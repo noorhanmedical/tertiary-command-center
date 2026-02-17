@@ -7,6 +7,9 @@ import { parse } from "csv-parse/sync";
 import OpenAI from "openai";
 import { batchProcess } from "./replit_integrations/batch";
 import { z } from "zod";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const pdfParse = require("pdf-parse");
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -302,7 +305,7 @@ export async function registerRoutes(
         batchId,
         name: name.trim(),
         time: time || null,
-        age: age ? parseInt(age) : null,
+        age: age ? parseInt(String(age)) : null,
         gender: gender || null,
         diagnoses: diagnoses || null,
         history: history || null,
@@ -340,6 +343,60 @@ export async function registerRoutes(
           allPatients.push(...parseExcelFile(file.buffer));
         } else if (ext === "csv") {
           allPatients.push(...parseCsvFile(file.buffer));
+        } else if (ext === "pdf") {
+          const pdfData = await pdfParse(file.buffer);
+          const extractionPrompt = `Extract all patient names and appointment times from this document/image. Return a JSON object: { "patients": [{ "name": "Full Name", "time": "time if visible" }] }. Only include actual patient names, not doctor names or staff.`;
+          const response = await openai.chat.completions.create({
+            model: "gpt-5.2",
+            messages: [
+              { role: "user", content: `${extractionPrompt}\n\nDocument text:\n${pdfData.text}` },
+            ],
+            response_format: { type: "json_object" },
+          });
+          const content = response.choices[0]?.message?.content || "{}";
+          try {
+            const parsed = JSON.parse(content);
+            if (parsed.patients && Array.isArray(parsed.patients)) {
+              for (const p of parsed.patients) {
+                if (p.name) {
+                  allPatients.push({ name: p.name, time: p.time || undefined });
+                }
+              }
+            }
+          } catch {
+            console.error("Failed to parse PDF AI extraction response");
+          }
+        } else if (["jpg", "jpeg", "png", "gif", "bmp", "webp"].includes(ext || "")) {
+          const base64 = file.buffer.toString("base64");
+          const mimeType = file.mimetype || `image/${ext === "jpg" ? "jpeg" : ext}`;
+          const dataUrl = `data:${mimeType};base64,${base64}`;
+          const extractionPrompt = `Extract all patient names and appointment times from this document/image. Return a JSON object: { "patients": [{ "name": "Full Name", "time": "time if visible" }] }. Only include actual patient names, not doctor names or staff.`;
+          const response = await openai.chat.completions.create({
+            model: "gpt-5.2",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: extractionPrompt },
+                  { type: "image_url", image_url: { url: dataUrl } },
+                ],
+              },
+            ],
+            response_format: { type: "json_object" },
+          });
+          const content = response.choices[0]?.message?.content || "{}";
+          try {
+            const parsed = JSON.parse(content);
+            if (parsed.patients && Array.isArray(parsed.patients)) {
+              for (const p of parsed.patients) {
+                if (p.name) {
+                  allPatients.push({ name: p.name, time: p.time || undefined });
+                }
+              }
+            }
+          } catch {
+            console.error("Failed to parse image AI extraction response");
+          }
         } else {
           allPatients.push(...parseTextForPatientNames(file.buffer.toString("utf-8")));
         }
@@ -456,6 +513,47 @@ export async function registerRoutes(
       res.status(204).send();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/patients/:id/analyze", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const patient = await storage.getPatientScreening(id);
+      if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      const patientData = [{
+        name: patient.name,
+        time: patient.time,
+        age: patient.age,
+        gender: patient.gender,
+        diagnoses: patient.diagnoses,
+        history: patient.history,
+        medications: patient.medications,
+        notes: patient.notes,
+      }];
+
+      const aiResults = await screenPatientsWithAI(patientData);
+
+      const match = aiResults.find(
+        (r) => r.name && r.name.toLowerCase().trim() === patient.name.toLowerCase().trim()
+      );
+
+      const updated = await storage.updatePatientScreening(id, {
+        qualifyingTests: match?.qualifyingTests || [],
+        reasoning: match?.reasoning || {},
+        diagnoses: match?.diagnoses || patient.diagnoses || null,
+        history: match?.history || patient.history || null,
+        medications: match?.medications || patient.medications || null,
+        age: match?.age || patient.age || null,
+        gender: match?.gender || patient.gender || null,
+        status: "completed",
+      });
+
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Per-patient analysis error:", error);
+      res.status(500).json({ error: error.message || "Analysis failed" });
     }
   });
 

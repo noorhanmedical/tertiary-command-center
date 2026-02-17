@@ -1,4 +1,4 @@
-import { useState, useCallback, Fragment } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card } from "@/components/ui/card";
@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import {
   Upload,
@@ -16,25 +15,21 @@ import {
   Scan,
   Loader2,
   ChevronDown,
-  ChevronUp,
+  ChevronRight,
   Download,
   ClipboardPaste,
-  FileSpreadsheet,
   Stethoscope,
   Pill,
   Zap,
   Check,
-  History,
   Trash2,
-  Search,
   MessageCircle,
   GraduationCap,
   Plus,
   UserPlus,
-  X,
-  Save,
-  Pencil,
-  Play,
+  ArrowLeft,
+  ArrowRight,
+  Sparkles,
 } from "lucide-react";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 
@@ -77,19 +72,15 @@ function getBadgeColor(cat: string): string {
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState("schedule");
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
+  const [view, setView] = useState<"home" | "build" | "results">("home");
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
-  const [editingPatient, setEditingPatient] = useState<number | null>(null);
-  const [showAddPanel, setShowAddPanel] = useState<"manual" | "text" | "file" | null>(null);
+  const [addMode, setAddMode] = useState<"manual" | "text" | "file" | null>(null);
   const [manualName, setManualName] = useState("");
   const [manualTime, setManualTime] = useState("");
   const [pasteText, setPasteText] = useState("");
   const [dragOver, setDragOver] = useState(false);
-  const [editForm, setEditForm] = useState<{
-    diagnoses: string; history: string; medications: string; notes: string;
-    age: string; gender: string;
-  }>({ diagnoses: "", history: "", medications: "", notes: "", age: "", gender: "" });
+  const [analyzingPatients, setAnalyzingPatients] = useState<Set<number>>(new Set());
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -111,6 +102,7 @@ export default function Home() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
       setSelectedBatchId(data.id);
+      setView("build");
     },
   });
 
@@ -136,7 +128,7 @@ export default function Home() {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
       setPasteText("");
-      setShowAddPanel(null);
+      setAddMode(null);
       toast({ title: `Imported ${data.imported} patients` });
     },
   });
@@ -150,7 +142,7 @@ export default function Home() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      setShowAddPanel(null);
+      setAddMode(null);
       toast({ title: `Imported ${data.imported} patients` });
     },
   });
@@ -162,7 +154,6 @@ export default function Home() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-      setEditingPatient(null);
     },
   });
 
@@ -182,11 +173,12 @@ export default function Home() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      if (selectedBatchId) setSelectedBatchId(null);
+      setSelectedBatchId(null);
+      setView("home");
     },
   });
 
-  const analyzeMutation = useMutation({
+  const analyzeAllMutation = useMutation({
     mutationFn: async (batchId: number) => {
       const res = await apiRequest("POST", `/api/batches/${batchId}/analyze`);
       return res.json();
@@ -194,12 +186,31 @@ export default function Home() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      toast({ title: "Analysis complete", description: "Ancillary qualifications generated." });
+      setView("results");
+      toast({ title: "Analysis complete", description: "All patients have been screened for ancillaries." });
     },
     onError: (err: Error) => {
       toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
     },
   });
+
+  const analyzeOnePatient = useCallback(async (patientId: number) => {
+    setAnalyzingPatients((prev) => new Set(prev).add(patientId));
+    try {
+      const res = await apiRequest("POST", `/api/patients/${patientId}/analyze`);
+      await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
+      toast({ title: "Patient analyzed" });
+    } catch (err: any) {
+      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
+    } finally {
+      setAnalyzingPatients((prev) => {
+        const next = new Set(prev);
+        next.delete(patientId);
+        return next;
+      });
+    }
+  }, [selectedBatchId, queryClient, toast]);
 
   const handleFileUpload = useCallback(
     (files: FileList | File[]) => {
@@ -232,581 +243,584 @@ export default function Home() {
     URL.revokeObjectURL(url);
   }, [selectedBatchId]);
 
-  const startEditing = (patient: PatientScreening) => {
-    setEditingPatient(patient.id);
-    setEditForm({
-      diagnoses: patient.diagnoses || "",
-      history: patient.history || "",
-      medications: patient.medications || "",
-      notes: patient.notes || "",
-      age: patient.age?.toString() || "",
-      gender: patient.gender || "",
-    });
+  const openBatch = (batchId: number, status: string) => {
+    setSelectedBatchId(batchId);
+    setView(status === "completed" ? "results" : "build");
   };
 
-  const savePatientEdit = () => {
-    if (!editingPatient) return;
-    updatePatientMutation.mutate({ id: editingPatient, updates: editForm });
-  };
-
-  const isDraft = selectedBatch?.status === "draft";
-  const isProcessing = selectedBatch?.status === "processing" || analyzeMutation.isPending;
-  const isCompleted = selectedBatch?.status === "completed";
   const patients = selectedBatch?.patients || [];
+  const isProcessing = analyzeAllMutation.isPending;
+  const completedCount = patients.filter((p) => p.status === "completed").length;
+  const allCompleted = patients.length > 0 && completedCount === patients.length;
 
-  const truncate = (text: string | null | undefined, max: number) => {
-    if (!text) return "";
-    return text.length > max ? text.substring(0, max) + "..." : text;
-  };
+  if (view === "results" && selectedBatchId) {
+    return <ResultsView
+      batch={selectedBatch}
+      patients={patients}
+      loading={batchLoading}
+      onBack={() => setView("build")}
+      onHome={() => { setView("home"); setSelectedBatchId(null); }}
+      onExport={handleExport}
+      expandedPatient={expandedPatient}
+      setExpandedPatient={setExpandedPatient}
+    />;
+  }
+
+  if (view === "build" && selectedBatchId) {
+    return (
+      <div className="min-h-screen bg-background">
+        <header className="border-b bg-card/80 backdrop-blur-md sticky top-0 z-50">
+          <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" size="icon" onClick={() => { setView("home"); setSelectedBatchId(null); setAddMode(null); }} data-testid="button-back-home">
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+              <div>
+                <h1 className="text-base font-bold tracking-tight" data-testid="text-batch-name">{selectedBatch?.name || "Loading..."}</h1>
+                <p className="text-xs text-muted-foreground">{patients.length} patients</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {allCompleted && (
+                <Button variant="outline" size="sm" onClick={() => setView("results")} className="gap-1.5" data-testid="button-view-results">
+                  <ArrowRight className="w-3.5 h-3.5" /> View Results
+                </Button>
+              )}
+              <Button
+                onClick={() => analyzeAllMutation.mutate(selectedBatchId!)}
+                disabled={isProcessing || patients.length === 0}
+                className="gap-1.5"
+                data-testid="button-generate-all"
+              >
+                {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                Generate All
+              </Button>
+            </div>
+          </div>
+        </header>
+
+        <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+          {isProcessing && (
+            <Card className="p-6">
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="w-10 h-10 text-primary animate-spin" />
+                <p className="font-semibold">Analyzing all patients for ancillary qualifications...</p>
+                <p className="text-sm text-muted-foreground">Reviewing clinical data with AI</p>
+              </div>
+            </Card>
+          )}
+
+          <section>
+            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Add Patients</h2>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Card
+                className={`p-4 cursor-pointer hover-elevate overflow-visible text-center ${addMode === "manual" ? "ring-2 ring-primary" : ""}`}
+                onClick={() => setAddMode(addMode === "manual" ? null : "manual")}
+                data-testid="card-add-manual"
+              >
+                <UserPlus className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
+                <p className="text-sm font-semibold">Manual Entry</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Add one patient at a time</p>
+              </Card>
+              <Card
+                className={`p-4 cursor-pointer hover-elevate overflow-visible text-center ${addMode === "text" ? "ring-2 ring-primary" : ""}`}
+                onClick={() => setAddMode(addMode === "text" ? null : "text")}
+                data-testid="card-add-text"
+              >
+                <ClipboardPaste className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
+                <p className="text-sm font-semibold">Paste List</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Paste names from a schedule</p>
+              </Card>
+              <Card
+                className={`p-4 cursor-pointer hover-elevate overflow-visible text-center ${addMode === "file" ? "ring-2 ring-primary" : ""}`}
+                onClick={() => setAddMode(addMode === "file" ? null : "file")}
+                data-testid="card-add-file"
+              >
+                <Upload className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
+                <p className="text-sm font-semibold">Upload File</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Excel, CSV, PDF, images</p>
+              </Card>
+            </div>
+
+            {addMode === "manual" && (
+              <Card className="mt-3 p-4">
+                <div className="flex items-end gap-3 flex-wrap">
+                  <div className="flex-1 min-w-[180px]">
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Patient Name</label>
+                    <Input
+                      placeholder="John Smith"
+                      value={manualName}
+                      onChange={(e) => setManualName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && manualName.trim() && selectedBatchId) {
+                          addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
+                        }
+                      }}
+                      data-testid="input-manual-name"
+                    />
+                  </div>
+                  <div className="w-28">
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Time</label>
+                    <Input
+                      placeholder="9:00 AM"
+                      value={manualTime}
+                      onChange={(e) => setManualTime(e.target.value)}
+                      data-testid="input-manual-time"
+                    />
+                  </div>
+                  <Button
+                    onClick={() => {
+                      if (!manualName.trim() || !selectedBatchId) return;
+                      addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
+                    }}
+                    disabled={!manualName.trim() || addPatientMutation.isPending}
+                    className="gap-1.5"
+                    data-testid="button-add-patient"
+                  >
+                    {addPatientMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                    Add
+                  </Button>
+                </div>
+              </Card>
+            )}
+
+            {addMode === "text" && (
+              <Card className="mt-3 p-4">
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                  Paste patient names (one per line). Optionally include time before the name.
+                </label>
+                <Textarea
+                  placeholder={"9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
+                  className="min-h-[120px] resize-none text-sm mb-3"
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                  data-testid="input-paste-list"
+                />
+                <Button
+                  onClick={() => {
+                    if (!pasteText.trim() || !selectedBatchId) return;
+                    importTextMutation.mutate({ batchId: selectedBatchId, text: pasteText.trim() });
+                  }}
+                  disabled={!pasteText.trim() || importTextMutation.isPending}
+                  className="gap-1.5"
+                  data-testid="button-import-text"
+                >
+                  {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                  Import Patients
+                </Button>
+              </Card>
+            )}
+
+            {addMode === "file" && (
+              <Card className="mt-3 p-0 overflow-hidden">
+                <div
+                  className={`p-8 text-center transition-all cursor-pointer border-2 border-dashed m-3 rounded-md ${
+                    dragOver ? "border-primary bg-primary/5" : "border-border"
+                  }`}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={handleDrop}
+                  onClick={() => {
+                    const input = document.createElement("input");
+                    input.type = "file";
+                    input.multiple = true;
+                    input.accept = ".xlsx,.xls,.csv,.txt,.text,.pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp";
+                    input.onchange = (e) => {
+                      const files = (e.target as HTMLInputElement).files;
+                      if (files) handleFileUpload(files);
+                    };
+                    input.click();
+                  }}
+                  data-testid="dropzone-upload"
+                >
+                  {importFileMutation.isPending ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <Loader2 className="w-8 h-8 text-muted-foreground animate-spin" />
+                      <p className="text-sm font-medium">Processing files...</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2">
+                      <Upload className="w-8 h-8 text-muted-foreground" />
+                      <p className="text-sm font-medium">Drop files here or click to browse</p>
+                      <p className="text-xs text-muted-foreground">Excel, CSV, PDF, images, text files</p>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            )}
+          </section>
+
+          {patients.length > 0 && (
+            <section>
+              <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                  Patient Schedule ({patients.length})
+                </h2>
+                {completedCount > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {completedCount} of {patients.length} analyzed
+                  </span>
+                )}
+              </div>
+              <div className="space-y-3">
+                {patients.map((patient) => (
+                  <PatientCard
+                    key={patient.id}
+                    patient={patient}
+                    isAnalyzing={analyzingPatients.has(patient.id)}
+                    onUpdate={(field, value) => {
+                      updatePatientMutation.mutate({ id: patient.id, updates: { [field]: value } });
+                    }}
+                    onDelete={() => deletePatientMutation.mutate(patient.id)}
+                    onAnalyze={() => analyzeOnePatient(patient.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {patients.length === 0 && !isProcessing && (
+            <div className="text-center py-16 text-muted-foreground">
+              <FileText className="w-10 h-10 mx-auto mb-3 opacity-40" />
+              <p className="text-sm">No patients added yet.</p>
+              <p className="text-xs mt-1">Use the options above to add patients to this batch.</p>
+            </div>
+          )}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card/80 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-[1400px] mx-auto px-5 py-4 flex items-center justify-between gap-2 flex-wrap">
+        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-primary flex items-center justify-center">
-              <Stethoscope className="w-5 h-5 text-primary-foreground" />
+            <div className="w-9 h-9 rounded-md bg-primary flex items-center justify-center">
+              <Stethoscope className="w-4 h-4 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight leading-tight" data-testid="text-app-title">
-                Ancillary Screening
-              </h1>
-              <p className="text-xs text-muted-foreground">Build Schedule, Add Clinical Data, Generate Qualifications</p>
+              <h1 className="text-base font-bold tracking-tight" data-testid="text-app-title">Ancillary Screening</h1>
+              <p className="text-xs text-muted-foreground">AI-powered patient qualification</p>
             </div>
           </div>
-          <Badge variant="outline" className="text-xs gap-1.5 rounded-full">
+          <Badge variant="outline" className="text-xs gap-1.5">
             <Zap className="w-3 h-3" /> GPT-5.2
           </Badge>
         </div>
       </header>
 
-      <main className="max-w-[1400px] mx-auto px-5 py-6">
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6 rounded-full">
-            <TabsTrigger value="schedule" data-testid="tab-schedule" className="gap-1.5 rounded-full">
-              <FileText className="w-4 h-4" /> Schedule
-            </TabsTrigger>
-            <TabsTrigger value="history" data-testid="tab-history" className="gap-1.5 rounded-full">
-              <History className="w-4 h-4" /> History
-              {batches.length > 0 && (
-                <span className="ml-1 text-xs bg-muted rounded-full px-2 py-0.5">{batches.length}</span>
-              )}
-            </TabsTrigger>
-          </TabsList>
+      <main className="max-w-5xl mx-auto px-4 py-8">
+        <div className="text-center mb-8">
+          <h2 className="text-2xl font-bold tracking-tight mb-2">Patient Screening Batches</h2>
+          <p className="text-sm text-muted-foreground max-w-lg mx-auto">
+            Create a batch, add patients, fill in their clinical data, then generate ancillary qualifications with AI.
+          </p>
+          <Button
+            onClick={() => createBatchMutation.mutate(`Batch - ${new Date().toLocaleDateString()}`)}
+            disabled={createBatchMutation.isPending}
+            className="mt-5 gap-2"
+            data-testid="button-new-batch"
+          >
+            {createBatchMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            New Batch
+          </Button>
+        </div>
 
-          <TabsContent value="schedule">
-            {!selectedBatchId ? (
-              <div className="space-y-6">
-                <div className="text-center py-16">
-                  <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-4">
-                    <Plus className="w-7 h-7 text-muted-foreground" />
-                  </div>
-                  <h3 className="font-semibold text-lg mb-1">Start a New Batch</h3>
-                  <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-                    Create a batch, add patients to the schedule, fill in their clinical data, then generate ancillary qualifications.
-                  </p>
-                  <Button
-                    onClick={() => createBatchMutation.mutate(`Batch - ${new Date().toLocaleDateString()}`)}
-                    disabled={createBatchMutation.isPending}
-                    className="rounded-full gap-2"
-                    data-testid="button-new-batch"
-                  >
-                    {createBatchMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    New Batch
-                  </Button>
-                </div>
-
-                {batches.length > 0 && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-muted-foreground mb-3">Or continue a recent batch:</h3>
-                    <div className="grid gap-2">
-                      {batches.slice(0, 5).map((batch) => (
-                        <Card
-                          key={batch.id}
-                          className="p-3 rounded-2xl hover-elevate cursor-pointer overflow-visible"
-                          onClick={() => { setSelectedBatchId(batch.id); }}
-                          data-testid={`card-recent-batch-${batch.id}`}
-                        >
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center">
-                                <FileText className="w-4 h-4 text-muted-foreground" />
-                              </div>
-                              <div>
-                                <p className="font-semibold text-sm">{batch.name}</p>
-                                <p className="text-xs text-muted-foreground">{batch.patientCount} patients</p>
-                              </div>
-                            </div>
-                            <StatusBadge status={batch.status} />
-                          </div>
-                        </Card>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : batchLoading ? (
-              <div className="flex items-center justify-center py-20">
-                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : (
-              <div className="space-y-4">
+        {batchesLoading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : batches.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <p className="text-sm">No batches yet. Create one to get started.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {batches.map((batch) => (
+              <Card
+                key={batch.id}
+                className="p-3 hover-elevate cursor-pointer overflow-visible"
+                onClick={() => openBatch(batch.id, batch.status)}
+                data-testid={`card-batch-${batch.id}`}
+              >
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-3">
-                    <Button variant="ghost" size="icon" onClick={() => { setSelectedBatchId(null); setShowAddPanel(null); setEditingPatient(null); }} data-testid="button-back">
-                      <ChevronUp className="w-4 h-4 -rotate-90" />
-                    </Button>
+                    <div className="w-9 h-9 rounded-md bg-muted flex items-center justify-center">
+                      <FileText className="w-4 h-4 text-muted-foreground" />
+                    </div>
                     <div>
-                      <h2 className="font-bold text-lg tracking-tight" data-testid="text-batch-name">{selectedBatch?.name}</h2>
-                      <p className="text-sm text-muted-foreground">
-                        {patients.length} patients
-                        <span className="mx-1.5">·</span>
-                        <StatusBadge status={selectedBatch?.status || "draft"} inline />
+                      <p className="font-semibold text-sm">{batch.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {batch.patientCount} patients
+                        {batch.createdAt && ` · ${new Date(batch.createdAt).toLocaleDateString()}`}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {isDraft && patients.length > 0 && (
-                      <Button
-                        onClick={() => analyzeMutation.mutate(selectedBatchId!)}
-                        disabled={isProcessing}
-                        className="rounded-full gap-2"
-                        data-testid="button-analyze"
-                      >
-                        {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                        Analyze for Ancillaries
-                      </Button>
-                    )}
-                    {isCompleted && (
-                      <>
-                        <Button variant="outline" size="sm" onClick={handleExport} className="rounded-full gap-1.5" data-testid="button-export">
-                          <Download className="w-4 h-4" /> Export CSV
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            if (!selectedBatchId) return;
-                            // Re-run by resetting to draft-like state
-                            analyzeMutation.mutate(selectedBatchId);
-                          }}
-                          disabled={isProcessing}
-                          className="rounded-full gap-1.5"
-                          data-testid="button-reanalyze"
-                        >
-                          {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                          Re-Analyze
-                        </Button>
-                      </>
-                    )}
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={batch.status} />
+                    <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); deleteBatchMutation.mutate(batch.id); }} data-testid={`button-delete-batch-${batch.id}`}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                   </div>
                 </div>
-
-                {isDraft && (
-                  <Card className="p-4 rounded-2xl">
-                    <div className="flex items-center gap-2 mb-3 flex-wrap">
-                      <span className="text-sm font-semibold">Add Patients</span>
-                      <div className="flex items-center gap-1.5 ml-auto flex-wrap">
-                        <Button
-                          variant={showAddPanel === "manual" ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setShowAddPanel(showAddPanel === "manual" ? null : "manual")}
-                          className="rounded-full gap-1.5"
-                          data-testid="button-add-manual"
-                        >
-                          <UserPlus className="w-3.5 h-3.5" /> Manual
-                        </Button>
-                        <Button
-                          variant={showAddPanel === "text" ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setShowAddPanel(showAddPanel === "text" ? null : "text")}
-                          className="rounded-full gap-1.5"
-                          data-testid="button-add-text"
-                        >
-                          <ClipboardPaste className="w-3.5 h-3.5" /> Paste List
-                        </Button>
-                        <Button
-                          variant={showAddPanel === "file" ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setShowAddPanel(showAddPanel === "file" ? null : "file")}
-                          className="rounded-full gap-1.5"
-                          data-testid="button-add-file"
-                        >
-                          <FileSpreadsheet className="w-3.5 h-3.5" /> File
-                        </Button>
-                      </div>
-                    </div>
-
-                    {showAddPanel === "manual" && (
-                      <div className="flex items-end gap-2 pt-2 flex-wrap">
-                        <div className="flex-1 min-w-[160px]">
-                          <label className="text-xs font-medium text-muted-foreground mb-1 block">Patient Name</label>
-                          <Input
-                            placeholder="John Smith"
-                            value={manualName}
-                            onChange={(e) => setManualName(e.target.value)}
-                            className="rounded-xl"
-                            data-testid="input-manual-name"
-                          />
-                        </div>
-                        <div className="w-32">
-                          <label className="text-xs font-medium text-muted-foreground mb-1 block">Time (optional)</label>
-                          <Input
-                            placeholder="9:00 AM"
-                            value={manualTime}
-                            onChange={(e) => setManualTime(e.target.value)}
-                            className="rounded-xl"
-                            data-testid="input-manual-time"
-                          />
-                        </div>
-                        <Button
-                          onClick={() => {
-                            if (!manualName.trim() || !selectedBatchId) return;
-                            addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
-                          }}
-                          disabled={!manualName.trim() || addPatientMutation.isPending}
-                          className="rounded-xl gap-1.5"
-                          data-testid="button-add-patient"
-                        >
-                          {addPatientMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                          Add
-                        </Button>
-                      </div>
-                    )}
-
-                    {showAddPanel === "text" && (
-                      <div className="pt-2 space-y-2">
-                        <label className="text-xs font-medium text-muted-foreground block">
-                          Paste patient names (one per line). Optionally include time before the name.
-                        </label>
-                        <Textarea
-                          placeholder={"9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
-                          className="min-h-[120px] resize-none text-sm rounded-xl"
-                          value={pasteText}
-                          onChange={(e) => setPasteText(e.target.value)}
-                          data-testid="input-paste-list"
-                        />
-                        <Button
-                          onClick={() => {
-                            if (!pasteText.trim() || !selectedBatchId) return;
-                            importTextMutation.mutate({ batchId: selectedBatchId, text: pasteText.trim() });
-                          }}
-                          disabled={!pasteText.trim() || importTextMutation.isPending}
-                          className="rounded-xl gap-1.5"
-                          data-testid="button-import-text"
-                        >
-                          {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                          Import Patients
-                        </Button>
-                      </div>
-                    )}
-
-                    {showAddPanel === "file" && (
-                      <div
-                        className={`border-2 border-dashed rounded-2xl p-8 text-center transition-all cursor-pointer mt-2 ${
-                          dragOver ? "border-primary bg-primary/5" : "border-border"
-                        }`}
-                        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                        onDragLeave={() => setDragOver(false)}
-                        onDrop={handleDrop}
-                        onClick={() => {
-                          const input = document.createElement("input");
-                          input.type = "file";
-                          input.multiple = true;
-                          input.accept = ".xlsx,.xls,.csv,.txt,.text";
-                          input.onchange = (e) => {
-                            const files = (e.target as HTMLInputElement).files;
-                            if (files) handleFileUpload(files);
-                          };
-                          input.click();
-                        }}
-                        data-testid="dropzone-upload"
-                      >
-                        {importFileMutation.isPending ? (
-                          <div className="flex flex-col items-center gap-2">
-                            <Loader2 className="w-8 h-8 text-muted-foreground animate-spin" />
-                            <p className="text-sm font-medium">Importing...</p>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center gap-2">
-                            <div className="w-12 h-12 rounded-2xl bg-muted flex items-center justify-center">
-                              <Upload className="w-5 h-5 text-muted-foreground" />
-                            </div>
-                            <p className="text-sm font-medium">Drop files or tap to browse</p>
-                            <p className="text-xs text-muted-foreground">.xlsx, .csv, .txt</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </Card>
-                )}
-
-                {isProcessing && (
-                  <Card className="p-6 rounded-2xl">
-                    <div className="flex flex-col items-center gap-3">
-                      <Loader2 className="w-10 h-10 text-primary animate-spin" />
-                      <p className="font-semibold">Analyzing patients for ancillary qualifications...</p>
-                      <p className="text-sm text-muted-foreground">Reviewing Dx, PMH & Rx with GPT-5.2</p>
-                    </div>
-                  </Card>
-                )}
-
-                {patients.length > 0 && (
-                  <Card className="overflow-visible rounded-2xl">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm" data-testid="table-schedule">
-                        <thead>
-                          <tr className="border-b bg-muted/40">
-                            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Time</th>
-                            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Name</th>
-                            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Age</th>
-                            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Gender</th>
-                            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Dx</th>
-                            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Hx</th>
-                            <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Rx</th>
-                            {isCompleted && (
-                              <th className="text-left px-4 py-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Qualifying Tests</th>
-                            )}
-                            <th className="px-3 py-3 w-10"></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {patients.map((patient) => {
-                            const isExpanded = expandedPatient === patient.id;
-                            const isEditing = editingPatient === patient.id;
-                            const tests = patient.qualifyingTests || [];
-                            const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
-
-                            return (
-                              <Fragment key={patient.id}>
-                                <tr
-                                  className="border-b cursor-pointer hover-elevate transition-colors"
-                                  onClick={() => {
-                                    if (isEditing) return;
-                                    if (isDraft) {
-                                      startEditing(patient);
-                                    } else {
-                                      setExpandedPatient(isExpanded ? null : patient.id);
-                                    }
-                                  }}
-                                  data-testid={`row-patient-${patient.id}`}
-                                >
-                                  <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">{patient.time || "--"}</td>
-                                  <td className="px-4 py-3 whitespace-nowrap font-semibold">{patient.name}</td>
-                                  <td className="px-4 py-3 whitespace-nowrap">{patient.age || "--"}</td>
-                                  <td className="px-4 py-3 whitespace-nowrap">{patient.gender || "--"}</td>
-                                  <td className="px-4 py-3 max-w-[180px]">
-                                    <span className="line-clamp-2 text-xs">{patient.diagnoses ? truncate(patient.diagnoses, 80) : <span className="text-muted-foreground italic">--</span>}</span>
-                                  </td>
-                                  <td className="px-4 py-3 max-w-[180px]">
-                                    <span className="line-clamp-2 text-xs">{patient.history ? truncate(patient.history, 80) : <span className="text-muted-foreground italic">--</span>}</span>
-                                  </td>
-                                  <td className="px-4 py-3 max-w-[160px]">
-                                    <span className="line-clamp-2 text-xs">{patient.medications ? truncate(patient.medications, 60) : <span className="text-muted-foreground italic">--</span>}</span>
-                                  </td>
-                                  {isCompleted && (
-                                    <td className="px-4 py-3">
-                                      <div className="flex items-center gap-1 flex-wrap">
-                                        {tests.length > 0 ? tests.map((test) => {
-                                          const cat = getAncillaryCategory(test);
-                                          return (
-                                            <span key={test} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap ${getBadgeColor(cat)}`}>
-                                              {test}
-                                            </span>
-                                          );
-                                        }) : <span className="text-xs text-muted-foreground">None</span>}
-                                      </div>
-                                    </td>
-                                  )}
-                                  <td className="px-3 py-3">
-                                    <div className="flex items-center gap-1">
-                                      {isDraft && (
-                                        <>
-                                          <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); startEditing(patient); }} data-testid={`button-edit-patient-${patient.id}`}>
-                                            <Pencil className="w-3.5 h-3.5" />
-                                          </Button>
-                                          <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); deletePatientMutation.mutate(patient.id); }} data-testid={`button-delete-patient-${patient.id}`}>
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                          </Button>
-                                        </>
-                                      )}
-                                      {isCompleted && (
-                                        isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                                      )}
-                                    </div>
-                                  </td>
-                                </tr>
-                                {isEditing && isDraft && (
-                                  <tr data-testid={`row-edit-${patient.id}`}>
-                                    <td colSpan={isCompleted ? 9 : 8} className="px-4 py-4 border-b bg-muted/20">
-                                      <PatientEditForm
-                                        editForm={editForm}
-                                        setEditForm={setEditForm}
-                                        onSave={savePatientEdit}
-                                        onCancel={() => setEditingPatient(null)}
-                                        saving={updatePatientMutation.isPending}
-                                      />
-                                    </td>
-                                  </tr>
-                                )}
-                                {isExpanded && isCompleted && (
-                                  <tr data-testid={`row-detail-${patient.id}`}>
-                                    <td colSpan={9} className="px-4 py-5 border-b bg-muted/20">
-                                      <ExpandedPatientDetail patient={patient} reasoning={reasoning} tests={tests} />
-                                    </td>
-                                  </tr>
-                                )}
-                              </Fragment>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </Card>
-                )}
-
-                {patients.length === 0 && !isProcessing && (
-                  <div className="text-center py-12 text-muted-foreground">
-                    <p className="text-sm">No patients added yet. Use the options above to add patients to this batch.</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="history">
-            {batchesLoading ? (
-              <div className="flex items-center justify-center py-20">
-                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : batches.length === 0 ? (
-              <div className="text-center py-20">
-                <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-4">
-                  <History className="w-7 h-7 text-muted-foreground" />
-                </div>
-                <h3 className="font-semibold text-lg mb-1">No batches yet</h3>
-                <p className="text-sm text-muted-foreground">Create your first batch from the Schedule tab.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {batches.map((batch) => (
-                  <Card
-                    key={batch.id}
-                    className="p-4 rounded-2xl hover-elevate cursor-pointer overflow-visible"
-                    onClick={() => { setSelectedBatchId(batch.id); setActiveTab("schedule"); }}
-                    data-testid={`card-batch-${batch.id}`}
-                  >
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-2xl bg-muted flex items-center justify-center">
-                          <FileText className="w-4 h-4 text-muted-foreground" />
-                        </div>
-                        <div>
-                          <p className="font-semibold text-sm">{batch.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {batch.patientCount} patients
-                            {batch.createdAt && ` · ${new Date(batch.createdAt).toLocaleDateString()}`}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <StatusBadge status={batch.status} />
-                        <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); deleteBatchMutation.mutate(batch.id); }} data-testid={`button-delete-batch-${batch.id}`}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+              </Card>
+            ))}
+          </div>
+        )}
       </main>
     </div>
   );
 }
 
-function StatusBadge({ status, inline }: { status: string; inline?: boolean }) {
-  if (inline) {
-    switch (status) {
-      case "draft": return <span className="text-blue-600 dark:text-blue-400 font-medium">Draft</span>;
-      case "processing": return <span className="text-amber-600 dark:text-amber-400 font-medium">Processing</span>;
-      case "completed": return <span className="text-emerald-600 dark:text-emerald-400 font-medium">Complete</span>;
-      default: return <span className="font-medium">{status}</span>;
-    }
-  }
-  switch (status) {
-    case "draft": return <Badge variant="outline" className="text-xs rounded-full gap-1"><Pencil className="w-3 h-3" /> Draft</Badge>;
-    case "processing": return <Badge variant="outline" className="text-xs rounded-full gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Processing</Badge>;
-    case "completed": return <Badge variant="outline" className="text-xs rounded-full gap-1"><Check className="w-3 h-3" /> Complete</Badge>;
-    default: return <Badge variant="outline" className="text-xs rounded-full">{status}</Badge>;
-  }
+function PatientCard({
+  patient,
+  isAnalyzing,
+  onUpdate,
+  onDelete,
+  onAnalyze,
+}: {
+  patient: PatientScreening;
+  isAnalyzing: boolean;
+  onUpdate: (field: string, value: string) => void;
+  onDelete: () => void;
+  onAnalyze: () => void;
+}) {
+  const isCompleted = patient.status === "completed";
+  const tests = patient.qualifyingTests || [];
+
+  const [localDx, setLocalDx] = useState(patient.diagnoses || "");
+  const [localHx, setLocalHx] = useState(patient.history || "");
+  const [localRx, setLocalRx] = useState(patient.medications || "");
+
+  useEffect(() => { setLocalDx(patient.diagnoses || ""); }, [patient.diagnoses]);
+  useEffect(() => { setLocalHx(patient.history || ""); }, [patient.history]);
+  useEffect(() => { setLocalRx(patient.medications || ""); }, [patient.medications]);
+
+  return (
+    <Card className={`overflow-visible ${isCompleted ? "ring-1 ring-emerald-200 dark:ring-emerald-800" : ""}`} data-testid={`card-patient-${patient.id}`}>
+      <div className="px-4 py-3 flex items-center justify-between gap-2 border-b flex-wrap">
+        <div className="flex items-center gap-3">
+          <div className="flex flex-col">
+            <span className="font-semibold text-sm">{patient.name}</span>
+            <span className="text-xs text-muted-foreground">{patient.time || "No time set"}</span>
+          </div>
+          {isCompleted && (
+            <Badge variant="outline" className="text-xs gap-1">
+              <Check className="w-3 h-3 text-emerald-500" /> Analyzed
+            </Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onAnalyze}
+            disabled={isAnalyzing}
+            className="gap-1.5"
+            data-testid={`button-generate-${patient.id}`}
+          >
+            {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {isCompleted ? "Re-Generate" : "Generate"}
+          </Button>
+          <Button variant="ghost" size="icon" onClick={onDelete} data-testid={`button-delete-patient-${patient.id}`}>
+            <Trash2 className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div>
+          <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1 mb-1.5">
+            <Stethoscope className="w-3 h-3" /> Dx (Diagnoses)
+          </label>
+          <Textarea
+            placeholder="HTN, DM2, HLD, Hypothyroidism..."
+            className="min-h-[70px] resize-none text-sm"
+            value={localDx}
+            onChange={(e) => setLocalDx(e.target.value)}
+            onBlur={() => { if (localDx !== (patient.diagnoses || "")) onUpdate("diagnoses", localDx); }}
+            data-testid={`input-dx-${patient.id}`}
+          />
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1 mb-1.5">
+            <FileText className="w-3 h-3" /> Hx (History / PMH)
+          </label>
+          <Textarea
+            placeholder="MI 2019, CABG 2020, TIA..."
+            className="min-h-[70px] resize-none text-sm"
+            value={localHx}
+            onChange={(e) => setLocalHx(e.target.value)}
+            onBlur={() => { if (localHx !== (patient.history || "")) onUpdate("history", localHx); }}
+            data-testid={`input-hx-${patient.id}`}
+          />
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1 mb-1.5">
+            <Pill className="w-3 h-3" /> Rx (Medications)
+          </label>
+          <Textarea
+            placeholder="Metformin 1000mg, Lisinopril..."
+            className="min-h-[70px] resize-none text-sm"
+            value={localRx}
+            onChange={(e) => setLocalRx(e.target.value)}
+            onBlur={() => { if (localRx !== (patient.medications || "")) onUpdate("medications", localRx); }}
+            data-testid={`input-rx-${patient.id}`}
+          />
+        </div>
+      </div>
+
+      {isCompleted && tests.length > 0 && (
+        <div className="px-4 pb-3">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-muted-foreground mr-1">Qualifying:</span>
+            {tests.map((test) => {
+              const cat = getAncillaryCategory(test);
+              return (
+                <span key={test} className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>
+                  {test}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
 }
 
-function PatientEditForm({
-  editForm,
-  setEditForm,
-  onSave,
-  onCancel,
-  saving,
+function ResultsView({
+  batch,
+  patients,
+  loading,
+  onBack,
+  onHome,
+  onExport,
+  expandedPatient,
+  setExpandedPatient,
 }: {
-  editForm: { diagnoses: string; history: string; medications: string; notes: string; age: string; gender: string };
-  setEditForm: (form: typeof editForm) => void;
-  onSave: () => void;
-  onCancel: () => void;
-  saving: boolean;
+  batch: ScreeningBatchWithPatients | undefined;
+  patients: PatientScreening[];
+  loading: boolean;
+  onBack: () => void;
+  onHome: () => void;
+  onExport: () => void;
+  expandedPatient: number | null;
+  setExpandedPatient: (id: number | null) => void;
 }) {
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-4" onClick={(e) => e.stopPropagation()}>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Age</label>
-          <Input value={editForm.age} onChange={(e) => setEditForm({ ...editForm, age: e.target.value })} placeholder="65" className="rounded-xl" data-testid="input-edit-age" />
+    <div className="min-h-screen bg-background">
+      <header className="border-b bg-card/80 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" onClick={onBack} data-testid="button-back-build">
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+            <div>
+              <h1 className="text-base font-bold tracking-tight" data-testid="text-results-title">{batch?.name} - Results</h1>
+              <p className="text-xs text-muted-foreground">{patients.length} patients screened</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button variant="outline" size="sm" onClick={onExport} className="gap-1.5" data-testid="button-export">
+              <Download className="w-3.5 h-3.5" /> Export CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={onHome} className="gap-1.5" data-testid="button-home">
+              <ArrowLeft className="w-3.5 h-3.5" /> All Batches
+            </Button>
+          </div>
         </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Gender</label>
-          <Input value={editForm.gender} onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })} placeholder="M / F" className="rounded-xl" data-testid="input-edit-gender" />
-        </div>
-      </div>
-      <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Dx (Diagnoses)</label>
-        <Textarea value={editForm.diagnoses} onChange={(e) => setEditForm({ ...editForm, diagnoses: e.target.value })} placeholder="HTN, DM2, HLD, Hypothyroidism..." className="min-h-[60px] resize-none text-sm rounded-xl" data-testid="input-edit-dx" />
-      </div>
-      <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Hx (History / PMH)</label>
-        <Textarea value={editForm.history} onChange={(e) => setEditForm({ ...editForm, history: e.target.value })} placeholder="MI 2019, CABG 2020, TIA 2021..." className="min-h-[60px] resize-none text-sm rounded-xl" data-testid="input-edit-hx" />
-      </div>
-      <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Rx (Medications)</label>
-        <Textarea value={editForm.medications} onChange={(e) => setEditForm({ ...editForm, medications: e.target.value })} placeholder="Metformin 1000mg, Lisinopril 20mg..." className="min-h-[60px] resize-none text-sm rounded-xl" data-testid="input-edit-rx" />
-      </div>
-      <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Notes (optional)</label>
-        <Textarea value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} placeholder="Additional clinical notes..." className="min-h-[40px] resize-none text-sm rounded-xl" data-testid="input-edit-notes" />
-      </div>
-      <div className="flex items-center gap-2">
-        <Button onClick={onSave} disabled={saving} className="rounded-xl gap-1.5" data-testid="button-save-patient">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          Save
-        </Button>
-        <Button variant="outline" onClick={onCancel} className="rounded-xl gap-1.5" data-testid="button-cancel-edit">
-          <X className="w-4 h-4" /> Cancel
-        </Button>
-      </div>
+      </header>
+
+      <main className="max-w-5xl mx-auto px-4 py-6 space-y-3">
+        {patients.map((patient) => {
+          const tests = patient.qualifyingTests || [];
+          const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
+          const isExpanded = expandedPatient === patient.id;
+
+          return (
+            <Card key={patient.id} className="overflow-visible" data-testid={`card-result-${patient.id}`}>
+              <div
+                className="px-4 py-3 cursor-pointer hover-elevate flex items-center justify-between gap-3 flex-wrap"
+                onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
+                data-testid={`row-result-${patient.id}`}
+              >
+                <div className="flex items-center gap-3">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-sm">{patient.name}</span>
+                      {patient.time && <span className="text-xs text-muted-foreground">{patient.time}</span>}
+                      {patient.age && <span className="text-xs text-muted-foreground">Age {patient.age}</span>}
+                      {patient.gender && <span className="text-xs text-muted-foreground">{patient.gender}</span>}
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                      {tests.length > 0 ? tests.map((test) => {
+                        const cat = getAncillaryCategory(test);
+                        return (
+                          <span key={test} className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>
+                            {test}
+                          </span>
+                        );
+                      }) : (
+                        <span className="text-xs text-muted-foreground">No qualifying tests</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />}
+              </div>
+
+              {isExpanded && (
+                <div className="border-t px-4 py-4 space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <Stethoscope className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Dx</span>
+                      </div>
+                      <p className="text-sm whitespace-pre-wrap">{patient.diagnoses || "N/A"}</p>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Hx</span>
+                      </div>
+                      <p className="text-sm whitespace-pre-wrap">{patient.history || "N/A"}</p>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <Pill className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Rx</span>
+                      </div>
+                      <p className="text-sm whitespace-pre-wrap">{patient.medications || "N/A"}</p>
+                    </div>
+                  </div>
+
+                  {tests.length > 0 && (
+                    <ExpandedAncillaries tests={tests} reasoning={reasoning} />
+                  )}
+                </div>
+              )}
+            </Card>
+          );
+        })}
+      </main>
     </div>
   );
 }
 
-function ExpandedPatientDetail({
-  patient,
-  reasoning,
-  tests,
-}: {
-  patient: PatientScreening;
-  reasoning: Record<string, ReasoningValue>;
-  tests: string[];
-}) {
+function ExpandedAncillaries({ tests, reasoning }: { tests: string[]; reasoning: Record<string, ReasoningValue> }) {
   const grouped: Record<string, { tests: string[]; reasonings: Record<string, ReasoningValue> }> = {};
   for (const test of tests) {
     const cat = getAncillaryCategory(test);
@@ -819,89 +833,74 @@ function ExpandedPatientDetail({
   const sortedCategories = categoryOrder.filter((c) => grouped[c]);
 
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <Stethoscope className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Dx (Diagnoses)</span>
-          </div>
-          <p className="text-sm whitespace-pre-wrap">{patient.diagnoses || "N/A"}</p>
-        </div>
-        <div>
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Hx (History / PMH)</span>
-          </div>
-          <p className="text-sm whitespace-pre-wrap">{patient.history || "N/A"}</p>
-        </div>
-        <div>
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <Pill className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Rx (Medications)</span>
-          </div>
-          <p className="text-sm whitespace-pre-wrap">{patient.medications || "N/A"}</p>
-        </div>
-      </div>
+    <div>
+      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Qualifying Ancillaries</h4>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {sortedCategories.map((cat) => {
+          const group = grouped[cat];
+          const style = categoryStyles[cat];
+          const IconComp = categoryIcons[cat];
+          return (
+            <div key={cat} className={`rounded-md border ${style.bg} ${style.border} p-4`} data-testid={`card-ancillary-${cat}`}>
+              <div className="flex items-center gap-2 mb-3">
+                <IconComp className={`w-5 h-5 ${style.icon}`} />
+                <span className={`font-semibold text-sm ${style.accent}`}>{categoryLabels[cat]}</span>
+              </div>
 
-      {sortedCategories.length > 0 && (
-        <div>
-          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Qualifying Ancillaries</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {sortedCategories.map((cat) => {
-              const group = grouped[cat];
-              const style = categoryStyles[cat];
-              const IconComp = categoryIcons[cat];
-              return (
-                <div key={cat} className={`rounded-2xl border ${style.bg} ${style.border} p-4`} data-testid={`card-ancillary-${cat}`}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <IconComp className={`w-5 h-5 ${style.icon}`} />
-                    <span className={`font-semibold text-sm ${style.accent}`}>{categoryLabels[cat]}</span>
-                  </div>
-
-                  {cat === "ultrasound" && group.tests.length > 1 && (
-                    <div className="flex items-center gap-1.5 flex-wrap mb-3">
-                      {group.tests.map((t) => (
-                        <span key={t} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor(cat)}`}>{t}</span>
-                      ))}
-                    </div>
-                  )}
-
-                  {Object.entries(group.reasonings).map(([test, reason]) => {
-                    const clinician = typeof reason === "string" ? reason : reason.clinician_understanding;
-                    const talking = typeof reason === "string" ? null : reason.patient_talking_points;
-                    return (
-                      <div key={test} className="mb-3 last:mb-0">
-                        {cat === "ultrasound" && group.tests.length > 1 && (
-                          <p className={`text-xs font-semibold mb-1.5 ${style.accent}`}>{test}</p>
-                        )}
-                        <div className="space-y-2">
-                          <div className="rounded-xl bg-background/60 dark:bg-background/30 p-3">
-                            <div className="flex items-center gap-1.5 mb-1">
-                              <GraduationCap className="w-3.5 h-3.5 text-muted-foreground" />
-                              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Clinician Understanding</span>
-                            </div>
-                            <p className="text-xs leading-relaxed">{clinician}</p>
-                          </div>
-                          {talking && (
-                            <div className="rounded-xl bg-background/60 dark:bg-background/30 p-3">
-                              <div className="flex items-center gap-1.5 mb-1">
-                                <MessageCircle className="w-3.5 h-3.5 text-muted-foreground" />
-                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Patient Talking Points</span>
-                              </div>
-                              <p className="text-xs leading-relaxed">{talking}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+              {cat === "ultrasound" && group.tests.length > 1 && (
+                <div className="flex items-center gap-1.5 flex-wrap mb-3">
+                  {group.tests.map((t) => (
+                    <span key={t} className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>{t}</span>
+                  ))}
                 </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+              )}
+
+              {Object.entries(group.reasonings).map(([test, reason]) => {
+                const clinician = typeof reason === "string" ? reason : reason.clinician_understanding;
+                const talking = typeof reason === "string" ? null : reason.patient_talking_points;
+                return (
+                  <div key={test} className="mb-3 last:mb-0">
+                    {cat === "ultrasound" && group.tests.length > 1 && (
+                      <p className={`text-xs font-semibold mb-1.5 ${style.accent}`}>{test}</p>
+                    )}
+                    <div className="space-y-2">
+                      <div className="rounded-md bg-background/60 dark:bg-background/30 p-3">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <GraduationCap className="w-3.5 h-3.5 text-muted-foreground" />
+                          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Clinician Understanding</span>
+                        </div>
+                        <p className="text-xs leading-relaxed">{clinician}</p>
+                      </div>
+                      {talking && (
+                        <div className="rounded-md bg-background/60 dark:bg-background/30 p-3">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <MessageCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Patient Talking Points</span>
+                          </div>
+                          <p className="text-xs leading-relaxed">{talking}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  switch (status) {
+    case "draft":
+      return <Badge variant="outline" className="text-xs gap-1"><FileText className="w-3 h-3" /> Draft</Badge>;
+    case "processing":
+      return <Badge variant="outline" className="text-xs gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Processing</Badge>;
+    case "completed":
+      return <Badge variant="outline" className="text-xs gap-1"><Check className="w-3 h-3 text-emerald-500" /> Complete</Badge>;
+    default:
+      return <Badge variant="outline" className="text-xs">{status}</Badge>;
+  }
 }
