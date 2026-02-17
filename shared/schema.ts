@@ -60,6 +60,11 @@ export const insertPatientScreeningSchema = createInsertSchema(patientScreenings
 export type PatientScreening = typeof patientScreenings.$inferSelect;
 export type InsertPatientScreening = z.infer<typeof insertPatientScreeningSchema>;
 
+export const testReasoningSchema = z.object({
+  clinician_understanding: z.string(),
+  patient_talking_points: z.string(),
+});
+
 export const patientScreeningResultSchema = z.object({
   time: z.string().optional(),
   name: z.string(),
@@ -70,7 +75,11 @@ export const patientScreeningResultSchema = z.object({
   medications: z.string().optional(),
   notes: z.string().optional(),
   qualifyingTests: z.array(z.string()),
-  reasoning: z.record(z.string(), z.string()).optional(),
+  reasoning: z.record(z.string(), z.union([
+    testReasoningSchema,
+    z.string(),
+  ])).optional(),
 });
 
+export type TestReasoning = z.infer<typeof testReasoningSchema>;
 export type PatientScreeningResult = z.infer<typeof patientScreeningResultSchema>;

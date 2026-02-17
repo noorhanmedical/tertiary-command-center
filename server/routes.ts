@@ -155,8 +155,10 @@ For each patient, respond with a JSON object:
       "medications": "medications list",
       "qualifyingTests": ["Test1", "Test2", ...],
       "reasoning": {
-        "Test1": "Brief clinical justification",
-        "Test2": "Brief clinical justification"
+        "Test1": {
+          "clinician_understanding": "Clinical justification with medical terminology and evidence-based rationale for why this test is indicated. Reference specific diagnoses, risk factors, medications, and guidelines.",
+          "patient_talking_points": "Plain language explanation of why this test would benefit the patient. Use simple terms they can understand. Example: 'Based on your blood pressure readings and diabetes, we want to check the blood flow in your legs to make sure everything is healthy.'"
+        }
       }
     }
   ]
