@@ -1,0 +1,86 @@
+TIME	NAME	AGE	GENDER	Dx	Hx	Rx	QUALIFYING TESTS
+9:00 AM	AVILA, ARACELI	46	F	"Mixed Hyperlipidemia, Type 2 Diabetes Mellitus With Other Oral Complications, Body Mass
+Index [bmi] 40.0-44.9, Adult, Abnormal Weight Gain
+Encounter For General Adult Medical Exam W Abnormal Findings, Encounter For Screening For Eye And Ear Disorders, Encntr Screen Mammogram For Malignant Neoplasm Of Breast, Encounter For Screening For Malignant Neoplasm Of Colon, Family History Of Colonic Polyps, Pain In Right Knee, Chronic Instability Of Knee, Right Knee"	"Chief Complaint: 
+ 
+Subjective
+
+History of Present Illness
+Michelle Douglas is a female patient presenting for follow-up of multiple medical conditions including recent UTI, hypertension management, and gastrointestinal concerns.
+
+The patient reports that she developed a UTI approximately 5-6 days after her last visit on the 5th. She states she never received the antibiotics that were initially prescribed for her. When nurses called to inform her about the prescription, she had already sought care at a clinic due to feeling sick at work, where the UTI was detected and treated with antibiotics. She reports the infection resolved completely with the clinic-provided treatment.
+
+Regarding her hypertension management, the patient admits to poor medication adherence, stating she is not taking her hydrochlorothiazide and amlodipine regularly. She reports that she has not yet noticed a difference in swelling when she does take the medications, attributing this to her inconsistent use.
+
+The patient continues to experience upper abdominal discomfort, particularly after eating, which she describes as feeling like a ventral hernia. She confirms she followed up with gastroenterologist Dr. Siyuan Li back in May as previously referred.
+
+Since taking antibiotics for the UTI, the patient reports changes in her stool consistency. She has been experiencing ongoing swelling, though notes some improvement compared to previous visits.
+
+Medical History
+- Urinary tract infection treated at clinic approximately 5-6 days after October 5th visit
+- Hypertension
+- Hyperlipidemia
+- Vitamin D deficiency
+- Suspected ventral hernia with upper abdominal symptoms after eating
+
+Medications and Supplements
+- Hydrochlorothiazide
+  - Not taking regularly
+- Amlodipine
+  - Not taking regularly
+- Antibiotics for UTI
+  - Recently completed course obtained from clinic
+- Probiotics
+  - Taking since completing antibiotics for UTI
+
+Social History
+- Occupation: Works indoors, limiting sun exposure
+
+Review of Systems
+Gastrointestinal: Positive for upper abdominal discomfort after eating, stool changes.
+Musculoskeletal: Positive for swelling.
+
+ 
+
+Araceli Avila is a 46 year old Hispanic or Latino female complaining of Leg Pain.
+The symptoms are located at: anterior, posterior, inferior, right leg.
+The quality is best described as: achy, dull, sore; radiation; ability to bear weight.
+When asked about the severity level of the symptoms the patient reported: moderate; affecting daily activities; affecting sleep.
+The patient reports the duration of their symptoms as: 1-3 days.
+The patient also reports the following factors related to their symptoms: recent trauma, ; Running .
+The patient admits to the following factors that modify their symptoms: exacerbated with leg movements.
+The following findings or symptoms are associated with patient's chief complaint: edema; limitation of movement; weakness; they deny: erythema, tender to palpation, stiffness, instability.
+
+The patient also complains of Well Woman Exam.
+The patient reports the duration of their symptoms as: last mammogram more than 5 years ago; last pap more than 5 years ago.
+The patient also denies that the following factors are related to their symptoms: history of breast disorders, history of gynecologic disorders, family history of gynecologic cancer, family history of breast cancer, family history of osteoporosis. 
+The following findings or symptoms are associated with patient's chief complaint: vaginal symptoms, ; Discharge; vasomotor symptoms; they deny: breast symptoms, pelvic pain, insomnia, urinary symptoms.
+Questionnaire : GAD-7
+Question		Comments
+Feeling nervous, anxious or on edge	Several days- 1	
+Not being able to stop or control worrying	Not at all- 0	
+Worrying too much about different things	Not at all- 0	
+Trouble Relaxing	Not at all- 0	
+Being so restless that it is hard to sit still	Not at all- 0	
+Becoming easily annoyed or irritated	Several days- 1	
+Feeling afraid as if something awful might happen	Several days- 1	
+If you checked off any problems, how difficult have these problems made it for you to do your work, take care of things at home, or get along with other people?	Not difficult at all	
+TOTAL SCORE	3	
+Questionnaire : PHQ-9
+Question		Comments
+Patient Health Questionnaire (PHQ-9)
+Do you have little interest or pleasure in doing things?	Several Days (1 Point)	
+Do you feel down, depressed or hopeless?	Not At All (0 Points)	
+Do you have trouble falling asleep, staying asleep or sleeping too much?	Not At All (0 Points)	
+Do you feel tired or have little energy?	Not At All (0 Points)	
+Do you have a poor appetitie or are you overeating?	Several Days (1 Point)	
+Do you feel bad about yourself, feel like a failure or feel you have let yourself or your family down?	Several Days (1 Point)	
+Do you have trouble concentrating on things like reading the newspaper or watching TV?	Not At All (0 Points)	
+Have you been moving or speaking so slowly that others have noticed? Or feel so restless or fidgety that you have been moving around a lot more than usual?	Not At All (0 Points)	
+Do you have thoughts that you would be better off dead or of hurting yourself in some way?	Not At All (0 Points)	
+If you have any of these problems, how difficult have these problems made it for you to take care of things at home, do your work or get along with others?	Not Difficult At All	
+Total score:	3	
+Well Visit : AWV
+This is a 46 year old, female here for an AWV. The patient has concerns regarding their health. There are no concerns regarding this patient's hearing. Over the last month, this patient has not felt fatigued. This patient is able to walk up 10 stairs unassisted. This patient is able to walk 1 block unassisted. This patient does not feel their work or activities are limited due to a medical, physical, mental or emotional problem. There are no concerns regarding this patient's cognition."	"metformin 500 mg tablet
+Zyrtec 10 mg tablet
+(2 mg/3 mL) Ozempic 0.25 mg or 0.5 mg (2 mg/3 mL) subcutaneous pen injector"	BrainWave, VitalWave, Carotid US, Echo, Renal artery US
