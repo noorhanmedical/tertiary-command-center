@@ -17,7 +17,6 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
-  ClipboardPaste,
   Stethoscope,
   Pill,
   Zap,
@@ -26,9 +25,7 @@ import {
   MessageCircle,
   GraduationCap,
   Plus,
-  UserPlus,
   ArrowLeft,
-  ArrowRight,
   Sparkles,
 } from "lucide-react";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
@@ -37,16 +34,13 @@ type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening
 type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string };
 
 const ULTRASOUND_TESTS = ["carotid", "echo", "renal", "aaa", "aorta", "thyroid", "venous", "arterial", "dvt", "duplex"];
-function isUltrasound(test: string): boolean {
-  return ULTRASOUND_TESTS.some((u) => test.toLowerCase().includes(u));
-}
 
 function getAncillaryCategory(test: string): "brainwave" | "vitalwave" | "ultrasound" | "fibroscan" | "other" {
   const lower = test.toLowerCase();
   if (lower.includes("brain")) return "brainwave";
   if (lower.includes("vital")) return "vitalwave";
   if (lower.includes("fibro")) return "fibroscan";
-  if (isUltrasound(lower)) return "ultrasound";
+  if (ULTRASOUND_TESTS.some((u) => lower.includes(u))) return "ultrasound";
   return "other";
 }
 
@@ -75,7 +69,6 @@ export default function Home() {
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
   const [view, setView] = useState<"home" | "build" | "results">("home");
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
-  const [addMode, setAddMode] = useState<"manual" | "text" | "file" | null>(null);
   const [manualName, setManualName] = useState("");
   const [manualTime, setManualTime] = useState("");
   const [pasteText, setPasteText] = useState("");
@@ -128,7 +121,6 @@ export default function Home() {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
       setPasteText("");
-      setAddMode(null);
       toast({ title: `Imported ${data.imported} patients` });
     },
   });
@@ -142,7 +134,6 @@ export default function Home() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      setAddMode(null);
       toast({ title: `Imported ${data.imported} patients` });
     },
   });
@@ -187,7 +178,7 @@ export default function Home() {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
       setView("results");
-      toast({ title: "Analysis complete", description: "All patients have been screened for ancillaries." });
+      toast({ title: "Analysis complete", description: "All patients have been screened." });
     },
     onError: (err: Error) => {
       toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
@@ -243,11 +234,6 @@ export default function Home() {
     URL.revokeObjectURL(url);
   }, [selectedBatchId]);
 
-  const openBatch = (batchId: number, status: string) => {
-    setSelectedBatchId(batchId);
-    setView(status === "completed" ? "results" : "build");
-  };
-
   const patients = selectedBatch?.patients || [];
   const isProcessing = analyzeAllMutation.isPending;
   const completedCount = patients.filter((p) => p.status === "completed").length;
@@ -272,7 +258,7 @@ export default function Home() {
         <header className="border-b bg-card/80 backdrop-blur-md sticky top-0 z-50">
           <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-3">
-              <Button variant="ghost" size="icon" onClick={() => { setView("home"); setSelectedBatchId(null); setAddMode(null); }} data-testid="button-back-home">
+              <Button variant="ghost" size="icon" onClick={() => { setView("home"); setSelectedBatchId(null); }} data-testid="button-back-home">
                 <ArrowLeft className="w-4 h-4" />
               </Button>
               <div>
@@ -283,7 +269,7 @@ export default function Home() {
             <div className="flex items-center gap-2 flex-wrap">
               {allCompleted && (
                 <Button variant="outline" size="sm" onClick={() => setView("results")} className="gap-1.5" data-testid="button-view-results">
-                  <ArrowRight className="w-3.5 h-3.5" /> View Results
+                  View Results
                 </Button>
               )}
               <Button
@@ -304,119 +290,87 @@ export default function Home() {
             <Card className="p-6">
               <div className="flex flex-col items-center gap-3">
                 <Loader2 className="w-10 h-10 text-primary animate-spin" />
-                <p className="font-semibold">Analyzing all patients for ancillary qualifications...</p>
-                <p className="text-sm text-muted-foreground">Reviewing clinical data with AI</p>
+                <p className="font-semibold">Analyzing all patients...</p>
+                <p className="text-sm text-muted-foreground">Screening with AI for ancillary qualifications</p>
               </div>
             </Card>
           )}
 
           <section>
-            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Add Patients</h2>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Card
-                className={`p-4 cursor-pointer hover-elevate overflow-visible text-center ${addMode === "manual" ? "ring-2 ring-primary" : ""}`}
-                onClick={() => setAddMode(addMode === "manual" ? null : "manual")}
-                data-testid="card-add-manual"
-              >
-                <UserPlus className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-sm font-semibold">Manual Entry</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Add one patient at a time</p>
-              </Card>
-              <Card
-                className={`p-4 cursor-pointer hover-elevate overflow-visible text-center ${addMode === "text" ? "ring-2 ring-primary" : ""}`}
-                onClick={() => setAddMode(addMode === "text" ? null : "text")}
-                data-testid="card-add-text"
-              >
-                <ClipboardPaste className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-sm font-semibold">Paste List</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Paste names from a schedule</p>
-              </Card>
-              <Card
-                className={`p-4 cursor-pointer hover-elevate overflow-visible text-center ${addMode === "file" ? "ring-2 ring-primary" : ""}`}
-                onClick={() => setAddMode(addMode === "file" ? null : "file")}
-                data-testid="card-add-file"
-              >
-                <Upload className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-sm font-semibold">Upload File</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Excel, CSV, PDF, images</p>
-              </Card>
-            </div>
-
-            {addMode === "manual" && (
-              <Card className="mt-3 p-4">
-                <div className="flex items-end gap-3 flex-wrap">
-                  <div className="flex-1 min-w-[180px]">
-                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Patient Name</label>
-                    <Input
-                      placeholder="John Smith"
-                      value={manualName}
-                      onChange={(e) => setManualName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && manualName.trim() && selectedBatchId) {
-                          addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
-                        }
-                      }}
-                      data-testid="input-manual-name"
-                    />
-                  </div>
-                  <div className="w-28">
-                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Time</label>
-                    <Input
-                      placeholder="9:00 AM"
-                      value={manualTime}
-                      onChange={(e) => setManualTime(e.target.value)}
-                      data-testid="input-manual-time"
-                    />
-                  </div>
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Add Patients</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <Card className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Plus className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Manual Entry</span>
+                </div>
+                <div className="space-y-2">
+                  <Input
+                    placeholder="Patient name"
+                    value={manualName}
+                    onChange={(e) => setManualName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && manualName.trim() && selectedBatchId) {
+                        addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
+                      }
+                    }}
+                    data-testid="input-manual-name"
+                  />
+                  <Input
+                    placeholder="Time (optional)"
+                    value={manualTime}
+                    onChange={(e) => setManualTime(e.target.value)}
+                    data-testid="input-manual-time"
+                  />
                   <Button
+                    className="w-full gap-1.5"
                     onClick={() => {
                       if (!manualName.trim() || !selectedBatchId) return;
                       addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
                     }}
                     disabled={!manualName.trim() || addPatientMutation.isPending}
-                    className="gap-1.5"
                     data-testid="button-add-patient"
                   >
                     {addPatientMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    Add
+                    Add Patient
                   </Button>
                 </div>
               </Card>
-            )}
 
-            {addMode === "text" && (
-              <Card className="mt-3 p-4">
-                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-                  Paste patient names (one per line). Optionally include time before the name.
-                </label>
+              <Card className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <FileText className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Paste List</span>
+                </div>
                 <Textarea
                   placeholder={"9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
-                  className="min-h-[120px] resize-none text-sm mb-3"
+                  className="min-h-[82px] resize-none text-sm mb-2"
                   value={pasteText}
                   onChange={(e) => setPasteText(e.target.value)}
                   data-testid="input-paste-list"
                 />
                 <Button
+                  className="w-full gap-1.5"
+                  variant="outline"
                   onClick={() => {
                     if (!pasteText.trim() || !selectedBatchId) return;
                     importTextMutation.mutate({ batchId: selectedBatchId, text: pasteText.trim() });
                   }}
                   disabled={!pasteText.trim() || importTextMutation.isPending}
-                  className="gap-1.5"
                   data-testid="button-import-text"
                 >
-                  {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                  Import Patients
+                  {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  Import List
                 </Button>
               </Card>
-            )}
 
-            {addMode === "file" && (
-              <Card className="mt-3 p-0 overflow-hidden">
+              <Card className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Upload className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Upload File</span>
+                </div>
                 <div
-                  className={`p-8 text-center transition-all cursor-pointer border-2 border-dashed m-3 rounded-md ${
+                  className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${
                     dragOver ? "border-primary bg-primary/5" : "border-border"
                   }`}
                   onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -436,20 +390,17 @@ export default function Home() {
                   data-testid="dropzone-upload"
                 >
                   {importFileMutation.isPending ? (
-                    <div className="flex flex-col items-center gap-2">
-                      <Loader2 className="w-8 h-8 text-muted-foreground animate-spin" />
-                      <p className="text-sm font-medium">Processing files...</p>
-                    </div>
+                    <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
                   ) : (
-                    <div className="flex flex-col items-center gap-2">
-                      <Upload className="w-8 h-8 text-muted-foreground" />
-                      <p className="text-sm font-medium">Drop files here or click to browse</p>
-                      <p className="text-xs text-muted-foreground">Excel, CSV, PDF, images, text files</p>
-                    </div>
+                    <>
+                      <Upload className="w-6 h-6 text-muted-foreground mb-1.5" />
+                      <p className="text-xs text-muted-foreground text-center">Drop files or click to browse</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Excel, CSV, PDF, images, text</p>
+                    </>
                   )}
                 </div>
               </Card>
-            )}
+            </div>
           </section>
 
           {patients.length > 0 && (
@@ -460,7 +411,7 @@ export default function Home() {
                 </h2>
                 {completedCount > 0 && (
                   <span className="text-xs text-muted-foreground">
-                    {completedCount} of {patients.length} analyzed
+                    {completedCount}/{patients.length} analyzed
                   </span>
                 )}
               </div>
@@ -484,8 +435,7 @@ export default function Home() {
           {patients.length === 0 && !isProcessing && (
             <div className="text-center py-16 text-muted-foreground">
               <FileText className="w-10 h-10 mx-auto mb-3 opacity-40" />
-              <p className="text-sm">No patients added yet.</p>
-              <p className="text-xs mt-1">Use the options above to add patients to this batch.</p>
+              <p className="text-sm">No patients yet. Use the options above to add patients.</p>
             </div>
           )}
         </main>
@@ -506,7 +456,7 @@ export default function Home() {
               <p className="text-xs text-muted-foreground">AI-powered patient qualification</p>
             </div>
           </div>
-          <Badge variant="outline" className="text-xs gap-1.5">
+          <Badge variant="outline" className="text-xs gap-1.5 no-default-hover-elevate no-default-active-elevate">
             <Zap className="w-3 h-3" /> GPT-5.2
           </Badge>
         </div>
@@ -516,7 +466,7 @@ export default function Home() {
         <div className="text-center mb-8">
           <h2 className="text-2xl font-bold tracking-tight mb-2">Patient Screening Batches</h2>
           <p className="text-sm text-muted-foreground max-w-lg mx-auto">
-            Create a batch, add patients, fill in their clinical data, then generate ancillary qualifications with AI.
+            Create a batch, add patients, fill in clinical data, then generate ancillary qualifications.
           </p>
           <Button
             onClick={() => createBatchMutation.mutate(`Batch - ${new Date().toLocaleDateString()}`)}
@@ -543,7 +493,10 @@ export default function Home() {
               <Card
                 key={batch.id}
                 className="p-3 hover-elevate cursor-pointer overflow-visible"
-                onClick={() => openBatch(batch.id, batch.status)}
+                onClick={() => {
+                  setSelectedBatchId(batch.id);
+                  setView(batch.status === "completed" ? "results" : "build");
+                }}
                 data-testid={`card-batch-${batch.id}`}
               >
                 <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -608,7 +561,7 @@ function PatientCard({
             <span className="text-xs text-muted-foreground">{patient.time || "No time set"}</span>
           </div>
           {isCompleted && (
-            <Badge variant="outline" className="text-xs gap-1">
+            <Badge variant="outline" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate">
               <Check className="w-3 h-3 text-emerald-500" /> Analyzed
             </Badge>
           )}
@@ -637,7 +590,7 @@ function PatientCard({
             <Stethoscope className="w-3 h-3" /> Dx (Diagnoses)
           </label>
           <Textarea
-            placeholder="HTN, DM2, HLD, Hypothyroidism..."
+            placeholder="HTN, DM2, HLD..."
             className="min-h-[70px] resize-none text-sm"
             value={localDx}
             onChange={(e) => setLocalDx(e.target.value)}
@@ -650,7 +603,7 @@ function PatientCard({
             <FileText className="w-3 h-3" /> Hx (History / PMH)
           </label>
           <Textarea
-            placeholder="MI 2019, CABG 2020, TIA..."
+            placeholder="MI 2019, CABG, TIA..."
             className="min-h-[70px] resize-none text-sm"
             value={localHx}
             onChange={(e) => setLocalHx(e.target.value)}
@@ -663,7 +616,7 @@ function PatientCard({
             <Pill className="w-3 h-3" /> Rx (Medications)
           </label>
           <Textarea
-            placeholder="Metformin 1000mg, Lisinopril..."
+            placeholder="Metformin, Lisinopril..."
             className="min-h-[70px] resize-none text-sm"
             value={localRx}
             onChange={(e) => setLocalRx(e.target.value)}
@@ -728,7 +681,7 @@ function ResultsView({
               <ArrowLeft className="w-4 h-4" />
             </Button>
             <div>
-              <h1 className="text-base font-bold tracking-tight" data-testid="text-results-title">{batch?.name} - Results</h1>
+              <h1 className="text-base font-bold tracking-tight" data-testid="text-results-title">{batch?.name} - Final Schedule</h1>
               <p className="text-xs text-muted-foreground">{patients.length} patients screened</p>
             </div>
           </div>
@@ -895,12 +848,12 @@ function ExpandedAncillaries({ tests, reasoning }: { tests: string[]; reasoning:
 function StatusBadge({ status }: { status: string }) {
   switch (status) {
     case "draft":
-      return <Badge variant="outline" className="text-xs gap-1"><FileText className="w-3 h-3" /> Draft</Badge>;
+      return <Badge variant="outline" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate"><FileText className="w-3 h-3" /> Draft</Badge>;
     case "processing":
-      return <Badge variant="outline" className="text-xs gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Processing</Badge>;
+      return <Badge variant="outline" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate"><Loader2 className="w-3 h-3 animate-spin" /> Processing</Badge>;
     case "completed":
-      return <Badge variant="outline" className="text-xs gap-1"><Check className="w-3 h-3 text-emerald-500" /> Complete</Badge>;
+      return <Badge variant="outline" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate"><Check className="w-3 h-3 text-emerald-500" /> Complete</Badge>;
     default:
-      return <Badge variant="outline" className="text-xs">{status}</Badge>;
+      return <Badge variant="outline" className="text-xs no-default-hover-elevate no-default-active-elevate">{status}</Badge>;
   }
 }
