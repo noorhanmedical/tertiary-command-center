@@ -25,6 +25,9 @@ export interface IStorage {
 
   createPatientScreening(screening: InsertPatientScreening): Promise<PatientScreening>;
   getPatientScreeningsByBatch(batchId: number): Promise<PatientScreening[]>;
+  getPatientScreening(id: number): Promise<PatientScreening | undefined>;
+  updatePatientScreening(id: number, updates: Partial<InsertPatientScreening>): Promise<PatientScreening | undefined>;
+  deletePatientScreening(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -74,6 +77,20 @@ export class DatabaseStorage implements IStorage {
 
   async getPatientScreeningsByBatch(batchId: number): Promise<PatientScreening[]> {
     return db.select().from(patientScreenings).where(eq(patientScreenings.batchId, batchId));
+  }
+
+  async getPatientScreening(id: number): Promise<PatientScreening | undefined> {
+    const [result] = await db.select().from(patientScreenings).where(eq(patientScreenings.id, id));
+    return result;
+  }
+
+  async updatePatientScreening(id: number, updates: Partial<InsertPatientScreening>): Promise<PatientScreening | undefined> {
+    const [result] = await db.update(patientScreenings).set(updates).where(eq(patientScreenings.id, id)).returning();
+    return result;
+  }
+
+  async deletePatientScreening(id: number): Promise<void> {
+    await db.delete(patientScreenings).where(eq(patientScreenings.id, id));
   }
 }
 

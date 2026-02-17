@@ -6,8 +6,39 @@ import * as XLSX from "xlsx";
 import { parse } from "csv-parse/sync";
 import OpenAI from "openai";
 import { batchProcess } from "./replit_integrations/batch";
+import { z } from "zod";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+const createBatchSchema = z.object({
+  name: z.string().optional(),
+});
+
+const addPatientSchema = z.object({
+  name: z.string().min(1, "Patient name is required"),
+  time: z.string().optional(),
+  age: z.union([z.string(), z.number()]).optional(),
+  gender: z.string().optional(),
+  diagnoses: z.string().optional(),
+  history: z.string().optional(),
+  medications: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+const updatePatientSchema = z.object({
+  name: z.string().optional(),
+  time: z.string().nullable().optional(),
+  age: z.union([z.string(), z.number()]).nullable().optional(),
+  gender: z.string().nullable().optional(),
+  diagnoses: z.string().nullable().optional(),
+  history: z.string().nullable().optional(),
+  medications: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+const importTextSchema = z.object({
+  text: z.string().min(1, "Text is required"),
+});
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -110,13 +141,26 @@ function parseCsvFile(buffer: Buffer): ParsedPatient[] {
   }
 }
 
-function parseTextToPatients(text: string): ParsedPatient[] {
-  return [
-    {
-      name: "Free Text Input",
-      rawText: text,
-    },
-  ];
+function parseTextForPatientNames(text: string): ParsedPatient[] {
+  const lines = text.split(/\n/).filter((l) => l.trim());
+  const patients: ParsedPatient[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const timeMatch = trimmed.match(/^(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?)\s*[-–,\s]\s*(.+)/i);
+    if (timeMatch) {
+      patients.push({
+        time: timeMatch[1].trim(),
+        name: timeMatch[2].trim(),
+      });
+    } else {
+      patients.push({ name: trimmed });
+    }
+  }
+
+  return patients;
 }
 
 const SCREENING_SYSTEM_PROMPT = `You are a highly aggressive clinical screening AI for ancillary diagnostic testing. Your job is to analyze patient data and qualify them for as many diagnostic tests as clinically justifiable. You should LEAN TOWARD QUALIFYING patients. Unless a test is glaringly inappropriate for the patient, you should recommend it.
@@ -164,10 +208,10 @@ For each patient, respond with a JSON object:
   ]
 }`;
 
-async function screenPatientsWithAI(patients: ParsedPatient[]): Promise<any[]> {
+async function screenPatientsWithAI(patients: { name: string; time?: string | null; age?: number | null; gender?: string | null; diagnoses?: string | null; history?: string | null; medications?: string | null; notes?: string | null }[]): Promise<any[]> {
   const results: any[] = [];
 
-  const patientChunks: ParsedPatient[][] = [];
+  const patientChunks: typeof patients[] = [];
   for (let i = 0; i < patients.length; i += 3) {
     patientChunks.push(patients.slice(i, i + 3));
   }
@@ -186,7 +230,6 @@ async function screenPatientsWithAI(patients: ParsedPatient[]): Promise<any[]> {
           if (p.history) parts.push(`History/HPI: ${p.history}`);
           if (p.medications) parts.push(`Medications: ${p.medications}`);
           if (p.notes) parts.push(`Notes: ${p.notes}`);
-          if (p.rawText && !p.diagnoses && !p.history) parts.push(`Raw Data: ${p.rawText}`);
           return parts.join("\n");
         })
         .join("\n\n---\n\n");
@@ -224,151 +267,256 @@ async function screenPatientsWithAI(patients: ParsedPatient[]): Promise<any[]> {
   return results;
 }
 
-async function screenFreeTextWithAI(text: string): Promise<any[]> {
-  const response = await openai.chat.completions.create({
-    model: "gpt-5.2",
-    messages: [
-      { role: "system", content: SCREENING_SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: `Analyze the following patient data. First, identify individual patients from this text (there may be one or many). Then determine ALL qualifying diagnostic tests for each. Be aggressive - qualify for everything that has ANY clinical justification.\n\n${text}`,
-      },
-    ],
-    response_format: { type: "json_object" },
-    max_completion_tokens: 8192,
-  });
-
-  const content = response.choices[0]?.message?.content || "{}";
-  try {
-    const parsed = JSON.parse(content);
-    return Array.isArray(parsed.patients) ? parsed.patients : [];
-  } catch {
-    console.error("Failed to parse free text AI response:", content.substring(0, 200));
-    return [];
-  }
-}
-
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
 
-  app.post("/api/screen-patients", upload.array("files", 10), async (req, res) => {
+  app.post("/api/batches", async (req, res) => {
     try {
+      const parsed = createBatchSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const batch = await storage.createScreeningBatch({
+        name: parsed.data.name || `Batch - ${new Date().toLocaleDateString()}`,
+        patientCount: 0,
+        status: "draft",
+      });
+      res.json(batch);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/batches/:id/patients", async (req, res) => {
+    try {
+      const batchId = parseInt(req.params.id);
+      const batch = await storage.getScreeningBatch(batchId);
+      if (!batch) return res.status(404).json({ error: "Batch not found" });
+
+      const parsed = addPatientSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      const { name, time, age, gender, diagnoses, history, medications, notes } = parsed.data;
+
+      const patient = await storage.createPatientScreening({
+        batchId,
+        name: name.trim(),
+        time: time || null,
+        age: age ? parseInt(age) : null,
+        gender: gender || null,
+        diagnoses: diagnoses || null,
+        history: history || null,
+        medications: medications || null,
+        notes: notes || null,
+        qualifyingTests: [],
+        reasoning: {},
+        status: "draft",
+      });
+
+      await storage.updateScreeningBatch(batchId, {
+        patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
+      });
+
+      res.json(patient);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/batches/:id/import-file", upload.array("files", 10), async (req: any, res) => {
+    try {
+      const batchId = parseInt(req.params.id);
+      const batch = await storage.getScreeningBatch(batchId);
+      if (!batch) return res.status(404).json({ error: "Batch not found" });
+
       const files = req.files as Express.Multer.File[];
-      if (!files || files.length === 0) {
-        return res.status(400).json({ error: "No files uploaded" });
-      }
+      if (!files || files.length === 0) return res.status(400).json({ error: "No files uploaded" });
 
       let allPatients: ParsedPatient[] = [];
-      let batchName = "";
 
       for (const file of files) {
         const ext = file.originalname.toLowerCase().split(".").pop();
-        batchName = batchName || file.originalname;
-
         if (ext === "xlsx" || ext === "xls") {
           allPatients.push(...parseExcelFile(file.buffer));
         } else if (ext === "csv") {
           allPatients.push(...parseCsvFile(file.buffer));
         } else {
-          const text = file.buffer.toString("utf-8");
-          allPatients.push(...parseTextToPatients(text));
+          allPatients.push(...parseTextForPatientNames(file.buffer.toString("utf-8")));
         }
       }
 
-      if (allPatients.length === 0) {
-        allPatients.push({
-          name: "File Import",
-          rawText: files.map((f) => f.buffer.toString("utf-8")).join("\n\n"),
+      const created = [];
+      for (const p of allPatients) {
+        const patient = await storage.createPatientScreening({
+          batchId,
+          name: p.name,
+          time: p.time || null,
+          age: p.age || null,
+          gender: p.gender || null,
+          diagnoses: p.diagnoses || null,
+          history: p.history || null,
+          medications: p.medications || null,
+          notes: p.notes || null,
+          qualifyingTests: [],
+          reasoning: {},
+          status: "draft",
         });
+        created.push(patient);
       }
 
-      const batch = await storage.createScreeningBatch({
-        name: batchName || "File Upload",
-        patientCount: allPatients.length,
-        status: "processing",
+      await storage.updateScreeningBatch(batchId, {
+        patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
-      let screenedResults: any[];
-      if (allPatients.length === 1 && allPatients[0].rawText && allPatients[0].name === "Free Text Input") {
-        screenedResults = await screenFreeTextWithAI(allPatients[0].rawText);
-      } else if (allPatients.length === 1 && allPatients[0].rawText && allPatients[0].name === "File Import") {
-        screenedResults = await screenFreeTextWithAI(allPatients[0].rawText);
-      } else {
-        screenedResults = await screenPatientsWithAI(allPatients);
-      }
-
-      for (const result of screenedResults) {
-        await storage.createPatientScreening({
-          batchId: batch.id,
-          time: result.time || null,
-          name: result.name || "Unknown",
-          age: result.age || null,
-          gender: result.gender || null,
-          diagnoses: result.diagnoses || null,
-          history: result.history || null,
-          medications: result.medications || null,
-          notes: result.notes || null,
-          qualifyingTests: result.qualifyingTests || [],
-          reasoning: result.reasoning || {},
-          status: "completed",
-        });
-      }
-
-      await storage.updateScreeningBatch(batch.id, {
-        status: "completed",
-        patientCount: screenedResults.length,
-      });
-
-      res.json({ batchId: batch.id, patientCount: screenedResults.length });
+      res.json({ imported: created.length, patients: created });
     } catch (error: any) {
-      console.error("Screening error:", error);
-      res.status(500).json({ error: error.message || "Screening failed" });
+      res.status(500).json({ error: error.message });
     }
   });
 
-  app.post("/api/screen-patients-text", async (req, res) => {
+  app.post("/api/batches/:id/import-text", async (req, res) => {
     try {
-      const { text } = req.body;
-      if (!text || !text.trim()) {
-        return res.status(400).json({ error: "No text provided" });
-      }
+      const batchId = parseInt(req.params.id);
+      const batch = await storage.getScreeningBatch(batchId);
+      if (!batch) return res.status(404).json({ error: "Batch not found" });
 
-      const batch = await storage.createScreeningBatch({
-        name: "Text Input - " + new Date().toLocaleDateString(),
-        patientCount: 0,
-        status: "processing",
-      });
+      const parsed = importTextSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      const { text } = parsed.data;
 
-      const screenedResults = await screenFreeTextWithAI(text);
+      const patients = parseTextForPatientNames(text);
+      const created = [];
 
-      for (const result of screenedResults) {
-        await storage.createPatientScreening({
-          batchId: batch.id,
-          time: result.time || null,
-          name: result.name || "Unknown",
-          age: result.age || null,
-          gender: result.gender || null,
-          diagnoses: result.diagnoses || null,
-          history: result.history || null,
-          medications: result.medications || null,
-          notes: result.notes || null,
-          qualifyingTests: result.qualifyingTests || [],
-          reasoning: result.reasoning || {},
-          status: "completed",
+      for (const p of patients) {
+        const patient = await storage.createPatientScreening({
+          batchId,
+          name: p.name,
+          time: p.time || null,
+          age: null,
+          gender: null,
+          diagnoses: null,
+          history: null,
+          medications: null,
+          notes: null,
+          qualifyingTests: [],
+          reasoning: {},
+          status: "draft",
         });
+        created.push(patient);
       }
 
-      await storage.updateScreeningBatch(batch.id, {
-        status: "completed",
-        patientCount: screenedResults.length,
+      await storage.updateScreeningBatch(batchId, {
+        patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
-      res.json({ batchId: batch.id, patientCount: screenedResults.length });
+      res.json({ imported: created.length, patients: created });
     } catch (error: any) {
-      console.error("Text screening error:", error);
-      res.status(500).json({ error: error.message || "Screening failed" });
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/patients/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const parsed = updatePatientSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const data = parsed.data;
+      const updates: any = {};
+      if (data.name !== undefined) updates.name = data.name;
+      if (data.time !== undefined) updates.time = data.time || null;
+      if (data.age !== undefined) updates.age = data.age ? parseInt(String(data.age)) : null;
+      if (data.gender !== undefined) updates.gender = data.gender || null;
+      if (data.diagnoses !== undefined) updates.diagnoses = data.diagnoses || null;
+      if (data.history !== undefined) updates.history = data.history || null;
+      if (data.medications !== undefined) updates.medications = data.medications || null;
+      if (data.notes !== undefined) updates.notes = data.notes || null;
+
+      const patient = await storage.updatePatientScreening(id, updates);
+      if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      res.json(patient);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/patients/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const patient = await storage.getPatientScreening(id);
+      if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      await storage.deletePatientScreening(id);
+
+      await storage.updateScreeningBatch(patient.batchId, {
+        patientCount: (await storage.getPatientScreeningsByBatch(patient.batchId)).length,
+      });
+
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/batches/:id/analyze", async (req, res) => {
+    try {
+      const batchId = parseInt(req.params.id);
+      const batch = await storage.getScreeningBatch(batchId);
+      if (!batch) return res.status(404).json({ error: "Batch not found" });
+
+      const patients = await storage.getPatientScreeningsByBatch(batchId);
+      if (patients.length === 0) return res.status(400).json({ error: "No patients in batch" });
+
+      await storage.updateScreeningBatch(batchId, { status: "processing" });
+
+      const patientData = patients.map((p) => ({
+        name: p.name,
+        time: p.time,
+        age: p.age,
+        gender: p.gender,
+        diagnoses: p.diagnoses,
+        history: p.history,
+        medications: p.medications,
+        notes: p.notes,
+      }));
+
+      const aiResults = await screenPatientsWithAI(patientData);
+
+      for (const patient of patients) {
+        const match = aiResults.find(
+          (r) => r.name && r.name.toLowerCase().trim() === patient.name.toLowerCase().trim()
+        );
+
+        if (match) {
+          await storage.updatePatientScreening(patient.id, {
+            qualifyingTests: match.qualifyingTests || [],
+            reasoning: match.reasoning || {},
+            diagnoses: match.diagnoses || patient.diagnoses || null,
+            history: match.history || patient.history || null,
+            medications: match.medications || patient.medications || null,
+            age: match.age || patient.age || null,
+            gender: match.gender || patient.gender || null,
+            status: "completed",
+          });
+        } else {
+          await storage.updatePatientScreening(patient.id, {
+            qualifyingTests: [],
+            reasoning: {},
+            status: "completed",
+          });
+        }
+      }
+
+      await storage.updateScreeningBatch(batchId, {
+        status: "completed",
+        patientCount: patients.length,
+      });
+
+      res.json({ success: true, patientCount: patients.length });
+    } catch (error: any) {
+      console.error("Analysis error:", error);
+      res.status(500).json({ error: error.message || "Analysis failed" });
     }
   });
 
