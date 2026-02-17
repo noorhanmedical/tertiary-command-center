@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, Fragment } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card } from "@/components/ui/card";
@@ -6,9 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import {
   Upload,
@@ -22,16 +19,14 @@ import {
   Download,
   ClipboardPaste,
   FileSpreadsheet,
-  Clock,
-  User,
   Stethoscope,
   Pill,
   Heart,
   Zap,
-  AlertCircle,
   Check,
   History,
   Trash2,
+  Search,
 } from "lucide-react";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 
@@ -71,10 +66,10 @@ export default function Home() {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
       setSelectedBatchId(data.batchId);
       setActiveTab("results");
-      toast({ title: "Screening complete", description: `${data.patientCount} patients screened successfully.` });
+      toast({ title: "Analysis complete", description: `${data.patientCount} patients analyzed for ancillary qualifications.` });
     },
     onError: (err: Error) => {
-      toast({ title: "Screening failed", description: err.message, variant: "destructive" });
+      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -88,10 +83,10 @@ export default function Home() {
       setSelectedBatchId(data.batchId);
       setActiveTab("results");
       setFreeText("");
-      toast({ title: "Screening complete", description: `${data.patientCount} patients screened successfully.` });
+      toast({ title: "Analysis complete", description: `${data.patientCount} patients analyzed for ancillary qualifications.` });
     },
     onError: (err: Error) => {
-      toast({ title: "Screening failed", description: err.message, variant: "destructive" });
+      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -140,31 +135,15 @@ export default function Home() {
 
   const isProcessing = uploadMutation.isPending || textMutation.isPending;
 
-  const getTestIcon = (test: string) => {
-    const lower = test.toLowerCase();
-    if (lower.includes("brain")) return <Brain className="w-3 h-3" />;
-    if (lower.includes("vital")) return <Activity className="w-3 h-3" />;
-    if (lower.includes("echo")) return <Heart className="w-3 h-3" />;
-    return <Scan className="w-3 h-3" />;
-  };
-
-  const getTestColor = (test: string): string => {
-    const lower = test.toLowerCase();
-    if (lower.includes("brain")) return "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300";
-    if (lower.includes("vital")) return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300";
-    if (lower.includes("carotid")) return "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300";
-    if (lower.includes("echo")) return "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300";
-    if (lower.includes("renal")) return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
-    if (lower.includes("aorta") || lower.includes("aaa")) return "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300";
-    if (lower.includes("thyroid")) return "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300";
-    if (lower.includes("venous") || lower.includes("dvt") || lower.includes("arterial")) return "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300";
-    return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300";
+  const truncate = (text: string | null | undefined, max: number) => {
+    if (!text) return "";
+    return text.length > max ? text.substring(0, max) + "..." : text;
   };
 
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
+        <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-md bg-primary flex items-center justify-center">
               <Stethoscope className="w-5 h-5 text-primary-foreground" />
@@ -173,25 +152,25 @@ export default function Home() {
               <h1 className="text-lg font-semibold leading-tight" data-testid="text-app-title">
                 Ancillary Screening
               </h1>
-              <p className="text-xs text-muted-foreground">AI-Powered Patient Qualification</p>
+              <p className="text-xs text-muted-foreground">Analyze Dx, PMH & Rx for Ancillary Qualification</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="text-xs gap-1">
-              <Zap className="w-3 h-3" /> GPT-5.2 Powered
+              <Zap className="w-3 h-3" /> GPT-5.2
             </Badge>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-6">
+      <main className="max-w-[1400px] mx-auto px-4 py-6">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="mb-6">
             <TabsTrigger value="upload" data-testid="tab-upload" className="gap-1.5">
-              <Upload className="w-4 h-4" /> Upload Patients
+              <Upload className="w-4 h-4" /> Upload
             </TabsTrigger>
             <TabsTrigger value="results" data-testid="tab-results" className="gap-1.5">
-              <FileText className="w-4 h-4" /> Results
+              <FileText className="w-4 h-4" /> Schedule
               {batches.length > 0 && (
                 <span className="ml-1 text-xs bg-muted rounded-full px-1.5">{batches.length}</span>
               )}
@@ -206,10 +185,10 @@ export default function Home() {
               <Card className="p-6">
                 <div className="flex items-center gap-2 mb-4">
                   <FileSpreadsheet className="w-5 h-5 text-muted-foreground" />
-                  <h2 className="font-semibold">Upload Files</h2>
+                  <h2 className="font-semibold">Upload Schedule / Patient Data</h2>
                 </div>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Upload patient schedules, medical histories, medications, and notes. Supports Excel, CSV, and text files.
+                  Upload patient schedules with Dx, PMH, and medications. Supports Excel, CSV, and text files.
                 </p>
                 <div
                   className={`border-2 border-dashed rounded-md p-8 text-center transition-colors cursor-pointer ${
@@ -233,9 +212,9 @@ export default function Home() {
                 >
                   {isProcessing ? (
                     <div className="flex flex-col items-center gap-3">
-                      <Loader2 className="w-10 h-10 text-primary animate-spin" />
-                      <p className="text-sm font-medium">Screening patients with AI...</p>
-                      <p className="text-xs text-muted-foreground">This may take a moment for thorough analysis</p>
+                      <Loader2 className="w-10 h-10 text-muted-foreground animate-spin" />
+                      <p className="text-sm font-medium">Analyzing patients for ancillary qualifications...</p>
+                      <p className="text-xs text-muted-foreground">Reviewing Dx, PMH & Rx for each patient</p>
                     </div>
                   ) : (
                     <div className="flex flex-col items-center gap-3">
@@ -252,13 +231,13 @@ export default function Home() {
               <Card className="p-6">
                 <div className="flex items-center gap-2 mb-4">
                   <ClipboardPaste className="w-5 h-5 text-muted-foreground" />
-                  <h2 className="font-semibold">Paste Free Text</h2>
+                  <h2 className="font-semibold">Paste Patient Data</h2>
                 </div>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Paste patient schedules, clinical notes, EHR exports, or any medical text directly.
+                  Paste schedules, clinical notes, EHR exports with diagnoses, history, and medications.
                 </p>
                 <Textarea
-                  placeholder="Paste patient information here... Schedules, PMH, medications, clinical notes - any format works."
+                  placeholder={"Paste patient schedule here...\nInclude: Dx, PMH, medications, clinical notes"}
                   className="min-h-[180px] resize-none text-sm"
                   value={freeText}
                   onChange={(e) => setFreeText(e.target.value)}
@@ -268,41 +247,17 @@ export default function Home() {
                   className="w-full mt-3 gap-2"
                   onClick={() => textMutation.mutate(freeText)}
                   disabled={!freeText.trim() || isProcessing}
-                  data-testid="button-screen-text"
+                  data-testid="button-analyze-text"
                 >
                   {textMutation.isPending ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    <Brain className="w-4 h-4" />
+                    <Search className="w-4 h-4" />
                   )}
-                  Screen Patients
+                  Analyze for Ancillaries
                 </Button>
               </Card>
             </div>
-
-            <Card className="p-6">
-              <h3 className="font-semibold mb-3">What We Screen For</h3>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                {[
-                  { name: "BrainWave (EEG)", icon: Brain, desc: "Neurological evaluation" },
-                  { name: "VitalWave (ABI)", icon: Activity, desc: "Peripheral artery screening" },
-                  { name: "Carotid Ultrasound", icon: Scan, desc: "Stroke risk assessment" },
-                  { name: "Echocardiogram", icon: Heart, desc: "Cardiac function" },
-                  { name: "Renal Artery US", icon: Scan, desc: "Renovascular disease" },
-                  { name: "AAA Ultrasound", icon: Scan, desc: "Aortic aneurysm screening" },
-                  { name: "Thyroid Ultrasound", icon: Scan, desc: "Thyroid evaluation" },
-                  { name: "Venous/Arterial US", icon: Scan, desc: "DVT & PAD assessment" },
-                ].map((test) => (
-                  <div key={test.name} className="flex items-start gap-2 p-3 rounded-md bg-muted/50">
-                    <test.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium leading-tight">{test.name}</p>
-                      <p className="text-xs text-muted-foreground">{test.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
           </TabsContent>
 
           <TabsContent value="results">
@@ -312,7 +267,7 @@ export default function Home() {
                   <div>
                     <h2 className="font-semibold text-lg" data-testid="text-batch-name">{selectedBatch.name}</h2>
                     <p className="text-sm text-muted-foreground">
-                      {selectedBatch.patients?.length || 0} patients screened
+                      {selectedBatch.patients?.length || 0} patients
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -325,36 +280,154 @@ export default function Home() {
                       onClick={() => setSelectedBatchId(null)}
                       data-testid="button-back"
                     >
-                      Back to list
+                      Back
                     </Button>
                   </div>
                 </div>
 
                 {batchLoading ? (
                   <div className="flex items-center justify-center py-20">
-                    <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                    <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {selectedBatch.patients?.map((patient) => (
-                      <PatientCard
-                        key={patient.id}
-                        patient={patient}
-                        expanded={expandedPatient === patient.id}
-                        onToggle={() => setExpandedPatient(expandedPatient === patient.id ? null : patient.id)}
-                        getTestIcon={getTestIcon}
-                        getTestColor={getTestColor}
-                      />
-                    ))}
-                  </div>
+                  <Card className="overflow-visible">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm" data-testid="table-schedule">
+                        <thead>
+                          <tr className="border-b bg-muted/50">
+                            <th className="text-left px-3 py-2.5 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Time</th>
+                            <th className="text-left px-3 py-2.5 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Name</th>
+                            <th className="text-left px-3 py-2.5 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Age</th>
+                            <th className="text-left px-3 py-2.5 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Gender</th>
+                            <th className="text-left px-3 py-2.5 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Dx</th>
+                            <th className="text-left px-3 py-2.5 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Hx</th>
+                            <th className="text-left px-3 py-2.5 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Rx</th>
+                            <th className="text-left px-3 py-2.5 font-semibold text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">Qualifying Tests</th>
+                            <th className="px-3 py-2.5 w-10"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedBatch.patients?.map((patient) => {
+                            const isExpanded = expandedPatient === patient.id;
+                            const tests = patient.qualifyingTests || [];
+                            const reasoning = (patient.reasoning || {}) as Record<string, string>;
+                            return (
+                              <Fragment key={patient.id}>
+                                <tr
+                                  className="border-b cursor-pointer hover-elevate transition-colors"
+                                  onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
+                                  data-testid={`row-patient-${patient.id}`}
+                                >
+                                  <td className="px-3 py-2.5 whitespace-nowrap text-muted-foreground" data-testid={`text-time-${patient.id}`}>
+                                    {patient.time || "--"}
+                                  </td>
+                                  <td className="px-3 py-2.5 whitespace-nowrap font-medium" data-testid={`text-name-${patient.id}`}>
+                                    {patient.name}
+                                  </td>
+                                  <td className="px-3 py-2.5 whitespace-nowrap" data-testid={`text-age-${patient.id}`}>
+                                    {patient.age || "--"}
+                                  </td>
+                                  <td className="px-3 py-2.5 whitespace-nowrap" data-testid={`text-gender-${patient.id}`}>
+                                    {patient.gender || "--"}
+                                  </td>
+                                  <td className="px-3 py-2.5 max-w-[180px]" data-testid={`text-dx-${patient.id}`}>
+                                    <span className="line-clamp-2 text-xs">{truncate(patient.diagnoses, 80)}</span>
+                                  </td>
+                                  <td className="px-3 py-2.5 max-w-[180px]" data-testid={`text-hx-${patient.id}`}>
+                                    <span className="line-clamp-2 text-xs">{truncate(patient.history, 80)}</span>
+                                  </td>
+                                  <td className="px-3 py-2.5 max-w-[160px]" data-testid={`text-rx-${patient.id}`}>
+                                    <span className="line-clamp-2 text-xs">{truncate(patient.medications, 60)}</span>
+                                  </td>
+                                  <td className="px-3 py-2.5" data-testid={`text-tests-${patient.id}`}>
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      {tests.length > 0 ? (
+                                        tests.map((test) => (
+                                          <Badge key={test} variant="secondary" className="text-[10px] leading-tight px-1.5 py-0.5 whitespace-nowrap">
+                                            {test}
+                                          </Badge>
+                                        ))
+                                      ) : (
+                                        <span className="text-xs text-muted-foreground">None</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-2.5 text-center">
+                                    {isExpanded ? (
+                                      <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                                    ) : (
+                                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                    )}
+                                  </td>
+                                </tr>
+                                {isExpanded && (
+                                  <tr data-testid={`row-detail-${patient.id}`}>
+                                    <td colSpan={9} className="bg-muted/30 px-4 py-4 border-b">
+                                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                        <div>
+                                          <div className="flex items-center gap-1.5 mb-1">
+                                            <Stethoscope className="w-3.5 h-3.5 text-muted-foreground" />
+                                            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Dx (Diagnoses)</span>
+                                          </div>
+                                          <p className="text-sm whitespace-pre-wrap">{patient.diagnoses || "N/A"}</p>
+                                        </div>
+                                        <div>
+                                          <div className="flex items-center gap-1.5 mb-1">
+                                            <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                                            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Hx (History / PMH)</span>
+                                          </div>
+                                          <p className="text-sm whitespace-pre-wrap">{patient.history || "N/A"}</p>
+                                        </div>
+                                        <div>
+                                          <div className="flex items-center gap-1.5 mb-1">
+                                            <Pill className="w-3.5 h-3.5 text-muted-foreground" />
+                                            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Rx (Medications)</span>
+                                          </div>
+                                          <p className="text-sm whitespace-pre-wrap">{patient.medications || "N/A"}</p>
+                                        </div>
+                                      </div>
+                                      {patient.notes && (
+                                        <div className="mb-4">
+                                          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Notes</span>
+                                          <p className="text-sm whitespace-pre-wrap mt-1">{patient.notes}</p>
+                                        </div>
+                                      )}
+                                      {Object.keys(reasoning).length > 0 && (
+                                        <div>
+                                          <div className="flex items-center gap-1.5 mb-2">
+                                            <Brain className="w-3.5 h-3.5 text-muted-foreground" />
+                                            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">AI Qualification Reasoning</span>
+                                          </div>
+                                          <div className="space-y-1.5">
+                                            {Object.entries(reasoning).map(([test, reason]) => (
+                                              <div key={test} className="flex items-start gap-2 text-sm">
+                                                <Badge variant="secondary" className="text-[10px] leading-tight px-1.5 py-0.5 whitespace-nowrap shrink-0 mt-0.5">
+                                                  {test}
+                                                </Badge>
+                                                <span className="text-muted-foreground text-xs">{reason}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )}
+                              </Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
                 )}
               </div>
             ) : (
               <div className="text-center py-16">
                 <Scan className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-                <h3 className="font-semibold text-lg mb-1">No batch selected</h3>
+                <h3 className="font-semibold text-lg mb-1">No schedule loaded</h3>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Upload patient data or select a batch from history to view results.
+                  Upload patient data or select a batch from history to view the schedule.
                 </p>
                 <Button variant="outline" onClick={() => setActiveTab("upload")} data-testid="button-go-upload">
                   <Upload className="w-4 h-4 mr-1.5" /> Upload Patients
@@ -366,14 +439,14 @@ export default function Home() {
           <TabsContent value="history">
             {batchesLoading ? (
               <div className="flex items-center justify-center py-20">
-                <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
               </div>
             ) : batches.length === 0 ? (
               <div className="text-center py-16">
                 <History className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
                 <h3 className="font-semibold text-lg mb-1">No screening history</h3>
                 <p className="text-sm text-muted-foreground">
-                  Your screening results will appear here after you upload patient data.
+                  Results will appear here after you analyze patient data.
                 </p>
               </div>
             ) : (
@@ -381,7 +454,7 @@ export default function Home() {
                 {batches.map((batch) => (
                   <Card
                     key={batch.id}
-                    className="p-4 hover-elevate cursor-pointer"
+                    className="p-4 hover-elevate cursor-pointer overflow-visible"
                     onClick={() => {
                       setSelectedBatchId(batch.id);
                       setActiveTab("results");
@@ -397,7 +470,7 @@ export default function Home() {
                           <p className="font-medium text-sm">{batch.name}</p>
                           <p className="text-xs text-muted-foreground">
                             {batch.patientCount} patients
-                            {batch.createdAt && ` \u00B7 ${new Date(batch.createdAt).toLocaleDateString()}`}
+                            {batch.createdAt && ` · ${new Date(batch.createdAt).toLocaleDateString()}`}
                           </p>
                         </div>
                       </div>
@@ -430,150 +503,5 @@ export default function Home() {
         </Tabs>
       </main>
     </div>
-  );
-}
-
-function PatientCard({
-  patient,
-  expanded,
-  onToggle,
-  getTestIcon,
-  getTestColor,
-}: {
-  patient: PatientScreening;
-  expanded: boolean;
-  onToggle: () => void;
-  getTestIcon: (test: string) => JSX.Element;
-  getTestColor: (test: string) => string;
-}) {
-  const tests = patient.qualifyingTests || [];
-  const reasoning = (patient.reasoning || {}) as Record<string, string>;
-
-  return (
-    <Card className="overflow-visible" data-testid={`card-patient-${patient.id}`}>
-      <div
-        className="p-4 cursor-pointer hover-elevate"
-        onClick={onToggle}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3 min-w-0 flex-1">
-            <div className="w-9 h-9 rounded-md bg-muted flex items-center justify-center shrink-0">
-              <User className="w-4 h-4 text-muted-foreground" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-semibold text-sm" data-testid={`text-patient-name-${patient.id}`}>
-                  {patient.name}
-                </h3>
-                {patient.time && (
-                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Clock className="w-3 h-3" /> {patient.time}
-                  </span>
-                )}
-                {patient.age && (
-                  <span className="text-xs text-muted-foreground">
-                    {patient.age}yo
-                  </span>
-                )}
-                {patient.gender && (
-                  <span className="text-xs text-muted-foreground">{patient.gender}</span>
-                )}
-              </div>
-              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                {tests.length > 0 ? (
-                  tests.map((test) => (
-                    <Tooltip key={test}>
-                      <TooltipTrigger asChild>
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${getTestColor(test)}`}>
-                          {getTestIcon(test)}
-                          {test}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-xs">
-                        <p className="text-xs">{reasoning[test] || "Qualified based on clinical findings"}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  ))
-                ) : (
-                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" /> No qualifying tests identified
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-          <Button variant="ghost" size="icon" className="shrink-0">
-            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </Button>
-        </div>
-      </div>
-
-      {expanded && (
-        <div className="px-4 pb-4">
-          <Separator className="mb-4" />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {patient.diagnoses && (
-              <div>
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <Stethoscope className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Diagnoses</span>
-                </div>
-                <p className="text-sm leading-relaxed">{patient.diagnoses}</p>
-              </div>
-            )}
-            {patient.history && (
-              <div>
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">History</span>
-                </div>
-                <ScrollArea className="max-h-40">
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{patient.history}</p>
-                </ScrollArea>
-              </div>
-            )}
-            {patient.medications && (
-              <div>
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <Pill className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Medications</span>
-                </div>
-                <p className="text-sm leading-relaxed">{patient.medications}</p>
-              </div>
-            )}
-            {patient.notes && (
-              <div>
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <ClipboardPaste className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Notes</span>
-                </div>
-                <ScrollArea className="max-h-40">
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{patient.notes}</p>
-                </ScrollArea>
-              </div>
-            )}
-          </div>
-
-          {Object.keys(reasoning).length > 0 && (
-            <div className="mt-4">
-              <div className="flex items-center gap-1.5 mb-2">
-                <Brain className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">AI Reasoning</span>
-              </div>
-              <div className="space-y-2">
-                {Object.entries(reasoning).map(([test, reason]) => (
-                  <div key={test} className="flex items-start gap-2 text-sm">
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium shrink-0 ${getTestColor(test)}`}>
-                      {getTestIcon(test)} {test}
-                    </span>
-                    <span className="text-muted-foreground">{reason}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </Card>
   );
 }
