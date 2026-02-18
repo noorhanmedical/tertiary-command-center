@@ -137,8 +137,6 @@ export default function Home() {
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
   const [view, setView] = useState<"home" | "build" | "results">("home");
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
-  const [manualName, setManualName] = useState("");
-  const [manualTime, setManualTime] = useState("");
   const [pasteText, setPasteText] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [analyzingPatients, setAnalyzingPatients] = useState<Set<number>>(new Set());
@@ -176,8 +174,6 @@ export default function Home() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      setManualName("");
-      setManualTime("");
     },
   });
 
@@ -529,37 +525,18 @@ export default function Home() {
                         <Plus className="w-4 h-4 text-muted-foreground" />
                         <span className="text-sm font-semibold">Manual Entry</span>
                       </div>
-                      <div className="space-y-2">
-                        <Input
-                          placeholder="Patient name"
-                          value={manualName}
-                          onChange={(e) => setManualName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && manualName.trim() && selectedBatchId) {
-                              addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
-                            }
-                          }}
-                          data-testid="input-manual-name"
-                        />
-                        <Input
-                          placeholder="Time (optional)"
-                          value={manualTime}
-                          onChange={(e) => setManualTime(e.target.value)}
-                          data-testid="input-manual-time"
-                        />
-                        <Button
-                          className="w-full gap-1.5"
-                          onClick={() => {
-                            if (!manualName.trim() || !selectedBatchId) return;
-                            addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
-                          }}
-                          disabled={!manualName.trim() || addPatientMutation.isPending}
-                          data-testid="button-add-patient"
-                        >
-                          {addPatientMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                          Add Patient
-                        </Button>
-                      </div>
+                      <Button
+                        className="w-full gap-1.5"
+                        onClick={() => {
+                          if (!selectedBatchId) return;
+                          addPatientMutation.mutate({ batchId: selectedBatchId, name: "", time: undefined });
+                        }}
+                        disabled={addPatientMutation.isPending}
+                        data-testid="button-add-patient"
+                      >
+                        {addPatientMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                        Add Patient
+                      </Button>
                     </Card>
                   </div>
                 </section>
@@ -674,10 +651,14 @@ function PatientCard({
   const isCompleted = patient.status === "completed";
   const tests = patient.qualifyingTests || [];
 
+  const [localName, setLocalName] = useState(patient.name || "");
+  const [localTime, setLocalTime] = useState(patient.time || "");
   const [localDx, setLocalDx] = useState(patient.diagnoses || "");
   const [localHx, setLocalHx] = useState(patient.history || "");
   const [localRx, setLocalRx] = useState(patient.medications || "");
 
+  useEffect(() => { setLocalName(patient.name || ""); }, [patient.name]);
+  useEffect(() => { setLocalTime(patient.time || ""); }, [patient.time]);
   useEffect(() => { setLocalDx(patient.diagnoses || ""); }, [patient.diagnoses]);
   useEffect(() => { setLocalHx(patient.history || ""); }, [patient.history]);
   useEffect(() => { setLocalRx(patient.medications || ""); }, [patient.medications]);
@@ -686,9 +667,23 @@ function PatientCard({
     <Card className={`overflow-visible ${isCompleted ? "ring-1 ring-emerald-200 dark:ring-emerald-800" : ""}`} data-testid={`card-patient-${patient.id}`}>
       <div className="px-4 py-3 flex items-center justify-between gap-2 border-b flex-wrap">
         <div className="flex items-center gap-3">
-          <div className="flex flex-col">
-            <span className="font-semibold text-sm">{patient.name}</span>
-            <span className="text-xs text-muted-foreground">{patient.time || "No time set"}</span>
+          <div className="flex flex-col gap-1">
+            <Input
+              placeholder="Patient name"
+              value={localName}
+              onChange={(e) => setLocalName(e.target.value)}
+              onBlur={() => { if (localName !== (patient.name || "")) onUpdate("name", localName); }}
+              className="h-7 text-sm font-semibold px-2"
+              data-testid={`input-patient-name-${patient.id}`}
+            />
+            <Input
+              placeholder="Time (optional)"
+              value={localTime}
+              onChange={(e) => setLocalTime(e.target.value)}
+              onBlur={() => { if (localTime !== (patient.time || "")) onUpdate("time", localTime); }}
+              className="h-6 text-xs px-2"
+              data-testid={`input-patient-time-${patient.id}`}
+            />
           </div>
           {isCompleted && (
             <Badge variant="outline" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate">

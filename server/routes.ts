@@ -18,7 +18,7 @@ const createBatchSchema = z.object({
 });
 
 const addPatientSchema = z.object({
-  name: z.string().min(1, "Patient name is required"),
+  name: z.string().default(""),
   time: z.string().optional(),
   age: z.union([z.string(), z.number()]).optional(),
   gender: z.string().optional(),
