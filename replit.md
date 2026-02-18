@@ -1,7 +1,7 @@
 # Ancillary Patient Screening System
 
 ## Overview
-AI-powered patient screening application that analyzes clinical data (schedules, past medical history, medications, notes) to qualify patients for diagnostic tests: BrainWave (EEG), VitalWave (ABI), Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Stress Echocardiogram (93351), Lower Extremity Venous Duplex (93971), and Upper Extremity Venous Duplex (93970). The system uses OpenAI GPT-5.2 for aggressive qualification - it qualifies patients for every test with any reasonable clinical justification.
+AI-powered patient screening application that analyzes clinical data (schedules, past medical history, medications, notes) to qualify patients for diagnostic tests: BrainWave (EEG), VitalWave (ABI), Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Upper Extremity Arterial Doppler (93930), Abdominal Aortic Aneurysm Duplex (93978), Stress Echocardiogram (93350), Lower Extremity Venous Duplex (93971), and Upper Extremity Venous Duplex (93970). The system uses OpenAI GPT-5.2 for aggressive qualification - it qualifies patients for every test with any reasonable clinical justification.
 
 ## Recent Changes
 - 2026-02-18: Renamed all user-facing "batch" references to "schedule"; redesigned home page with collapsible sidebar for schedule history
@@ -60,8 +60,8 @@ AI-powered patient screening application that analyzes clinical data (schedules,
 - 3-step workflow: add patients -> add clinical data -> generate
 - Output format: TIME, NAME, AGE, GENDER, Dx, Hx, Rx, QUALIFYING TESTS, QUALIFYING IMAGING
 - Color-coded ancillary cards: BrainWave=purple, VitalWave=red, Ultrasounds=green
-- Only 7 qualifying tests: BrainWave, VitalWave, Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Stress Echocardiogram (93351), Lower Extremity Venous Duplex (93971), Upper Extremity Venous Duplex (93970)
-- No FibroScan, no Renal, no AAA, no Thyroid, no Arterial Duplex
+- 11 qualifying tests: BrainWave, VitalWave, Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Upper Extremity Arterial Doppler (93930), Abdominal Aortic Aneurysm Duplex (93978), Stress Echocardiogram (93350), Lower Extremity Venous Duplex (93971), Upper Extremity Venous Duplex (93970)
+- No FibroScan, no Thyroid US
 - All ultrasounds grouped under one card in expanded view
 - Split reasoning: Clinician Understanding + Patient Talking Points (prominent headers)
 - Manual Entry: just "Add Patient" button, name/time editable on patient card

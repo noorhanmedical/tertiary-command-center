@@ -49,7 +49,7 @@ import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string };
 
-const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "93880", "93306", "93351", "93971", "93970"];
+const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
 
 function getAncillaryCategory(test: string): "brainwave" | "vitalwave" | "ultrasound" | "other" {
   const lower = test.toLowerCase();
