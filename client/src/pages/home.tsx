@@ -8,6 +8,18 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarGroupContent,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar";
+import {
   Upload,
   FileText,
   Brain,
@@ -25,8 +37,10 @@ import {
   MessageCircle,
   GraduationCap,
   Plus,
-  ArrowLeft,
   Sparkles,
+  Calendar,
+  Clock,
+  PanelLeft,
 } from "lucide-react";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 
@@ -129,6 +143,7 @@ export default function Home() {
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { setOpen: setSidebarOpen } = useSidebar();
 
   const { data: batches = [], isLoading: batchesLoading } = useQuery<ScreeningBatchWithPatients[]>({
     queryKey: ["/api/screening-batches"],
@@ -289,7 +304,6 @@ export default function Home() {
   const patients = selectedBatch?.patients || [];
   const isProcessing = analyzeAllMutation.isPending;
   const completedCount = patients.filter((p) => p.status === "completed").length;
-  const allCompleted = patients.length > 0 && completedCount === patients.length;
 
   const handleTimelineNav = useCallback((step: "home" | "build" | "results") => {
     if (step === "home") { setView("home"); setSelectedBatchId(null); }
@@ -297,282 +311,311 @@ export default function Home() {
     else if (step === "results") setView("results");
   }, []);
 
-  if (view === "results" && selectedBatchId) {
-    return <ResultsView
-      batch={selectedBatch}
-      patients={patients}
-      loading={batchLoading}
-      onExport={handleExport}
-      onNavigate={handleTimelineNav}
-      expandedPatient={expandedPatient}
-      setExpandedPatient={setExpandedPatient}
-    />;
-  }
+  const handleSelectSchedule = useCallback((batch: ScreeningBatchWithPatients) => {
+    setSelectedBatchId(batch.id);
+    setView(batch.status === "completed" ? "results" : "build");
+    setSidebarOpen(false);
+  }, [setSidebarOpen]);
 
-  if (view === "build" && selectedBatchId) {
-    return (
-      <div className="min-h-screen bg-background">
-        <header className="bg-card/80 backdrop-blur-md sticky top-0 z-50">
-          <StepTimeline current="build" onNavigate={handleTimelineNav} canGoToResults={completedCount > 0} />
-          <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
-            <div>
-              <h1 className="text-base font-bold tracking-tight" data-testid="text-batch-name">{selectedBatch?.name || "Loading..."}</h1>
-              <p className="text-xs text-muted-foreground">{patients.length} patients</p>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button
-                onClick={() => analyzeAllMutation.mutate(selectedBatchId!)}
-                disabled={isProcessing || patients.length === 0}
-                className="gap-1.5"
-                data-testid="button-generate-all"
-              >
-                {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                Generate All
-              </Button>
-            </div>
-          </div>
-        </header>
-
-        <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-          {isProcessing && (
-            <Card className="p-6">
-              <div className="flex flex-col items-center gap-3">
-                <Loader2 className="w-10 h-10 text-primary animate-spin" />
-                <p className="font-semibold">Analyzing all patients...</p>
-                <p className="text-sm text-muted-foreground">Screening with AI for ancillary qualifications</p>
-              </div>
-            </Card>
-          )}
-
-          <section>
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Add Patients</h2>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <Card className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Upload className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Upload File</span>
-                </div>
-                <div
-                  className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${
-                    dragOver ? "border-primary bg-primary/5" : "border-border"
-                  }`}
-                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                  onDragLeave={() => setDragOver(false)}
-                  onDrop={handleDrop}
-                  onClick={() => {
-                    const input = document.createElement("input");
-                    input.type = "file";
-                    input.multiple = true;
-                    input.accept = ".xlsx,.xls,.csv,.txt,.text,.pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp";
-                    input.onchange = (e) => {
-                      const files = (e.target as HTMLInputElement).files;
-                      if (files) handleFileUpload(files);
-                    };
-                    input.click();
-                  }}
-                  data-testid="dropzone-upload"
-                >
-                  {importFileMutation.isPending ? (
-                    <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
-                  ) : (
-                    <>
-                      <Upload className="w-6 h-6 text-muted-foreground mb-1.5" />
-                      <p className="text-xs text-muted-foreground text-center">Drop files or click to browse</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Excel, CSV, PDF, images, text</p>
-                    </>
-                  )}
-                </div>
-              </Card>
-
-              <Card className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <FileText className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Paste List</span>
-                </div>
-                <Textarea
-                  placeholder={"9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
-                  className="min-h-[82px] resize-none text-sm mb-2"
-                  value={pasteText}
-                  onChange={(e) => setPasteText(e.target.value)}
-                  data-testid="input-paste-list"
-                />
-                <Button
-                  className="w-full gap-1.5"
-                  variant="outline"
-                  onClick={() => {
-                    if (!pasteText.trim() || !selectedBatchId) return;
-                    importTextMutation.mutate({ batchId: selectedBatchId, text: pasteText.trim() });
-                  }}
-                  disabled={!pasteText.trim() || importTextMutation.isPending}
-                  data-testid="button-import-text"
-                >
-                  {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  Import List
-                </Button>
-              </Card>
-
-              <Card className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Plus className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Manual Entry</span>
-                </div>
-                <div className="space-y-2">
-                  <Input
-                    placeholder="Patient name"
-                    value={manualName}
-                    onChange={(e) => setManualName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && manualName.trim() && selectedBatchId) {
-                        addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
-                      }
-                    }}
-                    data-testid="input-manual-name"
-                  />
-                  <Input
-                    placeholder="Time (optional)"
-                    value={manualTime}
-                    onChange={(e) => setManualTime(e.target.value)}
-                    data-testid="input-manual-time"
-                  />
-                  <Button
-                    className="w-full gap-1.5"
-                    onClick={() => {
-                      if (!manualName.trim() || !selectedBatchId) return;
-                      addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
-                    }}
-                    disabled={!manualName.trim() || addPatientMutation.isPending}
-                    data-testid="button-add-patient"
-                  >
-                    {addPatientMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    Add Patient
-                  </Button>
-                </div>
-              </Card>
-            </div>
-          </section>
-
-          {patients.length > 0 && (
-            <section>
-              <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                  Schedule Generator ({patients.length})
-                </h2>
-                {completedCount > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    {completedCount}/{patients.length} analyzed
-                  </span>
-                )}
-              </div>
-              <div className="space-y-3">
-                {patients.map((patient) => (
-                  <PatientCard
-                    key={patient.id}
-                    patient={patient}
-                    isAnalyzing={analyzingPatients.has(patient.id)}
-                    onUpdate={(field, value) => {
-                      updatePatientMutation.mutate({ id: patient.id, updates: { [field]: value } });
-                    }}
-                    onDelete={() => deletePatientMutation.mutate(patient.id)}
-                    onAnalyze={() => analyzeOnePatient(patient.id)}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {patients.length === 0 && !isProcessing && (
-            <div className="text-center py-16 text-muted-foreground">
-              <FileText className="w-10 h-10 mx-auto mb-3 opacity-40" />
-              <p className="text-sm">No patients yet. Use the options above to add patients.</p>
-            </div>
-          )}
-        </main>
-      </div>
-    );
-  }
+  const handleNewSchedule = useCallback(() => {
+    createBatchMutation.mutate(`Schedule - ${new Date().toLocaleDateString()}`);
+  }, [createBatchMutation]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card/80 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-md bg-primary flex items-center justify-center">
-              <Stethoscope className="w-4 h-4 text-primary-foreground" />
-            </div>
-            <div>
-              <h1 className="text-base font-bold tracking-tight" data-testid="text-app-title">Ancillary Screening</h1>
-              <p className="text-xs text-muted-foreground">AI-powered patient qualification</p>
-            </div>
-          </div>
-          <Badge variant="outline" className="text-xs gap-1.5 no-default-hover-elevate no-default-active-elevate">
-            <Zap className="w-3 h-3" /> GPT-5.2
-          </Badge>
-        </div>
-      </header>
-
-      <main className="max-w-5xl mx-auto px-4 py-8">
-        <div className="text-center mb-8">
-          <h2 className="text-2xl font-bold tracking-tight mb-2">Patient Screening Batches</h2>
-          <p className="text-sm text-muted-foreground max-w-lg mx-auto">
-            Create a batch, add patients, fill in clinical data, then generate ancillary qualifications.
-          </p>
-          <Button
-            onClick={() => createBatchMutation.mutate(`Batch - ${new Date().toLocaleDateString()}`)}
-            disabled={createBatchMutation.isPending}
-            className="mt-5 gap-2"
-            data-testid="button-new-batch"
-          >
-            {createBatchMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            New Batch
-          </Button>
-        </div>
-
-        {batchesLoading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-          </div>
-        ) : batches.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">
-            <p className="text-sm">No batches yet. Create one to get started.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {batches.map((batch) => (
-              <Card
-                key={batch.id}
-                className="p-3 hover-elevate cursor-pointer overflow-visible"
-                onClick={() => {
-                  setSelectedBatchId(batch.id);
-                  setView(batch.status === "completed" ? "results" : "build");
-                }}
-                data-testid={`card-batch-${batch.id}`}
-              >
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-md bg-muted flex items-center justify-center">
-                      <FileText className="w-4 h-4 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-sm">{batch.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {batch.patientCount} patients
-                        {batch.createdAt && ` · ${new Date(batch.createdAt).toLocaleDateString()}`}
-                      </p>
-                    </div>
+    <>
+      <Sidebar collapsible="icon" data-testid="sidebar-history">
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel>Schedule History</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {batchesLoading ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={batch.status} />
-                    <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); deleteBatchMutation.mutate(batch.id); }} data-testid={`button-delete-batch-${batch.id}`}>
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                ) : batches.length === 0 ? (
+                  <div className="px-2 py-3 text-xs text-muted-foreground text-center">
+                    No schedules yet
+                  </div>
+                ) : (
+                  batches.map((batch) => (
+                    <SidebarMenuItem key={batch.id}>
+                      <SidebarMenuButton
+                        onClick={() => handleSelectSchedule(batch)}
+                        isActive={selectedBatchId === batch.id}
+                        tooltip={batch.name}
+                        data-testid={`sidebar-schedule-${batch.id}`}
+                      >
+                        <Calendar className="w-4 h-4 shrink-0" />
+                        <div className="flex flex-col min-w-0">
+                          <span className="truncate text-sm">{batch.name}</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {batch.patientCount} patients
+                            {batch.status === "completed" && " · Complete"}
+                          </span>
+                        </div>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))
+                )}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+      </Sidebar>
+
+      <div className="flex flex-col flex-1 min-w-0">
+        {view === "results" && selectedBatchId ? (
+          <ResultsView
+            batch={selectedBatch}
+            patients={patients}
+            loading={batchLoading}
+            onExport={handleExport}
+            onNavigate={handleTimelineNav}
+            expandedPatient={expandedPatient}
+            setExpandedPatient={setExpandedPatient}
+          />
+        ) : view === "build" && selectedBatchId ? (
+          <div className="flex flex-col h-full bg-background">
+            <header className="bg-card/80 backdrop-blur-md sticky top-0 z-50">
+              <StepTimeline current="build" onNavigate={handleTimelineNav} canGoToResults={completedCount > 0} />
+              <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
+                <div className="flex items-center gap-2">
+                  <SidebarTrigger data-testid="button-sidebar-toggle" />
+                  <div>
+                    <h1 className="text-base font-bold tracking-tight" data-testid="text-schedule-name">{selectedBatch?.name || "Loading..."}</h1>
+                    <p className="text-xs text-muted-foreground">{patients.length} patients</p>
                   </div>
                 </div>
-              </Card>
-            ))}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button
+                    onClick={() => analyzeAllMutation.mutate(selectedBatchId!)}
+                    disabled={isProcessing || patients.length === 0}
+                    className="gap-1.5"
+                    data-testid="button-generate-all"
+                  >
+                    {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                    Generate All
+                  </Button>
+                </div>
+              </div>
+            </header>
+
+            <main className="flex-1 overflow-auto">
+              <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+                {isProcessing && (
+                  <Card className="p-6">
+                    <div className="flex flex-col items-center gap-3">
+                      <Loader2 className="w-10 h-10 text-primary animate-spin" />
+                      <p className="font-semibold">Analyzing all patients...</p>
+                      <p className="text-sm text-muted-foreground">Screening with AI for ancillary qualifications</p>
+                    </div>
+                  </Card>
+                )}
+
+                <section>
+                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Add Patients</h2>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <Card className="p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Upload className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm font-semibold">Upload File</span>
+                      </div>
+                      <div
+                        className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${
+                          dragOver ? "border-primary bg-primary/5" : "border-border"
+                        }`}
+                        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                        onDragLeave={() => setDragOver(false)}
+                        onDrop={handleDrop}
+                        onClick={() => {
+                          const input = document.createElement("input");
+                          input.type = "file";
+                          input.multiple = true;
+                          input.accept = ".xlsx,.xls,.csv,.txt,.text,.pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp";
+                          input.onchange = (e) => {
+                            const files = (e.target as HTMLInputElement).files;
+                            if (files) handleFileUpload(files);
+                          };
+                          input.click();
+                        }}
+                        data-testid="dropzone-upload"
+                      >
+                        {importFileMutation.isPending ? (
+                          <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+                        ) : (
+                          <>
+                            <Upload className="w-6 h-6 text-muted-foreground mb-1.5" />
+                            <p className="text-xs text-muted-foreground text-center">Drop files or click to browse</p>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">Excel, CSV, PDF, images, text</p>
+                          </>
+                        )}
+                      </div>
+                    </Card>
+
+                    <Card className="p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <FileText className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm font-semibold">Paste List</span>
+                      </div>
+                      <Textarea
+                        placeholder={"9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
+                        className="min-h-[82px] resize-none text-sm mb-2"
+                        value={pasteText}
+                        onChange={(e) => setPasteText(e.target.value)}
+                        data-testid="input-paste-list"
+                      />
+                      <Button
+                        className="w-full gap-1.5"
+                        variant="outline"
+                        onClick={() => {
+                          if (!pasteText.trim() || !selectedBatchId) return;
+                          importTextMutation.mutate({ batchId: selectedBatchId, text: pasteText.trim() });
+                        }}
+                        disabled={!pasteText.trim() || importTextMutation.isPending}
+                        data-testid="button-import-text"
+                      >
+                        {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                        Import List
+                      </Button>
+                    </Card>
+
+                    <Card className="p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Plus className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm font-semibold">Manual Entry</span>
+                      </div>
+                      <div className="space-y-2">
+                        <Input
+                          placeholder="Patient name"
+                          value={manualName}
+                          onChange={(e) => setManualName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && manualName.trim() && selectedBatchId) {
+                              addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
+                            }
+                          }}
+                          data-testid="input-manual-name"
+                        />
+                        <Input
+                          placeholder="Time (optional)"
+                          value={manualTime}
+                          onChange={(e) => setManualTime(e.target.value)}
+                          data-testid="input-manual-time"
+                        />
+                        <Button
+                          className="w-full gap-1.5"
+                          onClick={() => {
+                            if (!manualName.trim() || !selectedBatchId) return;
+                            addPatientMutation.mutate({ batchId: selectedBatchId, name: manualName.trim(), time: manualTime.trim() || undefined });
+                          }}
+                          disabled={!manualName.trim() || addPatientMutation.isPending}
+                          data-testid="button-add-patient"
+                        >
+                          {addPatientMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                          Add Patient
+                        </Button>
+                      </div>
+                    </Card>
+                  </div>
+                </section>
+
+                {patients.length > 0 && (
+                  <section>
+                    <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+                      <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                        Schedule Generator ({patients.length})
+                      </h2>
+                      {completedCount > 0 && (
+                        <span className="text-xs text-muted-foreground">
+                          {completedCount}/{patients.length} analyzed
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-3">
+                      {patients.map((patient) => (
+                        <PatientCard
+                          key={patient.id}
+                          patient={patient}
+                          isAnalyzing={analyzingPatients.has(patient.id)}
+                          onUpdate={(field, value) => {
+                            updatePatientMutation.mutate({ id: patient.id, updates: { [field]: value } });
+                          }}
+                          onDelete={() => deletePatientMutation.mutate(patient.id)}
+                          onAnalyze={() => analyzeOnePatient(patient.id)}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {patients.length === 0 && !isProcessing && (
+                  <div className="text-center py-16 text-muted-foreground">
+                    <FileText className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                    <p className="text-sm">No patients yet. Use the options above to add patients.</p>
+                  </div>
+                )}
+              </div>
+            </main>
+          </div>
+        ) : (
+          <div className="flex flex-col h-full bg-background">
+            <header className="border-b bg-card/80 backdrop-blur-md sticky top-0 z-50">
+              <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-3">
+                  <SidebarTrigger data-testid="button-sidebar-toggle-home" />
+                  <div className="w-9 h-9 rounded-md bg-primary flex items-center justify-center">
+                    <Stethoscope className="w-4 h-4 text-primary-foreground" />
+                  </div>
+                  <div>
+                    <h1 className="text-base font-bold tracking-tight" data-testid="text-app-title">Ancillary Screening</h1>
+                    <p className="text-xs text-muted-foreground">AI-powered patient qualification</p>
+                  </div>
+                </div>
+                <Badge variant="outline" className="text-xs gap-1.5 no-default-hover-elevate no-default-active-elevate">
+                  <Zap className="w-3 h-3" /> GPT-5.2
+                </Badge>
+              </div>
+            </header>
+
+            <main className="flex-1 flex items-center justify-center">
+              <div className="text-center px-4">
+                <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-6">
+                  <Stethoscope className="w-8 h-8 text-primary" />
+                </div>
+                <h2 className="text-2xl font-bold tracking-tight mb-2" data-testid="text-home-heading">Ancillary Screening</h2>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto mb-8">
+                  Create a new schedule, add patients with clinical data, then generate ancillary qualifications using AI.
+                </p>
+                <div className="flex flex-col items-center gap-3">
+                  <Button
+                    onClick={handleNewSchedule}
+                    disabled={createBatchMutation.isPending}
+                    className="gap-2"
+                    data-testid="button-new-schedule"
+                  >
+                    {createBatchMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                    New Schedule
+                  </Button>
+                  {batches.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSidebarOpen(true)}
+                      className="gap-1.5 text-muted-foreground"
+                      data-testid="button-view-history"
+                    >
+                      <PanelLeft className="w-3.5 h-3.5" />
+                      View Schedule History ({batches.length})
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </main>
           </div>
         )}
-      </main>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -712,20 +755,23 @@ function ResultsView({
 }) {
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex flex-col h-full bg-background">
       <header className="bg-card/80 backdrop-blur-md sticky top-0 z-50">
         <StepTimeline current="results" onNavigate={onNavigate} canGoToResults={true} />
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
-          <div>
-            <h1 className="text-base font-bold tracking-tight" data-testid="text-results-title">{batch?.name} - Final Schedule</h1>
-            <p className="text-xs text-muted-foreground">{patients.length} patients screened</p>
+          <div className="flex items-center gap-2">
+            <SidebarTrigger data-testid="button-sidebar-toggle-results" />
+            <div>
+              <h1 className="text-base font-bold tracking-tight" data-testid="text-results-title">{batch?.name} - Final Schedule</h1>
+              <p className="text-xs text-muted-foreground">{patients.length} patients screened</p>
+            </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Button variant="outline" size="sm" onClick={onExport} className="gap-1.5" data-testid="button-export">
@@ -735,78 +781,80 @@ function ResultsView({
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-6 space-y-3">
-        {patients.map((patient) => {
-          const tests = patient.qualifyingTests || [];
-          const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
-          const isExpanded = expandedPatient === patient.id;
+      <main className="flex-1 overflow-auto">
+        <div className="max-w-5xl mx-auto px-4 py-6 space-y-3">
+          {patients.map((patient) => {
+            const tests = patient.qualifyingTests || [];
+            const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
+            const isExpanded = expandedPatient === patient.id;
 
-          return (
-            <Card key={patient.id} className="overflow-visible" data-testid={`card-result-${patient.id}`}>
-              <div
-                className="px-4 py-3 cursor-pointer hover-elevate flex items-center justify-between gap-3 flex-wrap"
-                onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
-                data-testid={`row-result-${patient.id}`}
-              >
-                <div className="flex items-center gap-3">
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-sm">{patient.name}</span>
-                      {patient.time && <span className="text-xs text-muted-foreground">{patient.time}</span>}
-                      {patient.age && <span className="text-xs text-muted-foreground">Age {patient.age}</span>}
-                      {patient.gender && <span className="text-xs text-muted-foreground">{patient.gender}</span>}
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                      {tests.length > 0 ? tests.map((test) => {
-                        const cat = getAncillaryCategory(test);
-                        return (
-                          <span key={test} className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>
-                            {test}
-                          </span>
-                        );
-                      }) : (
-                        <span className="text-xs text-muted-foreground">No qualifying tests</span>
-                      )}
+            return (
+              <Card key={patient.id} className="overflow-visible" data-testid={`card-result-${patient.id}`}>
+                <div
+                  className="px-4 py-3 cursor-pointer hover-elevate flex items-center justify-between gap-3 flex-wrap"
+                  onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
+                  data-testid={`row-result-${patient.id}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-sm">{patient.name}</span>
+                        {patient.time && <span className="text-xs text-muted-foreground">{patient.time}</span>}
+                        {patient.age && <span className="text-xs text-muted-foreground">Age {patient.age}</span>}
+                        {patient.gender && <span className="text-xs text-muted-foreground">{patient.gender}</span>}
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                        {tests.length > 0 ? tests.map((test) => {
+                          const cat = getAncillaryCategory(test);
+                          return (
+                            <span key={test} className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>
+                              {test}
+                            </span>
+                          );
+                        }) : (
+                          <span className="text-xs text-muted-foreground">No qualifying tests</span>
+                        )}
+                      </div>
                     </div>
                   </div>
+                  {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />}
                 </div>
-                {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />}
-              </div>
 
-              {isExpanded && (
-                <div className="border-t px-4 py-4 space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <Stethoscope className="w-3.5 h-3.5 text-muted-foreground" />
-                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Dx</span>
+                {isExpanded && (
+                  <div className="border-t px-4 py-4 space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <Stethoscope className="w-3.5 h-3.5 text-muted-foreground" />
+                          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Dx</span>
+                        </div>
+                        <p className="text-sm whitespace-pre-wrap">{patient.diagnoses || "N/A"}</p>
                       </div>
-                      <p className="text-sm whitespace-pre-wrap">{patient.diagnoses || "N/A"}</p>
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Hx</span>
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Hx</span>
+                        </div>
+                        <p className="text-sm whitespace-pre-wrap">{patient.history || "N/A"}</p>
                       </div>
-                      <p className="text-sm whitespace-pre-wrap">{patient.history || "N/A"}</p>
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <Pill className="w-3.5 h-3.5 text-muted-foreground" />
-                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Rx</span>
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <Pill className="w-3.5 h-3.5 text-muted-foreground" />
+                          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Rx</span>
+                        </div>
+                        <p className="text-sm whitespace-pre-wrap">{patient.medications || "N/A"}</p>
                       </div>
-                      <p className="text-sm whitespace-pre-wrap">{patient.medications || "N/A"}</p>
                     </div>
+
+                    {tests.length > 0 && (
+                      <ExpandedAncillaries tests={tests} reasoning={reasoning} />
+                    )}
                   </div>
-
-                  {tests.length > 0 && (
-                    <ExpandedAncillaries tests={tests} reasoning={reasoning} />
-                  )}
-                </div>
-              )}
-            </Card>
-          );
-        })}
+                )}
+              </Card>
+            );
+          })}
+        </div>
       </main>
     </div>
   );

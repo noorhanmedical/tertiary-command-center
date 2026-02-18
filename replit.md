@@ -4,19 +4,26 @@
 AI-powered patient screening application that analyzes clinical data (schedules, past medical history, medications, notes) to qualify patients for diagnostic tests including BrainWave (EEG), VitalWave (ABI), Carotid Ultrasound, Echocardiogram, Renal Artery Ultrasound, AAA Ultrasound, Thyroid Ultrasound, and Venous/Arterial Duplex studies. The system uses OpenAI GPT-5.2 for aggressive qualification - it qualifies patients for every test with any reasonable clinical justification.
 
 ## Recent Changes
+- 2026-02-18: Renamed all user-facing "batch" references to "schedule"; redesigned home page with collapsible sidebar for schedule history
 - 2026-02-17: Reworked to 3-step draft workflow: (1) Build schedule by adding patients, (2) Edit Dx/Hx/Rx per patient, (3) Analyze for ancillaries
 - 2026-02-17: iOS-style redesign with colored ancillary cards and split reasoning (Clinician Understanding + Patient Talking Points)
 - 2026-02-17: Initial MVP built with full screening pipeline
 
 ## Workflow
-1. **Create Batch** - Start a new batch from the Schedule tab
-2. **Add Patients** - Add patients via manual entry (name + time), paste a list, or upload a file (.xlsx, .csv, .txt)
-3. **Edit Clinical Data** - Click on any patient row to add their Dx (diagnoses), Hx (history/PMH), Rx (medications), age, gender
-4. **Analyze** - Click "Analyze for Ancillaries" to run AI screening on the whole batch
-5. **Review Results** - Expand patient rows to see color-coded ancillary cards with Clinician Understanding and Patient Talking Points
+1. **New Schedule** - Create a new schedule from the clean home page
+2. **Add Patients** - Add patients via upload file, paste list, or manual entry (all visible simultaneously)
+3. **Edit Clinical Data** - Fill in Dx (diagnoses), Hx (history/PMH), Rx (medications) per patient
+4. **Generate** - Click "Generate All" or generate per-patient to run AI screening
+5. **Review Results** - View Final Schedule with color-coded ancillary cards (Clinician Understanding + Patient Talking Points)
+
+## UI Structure
+- **Home page**: Clean centered layout with "New Schedule" button; sidebar trigger to view schedule history
+- **Sidebar**: Collapsible left panel (Shadcn Sidebar) showing schedule history; starts collapsed, user can expand/retract
+- **Build Schedule page**: Step timeline at top, input cards (Upload/Paste/Manual), Schedule Generator list below
+- **Final Schedule page**: Step timeline at top, expandable patient result cards with ancillary details
 
 ## Architecture
-- **Frontend**: React + Vite + Tailwind CSS + Shadcn UI
+- **Frontend**: React + Vite + Tailwind CSS + Shadcn UI (including Sidebar component)
 - **Backend**: Express.js with file parsing (xlsx, csv-parse) and OpenAI integration
 - **Database**: PostgreSQL with Drizzle ORM
 - **AI**: OpenAI GPT-5.2 via Replit AI Integrations (no API key needed)
@@ -24,27 +31,32 @@ AI-powered patient screening application that analyzes clinical data (schedules,
 - **Validation**: Zod schemas on all API routes
 
 ## API Routes
-- `POST /api/batches` - Create a new draft batch
-- `POST /api/batches/:id/patients` - Add a patient to a batch
+- `POST /api/batches` - Create a new draft schedule
+- `POST /api/batches/:id/patients` - Add a patient to a schedule
 - `POST /api/batches/:id/import-file` - Import patients from uploaded file(s)
 - `POST /api/batches/:id/import-text` - Import patients from pasted text
 - `PATCH /api/patients/:id` - Update patient clinical data (Dx, Hx, Rx, etc.)
 - `DELETE /api/patients/:id` - Remove a patient
-- `POST /api/batches/:id/analyze` - Run AI screening on batch
-- `GET /api/screening-batches` - List all batches
-- `GET /api/screening-batches/:id` - Get batch with patients
-- `DELETE /api/screening-batches/:id` - Delete a batch
+- `POST /api/batches/:id/analyze` - Run AI screening on schedule
+- `GET /api/screening-batches` - List all schedules
+- `GET /api/screening-batches/:id` - Get schedule with patients
+- `DELETE /api/screening-batches/:id` - Delete a schedule
 - `GET /api/screening-batches/:id/export` - Export results as CSV
 
 ## Key Files
 - `shared/schema.ts` - Data models (screeningBatches, patientScreenings, testReasoningSchema)
 - `server/routes.ts` - API routes with file upload, Zod validation, AI screening, export
 - `server/storage.ts` - Database CRUD operations
-- `client/src/pages/home.tsx` - Main UI with schedule builder, patient editing, results view
+- `client/src/pages/home.tsx` - Main UI with sidebar, schedule builder, patient editing, results view
+- `client/src/App.tsx` - App shell with SidebarProvider wrapping
 
 ## User Preferences
 - Aggressive qualification: qualify for everything unless glaringly inappropriate
+- UI terminology: "schedule" not "batch"
+- Schedule history in collapsible sidebar, not on the home page
 - Support all input formats: Excel, CSV, text files, free text paste
+- Input card order: Upload File, Paste List, Manual Entry
+- Patient list section titled "Schedule Generator"
 - 3-step workflow: add patients -> add clinical data -> generate
 - Output format: TIME, NAME, AGE, GENDER, Dx, Hx, Rx, QUALIFYING TESTS
 - Color-coded ancillary cards: BrainWave=purple, VitalWave=red, Ultrasounds=green, FibroScan=yellow
