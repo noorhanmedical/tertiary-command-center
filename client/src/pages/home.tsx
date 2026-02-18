@@ -349,6 +349,70 @@ export default function Home() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <Card className="p-4">
                 <div className="flex items-center gap-2 mb-3">
+                  <Upload className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Upload File</span>
+                </div>
+                <div
+                  className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${
+                    dragOver ? "border-primary bg-primary/5" : "border-border"
+                  }`}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={handleDrop}
+                  onClick={() => {
+                    const input = document.createElement("input");
+                    input.type = "file";
+                    input.multiple = true;
+                    input.accept = ".xlsx,.xls,.csv,.txt,.text,.pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp";
+                    input.onchange = (e) => {
+                      const files = (e.target as HTMLInputElement).files;
+                      if (files) handleFileUpload(files);
+                    };
+                    input.click();
+                  }}
+                  data-testid="dropzone-upload"
+                >
+                  {importFileMutation.isPending ? (
+                    <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+                  ) : (
+                    <>
+                      <Upload className="w-6 h-6 text-muted-foreground mb-1.5" />
+                      <p className="text-xs text-muted-foreground text-center">Drop files or click to browse</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Excel, CSV, PDF, images, text</p>
+                    </>
+                  )}
+                </div>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <FileText className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Paste List</span>
+                </div>
+                <Textarea
+                  placeholder={"9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
+                  className="min-h-[82px] resize-none text-sm mb-2"
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                  data-testid="input-paste-list"
+                />
+                <Button
+                  className="w-full gap-1.5"
+                  variant="outline"
+                  onClick={() => {
+                    if (!pasteText.trim() || !selectedBatchId) return;
+                    importTextMutation.mutate({ batchId: selectedBatchId, text: pasteText.trim() });
+                  }}
+                  disabled={!pasteText.trim() || importTextMutation.isPending}
+                  data-testid="button-import-text"
+                >
+                  {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  Import List
+                </Button>
+              </Card>
+
+              <Card className="p-4">
+                <div className="flex items-center gap-2 mb-3">
                   <Plus className="w-4 h-4 text-muted-foreground" />
                   <span className="text-sm font-semibold">Manual Entry</span>
                 </div>
@@ -384,70 +448,6 @@ export default function Home() {
                   </Button>
                 </div>
               </Card>
-
-              <Card className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <FileText className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Paste List</span>
-                </div>
-                <Textarea
-                  placeholder={"9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
-                  className="min-h-[82px] resize-none text-sm mb-2"
-                  value={pasteText}
-                  onChange={(e) => setPasteText(e.target.value)}
-                  data-testid="input-paste-list"
-                />
-                <Button
-                  className="w-full gap-1.5"
-                  variant="outline"
-                  onClick={() => {
-                    if (!pasteText.trim() || !selectedBatchId) return;
-                    importTextMutation.mutate({ batchId: selectedBatchId, text: pasteText.trim() });
-                  }}
-                  disabled={!pasteText.trim() || importTextMutation.isPending}
-                  data-testid="button-import-text"
-                >
-                  {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  Import List
-                </Button>
-              </Card>
-
-              <Card className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Upload className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Upload File</span>
-                </div>
-                <div
-                  className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${
-                    dragOver ? "border-primary bg-primary/5" : "border-border"
-                  }`}
-                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                  onDragLeave={() => setDragOver(false)}
-                  onDrop={handleDrop}
-                  onClick={() => {
-                    const input = document.createElement("input");
-                    input.type = "file";
-                    input.multiple = true;
-                    input.accept = ".xlsx,.xls,.csv,.txt,.text,.pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp";
-                    input.onchange = (e) => {
-                      const files = (e.target as HTMLInputElement).files;
-                      if (files) handleFileUpload(files);
-                    };
-                    input.click();
-                  }}
-                  data-testid="dropzone-upload"
-                >
-                  {importFileMutation.isPending ? (
-                    <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
-                  ) : (
-                    <>
-                      <Upload className="w-6 h-6 text-muted-foreground mb-1.5" />
-                      <p className="text-xs text-muted-foreground text-center">Drop files or click to browse</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Excel, CSV, PDF, images, text</p>
-                    </>
-                  )}
-                </div>
-              </Card>
             </div>
           </section>
 
@@ -455,7 +455,7 @@ export default function Home() {
             <section>
               <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
                 <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                  Patient Schedule ({patients.length})
+                  Schedule Generator ({patients.length})
                 </h2>
                 {completedCount > 0 && (
                   <span className="text-xs text-muted-foreground">
