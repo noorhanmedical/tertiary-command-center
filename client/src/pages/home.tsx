@@ -599,7 +599,7 @@ export default function Home() {
             <main className="relative z-10 flex-1 flex items-center justify-center">
               <div className="max-w-lg w-full px-6">
                 <div className="text-center mb-10">
-                  <div className="w-20 h-20 rounded-full bg-white/85 dark:bg-card/85 flex items-center justify-center mx-auto mb-6 shadow-sm">
+                  <div className="w-20 h-20 rounded-full bg-white/95 dark:bg-card/95 flex items-center justify-center mx-auto mb-6 shadow-sm">
                     <Stethoscope className="w-10 h-10 text-primary" />
                   </div>
                   <h2 className="text-3xl font-bold tracking-tight mb-3 text-slate-900 dark:text-foreground" data-testid="text-home-heading">
@@ -627,7 +627,7 @@ export default function Home() {
                       variant="outline"
                       size="lg"
                       onClick={() => setSidebarOpen(true)}
-                      className="w-full gap-2 bg-white/85 dark:bg-card/85"
+                      className="w-full gap-2 bg-white/95 dark:bg-card/95"
                       data-testid="button-view-history"
                     >
                       <Clock className="w-4 h-4" />
@@ -637,21 +637,21 @@ export default function Home() {
                 </div>
 
                 <div className="mt-12 grid grid-cols-3 gap-4">
-                  <div className="text-center rounded-md bg-white/85 dark:bg-card/85 p-4 shadow-sm">
+                  <div className="text-center rounded-md bg-white/75 dark:bg-card/75 p-4 shadow-sm">
                     <div className="w-10 h-10 rounded-md bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mx-auto mb-2">
                       <Brain className="w-5 h-5 text-violet-600 dark:text-violet-400" />
                     </div>
                     <p className="text-xs font-medium text-slate-900 dark:text-foreground">BrainWave</p>
                     <p className="text-[10px] text-slate-500 dark:text-muted-foreground">EEG</p>
                   </div>
-                  <div className="text-center rounded-md bg-white/85 dark:bg-card/85 p-4 shadow-sm">
+                  <div className="text-center rounded-md bg-white/75 dark:bg-card/75 p-4 shadow-sm">
                     <div className="w-10 h-10 rounded-md bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-2">
                       <Activity className="w-5 h-5 text-red-600 dark:text-red-400" />
                     </div>
                     <p className="text-xs font-medium text-slate-900 dark:text-foreground">VitalWave</p>
                     <p className="text-[10px] text-slate-500 dark:text-muted-foreground">ABI</p>
                   </div>
-                  <div className="text-center rounded-md bg-white/85 dark:bg-card/85 p-4 shadow-sm">
+                  <div className="text-center rounded-md bg-white/75 dark:bg-card/75 p-4 shadow-sm">
                     <div className="w-10 h-10 rounded-md bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-2">
                       <Scan className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
                     </div>
