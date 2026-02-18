@@ -323,12 +323,24 @@ export default function Home() {
 
   return (
     <>
-      <Sidebar collapsible="icon" data-testid="sidebar-history">
+      <Sidebar collapsible="offcanvas" data-testid="sidebar-history">
         <SidebarContent>
           <SidebarGroup>
             <SidebarGroupLabel>Schedule History</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    onClick={() => {
+                      handleNewSchedule();
+                      setSidebarOpen(false);
+                    }}
+                    data-testid="sidebar-new-schedule"
+                  >
+                    <Plus className="w-4 h-4 shrink-0" />
+                    <span className="text-sm font-medium">New Schedule</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
                 {batchesLoading ? (
                   <div className="flex items-center justify-center py-4">
                     <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
@@ -579,36 +591,67 @@ export default function Home() {
             </header>
 
             <main className="flex-1 flex items-center justify-center">
-              <div className="text-center px-4">
-                <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-6">
-                  <Stethoscope className="w-8 h-8 text-primary" />
+              <div className="max-w-lg w-full px-6">
+                <div className="text-center mb-10">
+                  <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-6">
+                    <Stethoscope className="w-10 h-10 text-primary" />
+                  </div>
+                  <h2 className="text-3xl font-bold tracking-tight mb-3" data-testid="text-home-heading">
+                    Ancillary Screening
+                  </h2>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Qualify patients for diagnostic ancillaries using AI-powered clinical analysis.
+                  </p>
                 </div>
-                <h2 className="text-2xl font-bold tracking-tight mb-2" data-testid="text-home-heading">Ancillary Screening</h2>
-                <p className="text-sm text-muted-foreground max-w-md mx-auto mb-8">
-                  Create a new schedule, add patients with clinical data, then generate ancillary qualifications using AI.
-                </p>
-                <div className="flex flex-col items-center gap-3">
+
+                <div className="space-y-4">
                   <Button
                     onClick={handleNewSchedule}
                     disabled={createBatchMutation.isPending}
-                    className="gap-2"
+                    size="lg"
+                    className="w-full gap-2"
                     data-testid="button-new-schedule"
                   >
                     {createBatchMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                     New Schedule
                   </Button>
+
                   {batches.length > 0 && (
                     <Button
-                      variant="ghost"
-                      size="sm"
+                      variant="outline"
+                      size="lg"
                       onClick={() => setSidebarOpen(true)}
-                      className="gap-1.5 text-muted-foreground"
+                      className="w-full gap-2"
                       data-testid="button-view-history"
                     >
-                      <PanelLeft className="w-3.5 h-3.5" />
-                      View Schedule History ({batches.length})
+                      <Clock className="w-4 h-4" />
+                      Schedule History ({batches.length})
                     </Button>
                   )}
+                </div>
+
+                <div className="mt-12 grid grid-cols-3 gap-4">
+                  <div className="text-center">
+                    <div className="w-10 h-10 rounded-md bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mx-auto mb-2">
+                      <Brain className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+                    </div>
+                    <p className="text-xs font-medium">BrainWave</p>
+                    <p className="text-[10px] text-muted-foreground">EEG</p>
+                  </div>
+                  <div className="text-center">
+                    <div className="w-10 h-10 rounded-md bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-2">
+                      <Activity className="w-5 h-5 text-red-600 dark:text-red-400" />
+                    </div>
+                    <p className="text-xs font-medium">VitalWave</p>
+                    <p className="text-[10px] text-muted-foreground">ABI</p>
+                  </div>
+                  <div className="text-center">
+                    <div className="w-10 h-10 rounded-md bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-2">
+                      <Scan className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <p className="text-xs font-medium">Ultrasound</p>
+                    <p className="text-[10px] text-muted-foreground">Vascular & Organ</p>
+                  </div>
                 </div>
               </div>
             </main>
