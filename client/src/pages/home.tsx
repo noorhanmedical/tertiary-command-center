@@ -79,7 +79,7 @@ function StepTimeline({ current, onNavigate, canGoToResults }: { current: "home"
   const currentIdx = steps.findIndex((s) => s.id === current);
 
   return (
-    <div className="flex items-center justify-center gap-0 py-2 px-4 border-b bg-card/50" data-testid="step-timeline">
+    <div className="flex items-center justify-center gap-0 py-2 px-4 border-b bg-white/50 dark:bg-card/50" data-testid="step-timeline">
       {steps.map((step, i) => {
         const isActive = step.id === current;
         const isPast = i < currentIdx;
@@ -377,7 +377,12 @@ export default function Home() {
         </SidebarContent>
       </Sidebar>
 
-      <div className="flex flex-col flex-1 min-w-0">
+      <div className="flex flex-col flex-1 min-w-0 relative">
+        <div
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+          style={{ backgroundImage: `url(${heroBg})` }}
+        />
+        <div className="absolute inset-0 bg-background/30 dark:bg-background/60" />
         {view === "results" && selectedBatchId ? (
           <ResultsView
             batch={selectedBatch}
@@ -389,8 +394,8 @@ export default function Home() {
             setExpandedPatient={setExpandedPatient}
           />
         ) : view === "build" && selectedBatchId ? (
-          <div className="flex flex-col h-full bg-background">
-            <header className="bg-card/80 backdrop-blur-md sticky top-0 z-50">
+          <div className="flex flex-col h-full relative z-10">
+            <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
               <StepTimeline current="build" onNavigate={handleTimelineNav} canGoToResults={completedCount > 0} />
               <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
                 <div className="flex items-center gap-2">
@@ -572,14 +577,8 @@ export default function Home() {
             </main>
           </div>
         ) : (
-          <div className="flex flex-col h-full relative">
-            <div
-              className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-              style={{ backgroundImage: `url(${heroBg})` }}
-            />
-            <div className="absolute inset-0 bg-background/30 dark:bg-background/60" />
-
-            <header className="relative z-10 border-b bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0">
+          <div className="flex flex-col h-full relative z-10">
+            <header className="border-b bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
               <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-3">
                   <SidebarTrigger data-testid="button-sidebar-toggle-home" />
@@ -805,15 +804,15 @@ function ResultsView({
 }) {
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-background">
+      <div className="flex-1 flex items-center justify-center relative z-10">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      <header className="bg-card/80 backdrop-blur-md sticky top-0 z-50">
+    <div className="flex flex-col h-full relative z-10">
+      <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
         <StepTimeline current="results" onNavigate={onNavigate} canGoToResults={true} />
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
           <div className="flex items-center gap-2">
