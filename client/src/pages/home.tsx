@@ -843,8 +843,7 @@ function ResultsView({
                   <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">QUALIFYING IMAGING</th>
                 </tr>
               </thead>
-              <tbody>
-                {patients.map((patient, idx) => {
+              {patients.map((patient, idx) => {
                   const allTests = patient.qualifyingTests || [];
                   const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
                   const qualTests = allTests.filter((t) => !isImagingTest(t));
@@ -853,78 +852,112 @@ function ResultsView({
                   const rowBg = idx % 2 === 0 ? "bg-white dark:bg-card" : "bg-slate-50 dark:bg-card/80";
 
                   return (
-                    <tr
-                      key={patient.id}
-                      className={`${rowBg} cursor-pointer hover:bg-slate-100 dark:hover:bg-muted/50 transition-colors`}
-                      onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
-                      data-testid={`row-result-${patient.id}`}
-                    >
-                      <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">{patient.time || ""}</td>
-                      <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap font-medium align-top">{patient.name}</td>
-                      <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">{patient.age || ""}</td>
-                      <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">{patient.gender || ""}</td>
-                      <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top max-w-[200px]">
-                        <div className="whitespace-pre-wrap break-words">{patient.diagnoses || ""}</div>
-                      </td>
-                      <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top max-w-[200px]">
-                        <div className="whitespace-pre-wrap break-words">{patient.history || ""}</div>
-                      </td>
-                      <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top max-w-[200px]">
-                        <div className="whitespace-pre-wrap break-words">{patient.medications || ""}</div>
-                      </td>
-                      <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top">
-                        <div className="flex flex-col gap-1">
-                          {qualTests.length > 0 ? qualTests.map((test) => {
-                            const cat = getAncillaryCategory(test);
-                            return (
-                              <span key={test} className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight ${getBadgeColor(cat)}`}>
-                                {test}
-                              </span>
-                            );
-                          }) : <span className="text-muted-foreground">-</span>}
-                        </div>
-                      </td>
-                      <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top">
-                        <div className="flex flex-col gap-1">
-                          {qualImaging.length > 0 ? qualImaging.map((test) => {
-                            const cat = getAncillaryCategory(test);
-                            return (
-                              <span key={test} className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight ${getBadgeColor(cat)}`}>
-                                {test}
-                              </span>
-                            );
-                          }) : <span className="text-muted-foreground">-</span>}
-                        </div>
-                      </td>
-                    </tr>
+                    <tbody key={patient.id}>
+                      <tr
+                        className={`${rowBg} cursor-pointer hover:bg-slate-100 dark:hover:bg-muted/50 transition-colors`}
+                        onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
+                        data-testid={`row-result-${patient.id}`}
+                      >
+                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">{patient.time || ""}</td>
+                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap font-medium align-top">{patient.name}</td>
+                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">{patient.age || ""}</td>
+                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">{patient.gender || ""}</td>
+                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top max-w-[200px]">
+                          <div className="whitespace-pre-wrap break-words">{patient.diagnoses || ""}</div>
+                        </td>
+                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top max-w-[200px]">
+                          <div className="whitespace-pre-wrap break-words">{patient.history || ""}</div>
+                        </td>
+                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top max-w-[200px]">
+                          <div className="whitespace-pre-wrap break-words">{patient.medications || ""}</div>
+                        </td>
+                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top">
+                          <div className="flex flex-col gap-1">
+                            {qualTests.length > 0 ? qualTests.map((test) => {
+                              const cat = getAncillaryCategory(test);
+                              return (
+                                <span key={test} className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight ${getBadgeColor(cat)}`}>
+                                  {test}
+                                </span>
+                              );
+                            }) : <span className="text-muted-foreground">-</span>}
+                          </div>
+                        </td>
+                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top">
+                          <div className="flex flex-col gap-1">
+                            {qualImaging.length > 0 ? qualImaging.map((test) => {
+                              const cat = getAncillaryCategory(test);
+                              return (
+                                <span key={test} className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight ${getBadgeColor(cat)}`}>
+                                  {test}
+                                </span>
+                              );
+                            }) : <span className="text-muted-foreground">-</span>}
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && allTests.length > 0 && (
+                        <tr data-testid={`row-expanded-${patient.id}`}>
+                          <td colSpan={9} className="border border-slate-200 dark:border-slate-700 p-0">
+                            <div className="bg-slate-50/80 dark:bg-muted/30 p-4">
+                              <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+                                <h3 className="font-semibold text-sm">{patient.name} - Ancillary Details</h3>
+                                <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); setExpandedPatient(null); }} data-testid="button-close-detail">
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {allTests.map((test) => {
+                                  const cat = getAncillaryCategory(test);
+                                  const style = categoryStyles[cat];
+                                  const IconComp = categoryIcons[cat];
+                                  const reason = reasoning[test];
+                                  const clinician = reason ? (typeof reason === "string" ? reason : reason.clinician_understanding) : null;
+                                  const talking = reason ? (typeof reason === "string" ? null : reason.patient_talking_points) : null;
+
+                                  return (
+                                    <div key={test} className={`rounded-md border ${style.bg} ${style.border} p-3`} data-testid={`card-ancillary-${test}`}>
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <IconComp className={`w-4 h-4 ${style.icon}`} />
+                                        <span className={`font-semibold text-xs ${style.accent}`}>{test}</span>
+                                      </div>
+
+                                      {clinician && (
+                                        <div className="rounded-md bg-background/60 dark:bg-background/30 p-2.5 mb-2">
+                                          <div className="flex items-center gap-1.5 mb-1">
+                                            <GraduationCap className="w-3 h-3 text-muted-foreground" />
+                                            <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Clinician Understanding</span>
+                                          </div>
+                                          <p className="text-[11px] leading-relaxed">{clinician}</p>
+                                        </div>
+                                      )}
+
+                                      {talking && (
+                                        <div className="rounded-md bg-background/60 dark:bg-background/30 p-2.5">
+                                          <div className="flex items-center gap-1.5 mb-1">
+                                            <MessageCircle className="w-3 h-3 text-muted-foreground" />
+                                            <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Patient Talking Points</span>
+                                          </div>
+                                          <p className="text-[11px] leading-relaxed">{talking}</p>
+                                        </div>
+                                      )}
+
+                                      {!clinician && !talking && (
+                                        <p className="text-[11px] text-muted-foreground">No detailed reasoning available.</p>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
                   );
                 })}
-              </tbody>
             </table>
           </div>
-
-          {expandedPatient && (() => {
-            const patient = patients.find((p) => p.id === expandedPatient);
-            if (!patient) return null;
-            const allTests = patient.qualifyingTests || [];
-            const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
-            if (allTests.length === 0) return null;
-            return (
-              <Card className="mt-4 overflow-visible" data-testid={`card-expanded-${expandedPatient}`}>
-                <div className="px-4 py-3 border-b">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <h3 className="font-semibold text-sm">{patient.name} - Qualifying Details</h3>
-                    <Button variant="ghost" size="icon" onClick={() => setExpandedPatient(null)} data-testid="button-close-detail">
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-                <div className="p-4">
-                  <ExpandedAncillaries tests={allTests} reasoning={reasoning} />
-                </div>
-              </Card>
-            );
-          })()}
         </div>
       </main>
     </div>
