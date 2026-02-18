@@ -441,19 +441,81 @@ export async function registerRoutes(
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       const { text } = parsed.data;
 
-      const patients = parseTextForPatientNames(text);
-      const created = [];
+      let patients: ParsedPatient[] = [];
 
+      const hasClinicalData = /\b(dx|hx|rx|diagnos|history|medicat|pmh|htn|dm|copd|chf|a-?fib|metformin|lisinopril|amlodipine|atorvastatin|aspirin|insulin|omeprazole|gabapentin|prednisone|levothyroxine|losartan|hydrochlorothiazide)\b/i.test(text);
+
+      if (hasClinicalData) {
+        try {
+          const aiResponse = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content: `You are a clinical data parser. Extract patient information from pasted text.
+Return a JSON array of patients. For each patient extract:
+- "name": Patient full name (required)
+- "time": Appointment time if present (e.g. "9:00 AM"), or null
+- "age": Age as a number if present, or null
+- "gender": Gender if present (M/F/Male/Female), or null
+- "diagnoses": All diagnoses, conditions, Dx mentioned (combine into one string), or null
+- "history": Past medical history, Hx, PMH, surgical history (combine into one string), or null  
+- "medications": All medications, Rx listed (combine into one string), or null
+
+Parse common abbreviations: HTN=hypertension, DM=diabetes mellitus, COPD, CHF, CAD, A-fib, HLD=hyperlipidemia, CKD, OA=osteoarthritis, GERD, etc.
+
+If the text is just a simple list of names with no clinical data, still return each name as a patient with null for clinical fields.
+
+Respond ONLY with a valid JSON array, no markdown fences.`
+              },
+              {
+                role: "user",
+                content: text
+              }
+            ],
+            temperature: 0.1,
+          });
+
+          const content = aiResponse.choices[0]?.message?.content?.trim() || "[]";
+          const cleanedContent = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+          const aiPatients = JSON.parse(cleanedContent);
+
+          if (Array.isArray(aiPatients)) {
+            patients = aiPatients
+              .filter((p: any) => p.name && typeof p.name === "string")
+              .map((p: any) => ({
+                name: p.name.trim(),
+                time: p.time || undefined,
+                age: p.age ? parseInt(String(p.age)) : undefined,
+                gender: p.gender || undefined,
+                diagnoses: p.diagnoses || undefined,
+                history: p.history || undefined,
+                medications: p.medications || undefined,
+              }));
+          }
+        } catch (aiError: any) {
+          console.error("AI parse failed, falling back to simple parse:", aiError.message);
+          patients = parseTextForPatientNames(text);
+        }
+      } else {
+        patients = parseTextForPatientNames(text);
+      }
+
+      if (patients.length === 0) {
+        patients = parseTextForPatientNames(text);
+      }
+
+      const created = [];
       for (const p of patients) {
         const patient = await storage.createPatientScreening({
           batchId,
           name: p.name,
           time: p.time || null,
-          age: null,
-          gender: null,
-          diagnoses: null,
-          history: null,
-          medications: null,
+          age: p.age || null,
+          gender: p.gender || null,
+          diagnoses: p.diagnoses || null,
+          history: p.history || null,
+          medications: p.medications || null,
           notes: null,
           qualifyingTests: [],
           reasoning: {},
