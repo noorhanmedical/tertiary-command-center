@@ -26,9 +26,15 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <SidebarProvider defaultOpen={false} style={style as React.CSSProperties}>
-          <div className="flex h-screen w-full">
-            <Toaster />
-            <Router />
+          <div className="flex flex-col h-screen w-full">
+            <div className="bg-black/60 backdrop-blur-md px-4 py-2.5 z-[100] shrink-0" data-testid="banner-top">
+              <h1 className="text-sm font-bold tracking-tight text-white" data-testid="text-app-title-banner">Plexus Ancillary Screening</h1>
+              <p className="text-[10px] text-white/60 leading-tight">AI-powered patient qualification</p>
+            </div>
+            <div className="flex flex-1 min-h-0 w-full">
+              <Toaster />
+              <Router />
+            </div>
           </div>
         </SidebarProvider>
       </TooltipProvider>

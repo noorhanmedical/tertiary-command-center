@@ -603,13 +603,9 @@ export default function Home() {
           </div>
         ) : (
           <div className="flex flex-col h-full relative z-10">
-            <header className="border-b bg-black/60 backdrop-blur-md sticky top-0 z-50">
-              <div className="px-4 py-3 flex items-center gap-3">
+            <header className="bg-black/30 backdrop-blur-md sticky top-0 z-50">
+              <div className="px-4 py-2 flex items-center gap-3">
                 <SidebarTrigger data-testid="button-sidebar-toggle-home" className="text-white" />
-                <div>
-                  <h1 className="text-base font-bold tracking-tight text-white" data-testid="text-app-title">Plexus Ancillary Screening</h1>
-                  <p className="text-xs text-white/60">AI-powered patient qualification</p>
-                </div>
               </div>
             </header>
 
