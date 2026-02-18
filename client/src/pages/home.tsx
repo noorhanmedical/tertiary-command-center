@@ -494,10 +494,18 @@ export default function Home() {
                         <span className="text-sm font-semibold">Paste List</span>
                       </div>
                       <Textarea
-                        placeholder={"9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
+                        placeholder={"Paste patient list here — it will import automatically\n\n9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
                         className="min-h-[82px] resize-none text-sm mb-2"
                         value={pasteText}
                         onChange={(e) => setPasteText(e.target.value)}
+                        onPaste={(e) => {
+                          const pasted = e.clipboardData.getData("text");
+                          if (pasted.trim() && selectedBatchId) {
+                            e.preventDefault();
+                            setPasteText(pasted);
+                            importTextMutation.mutate({ batchId: selectedBatchId, text: pasted.trim() });
+                          }
+                        }}
                         data-testid="input-paste-list"
                       />
                       <Button
