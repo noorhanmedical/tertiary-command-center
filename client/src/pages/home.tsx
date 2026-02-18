@@ -406,6 +406,23 @@ export default function Home() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
+                  {patients.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (confirm("Delete all patients from this schedule?")) {
+                          patients.forEach((p) => deletePatientMutation.mutate(p.id));
+                        }
+                      }}
+                      disabled={isProcessing}
+                      className="gap-1.5"
+                      data-testid="button-delete-all"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete All
+                    </Button>
+                  )}
                   <Button
                     onClick={() => analyzeAllMutation.mutate(selectedBatchId!)}
                     disabled={isProcessing || patients.length === 0}
@@ -579,17 +596,12 @@ export default function Home() {
         ) : (
           <div className="flex flex-col h-full relative z-10">
             <header className="border-b bg-black/60 backdrop-blur-md sticky top-0 z-50">
-              <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-3">
-                  <SidebarTrigger data-testid="button-sidebar-toggle-home" className="text-white" />
-                  <div>
-                    <h1 className="text-base font-bold tracking-tight text-white" data-testid="text-app-title">Plexus Ancillary Screening</h1>
-                    <p className="text-xs text-white/60">AI-powered patient qualification</p>
-                  </div>
+              <div className="px-4 py-3 flex items-center gap-3">
+                <SidebarTrigger data-testid="button-sidebar-toggle-home" className="text-white" />
+                <div>
+                  <h1 className="text-base font-bold tracking-tight text-white" data-testid="text-app-title">Plexus Ancillary Screening</h1>
+                  <p className="text-xs text-white/60">AI-powered patient qualification</p>
                 </div>
-                <Badge variant="outline" className="text-xs gap-1.5 text-white border-white/30 no-default-hover-elevate no-default-active-elevate">
-                  <Zap className="w-3 h-3" /> GPT-5.2
-                </Badge>
               </div>
             </header>
 
