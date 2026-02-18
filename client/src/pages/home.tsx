@@ -578,19 +578,16 @@ export default function Home() {
           </div>
         ) : (
           <div className="flex flex-col h-full relative z-10">
-            <header className="border-b bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
+            <header className="border-b bg-black/60 backdrop-blur-md sticky top-0 z-50">
               <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-3">
-                  <SidebarTrigger data-testid="button-sidebar-toggle-home" />
-                  <div className="w-9 h-9 rounded-md bg-primary flex items-center justify-center">
-                    <Stethoscope className="w-4 h-4 text-primary-foreground" />
-                  </div>
+                  <SidebarTrigger data-testid="button-sidebar-toggle-home" className="text-white" />
                   <div>
-                    <h1 className="text-base font-bold tracking-tight text-slate-900 dark:text-foreground" data-testid="text-app-title">Ancillary Screening</h1>
-                    <p className="text-xs text-slate-500 dark:text-muted-foreground">AI-powered patient qualification</p>
+                    <h1 className="text-base font-bold tracking-tight text-white" data-testid="text-app-title">Plexus Ancillary Screening</h1>
+                    <p className="text-xs text-white/60">AI-powered patient qualification</p>
                   </div>
                 </div>
-                <Badge variant="outline" className="text-xs gap-1.5 bg-white/80 dark:bg-card/80 no-default-hover-elevate no-default-active-elevate">
+                <Badge variant="outline" className="text-xs gap-1.5 text-white border-white/30 no-default-hover-elevate no-default-active-elevate">
                   <Zap className="w-3 h-3" /> GPT-5.2
                 </Badge>
               </div>
@@ -603,7 +600,7 @@ export default function Home() {
                     <Stethoscope className="w-10 h-10 text-primary" />
                   </div>
                   <h2 className="text-3xl font-bold tracking-tight mb-3 text-slate-900 dark:text-foreground" data-testid="text-home-heading">
-                    Ancillary Screening
+                    Plexus Ancillary Screening
                   </h2>
                   <p className="text-slate-600 dark:text-muted-foreground leading-relaxed">
                     Qualify patients for diagnostic ancillaries using AI-powered clinical analysis.
@@ -634,30 +631,6 @@ export default function Home() {
                       Schedule History ({batches.length})
                     </Button>
                   )}
-                </div>
-
-                <div className="mt-12 grid grid-cols-3 gap-4">
-                  <div className="text-center rounded-md bg-white/75 dark:bg-card/75 p-4 shadow-sm">
-                    <div className="w-10 h-10 rounded-md bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mx-auto mb-2">
-                      <Brain className="w-5 h-5 text-violet-600 dark:text-violet-400" />
-                    </div>
-                    <p className="text-xs font-medium text-slate-900 dark:text-foreground">BrainWave</p>
-                    <p className="text-[10px] text-slate-500 dark:text-muted-foreground">EEG</p>
-                  </div>
-                  <div className="text-center rounded-md bg-white/75 dark:bg-card/75 p-4 shadow-sm">
-                    <div className="w-10 h-10 rounded-md bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-2">
-                      <Activity className="w-5 h-5 text-red-600 dark:text-red-400" />
-                    </div>
-                    <p className="text-xs font-medium text-slate-900 dark:text-foreground">VitalWave</p>
-                    <p className="text-[10px] text-slate-500 dark:text-muted-foreground">ABI</p>
-                  </div>
-                  <div className="text-center rounded-md bg-white/75 dark:bg-card/75 p-4 shadow-sm">
-                    <div className="w-10 h-10 rounded-md bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-2">
-                      <Scan className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                    </div>
-                    <p className="text-xs font-medium text-slate-900 dark:text-foreground">Ultrasound</p>
-                    <p className="text-[10px] text-slate-500 dark:text-muted-foreground">Vascular & Organ</p>
-                  </div>
                 </div>
               </div>
             </main>
