@@ -55,6 +55,58 @@ const categoryStyles: Record<string, { bg: string; border: string; accent: strin
 const categoryLabels: Record<string, string> = { brainwave: "BrainWave", vitalwave: "VitalWave", ultrasound: "Ultrasound Studies", fibroscan: "FibroScan", other: "Other" };
 const categoryIcons: Record<string, typeof Brain> = { brainwave: Brain, vitalwave: Activity, ultrasound: Scan, fibroscan: Scan, other: Scan };
 
+function StepTimeline({ current, onNavigate, canGoToResults }: { current: "home" | "build" | "results"; onNavigate: (step: "home" | "build" | "results") => void; canGoToResults: boolean }) {
+  const steps = [
+    { id: "home" as const, label: "Home", num: 1 },
+    { id: "build" as const, label: "Build Schedule", num: 2 },
+    { id: "results" as const, label: "Final Schedule", num: 3 },
+  ];
+  const currentIdx = steps.findIndex((s) => s.id === current);
+
+  return (
+    <div className="flex items-center justify-center gap-0 py-2 px-4 border-b bg-card/50" data-testid="step-timeline">
+      {steps.map((step, i) => {
+        const isActive = step.id === current;
+        const isPast = i < currentIdx;
+        const isClickable = step.id === "home" || step.id === "build" || (step.id === "results" && canGoToResults);
+
+        return (
+          <div key={step.id} className="flex items-center">
+            {i > 0 && (
+              <div className={`w-8 sm:w-12 h-px mx-1 ${isPast || isActive ? "bg-primary" : "bg-border"}`} />
+            )}
+            <Button
+              variant={isActive ? "default" : "ghost"}
+              size="sm"
+              onClick={() => isClickable && onNavigate(step.id)}
+              disabled={!isClickable}
+              className={`gap-1.5 text-xs ${
+                isActive
+                  ? ""
+                  : isPast
+                  ? "text-primary"
+                  : ""
+              }`}
+              data-testid={`step-${step.id}`}
+            >
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                isActive
+                  ? "bg-primary-foreground text-primary"
+                  : isPast
+                  ? "bg-primary/20 text-primary"
+                  : "bg-muted text-muted-foreground"
+              }`}>
+                {isPast ? <Check className="w-3 h-3" /> : step.num}
+              </span>
+              <span className="hidden sm:inline">{step.label}</span>
+            </Button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function getBadgeColor(cat: string): string {
   switch (cat) {
     case "brainwave": return "bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-300";
@@ -239,14 +291,19 @@ export default function Home() {
   const completedCount = patients.filter((p) => p.status === "completed").length;
   const allCompleted = patients.length > 0 && completedCount === patients.length;
 
+  const handleTimelineNav = useCallback((step: "home" | "build" | "results") => {
+    if (step === "home") { setView("home"); setSelectedBatchId(null); }
+    else if (step === "build") setView("build");
+    else if (step === "results") setView("results");
+  }, []);
+
   if (view === "results" && selectedBatchId) {
     return <ResultsView
       batch={selectedBatch}
       patients={patients}
       loading={batchLoading}
-      onBack={() => setView("build")}
-      onHome={() => { setView("home"); setSelectedBatchId(null); }}
       onExport={handleExport}
+      onNavigate={handleTimelineNav}
       expandedPatient={expandedPatient}
       setExpandedPatient={setExpandedPatient}
     />;
@@ -255,23 +312,14 @@ export default function Home() {
   if (view === "build" && selectedBatchId) {
     return (
       <div className="min-h-screen bg-background">
-        <header className="border-b bg-card/80 backdrop-blur-md sticky top-0 z-50">
-          <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex items-center gap-3">
-              <Button variant="ghost" size="icon" onClick={() => { setView("home"); setSelectedBatchId(null); }} data-testid="button-back-home">
-                <ArrowLeft className="w-4 h-4" />
-              </Button>
-              <div>
-                <h1 className="text-base font-bold tracking-tight" data-testid="text-batch-name">{selectedBatch?.name || "Loading..."}</h1>
-                <p className="text-xs text-muted-foreground">{patients.length} patients</p>
-              </div>
+        <header className="bg-card/80 backdrop-blur-md sticky top-0 z-50">
+          <StepTimeline current="build" onNavigate={handleTimelineNav} canGoToResults={completedCount > 0} />
+          <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
+            <div>
+              <h1 className="text-base font-bold tracking-tight" data-testid="text-batch-name">{selectedBatch?.name || "Loading..."}</h1>
+              <p className="text-xs text-muted-foreground">{patients.length} patients</p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              {allCompleted && (
-                <Button variant="outline" size="sm" onClick={() => setView("results")} className="gap-1.5" data-testid="button-view-results">
-                  View Results
-                </Button>
-              )}
               <Button
                 onClick={() => analyzeAllMutation.mutate(selectedBatchId!)}
                 disabled={isProcessing || patients.length === 0}
@@ -649,18 +697,16 @@ function ResultsView({
   batch,
   patients,
   loading,
-  onBack,
-  onHome,
   onExport,
+  onNavigate,
   expandedPatient,
   setExpandedPatient,
 }: {
   batch: ScreeningBatchWithPatients | undefined;
   patients: PatientScreening[];
   loading: boolean;
-  onBack: () => void;
-  onHome: () => void;
   onExport: () => void;
+  onNavigate: (step: "home" | "build" | "results") => void;
   expandedPatient: number | null;
   setExpandedPatient: (id: number | null) => void;
 }) {
@@ -674,23 +720,16 @@ function ResultsView({
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b bg-card/80 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={onBack} data-testid="button-back-build">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-            <div>
-              <h1 className="text-base font-bold tracking-tight" data-testid="text-results-title">{batch?.name} - Final Schedule</h1>
-              <p className="text-xs text-muted-foreground">{patients.length} patients screened</p>
-            </div>
+      <header className="bg-card/80 backdrop-blur-md sticky top-0 z-50">
+        <StepTimeline current="results" onNavigate={onNavigate} canGoToResults={true} />
+        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
+          <div>
+            <h1 className="text-base font-bold tracking-tight" data-testid="text-results-title">{batch?.name} - Final Schedule</h1>
+            <p className="text-xs text-muted-foreground">{patients.length} patients screened</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Button variant="outline" size="sm" onClick={onExport} className="gap-1.5" data-testid="button-export">
               <Download className="w-3.5 h-3.5" /> Export CSV
-            </Button>
-            <Button variant="outline" size="sm" onClick={onHome} className="gap-1.5" data-testid="button-home">
-              <ArrowLeft className="w-3.5 h-3.5" /> All Batches
             </Button>
           </div>
         </div>
