@@ -827,85 +827,85 @@ export default function Home() {
 
             <main className="relative z-10 flex-1 flex items-center justify-center">
               <div className="max-w-2xl w-full px-6">
-                <div className="text-center mb-10">
-                  <div className="w-20 h-20 rounded-full bg-white/95 dark:bg-card/95 flex items-center justify-center mx-auto mb-6 shadow-sm">
-                    <Stethoscope className="w-10 h-10 text-primary" />
+                <div className="text-center mb-12">
+                  <div className="w-20 h-20 rounded-[22px] bg-white/30 dark:bg-white/10 backdrop-blur-xl border border-white/40 dark:border-white/20 flex items-center justify-center mx-auto mb-6 shadow-[0_8px_32px_rgba(0,0,0,0.12)]">
+                    <Stethoscope className="w-10 h-10 text-white drop-shadow-md" />
                   </div>
-                  <h2 className="text-3xl font-bold tracking-tight mb-3 text-white drop-shadow-lg" data-testid="text-home-heading">
+                  <h2 className="text-3xl font-semibold tracking-tight mb-2 text-white drop-shadow-lg" data-testid="text-home-heading">
                     Plexus Ancillary Screening
                   </h2>
-                  <p className="text-white/80 drop-shadow leading-relaxed">
-                    Qualify patients for diagnostic ancillaries using AI-powered clinical analysis.
+                  <p className="text-sm text-white/70 drop-shadow font-light leading-relaxed tracking-wide">
+                    AI-powered clinical analysis for diagnostic ancillaries
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
                   <Card
-                    className={`group cursor-pointer bg-white/95 dark:bg-card/95 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-shadow duration-200 p-6 text-center ${createBatchMutation.isPending ? "pointer-events-none opacity-70" : ""}`}
+                    className={`group cursor-pointer rounded-3xl bg-white/20 dark:bg-white/10 backdrop-blur-xl border border-white/30 dark:border-white/15 shadow-[0_8px_32px_rgba(0,0,0,0.08)] hover:shadow-[0_12px_40px_rgba(0,0,0,0.15)] hover:bg-white/30 dark:hover:bg-white/15 transition-all duration-300 p-7 text-center ${createBatchMutation.isPending ? "pointer-events-none opacity-60" : ""}`}
                     onClick={handleNewSchedule}
                     data-testid="tile-new-schedule"
                   >
-                    <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                    <div className="w-16 h-16 rounded-[18px] bg-white/30 dark:bg-white/15 backdrop-blur-md border border-white/30 flex items-center justify-center mx-auto mb-5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.4)]">
                       {createBatchMutation.isPending ? (
-                        <Loader2 className="w-7 h-7 text-primary animate-spin" />
+                        <Loader2 className="w-7 h-7 text-white animate-spin" />
                       ) : (
-                        <Plus className="w-7 h-7 text-primary" />
+                        <Plus className="w-7 h-7 text-white drop-shadow-sm" />
                       )}
                     </div>
-                    <h3 className="font-bold text-sm mb-1" data-testid="text-tile-new-schedule">New Schedule</h3>
-                    <p className="text-[11px] text-muted-foreground leading-snug">Create a new patient screening schedule</p>
+                    <h3 className="font-semibold text-sm mb-1.5 text-white drop-shadow-sm" data-testid="text-tile-new-schedule">New Schedule</h3>
+                    <p className="text-[11px] text-white/60 font-light leading-snug tracking-wide">Create a new patient screening schedule</p>
                   </Card>
 
                   <Card
-                    className="group cursor-pointer bg-white/95 dark:bg-card/95 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-shadow duration-200 p-6 text-center"
+                    className="group cursor-pointer rounded-3xl bg-white/20 dark:bg-white/10 backdrop-blur-xl border border-white/30 dark:border-white/15 shadow-[0_8px_32px_rgba(0,0,0,0.08)] hover:shadow-[0_12px_40px_rgba(0,0,0,0.15)] hover:bg-white/30 dark:hover:bg-white/15 transition-all duration-300 p-7 text-center"
                     onClick={() => setView("history")}
                     data-testid="tile-patient-database"
                   >
-                    <div className="w-14 h-14 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto mb-4">
-                      <Users className="w-7 h-7 text-blue-600" />
+                    <div className="w-16 h-16 rounded-[18px] bg-blue-400/20 dark:bg-blue-400/15 backdrop-blur-md border border-blue-300/30 flex items-center justify-center mx-auto mb-5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.4)]">
+                      <Users className="w-7 h-7 text-white drop-shadow-sm" />
                     </div>
-                    <h3 className="font-bold text-sm mb-1" data-testid="text-tile-patient-database">Patient Database</h3>
-                    <p className="text-[11px] text-muted-foreground leading-snug">View and manage patient test history</p>
+                    <h3 className="font-semibold text-sm mb-1.5 text-white drop-shadow-sm" data-testid="text-tile-patient-database">Patient Database</h3>
+                    <p className="text-[11px] text-white/60 font-light leading-snug tracking-wide">View and manage patient test history</p>
                   </Card>
 
                   <Card
-                    className="bg-white/95 dark:bg-card/95 backdrop-blur-sm border-0 shadow-lg p-6 text-center"
+                    className="rounded-3xl bg-white/20 dark:bg-white/10 backdrop-blur-xl border border-white/30 dark:border-white/15 shadow-[0_8px_32px_rgba(0,0,0,0.08)] p-7 text-center"
                     data-testid="tile-billing"
                   >
-                    <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 flex items-center justify-center mx-auto mb-4">
-                      <DollarSign className="w-7 h-7 text-emerald-600" />
+                    <div className="w-16 h-16 rounded-[18px] bg-emerald-400/20 dark:bg-emerald-400/15 backdrop-blur-md border border-emerald-300/30 flex items-center justify-center mx-auto mb-5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.4)]">
+                      <DollarSign className="w-7 h-7 text-white drop-shadow-sm" />
                     </div>
-                    <h3 className="font-bold text-sm mb-3" data-testid="text-tile-billing">Billing</h3>
+                    <h3 className="font-semibold text-sm mb-4 text-white drop-shadow-sm" data-testid="text-tile-billing">Billing</h3>
                     <div className="space-y-2">
                       <Button
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
-                        className="w-full justify-start gap-2"
+                        className="w-full justify-start gap-2.5 rounded-xl bg-white/15 border border-white/20 text-white/90 hover:bg-white/25 hover:text-white backdrop-blur-md"
                         data-testid="button-billing-nwpg"
                       >
-                        <Building2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                        NWPG
+                        <Building2 className="w-4 h-4 flex-shrink-0 opacity-70" />
+                        <span className="text-xs font-medium tracking-wide">NWPG</span>
                       </Button>
                       <Button
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
-                        className="w-full justify-start gap-2"
+                        className="w-full justify-start gap-2.5 rounded-xl bg-white/15 border border-white/20 text-white/90 hover:bg-white/25 hover:text-white backdrop-blur-md"
                         data-testid="button-billing-taylor"
                       >
-                        <Building2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                        Taylor Family Practice
+                        <Building2 className="w-4 h-4 flex-shrink-0 opacity-70" />
+                        <span className="text-xs font-medium tracking-wide">Taylor Family Practice</span>
                       </Button>
                     </div>
                   </Card>
                 </div>
 
                 {batches.length > 0 && (
-                  <div className="mt-4 text-center">
+                  <div className="mt-6 text-center">
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
                       onClick={() => setSidebarOpen(true)}
-                      className="gap-2 bg-white/80 dark:bg-card/80 backdrop-blur-sm border-white/30 text-slate-700 dark:text-foreground hover:bg-white/95"
+                      className="gap-2 rounded-full bg-white/15 backdrop-blur-xl border border-white/25 text-white/80 hover:bg-white/25 hover:text-white px-5"
                       data-testid="button-view-history"
                     >
                       <Clock className="w-3.5 h-3.5" />
