@@ -48,6 +48,7 @@ export const patientScreenings = pgTable("patient_screenings", {
   notes: text("notes"),
   qualifyingTests: text("qualifying_tests").array(),
   reasoning: jsonb("reasoning"),
+  cooldownTests: jsonb("cooldown_tests"),
   status: text("status").notNull().default("pending"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -59,6 +60,24 @@ export const insertPatientScreeningSchema = createInsertSchema(patientScreenings
 
 export type PatientScreening = typeof patientScreenings.$inferSelect;
 export type InsertPatientScreening = z.infer<typeof insertPatientScreeningSchema>;
+
+export const patientTestHistory = pgTable("patient_test_history", {
+  id: serial("id").primaryKey(),
+  patientName: text("patient_name").notNull(),
+  testName: text("test_name").notNull(),
+  dateOfService: text("date_of_service").notNull(),
+  insuranceType: text("insurance_type").notNull().default("ppo"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertTestHistorySchema = createInsertSchema(patientTestHistory).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type PatientTestHistory = typeof patientTestHistory.$inferSelect;
+export type InsertTestHistory = z.infer<typeof insertTestHistorySchema>;
 
 export const testReasoningSchema = z.object({
   clinician_understanding: z.string(),

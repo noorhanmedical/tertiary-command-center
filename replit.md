@@ -4,6 +4,7 @@
 AI-powered patient screening application that analyzes clinical data (schedules, past medical history, medications, notes) to qualify patients for diagnostic tests: BrainWave (EEG), VitalWave (ABI), Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Upper Extremity Arterial Doppler (93930), Abdominal Aortic Aneurysm Duplex (93978), Stress Echocardiogram (93350), Lower Extremity Venous Duplex (93971), and Upper Extremity Venous Duplex (93970). The system uses OpenAI GPT-5.2 for aggressive qualification - it qualifies patients for every test with any reasonable clinical justification.
 
 ## Recent Changes
+- 2026-03-01: Added patient test history database with cooldown enforcement (6mo PPO, 12mo Medicare); OpenAI-powered name matching and history import parsing; COOLDOWN column in final schedule; Patient History management UI in sidebar
 - 2026-03-01: Integrated richer AI qualification logic: confidence levels (high/medium/low), qualifying factors, ICD-10 codes per test; rewritten prompt with explicit lenient qualification rules; temperature 0.2; frontend displays confidence badges, factor pills, and ICD-10 badges
 - 2026-02-18: Renamed all user-facing "batch" references to "schedule"; redesigned home page with collapsible sidebar for schedule history
 - 2026-02-17: Reworked to 3-step draft workflow: (1) Build schedule by adding patients, (2) Edit Dx/Hx/Rx per patient, (3) Analyze for ancillaries
@@ -43,9 +44,14 @@ AI-powered patient screening application that analyzes clinical data (schedules,
 - `GET /api/screening-batches/:id` - Get schedule with patients
 - `DELETE /api/screening-batches/:id` - Delete a schedule
 - `GET /api/screening-batches/:id/export` - Export results as CSV
+- `GET /api/test-history` - List all test history records
+- `POST /api/test-history` - Add a single test history record
+- `POST /api/test-history/import` - Import test history from file or pasted text (AI-parsed)
+- `DELETE /api/test-history/:id` - Delete a test history record
+- `DELETE /api/test-history` - Clear all test history
 
 ## Key Files
-- `shared/schema.ts` - Data models (screeningBatches, patientScreenings, testReasoningSchema)
+- `shared/schema.ts` - Data models (screeningBatches, patientScreenings, patientTestHistory, testReasoningSchema)
 - `server/routes.ts` - API routes with file upload, Zod validation, AI screening, export
 - `server/storage.ts` - Database CRUD operations
 - `client/src/pages/home.tsx` - Main UI with sidebar, schedule builder, patient editing, results view
@@ -59,7 +65,9 @@ AI-powered patient screening application that analyzes clinical data (schedules,
 - Input card order: Upload File, Paste List, Manual Entry
 - Patient list section titled "Schedule Generator"
 - 3-step workflow: add patients -> add clinical data -> generate
-- Output format: TIME, NAME, AGE, GENDER, Dx, Hx, Rx, QUALIFYING TESTS, QUALIFYING IMAGING
+- Output format: TIME, NAME, AGE, GENDER, Dx, Hx, Rx, QUALIFYING TESTS, QUALIFYING IMAGING, COOLDOWN
+- Cooldown enforcement: 6 months for PPO, 12 months for Medicare insurance
+- Patient test history: importable from files/paste, managed via sidebar "Patient History" section
 - Color-coded ancillary cards: BrainWave=purple, VitalWave=red, Ultrasounds=green
 - 11 qualifying tests: BrainWave, VitalWave, Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Upper Extremity Arterial Doppler (93930), Abdominal Aortic Aneurysm Duplex (93978), Stress Echocardiogram (93350), Lower Extremity Venous Duplex (93971), Upper Extremity Venous Duplex (93970)
 - No FibroScan, no Thyroid US

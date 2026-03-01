@@ -17,6 +17,14 @@ const createBatchSchema = z.object({
   name: z.string().optional(),
 });
 
+const addTestHistorySchema = z.object({
+  patientName: z.string(),
+  testName: z.string(),
+  dateOfService: z.string(),
+  insuranceType: z.string().default("ppo"),
+  notes: z.string().optional(),
+});
+
 const addPatientSchema = z.object({
   name: z.string().default(""),
   time: z.string().optional(),
@@ -285,6 +293,110 @@ async function screenPatientsWithAI(patients: { name: string; time?: string | nu
   }
 
   return results;
+}
+
+async function checkCooldownsForPatients(
+  patients: { name: string; qualifyingTests: string[] }[]
+): Promise<Record<string, { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[]>> {
+  const allHistory = await storage.getAllTestHistory();
+  if (allHistory.length === 0) return {};
+
+  const historyText = allHistory.map(h =>
+    `${h.patientName} | ${h.testName} | ${h.dateOfService} | ${h.insuranceType}`
+  ).join("\n");
+
+  const patientsText = patients.map(p =>
+    `${p.name}: [${p.qualifyingTests.join(", ")}]`
+  ).join("\n");
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `You are a patient name matching and cooldown checking assistant. You will be given:
+1. A database of historical patient test records (name | test | date | insurance_type)
+2. A list of patients with their currently qualifying tests
+
+Your job is to match patients by name (fuzzy matching - handle "Last, First" vs "First Last", nicknames, minor spelling differences) and determine which qualifying tests have been done within the cooldown period.
+
+COOLDOWN RULES:
+- PPO insurance: 6 month cooldown from date of service
+- Medicare insurance: 12 month cooldown from date of service
+- Today's date is: ${new Date().toISOString().split('T')[0]}
+
+TEST NAME MATCHING:
+- "BrainWave" in history matches "BrainWave" in qualifying tests
+- "VitalWave" or "VitalScan" in history matches "VitalWave" in qualifying tests
+- Any ultrasound test name should be matched to the specific qualifying test (e.g., "Bilateral Carotid Duplex", "Echocardiogram", "Renal Artery Doppler", etc.)
+- "Ultrasound" in history could match any ultrasound qualifying test - list all that apply
+
+Return a JSON object where keys are the EXACT patient names from the qualifying tests list, and values are arrays of cooldown violations:
+{
+  "Patient Name": [
+    {
+      "test": "exact test name from qualifying tests",
+      "lastDate": "YYYY-MM-DD",
+      "insuranceType": "ppo or medicare",
+      "cooldownMonths": 6 or 12
+    }
+  ]
+}
+
+Only include patients who have cooldown violations. If no violations found, return empty object {}.`
+      },
+      {
+        role: "user",
+        content: `HISTORICAL TEST RECORDS:\n${historyText}\n\nPATIENTS TO CHECK:\n${patientsText}`
+      }
+    ],
+    temperature: 0.1,
+    response_format: { type: "json_object" },
+  });
+
+  try {
+    return JSON.parse(response.choices[0]?.message?.content || "{}");
+  } catch {
+    console.error("Failed to parse cooldown check response");
+    return {};
+  }
+}
+
+async function parseHistoryImport(text: string): Promise<{ patientName: string; testName: string; dateOfService: string; insuranceType: string }[]> {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `You are a clinical data parser. You will receive raw text data from a patient test history spreadsheet/database. Extract patient records with:
+- patientName: The patient's full name (Last, First format)
+- testName: The type of test performed. Look at the section header or context to determine the test type. Common tests: BrainWave, VitalWave, Bilateral Carotid Duplex, Echocardiogram TTE, Renal Artery Doppler, Lower Extremity Arterial Doppler, Upper Extremity Arterial Doppler, Abdominal Aortic Aneurysm Duplex, Stress Echocardiogram, Lower Extremity Venous Duplex, Upper Extremity Venous Duplex
+- dateOfService: The date in YYYY-MM-DD format
+- insuranceType: "medicare" or "ppo". Look for insurance info in the record. If it mentions Medicare, HMO Medicare, use "medicare". Otherwise default to "ppo".
+
+The data is tab-separated and may have multiple columns. Focus on extracting the Date of Service (first column usually), Patient name (second column), and any insurance information available.
+
+Return JSON: { "records": [ { "patientName": "...", "testName": "...", "dateOfService": "...", "insuranceType": "..." } ] }
+
+Skip rows that are headers, empty, or don't contain valid patient data (no date or no name).`
+      },
+      {
+        role: "user",
+        content: text.substring(0, 30000)
+      }
+    ],
+    temperature: 0.1,
+    response_format: { type: "json_object" },
+    max_completion_tokens: 16000,
+  });
+
+  try {
+    const parsed = JSON.parse(response.choices[0]?.message?.content || '{"records":[]}');
+    return parsed.records || [];
+  } catch {
+    console.error("Failed to parse history import response");
+    return [];
+  }
 }
 
 export async function registerRoutes(
@@ -618,9 +730,25 @@ Respond ONLY with a valid JSON array, no markdown fences.`
         (r) => r.name && r.name.toLowerCase().trim() === patient.name.toLowerCase().trim()
       );
 
+      const qualTests = match?.qualifyingTests || [];
+
+      let cooldownData: any = null;
+      if (qualTests.length > 0) {
+        try {
+          const cooldowns = await checkCooldownsForPatients([{ name: patient.name, qualifyingTests: qualTests }]);
+          const patientCooldowns = cooldowns[patient.name];
+          if (patientCooldowns && patientCooldowns.length > 0) {
+            cooldownData = patientCooldowns;
+          }
+        } catch (e) {
+          console.error("Cooldown check failed:", e);
+        }
+      }
+
       const updated = await storage.updatePatientScreening(id, {
-        qualifyingTests: match?.qualifyingTests || [],
+        qualifyingTests: qualTests,
         reasoning: match?.reasoning || {},
+        cooldownTests: cooldownData,
         diagnoses: match?.diagnoses || patient.diagnoses || null,
         history: match?.history || patient.history || null,
         medications: match?.medications || patient.medications || null,
@@ -660,15 +788,37 @@ Respond ONLY with a valid JSON array, no markdown fences.`
 
       const aiResults = await screenPatientsWithAI(patientData);
 
+      const patientsForCooldown: { name: string; qualifyingTests: string[] }[] = [];
+      const matchMap = new Map<number, any>();
+
       for (const patient of patients) {
         const match = aiResults.find(
           (r) => r.name && r.name.toLowerCase().trim() === patient.name.toLowerCase().trim()
         );
+        matchMap.set(patient.id, match);
+        if (match?.qualifyingTests?.length > 0) {
+          patientsForCooldown.push({ name: patient.name, qualifyingTests: match.qualifyingTests });
+        }
+      }
+
+      let cooldownResults: Record<string, any[]> = {};
+      if (patientsForCooldown.length > 0) {
+        try {
+          cooldownResults = await checkCooldownsForPatients(patientsForCooldown);
+        } catch (e) {
+          console.error("Batch cooldown check failed:", e);
+        }
+      }
+
+      for (const patient of patients) {
+        const match = matchMap.get(patient.id);
+        const cooldowns = cooldownResults[patient.name];
 
         if (match) {
           await storage.updatePatientScreening(patient.id, {
             qualifyingTests: match.qualifyingTests || [],
             reasoning: match.reasoning || {},
+            cooldownTests: cooldowns && cooldowns.length > 0 ? cooldowns : null,
             diagnoses: match.diagnoses || patient.diagnoses || null,
             history: match.history || patient.history || null,
             medications: match.medications || patient.medications || null,
@@ -680,6 +830,7 @@ Respond ONLY with a valid JSON array, no markdown fences.`
           await storage.updatePatientScreening(patient.id, {
             qualifyingTests: [],
             reasoning: {},
+            cooldownTests: null,
             status: "completed",
           });
         }
@@ -758,6 +909,90 @@ Respond ONLY with a valid JSON array, no markdown fences.`
       res.setHeader("Content-Type", "text/csv");
       res.setHeader("Content-Disposition", `attachment; filename="screening-${id}.csv"`);
       res.send(csvHeader + csvRows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/test-history", async (_req, res) => {
+    try {
+      const records = await storage.getAllTestHistory();
+      res.json(records);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/test-history", async (req, res) => {
+    try {
+      const parsed = addTestHistorySchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      const record = await storage.createTestHistory(parsed.data);
+      res.json(record);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/test-history/import", upload.single("file"), async (req, res) => {
+    try {
+      let text = "";
+
+      if (req.file) {
+        const ext = req.file.originalname.toLowerCase();
+        if (ext.endsWith(".xlsx") || ext.endsWith(".xls")) {
+          const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+          for (const sheetName of workbook.SheetNames) {
+            const sheet = workbook.Sheets[sheetName];
+            text += sheetName + "\n" + XLSX.utils.sheet_to_csv(sheet) + "\n\n";
+          }
+        } else if (ext.endsWith(".csv")) {
+          text = req.file.buffer.toString("utf-8");
+        } else {
+          text = req.file.buffer.toString("utf-8");
+        }
+      } else if (req.body.text) {
+        text = req.body.text;
+      } else {
+        return res.status(400).json({ error: "No file or text provided" });
+      }
+
+      if (!text.trim()) return res.status(400).json({ error: "Empty data" });
+
+      const records = await parseHistoryImport(text);
+      if (records.length === 0) return res.json({ imported: 0, records: [] });
+
+      const validRecords = records
+        .filter(r => r.patientName && r.testName && r.dateOfService)
+        .map(r => ({
+          patientName: r.patientName,
+          testName: r.testName,
+          dateOfService: r.dateOfService,
+          insuranceType: r.insuranceType || "ppo",
+        }));
+
+      const created = await storage.createTestHistoryBulk(validRecords);
+      res.json({ imported: created.length, records: created });
+    } catch (error: any) {
+      console.error("Test history import error:", error);
+      res.status(500).json({ error: error.message || "Import failed" });
+    }
+  });
+
+  app.delete("/api/test-history/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteTestHistory(id);
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/test-history", async (_req, res) => {
+    try {
+      await storage.deleteAllTestHistory();
+      res.status(204).send();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

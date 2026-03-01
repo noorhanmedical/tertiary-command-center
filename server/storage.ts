@@ -2,15 +2,18 @@ import { db } from "./db";
 import {
   screeningBatches,
   patientScreenings,
+  patientTestHistory,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
   type InsertPatientScreening,
+  type PatientTestHistory,
+  type InsertTestHistory,
   users,
   type User,
   type InsertUser,
 } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, ilike, sql } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -28,6 +31,13 @@ export interface IStorage {
   getPatientScreening(id: number): Promise<PatientScreening | undefined>;
   updatePatientScreening(id: number, updates: Partial<InsertPatientScreening>): Promise<PatientScreening | undefined>;
   deletePatientScreening(id: number): Promise<void>;
+
+  createTestHistory(record: InsertTestHistory): Promise<PatientTestHistory>;
+  createTestHistoryBulk(records: InsertTestHistory[]): Promise<PatientTestHistory[]>;
+  getAllTestHistory(): Promise<PatientTestHistory[]>;
+  searchTestHistory(nameQuery: string): Promise<PatientTestHistory[]>;
+  deleteTestHistory(id: number): Promise<void>;
+  deleteAllTestHistory(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -91,6 +101,35 @@ export class DatabaseStorage implements IStorage {
 
   async deletePatientScreening(id: number): Promise<void> {
     await db.delete(patientScreenings).where(eq(patientScreenings.id, id));
+  }
+
+  async createTestHistory(record: InsertTestHistory): Promise<PatientTestHistory> {
+    const [result] = await db.insert(patientTestHistory).values(record).returning();
+    return result;
+  }
+
+  async createTestHistoryBulk(records: InsertTestHistory[]): Promise<PatientTestHistory[]> {
+    if (records.length === 0) return [];
+    const results = await db.insert(patientTestHistory).values(records).returning();
+    return results;
+  }
+
+  async getAllTestHistory(): Promise<PatientTestHistory[]> {
+    return db.select().from(patientTestHistory).orderBy(desc(patientTestHistory.createdAt));
+  }
+
+  async searchTestHistory(nameQuery: string): Promise<PatientTestHistory[]> {
+    return db.select().from(patientTestHistory)
+      .where(ilike(patientTestHistory.patientName, `%${nameQuery}%`))
+      .orderBy(desc(patientTestHistory.dateOfService));
+  }
+
+  async deleteTestHistory(id: number): Promise<void> {
+    await db.delete(patientTestHistory).where(eq(patientTestHistory.id, id));
+  }
+
+  async deleteAllTestHistory(): Promise<void> {
+    await db.delete(patientTestHistory);
   }
 }
 

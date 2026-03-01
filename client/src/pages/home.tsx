@@ -43,6 +43,10 @@ import {
   X,
   Clock,
   PanelLeft,
+  Database,
+  AlertTriangle,
+  ShieldAlert,
+  Search,
 } from "lucide-react";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 
@@ -132,11 +136,13 @@ function getBadgeColor(cat: string): string {
 
 export default function Home() {
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
-  const [view, setView] = useState<"home" | "build" | "results">("home");
+  const [view, setView] = useState<"home" | "build" | "results" | "history">("home");
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
   const [pasteText, setPasteText] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [analyzingPatients, setAnalyzingPatients] = useState<Set<number>>(new Set());
+  const [historyPasteText, setHistoryPasteText] = useState("");
+  const [historySearch, setHistorySearch] = useState("");
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -149,6 +155,62 @@ export default function Home() {
   const { data: selectedBatch, isLoading: batchLoading } = useQuery<ScreeningBatchWithPatients>({
     queryKey: ["/api/screening-batches", selectedBatchId],
     enabled: !!selectedBatchId,
+  });
+
+  const { data: testHistory = [], isLoading: historyLoading } = useQuery<any[]>({
+    queryKey: ["/api/test-history"],
+    enabled: view === "history",
+  });
+
+  const importHistoryMutation = useMutation({
+    mutationFn: async (text: string) => {
+      const res = await apiRequest("POST", "/api/test-history/import", { text });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/test-history"] });
+      toast({ title: `Imported ${data.imported} records` });
+      setHistoryPasteText("");
+    },
+    onError: (e: any) => {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const importHistoryFileMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/test-history/import", { method: "POST", body: formData });
+      if (!res.ok) throw new Error((await res.json()).error || "Import failed");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/test-history"] });
+      toast({ title: `Imported ${data.imported} records` });
+    },
+    onError: (e: any) => {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const deleteHistoryMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/test-history/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/test-history"] });
+    },
+  });
+
+  const clearHistoryMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", "/api/test-history");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/test-history"] });
+      toast({ title: "All history cleared" });
+    },
   });
 
   const createBatchMutation = useMutation({
@@ -321,6 +383,26 @@ export default function Home() {
       <Sidebar collapsible="offcanvas" data-testid="sidebar-history">
         <SidebarContent>
           <SidebarGroup>
+            <SidebarGroupLabel>Tools</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    onClick={() => {
+                      setView("history");
+                      setSidebarOpen(false);
+                    }}
+                    isActive={view === "history"}
+                    data-testid="sidebar-patient-history"
+                  >
+                    <Database className="w-4 h-4 shrink-0" />
+                    <span className="text-sm font-medium">Patient History</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+          <SidebarGroup>
             <SidebarGroupLabel>Schedule History</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
@@ -377,7 +459,157 @@ export default function Home() {
           style={{ backgroundImage: `url(${heroBg})` }}
         />
         <div className="absolute inset-0 bg-background/30 dark:bg-background/60" />
-        {view === "results" && selectedBatchId ? (
+        {view === "history" ? (
+          <div className="flex flex-col h-full relative z-10">
+            <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
+              <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
+                <div className="flex items-center gap-2">
+                  <SidebarTrigger data-testid="button-sidebar-toggle-history" />
+                  <div>
+                    <h1 className="text-base font-bold tracking-tight flex items-center gap-2">
+                      <Database className="w-4 h-4" />
+                      Patient Test History
+                    </h1>
+                    <p className="text-xs text-muted-foreground">{testHistory.length} records</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {testHistory.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (confirm("Clear all test history records?")) clearHistoryMutation.mutate();
+                      }}
+                      className="gap-1.5 text-red-600"
+                      data-testid="button-clear-history"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Clear All
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </header>
+            <div className="flex-1 overflow-auto p-4">
+              <div className="max-w-5xl mx-auto space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Card className="p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Upload className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm font-semibold">Upload File</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-2">Import from Excel, CSV, or text files</p>
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv,.txt"
+                      className="text-xs"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) importHistoryFileMutation.mutate(file);
+                        e.target.value = "";
+                      }}
+                      data-testid="input-history-file"
+                    />
+                    {importHistoryFileMutation.isPending && (
+                      <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Importing...
+                      </div>
+                    )}
+                  </Card>
+                  <Card className="p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FileText className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm font-semibold">Paste Data</span>
+                    </div>
+                    <Textarea
+                      placeholder="Paste patient test history data here..."
+                      value={historyPasteText}
+                      onChange={(e) => setHistoryPasteText(e.target.value)}
+                      className="text-xs min-h-[80px] mb-2"
+                      data-testid="input-history-paste"
+                    />
+                    <Button
+                      size="sm"
+                      disabled={!historyPasteText.trim() || importHistoryMutation.isPending}
+                      onClick={() => importHistoryMutation.mutate(historyPasteText)}
+                      className="gap-1.5"
+                      data-testid="button-import-history"
+                    >
+                      {importHistoryMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                      Import
+                    </Button>
+                  </Card>
+                </div>
+
+                {testHistory.length > 0 && (
+                  <Card className="p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Search className="w-4 h-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search by patient name..."
+                        value={historySearch}
+                        onChange={(e) => setHistorySearch(e.target.value)}
+                        className="text-xs h-8 max-w-xs"
+                        data-testid="input-history-search"
+                      />
+                    </div>
+                    <div className="overflow-auto max-h-[60vh]">
+                      <table className="w-full border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-100 dark:bg-muted">
+                            <th className="border px-3 py-2 text-left font-semibold">Patient Name</th>
+                            <th className="border px-3 py-2 text-left font-semibold">Test</th>
+                            <th className="border px-3 py-2 text-left font-semibold">Date of Service</th>
+                            <th className="border px-3 py-2 text-left font-semibold">Insurance</th>
+                            <th className="border px-3 py-2 text-left font-semibold w-10"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {testHistory
+                            .filter((r) => !historySearch || r.patientName.toLowerCase().includes(historySearch.toLowerCase()))
+                            .map((record) => (
+                              <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-muted/30" data-testid={`row-history-${record.id}`}>
+                                <td className="border px-3 py-1.5">{record.patientName}</td>
+                                <td className="border px-3 py-1.5">{record.testName}</td>
+                                <td className="border px-3 py-1.5">{record.dateOfService}</td>
+                                <td className="border px-3 py-1.5">
+                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                    record.insuranceType === "medicare"
+                                      ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                                      : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
+                                  }`}>
+                                    {record.insuranceType.toUpperCase()}
+                                  </span>
+                                </td>
+                                <td className="border px-3 py-1.5">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => deleteHistoryMutation.mutate(record.id)}
+                                    data-testid={`button-delete-history-${record.id}`}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </Button>
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                )}
+
+                {historyLoading && (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : view === "results" && selectedBatchId ? (
           <ResultsView
             batch={selectedBatch}
             patients={patients}
@@ -832,11 +1064,13 @@ function ResultsView({
                   <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">Rx</th>
                   <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">QUALIFYING TESTS</th>
                   <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">QUALIFYING IMAGING</th>
+                  <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">COOLDOWN</th>
                 </tr>
               </thead>
               {patients.map((patient, idx) => {
                   const allTests = patient.qualifyingTests || [];
                   const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
+                  const cooldowns = (patient.cooldownTests || []) as { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[];
                   const qualTests = allTests.filter((t) => !isImagingTest(t));
                   const qualImaging = allTests.filter((t) => isImagingTest(t));
                   const isExpanded = expandedPatient === patient.id;
@@ -886,10 +1120,20 @@ function ResultsView({
                             }) : <span className="text-muted-foreground">-</span>}
                           </div>
                         </td>
+                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top" data-testid={`cell-cooldown-${patient.id}`}>
+                          <div className="flex flex-col gap-1">
+                            {cooldowns.length > 0 ? cooldowns.map((cd, i) => (
+                              <span key={i} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300" data-testid={`badge-cooldown-${patient.id}-${i}`}>
+                                <ShieldAlert className="w-3 h-3 shrink-0" />
+                                {cd.test} ({cd.lastDate}, {cd.insuranceType.toUpperCase()} {cd.cooldownMonths}mo)
+                              </span>
+                            )) : <span className="text-muted-foreground">-</span>}
+                          </div>
+                        </td>
                       </tr>
                       {isExpanded && allTests.length > 0 && (
                         <tr data-testid={`row-expanded-${patient.id}`}>
-                          <td colSpan={9} className="border border-slate-200 dark:border-slate-700 p-0">
+                          <td colSpan={10} className="border border-slate-200 dark:border-slate-700 p-0">
                             <div className="bg-slate-50/80 dark:bg-muted/30 p-4">
                               <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
                                 <h3 className="font-semibold text-sm">{patient.name} - Ancillary Details</h3>
