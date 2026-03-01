@@ -22,6 +22,7 @@ const addTestHistorySchema = z.object({
   testName: z.string(),
   dateOfService: z.string(),
   insuranceType: z.string().default("ppo"),
+  clinic: z.string().default("NWPG"),
   notes: z.string().optional(),
 });
 
@@ -937,6 +938,7 @@ Respond ONLY with a valid JSON array, no markdown fences.`
   app.post("/api/test-history/import", upload.single("file"), async (req, res) => {
     try {
       let text = "";
+      const clinic = req.body.clinic || "NWPG";
 
       if (req.file) {
         const ext = req.file.originalname.toLowerCase();
@@ -969,6 +971,7 @@ Respond ONLY with a valid JSON array, no markdown fences.`
           testName: r.testName,
           dateOfService: r.dateOfService,
           insuranceType: r.insuranceType || "ppo",
+          clinic,
         }));
 
       const created = await storage.createTestHistoryBulk(validRecords);

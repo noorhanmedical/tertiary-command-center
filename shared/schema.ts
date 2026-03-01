@@ -67,6 +67,7 @@ export const patientTestHistory = pgTable("patient_test_history", {
   testName: text("test_name").notNull(),
   dateOfService: text("date_of_service").notNull(),
   insuranceType: text("insurance_type").notNull().default("ppo"),
+  clinic: text("clinic").notNull().default("NWPG"),
   notes: text("notes"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });

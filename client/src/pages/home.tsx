@@ -47,8 +47,11 @@ import {
   AlertTriangle,
   ShieldAlert,
   Search,
+  Users,
+  DollarSign,
+  Building2,
 } from "lucide-react";
-import type { ScreeningBatch, PatientScreening } from "@shared/schema";
+import type { ScreeningBatch, PatientScreening, PatientTestHistory } from "@shared/schema";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[]; icd10_codes?: string[] };
@@ -157,7 +160,7 @@ export default function Home() {
     enabled: !!selectedBatchId,
   });
 
-  const { data: testHistory = [], isLoading: historyLoading } = useQuery<any[]>({
+  const { data: testHistory = [], isLoading: historyLoading } = useQuery<PatientTestHistory[]>({
     queryKey: ["/api/test-history"],
     enabled: view === "history",
   });
@@ -562,6 +565,7 @@ export default function Home() {
                             <th className="border px-3 py-2 text-left font-semibold">Test</th>
                             <th className="border px-3 py-2 text-left font-semibold">Date of Service</th>
                             <th className="border px-3 py-2 text-left font-semibold">Insurance</th>
+                            <th className="border px-3 py-2 text-left font-semibold">Clinic</th>
                             <th className="border px-3 py-2 text-left font-semibold w-10"></th>
                           </tr>
                         </thead>
@@ -580,6 +584,11 @@ export default function Home() {
                                       : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
                                   }`}>
                                     {record.insuranceType.toUpperCase()}
+                                  </span>
+                                </td>
+                                <td className="border px-3 py-1.5">
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                    {record.clinic || "NWPG"}
                                   </span>
                                 </td>
                                 <td className="border px-3 py-1.5">
@@ -817,44 +826,93 @@ export default function Home() {
             </header>
 
             <main className="relative z-10 flex-1 flex items-center justify-center">
-              <div className="max-w-lg w-full px-6">
+              <div className="max-w-2xl w-full px-6">
                 <div className="text-center mb-10">
                   <div className="w-20 h-20 rounded-full bg-white/95 dark:bg-card/95 flex items-center justify-center mx-auto mb-6 shadow-sm">
                     <Stethoscope className="w-10 h-10 text-primary" />
                   </div>
-                  <h2 className="text-3xl font-bold tracking-tight mb-3 text-slate-900 dark:text-foreground" data-testid="text-home-heading">
+                  <h2 className="text-3xl font-bold tracking-tight mb-3 text-white drop-shadow-lg" data-testid="text-home-heading">
                     Plexus Ancillary Screening
                   </h2>
-                  <p className="text-slate-600 dark:text-muted-foreground leading-relaxed">
+                  <p className="text-white/80 drop-shadow leading-relaxed">
                     Qualify patients for diagnostic ancillaries using AI-powered clinical analysis.
                   </p>
                 </div>
 
-                <div className="space-y-4">
-                  <Button
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <Card
+                    className={`group cursor-pointer bg-white/95 dark:bg-card/95 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-shadow duration-200 p-6 text-center ${createBatchMutation.isPending ? "pointer-events-none opacity-70" : ""}`}
                     onClick={handleNewSchedule}
-                    disabled={createBatchMutation.isPending}
-                    size="lg"
-                    className="w-full gap-2"
-                    data-testid="button-new-schedule"
+                    data-testid="tile-new-schedule"
                   >
-                    {createBatchMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    New Schedule
-                  </Button>
+                    <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                      {createBatchMutation.isPending ? (
+                        <Loader2 className="w-7 h-7 text-primary animate-spin" />
+                      ) : (
+                        <Plus className="w-7 h-7 text-primary" />
+                      )}
+                    </div>
+                    <h3 className="font-bold text-sm mb-1" data-testid="text-tile-new-schedule">New Schedule</h3>
+                    <p className="text-[11px] text-muted-foreground leading-snug">Create a new patient screening schedule</p>
+                  </Card>
 
-                  {batches.length > 0 && (
+                  <Card
+                    className="group cursor-pointer bg-white/95 dark:bg-card/95 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-shadow duration-200 p-6 text-center"
+                    onClick={() => setView("history")}
+                    data-testid="tile-patient-database"
+                  >
+                    <div className="w-14 h-14 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto mb-4">
+                      <Users className="w-7 h-7 text-blue-600" />
+                    </div>
+                    <h3 className="font-bold text-sm mb-1" data-testid="text-tile-patient-database">Patient Database</h3>
+                    <p className="text-[11px] text-muted-foreground leading-snug">View and manage patient test history</p>
+                  </Card>
+
+                  <Card
+                    className="bg-white/95 dark:bg-card/95 backdrop-blur-sm border-0 shadow-lg p-6 text-center"
+                    data-testid="tile-billing"
+                  >
+                    <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 flex items-center justify-center mx-auto mb-4">
+                      <DollarSign className="w-7 h-7 text-emerald-600" />
+                    </div>
+                    <h3 className="font-bold text-sm mb-3" data-testid="text-tile-billing">Billing</h3>
+                    <div className="space-y-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full justify-start gap-2"
+                        data-testid="button-billing-nwpg"
+                      >
+                        <Building2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                        NWPG
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full justify-start gap-2"
+                        data-testid="button-billing-taylor"
+                      >
+                        <Building2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                        Taylor Family Practice
+                      </Button>
+                    </div>
+                  </Card>
+                </div>
+
+                {batches.length > 0 && (
+                  <div className="mt-4 text-center">
                     <Button
                       variant="outline"
-                      size="lg"
+                      size="sm"
                       onClick={() => setSidebarOpen(true)}
-                      className="w-full gap-2 bg-white/95 dark:bg-card/95"
+                      className="gap-2 bg-white/80 dark:bg-card/80 backdrop-blur-sm border-white/30 text-slate-700 dark:text-foreground hover:bg-white/95"
                       data-testid="button-view-history"
                     >
-                      <Clock className="w-4 h-4" />
+                      <Clock className="w-3.5 h-3.5" />
                       Schedule History ({batches.length})
                     </Button>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </main>
           </div>
