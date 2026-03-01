@@ -47,7 +47,7 @@ import {
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
-type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string };
+type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[]; icd10_codes?: string[] };
 
 const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
 
@@ -929,11 +929,37 @@ function ResultsView({
                                           const reason = reasoning[test];
                                           const clinician = reason ? (typeof reason === "string" ? reason : reason.clinician_understanding) : null;
                                           const talking = reason ? (typeof reason === "string" ? null : reason.patient_talking_points) : null;
+                                          const confidence = reason && typeof reason !== "string" ? reason.confidence : null;
+                                          const qualifyingFactors = reason && typeof reason !== "string" ? reason.qualifying_factors : null;
+                                          const icd10Codes = reason && typeof reason !== "string" ? reason.icd10_codes : null;
+
+                                          const confidenceStyles: Record<string, string> = {
+                                            high: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+                                            medium: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+                                            low: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300",
+                                          };
 
                                           return (
                                             <div key={test} className="mb-3 last:mb-0">
-                                              {(cat === "ultrasound" || tests.length > 1) && (
-                                                <p className={`text-xs font-bold mb-1.5 ${style.accent}`}>{test}</p>
+                                              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                                {(cat === "ultrasound" || tests.length > 1) && (
+                                                  <p className={`text-xs font-bold ${style.accent}`}>{test}</p>
+                                                )}
+                                                {confidence && (
+                                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${confidenceStyles[confidence]}`} data-testid={`badge-confidence-${test}`}>
+                                                    {confidence.toUpperCase()}
+                                                  </span>
+                                                )}
+                                              </div>
+
+                                              {qualifyingFactors && qualifyingFactors.length > 0 && (
+                                                <div className="flex items-center gap-1 flex-wrap mb-2" data-testid={`factors-${test}`}>
+                                                  {qualifyingFactors.map((factor, idx) => (
+                                                    <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                                      {factor}
+                                                    </span>
+                                                  ))}
+                                                </div>
                                               )}
 
                                               {clinician && (
@@ -953,6 +979,17 @@ function ResultsView({
                                                     <span className="text-xs font-bold text-foreground tracking-wide">Patient Talking Points</span>
                                                   </div>
                                                   <p className="text-[11px] leading-relaxed">{talking}</p>
+                                                </div>
+                                              )}
+
+                                              {icd10Codes && icd10Codes.length > 0 && (
+                                                <div className="flex items-center gap-1 flex-wrap mt-1" data-testid={`icd10-${test}`}>
+                                                  <span className="text-[10px] text-muted-foreground font-medium mr-0.5">ICD-10:</span>
+                                                  {icd10Codes.map((code, idx) => (
+                                                    <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                                      {code}
+                                                    </span>
+                                                  ))}
                                                 </div>
                                               )}
 

@@ -4,6 +4,7 @@
 AI-powered patient screening application that analyzes clinical data (schedules, past medical history, medications, notes) to qualify patients for diagnostic tests: BrainWave (EEG), VitalWave (ABI), Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Upper Extremity Arterial Doppler (93930), Abdominal Aortic Aneurysm Duplex (93978), Stress Echocardiogram (93350), Lower Extremity Venous Duplex (93971), and Upper Extremity Venous Duplex (93970). The system uses OpenAI GPT-5.2 for aggressive qualification - it qualifies patients for every test with any reasonable clinical justification.
 
 ## Recent Changes
+- 2026-03-01: Integrated richer AI qualification logic: confidence levels (high/medium/low), qualifying factors, ICD-10 codes per test; rewritten prompt with explicit lenient qualification rules; temperature 0.2; frontend displays confidence badges, factor pills, and ICD-10 badges
 - 2026-02-18: Renamed all user-facing "batch" references to "schedule"; redesigned home page with collapsible sidebar for schedule history
 - 2026-02-17: Reworked to 3-step draft workflow: (1) Build schedule by adding patients, (2) Edit Dx/Hx/Rx per patient, (3) Analyze for ancillaries
 - 2026-02-17: iOS-style redesign with colored ancillary cards and split reasoning (Clinician Understanding + Patient Talking Points)

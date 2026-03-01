@@ -63,6 +63,9 @@ export type InsertPatientScreening = z.infer<typeof insertPatientScreeningSchema
 export const testReasoningSchema = z.object({
   clinician_understanding: z.string(),
   patient_talking_points: z.string(),
+  confidence: z.enum(["high", "medium", "low"]).optional(),
+  qualifying_factors: z.array(z.string()).optional(),
+  icd10_codes: z.array(z.string()).optional(),
 });
 
 export const patientScreeningResultSchema = z.object({
