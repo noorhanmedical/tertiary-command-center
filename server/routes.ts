@@ -240,8 +240,8 @@ async function screenPatientsWithAI(patients: { name: string; time?: string | nu
   const results: any[] = [];
 
   const patientChunks: typeof patients[] = [];
-  for (let i = 0; i < patients.length; i += 3) {
-    patientChunks.push(patients.slice(i, i + 3));
+  for (let i = 0; i < patients.length; i += 2) {
+    patientChunks.push(patients.slice(i, i + 2));
   }
 
   const chunkResults = await batchProcess(
@@ -273,14 +273,18 @@ async function screenPatientsWithAI(patients: { name: string; time?: string | nu
         ],
         temperature: 0.2,
         response_format: { type: "json_object" },
-        max_completion_tokens: 8192,
+        max_completion_tokens: 16384,
       });
 
       const content = response.choices[0]?.message?.content || "{}";
+      const finishReason = response.choices[0]?.finish_reason;
+      if (finishReason === "length") {
+        console.error(`AI response truncated for chunk with patients: ${chunk.map(p => p.name).join(", ")}`);
+      }
       try {
         return JSON.parse(content);
       } catch {
-        console.error("Failed to parse AI response:", content.substring(0, 200));
+        console.error(`Failed to parse AI response for patients: ${chunk.map(p => p.name).join(", ")}. First 300 chars: ${content.substring(0, 300)}`);
         return { patients: [] };
       }
     },
