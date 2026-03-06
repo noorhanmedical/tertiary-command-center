@@ -50,6 +50,8 @@ import {
   Users,
   DollarSign,
   Building2,
+  Share2,
+  Copy,
 } from "lucide-react";
 import type { ScreeningBatch, PatientScreening, PatientTestHistory } from "@shared/schema";
 
@@ -1128,6 +1130,21 @@ function ResultsView({
   expandedPatient: number | null;
   setExpandedPatient: (id: number | null) => void;
 }) {
+  const { toast } = useToast();
+  const [shareButtonText, setShareButtonText] = useState("Share");
+
+  const handleShare = useCallback(() => {
+    if (!batch) return;
+    const url = `${window.location.origin}/schedule/${batch.id}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setShareButtonText("Copied!");
+      toast({ title: "Link copied", description: "Share link copied to clipboard" });
+      setTimeout(() => setShareButtonText("Share"), 2000);
+    }).catch(() => {
+      toast({ title: "Copy failed", description: url, variant: "destructive" });
+    });
+  }, [batch, toast]);
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center relative z-10">
@@ -1138,231 +1155,223 @@ function ResultsView({
 
   return (
     <div className="flex flex-col h-full relative z-10">
-      <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
+      <header className="bg-white/80 backdrop-blur-xl sticky top-0 z-50 border-b border-slate-200/60">
         <StepTimeline current="results" onNavigate={onNavigate} canGoToResults={true} />
-        <div className="px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
+        <div className="px-8 lg:px-[10%] py-3 flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
             <SidebarTrigger data-testid="button-sidebar-toggle-results" />
             <div>
-              <h1 className="text-base font-bold tracking-tight" data-testid="text-results-title">{batch?.name} - Final Schedule</h1>
-              <p className="text-xs text-muted-foreground">{patients.length} patients screened</p>
+              <h1 className="text-base font-semibold tracking-tight" data-testid="text-results-title">{batch?.name} — Final Schedule</h1>
+              <p className="text-xs text-slate-500">{patients.length} patients screened</p>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <Button variant="outline" size="sm" onClick={onExport} className="gap-1.5" data-testid="button-export">
+            <Button variant="outline" size="sm" onClick={handleShare} className="gap-1.5 rounded-xl" data-testid="button-share">
+              {shareButtonText === "Copied!" ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />} {shareButtonText}
+            </Button>
+            <Button variant="outline" size="sm" onClick={onExport} className="gap-1.5 rounded-xl" data-testid="button-export">
               <Download className="w-3.5 h-3.5" /> Export CSV
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 overflow-auto">
-        <div className="px-2 py-4">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-xs" data-testid="table-final-schedule">
-              <thead>
-                <tr className="bg-[#2d4a3e] text-white">
-                  <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">TIME</th>
-                  <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">NAME</th>
-                  <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">AGE</th>
-                  <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">GENDER</th>
-                  <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">Dx</th>
-                  <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">Hx</th>
-                  <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">Rx</th>
-                  <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">QUALIFYING TESTS</th>
-                  <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">QUALIFYING IMAGING</th>
-                  <th className="border border-[#1e3a2e] px-3 py-2 text-left font-semibold whitespace-nowrap">COOLDOWN</th>
-                </tr>
-              </thead>
-              {patients.map((patient, idx) => {
-                  const allTests = patient.qualifyingTests || [];
-                  const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
-                  const cooldowns = (patient.cooldownTests || []) as { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[];
-                  const qualTests = allTests.filter((t) => !isImagingTest(t));
-                  const qualImaging = allTests.filter((t) => isImagingTest(t));
-                  const isExpanded = expandedPatient === patient.id;
-                  const rowBg = idx % 2 === 0 ? "bg-white dark:bg-card" : "bg-slate-50 dark:bg-card/80";
+      <main className="flex-1 overflow-auto bg-slate-50/50">
+        <div className="px-8 lg:px-[10%] py-6">
+          <div className="space-y-3" data-testid="table-final-schedule">
+            {patients.map((patient) => {
+              const allTests = patient.qualifyingTests || [];
+              const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
+              const qualTests = allTests.filter((t) => !isImagingTest(t));
+              const qualImaging = allTests.filter((t) => isImagingTest(t));
+              const isExpanded = expandedPatient === patient.id;
 
-                  return (
-                    <tbody key={patient.id}>
-                      <tr
-                        className={`${rowBg} cursor-pointer hover:bg-slate-100 dark:hover:bg-muted/50 transition-colors`}
-                        onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
-                        data-testid={`row-result-${patient.id}`}
-                      >
-                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">{patient.time || ""}</td>
-                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap font-medium align-top">{patient.name}</td>
-                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">{patient.age || ""}</td>
-                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 whitespace-nowrap align-top">{patient.gender || ""}</td>
-                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top max-w-[200px]">
-                          <div className="whitespace-pre-wrap break-words">{patient.diagnoses || ""}</div>
-                        </td>
-                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top max-w-[200px]">
-                          <div className="whitespace-pre-wrap break-words">{patient.history || ""}</div>
-                        </td>
-                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top max-w-[200px]">
-                          <div className="whitespace-pre-wrap break-words">{patient.medications || ""}</div>
-                        </td>
-                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top">
-                          <div className="flex flex-col gap-1">
-                            {qualTests.length > 0 ? qualTests.map((test) => {
-                              const cat = getAncillaryCategory(test);
-                              return (
-                                <span key={test} className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight ${getBadgeColor(cat)}`}>
-                                  {test}
-                                </span>
-                              );
-                            }) : <span className="text-muted-foreground">-</span>}
+              return (
+                <Card
+                  key={patient.id}
+                  className="rounded-2xl border-0 shadow-sm bg-white/85 backdrop-blur-sm overflow-hidden transition-shadow hover:shadow-md"
+                  data-testid={`row-result-${patient.id}`}
+                >
+                  <div
+                    className="p-4 cursor-pointer hover:bg-slate-50/60 transition-colors"
+                    onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-4 min-w-0 flex-1">
+                        {patient.time && (
+                          <span className="text-xs text-slate-400 font-medium shrink-0 mt-0.5 tabular-nums">{patient.time}</span>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="font-semibold text-sm text-slate-900 truncate">{patient.name}</p>
+                            <span className="text-[11px] text-slate-400">
+                              {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
+                            </span>
                           </div>
-                        </td>
-                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top">
-                          <div className="flex flex-col gap-1">
-                            {qualImaging.length > 0 ? qualImaging.map((test) => {
-                              const cat = getAncillaryCategory(test);
-                              return (
-                                <span key={test} className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight ${getBadgeColor(cat)}`}>
-                                  {test}
-                                </span>
-                              );
-                            }) : <span className="text-muted-foreground">-</span>}
-                          </div>
-                        </td>
-                        <td className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top" data-testid={`cell-cooldown-${patient.id}`}>
-                          <div className="flex flex-col gap-1">
-                            {cooldowns.length > 0 ? cooldowns.map((cd, i) => (
-                              <span key={i} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium leading-tight bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300" data-testid={`badge-cooldown-${patient.id}-${i}`}>
-                                <ShieldAlert className="w-3 h-3 shrink-0" />
-                                {cd.test} ({cd.lastDate}, {cd.insuranceType.toUpperCase()} {cd.cooldownMonths}mo)
+                          <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                            {patient.diagnoses && (
+                              <span className="truncate max-w-[200px]" title={patient.diagnoses}>
+                                <span className="font-semibold text-slate-600">Dx:</span> {patient.diagnoses}
                               </span>
-                            )) : <span className="text-muted-foreground">-</span>}
+                            )}
+                            {patient.history && (
+                              <span className="truncate max-w-[160px]" title={patient.history}>
+                                <span className="font-semibold text-slate-600">Hx:</span> {patient.history}
+                              </span>
+                            )}
+                            {patient.medications && (
+                              <span className="truncate max-w-[160px]" title={patient.medications}>
+                                <span className="font-semibold text-slate-600">Rx:</span> {patient.medications}
+                              </span>
+                            )}
                           </div>
-                        </td>
-                      </tr>
-                      {isExpanded && allTests.length > 0 && (
-                        <tr data-testid={`row-expanded-${patient.id}`}>
-                          <td colSpan={10} className="border border-slate-200 dark:border-slate-700 p-0">
-                            <div className="bg-slate-50/80 dark:bg-muted/30 p-4">
-                              <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-                                <h3 className="font-semibold text-sm">{patient.name} - Ancillary Details</h3>
-                                <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); setExpandedPatient(null); }} data-testid="button-close-detail">
-                                  <X className="w-4 h-4" />
-                                </Button>
-                              </div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                {(() => {
-                                  const grouped: Record<string, string[]> = {};
-                                  for (const test of allTests) {
-                                    const cat = getAncillaryCategory(test);
-                                    if (!grouped[cat]) grouped[cat] = [];
-                                    grouped[cat].push(test);
-                                  }
-                                  const categoryOrder = ["brainwave", "vitalwave", "ultrasound", "other"];
-                                  return categoryOrder.filter((c) => grouped[c]).map((cat) => {
-                                    const tests = grouped[cat];
-                                    const style = categoryStyles[cat];
-                                    const IconComp = categoryIcons[cat];
-                                    return (
-                                      <div key={cat} className={`rounded-md border ${style.bg} ${style.border} p-3`} data-testid={`card-ancillary-${cat}`}>
-                                        <div className="flex items-center gap-2 mb-3">
-                                          <IconComp className={`w-5 h-5 ${style.icon}`} />
-                                          <span className={`font-bold text-sm ${style.accent}`}>{categoryLabels[cat]}</span>
-                                        </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-[340px]">
+                          {qualTests.map((test) => (
+                            <span key={test} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor(getAncillaryCategory(test))}`}>
+                              {test}
+                            </span>
+                          ))}
+                          {qualImaging.length > 0 && (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor("ultrasound")}`}>
+                              <Scan className="w-3 h-3 mr-1" />
+                              Ultrasound Studies ({qualImaging.length})
+                            </span>
+                          )}
+                          {allTests.length === 0 && (
+                            <span className="text-xs text-slate-300 italic">No qualifying tests</span>
+                          )}
+                        </div>
+                        {allTests.length > 0 && (
+                          isExpanded
+                            ? <ChevronDown className="w-4 h-4 text-slate-400 transition-transform" />
+                            : <ChevronRight className="w-4 h-4 text-slate-400 transition-transform" />
+                        )}
+                      </div>
+                    </div>
+                  </div>
 
-                                        {cat === "ultrasound" && tests.length > 1 && (
-                                          <div className="flex items-center gap-1.5 flex-wrap mb-3">
-                                            {tests.map((t) => (
-                                              <span key={t} className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>{t}</span>
-                                            ))}
-                                          </div>
+                  {isExpanded && allTests.length > 0 && (
+                    <div className="border-t border-slate-100 bg-slate-50/60 p-5" data-testid={`row-expanded-${patient.id}`}>
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="font-semibold text-sm text-slate-700">{patient.name} — Ancillary Details</h3>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setExpandedPatient(null); }} data-testid="button-close-detail">
+                          <X className="w-4 h-4 text-slate-400" />
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {(() => {
+                          const grouped: Record<string, string[]> = {};
+                          for (const test of allTests) {
+                            const cat = getAncillaryCategory(test);
+                            if (!grouped[cat]) grouped[cat] = [];
+                            grouped[cat].push(test);
+                          }
+                          return ["brainwave", "vitalwave", "ultrasound", "other"].filter((c) => grouped[c]).map((cat) => {
+                            const tests = grouped[cat];
+                            const style = categoryStyles[cat];
+                            const IconComp = categoryIcons[cat];
+                            return (
+                              <div key={cat} className={`rounded-xl ${style.bg} border ${style.border} p-4 backdrop-blur-sm`} data-testid={`card-ancillary-${cat}`}>
+                                <div className="flex items-center gap-2 mb-3">
+                                  <IconComp className={`w-4 h-4 ${style.icon}`} />
+                                  <span className={`font-semibold text-xs ${style.accent}`}>{categoryLabels[cat]}</span>
+                                </div>
+
+                                {cat === "ultrasound" && tests.length > 1 && (
+                                  <div className="flex items-center gap-1.5 flex-wrap mb-3">
+                                    {tests.map((t) => (
+                                      <span key={t} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor(cat)}`}>{t}</span>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {tests.map((test) => {
+                                  const reason = reasoning[test];
+                                  const clinician = reason ? (typeof reason === "string" ? reason : reason.clinician_understanding) : null;
+                                  const talking = reason ? (typeof reason === "string" ? null : reason.patient_talking_points) : null;
+                                  const confidence = reason && typeof reason !== "string" ? reason.confidence : null;
+                                  const qualifyingFactors = reason && typeof reason !== "string" ? reason.qualifying_factors : null;
+                                  const icd10Codes = reason && typeof reason !== "string" ? reason.icd10_codes : null;
+
+                                  const confidenceStyles: Record<string, string> = {
+                                    high: "bg-emerald-100 text-emerald-700",
+                                    medium: "bg-amber-100 text-amber-700",
+                                    low: "bg-orange-100 text-orange-700",
+                                  };
+
+                                  return (
+                                    <div key={test} className="mb-3 last:mb-0">
+                                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                        {(cat === "ultrasound" || tests.length > 1) && (
+                                          <p className={`text-xs font-semibold ${style.accent}`}>{test}</p>
                                         )}
-
-                                        {tests.map((test) => {
-                                          const reason = reasoning[test];
-                                          const clinician = reason ? (typeof reason === "string" ? reason : reason.clinician_understanding) : null;
-                                          const talking = reason ? (typeof reason === "string" ? null : reason.patient_talking_points) : null;
-                                          const confidence = reason && typeof reason !== "string" ? reason.confidence : null;
-                                          const qualifyingFactors = reason && typeof reason !== "string" ? reason.qualifying_factors : null;
-                                          const icd10Codes = reason && typeof reason !== "string" ? reason.icd10_codes : null;
-
-                                          const confidenceStyles: Record<string, string> = {
-                                            high: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
-                                            medium: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-                                            low: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300",
-                                          };
-
-                                          return (
-                                            <div key={test} className="mb-3 last:mb-0">
-                                              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                                                {(cat === "ultrasound" || tests.length > 1) && (
-                                                  <p className={`text-xs font-bold ${style.accent}`}>{test}</p>
-                                                )}
-                                                {confidence && (
-                                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${confidenceStyles[confidence]}`} data-testid={`badge-confidence-${test}`}>
-                                                    {confidence.toUpperCase()}
-                                                  </span>
-                                                )}
-                                              </div>
-
-                                              {qualifyingFactors && qualifyingFactors.length > 0 && (
-                                                <div className="flex items-center gap-1 flex-wrap mb-2" data-testid={`factors-${test}`}>
-                                                  {qualifyingFactors.map((factor, idx) => (
-                                                    <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                                                      {factor}
-                                                    </span>
-                                                  ))}
-                                                </div>
-                                              )}
-
-                                              {clinician && (
-                                                <div className="rounded-md bg-background/60 dark:bg-background/30 p-2.5 mb-2">
-                                                  <div className="flex items-center gap-1.5 mb-1.5">
-                                                    <GraduationCap className="w-4 h-4 text-muted-foreground" />
-                                                    <span className="text-xs font-bold text-foreground tracking-wide">Clinician Understanding</span>
-                                                  </div>
-                                                  <p className="text-[11px] leading-relaxed">{clinician}</p>
-                                                </div>
-                                              )}
-
-                                              {talking && (
-                                                <div className="rounded-md bg-background/60 dark:bg-background/30 p-2.5 mb-2">
-                                                  <div className="flex items-center gap-1.5 mb-1.5">
-                                                    <MessageCircle className="w-4 h-4 text-muted-foreground" />
-                                                    <span className="text-xs font-bold text-foreground tracking-wide">Patient Talking Points</span>
-                                                  </div>
-                                                  <p className="text-[11px] leading-relaxed">{talking}</p>
-                                                </div>
-                                              )}
-
-                                              {icd10Codes && icd10Codes.length > 0 && (
-                                                <div className="flex items-center gap-1 flex-wrap mt-1" data-testid={`icd10-${test}`}>
-                                                  <span className="text-[10px] text-muted-foreground font-medium mr-0.5">ICD-10:</span>
-                                                  {icd10Codes.map((code, idx) => (
-                                                    <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-                                                      {code}
-                                                    </span>
-                                                  ))}
-                                                </div>
-                                              )}
-
-                                              {!clinician && !talking && (
-                                                <p className="text-[11px] text-muted-foreground">No detailed reasoning available.</p>
-                                              )}
-                                            </div>
-                                          );
-                                        })}
+                                        {confidence && (
+                                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${confidenceStyles[confidence]}`} data-testid={`badge-confidence-${test}`}>
+                                            {confidence.toUpperCase()}
+                                          </span>
+                                        )}
                                       </div>
-                                    );
-                                  });
-                                })()}
+
+                                      {qualifyingFactors && qualifyingFactors.length > 0 && (
+                                        <div className="flex items-center gap-1 flex-wrap mb-2" data-testid={`factors-${test}`}>
+                                          {qualifyingFactors.map((factor, idx) => (
+                                            <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60">
+                                              {factor}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+
+                                      {clinician && (
+                                        <div className="rounded-xl bg-white/80 backdrop-blur-sm p-3 mb-2 shadow-sm">
+                                          <div className="flex items-center gap-1.5 mb-1.5">
+                                            <GraduationCap className="w-3.5 h-3.5 text-slate-400" />
+                                            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Clinician Understanding</span>
+                                          </div>
+                                          <p className="text-[11px] leading-relaxed text-slate-700">{clinician}</p>
+                                        </div>
+                                      )}
+
+                                      {talking && (
+                                        <div className="rounded-xl bg-white/80 backdrop-blur-sm p-3 mb-2 shadow-sm">
+                                          <div className="flex items-center gap-1.5 mb-1.5">
+                                            <MessageCircle className="w-3.5 h-3.5 text-slate-400" />
+                                            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Patient Talking Points</span>
+                                          </div>
+                                          <p className="text-[11px] leading-relaxed text-slate-700">{talking}</p>
+                                        </div>
+                                      )}
+
+                                      {icd10Codes && icd10Codes.length > 0 && (
+                                        <div className="flex items-center gap-1 flex-wrap mt-1.5" data-testid={`icd10-${test}`}>
+                                          <span className="text-[10px] text-slate-400 font-medium mr-0.5">ICD-10:</span>
+                                          {icd10Codes.map((code, idx) => (
+                                            <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-slate-100 text-slate-500">
+                                              {code}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+
+                                      {!clinician && !talking && (
+                                        <p className="text-[11px] text-slate-400 italic">No detailed reasoning available.</p>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  );
-                })}
-            </table>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
           </div>
         </div>
       </main>
