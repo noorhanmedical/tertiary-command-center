@@ -4,6 +4,9 @@
 AI-powered patient screening application that analyzes clinical data (schedules, past medical history, medications, notes) to qualify patients for diagnostic tests: BrainWave (EEG), VitalWave (ABI), Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Upper Extremity Arterial Doppler (93930), Abdominal Aortic Aneurysm Duplex (93978), Stress Echocardiogram (93350), Lower Extremity Venous Duplex (93971), and Upper Extremity Venous Duplex (93970). The system uses OpenAI GPT-5.2 for aggressive qualification - it qualifies patients for every test with any reasonable clinical justification.
 
 ## Recent Changes
+- 2026-03-06: Tab-based navigation: multiple schedules open simultaneously as tabs; tab bar below banner with close buttons; Home/Patient History/schedules as tab types; delete buttons on sidebar schedule items; no background image; solid icy blue-white background
+- 2026-03-06: Winter theme: CSS variables updated to icy blue-white palette (bg 210 35% 96%, primary 212 72% 40%); deep navy banner bg-[#1a365d]; dark mode deep navy tones; no background image overlay
+- 2026-03-06: Bigger text/tiles: banner title text-lg, home tiles p-6 with w-7 icons and text-base titles, patient name text-base, build section headers text-base, results view patient names text-base, Dx/Hx/Rx labels text-sm
 - 2026-03-06: Redesigned Final Schedule (results view) with iOS-style card layout; removed table in favor of expandable patient cards; hid COOLDOWN column; grouped ultrasounds into single "Ultrasound Studies (N)" badge; added Share button that copies /schedule/:id link; created read-only shared schedule page at /schedule/:id route; 10% side padding; frosted glass header; rounded-2xl cards
 - 2026-03-01: Redesigned home page with tile grid (New Schedule, Patient Database, Billing with NWPG + Taylor Family Practice); added clinic column to patient test history
 - 2026-03-01: Added patient test history database with cooldown enforcement (6mo PPO, 12mo Medicare); OpenAI-powered name matching and history import parsing; COOLDOWN column in final schedule; Patient History management UI in sidebar
@@ -21,10 +24,11 @@ AI-powered patient screening application that analyzes clinical data (schedules,
 5. **Review Results** - View Final Schedule with color-coded ancillary cards (Clinician Understanding + Patient Talking Points)
 
 ## UI Structure
-- **Home page**: Clean centered layout with "New Schedule" button; sidebar trigger to view schedule history
-- **Sidebar**: Collapsible left panel (Shadcn Sidebar) showing schedule history; starts collapsed, user can expand/retract
-- **Build Schedule page**: Step timeline at top, input cards (Upload/Paste/Manual), Schedule Generator list below
-- **Final Schedule page**: Step timeline at top, expandable patient result cards with ancillary details
+- **Tab bar**: Horizontal tab bar below banner; tabs for Home, Patient History, and open schedules; close buttons on tabs; "+" button creates new schedule
+- **Home tab**: Clean centered layout with tile grid (New Schedule, Patient Database, Billing); solid icy blue-white background
+- **Sidebar**: Collapsible left panel (Shadcn Sidebar) showing schedule history with delete buttons; starts collapsed, user can expand/retract
+- **Build Schedule tab**: Step timeline at top, input cards (Upload/Paste/Manual), Schedule Generator list below
+- **Final Schedule tab**: Step timeline at top, expandable patient result cards with ancillary details
 
 ## Architecture
 - **Frontend**: React + Vite + Tailwind CSS + Shadcn UI (including Sidebar component)

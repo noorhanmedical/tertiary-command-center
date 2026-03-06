@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import heroBg from "@/assets/images/hero-bg.png";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -139,15 +138,22 @@ function getBadgeColor(cat: string): string {
   }
 }
 
+type TabItem = { type: "home" } | { type: "history" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
+
 export default function Home() {
-  const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
-  const [view, setView] = useState<"home" | "build" | "results" | "history">("home");
+  const [tabs, setTabs] = useState<TabItem[]>([{ type: "home" }]);
+  const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
   const [pasteText, setPasteText] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [analyzingPatients, setAnalyzingPatients] = useState<Set<number>>(new Set());
   const [historyPasteText, setHistoryPasteText] = useState("");
   const [historySearch, setHistorySearch] = useState("");
+
+  const activeTab = tabs[activeTabIndex] || tabs[0] || { type: "home" };
+  const selectedBatchId = activeTab.type === "schedule" ? activeTab.batchId : null;
+  const scheduleViewMode = activeTab.type === "schedule" ? (activeTab.viewMode || "build") : null;
+  const view = activeTab.type === "history" ? "history" : activeTab.type === "schedule" ? "schedule" : "home";
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -164,7 +170,7 @@ export default function Home() {
 
   const { data: testHistory = [], isLoading: historyLoading } = useQuery<PatientTestHistory[]>({
     queryKey: ["/api/test-history"],
-    enabled: view === "history",
+    enabled: view === "history" || tabs.some((t) => t.type === "history"),
   });
 
   const importHistoryMutation = useMutation({
@@ -218,6 +224,30 @@ export default function Home() {
     },
   });
 
+  const openScheduleTab = useCallback((batchId: number, label: string, status?: string) => {
+    const existingIdx = tabs.findIndex((t) => t.type === "schedule" && t.batchId === batchId);
+    if (existingIdx >= 0) {
+      setActiveTabIndex(existingIdx);
+    } else {
+      const newTab: TabItem = { type: "schedule", batchId, label };
+      setTabs((prev) => [...prev, newTab]);
+      setActiveTabIndex(tabs.length);
+    }
+  }, [tabs]);
+
+  const closeTab = useCallback((index: number) => {
+    setTabs((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      if (next.length === 0) return [{ type: "home" as const }];
+      return next;
+    });
+    setActiveTabIndex((prev) => {
+      if (index < prev) return prev - 1;
+      if (index === prev) return Math.max(0, index - 1);
+      return prev;
+    });
+  }, []);
+
   const createBatchMutation = useMutation({
     mutationFn: async (name: string) => {
       const res = await apiRequest("POST", "/api/batches", { name });
@@ -225,8 +255,7 @@ export default function Home() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      setSelectedBatchId(data.id);
-      setView("build");
+      openScheduleTab(data.id, data.name || "New Schedule");
     },
   });
 
@@ -291,10 +320,10 @@ export default function Home() {
     mutationFn: async (id: number) => {
       await apiRequest("DELETE", `/api/screening-batches/${id}`);
     },
-    onSuccess: () => {
+    onSuccess: (_, deletedId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      setSelectedBatchId(null);
-      setView("home");
+      const tabIdx = tabs.findIndex((t) => t.type === "schedule" && t.batchId === deletedId);
+      if (tabIdx >= 0) closeTab(tabIdx);
     },
   });
 
@@ -327,8 +356,11 @@ export default function Home() {
       setAnalysisProgress(null);
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      setView("results");
       toast({ title: "Analysis complete", description: "All patients have been screened." });
+      setTabs((prev) => prev.map((tab, i) => {
+        if (i === activeTabIndex && tab.type === "schedule") return { ...tab, viewMode: "results" as const };
+        return tab;
+      }));
     },
     onError: (err: Error) => {
       setAnalysisProgress(null);
@@ -389,21 +421,46 @@ export default function Home() {
   const isProcessing = analyzeAllMutation.isPending;
   const completedCount = patients.filter((p) => p.status === "completed").length;
 
+  const setScheduleViewMode = useCallback((mode: "build" | "results") => {
+    setTabs((prev) => prev.map((tab, i) => {
+      if (i === activeTabIndex && tab.type === "schedule") {
+        return { ...tab, viewMode: mode };
+      }
+      return tab;
+    }));
+  }, [activeTabIndex]);
+
   const handleTimelineNav = useCallback((step: "home" | "build" | "results") => {
-    if (step === "home") { setView("home"); setSelectedBatchId(null); }
-    else if (step === "build") setView("build");
-    else if (step === "results") setView("results");
-  }, []);
+    if (step === "home") {
+      const homeIdx = tabs.findIndex((t) => t.type === "home");
+      if (homeIdx >= 0) setActiveTabIndex(homeIdx);
+      else {
+        setTabs((prev) => [{ type: "home" }, ...prev]);
+        setActiveTabIndex(0);
+      }
+    } else if (step === "build" || step === "results") {
+      setScheduleViewMode(step);
+    }
+  }, [tabs, setScheduleViewMode]);
 
   const handleSelectSchedule = useCallback((batch: ScreeningBatchWithPatients) => {
-    setSelectedBatchId(batch.id);
-    setView(batch.status === "completed" ? "results" : "build");
+    openScheduleTab(batch.id, batch.name);
     setSidebarOpen(false);
-  }, [setSidebarOpen]);
+  }, [openScheduleTab, setSidebarOpen]);
 
   const handleNewSchedule = useCallback(() => {
     createBatchMutation.mutate(`Schedule - ${new Date().toLocaleDateString()}`);
   }, [createBatchMutation]);
+
+  const openHistoryTab = useCallback(() => {
+    const existingIdx = tabs.findIndex((t) => t.type === "history");
+    if (existingIdx >= 0) {
+      setActiveTabIndex(existingIdx);
+    } else {
+      setTabs((prev) => [...prev, { type: "history" }]);
+      setActiveTabIndex(tabs.length);
+    }
+  }, [tabs]);
 
   return (
     <>
@@ -416,7 +473,7 @@ export default function Home() {
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     onClick={() => {
-                      setView("history");
+                      openHistoryTab();
                       setSidebarOpen(false);
                     }}
                     isActive={view === "history"}
@@ -456,21 +513,36 @@ export default function Home() {
                 ) : (
                   batches.map((batch) => (
                     <SidebarMenuItem key={batch.id}>
-                      <SidebarMenuButton
-                        onClick={() => handleSelectSchedule(batch)}
-                        isActive={selectedBatchId === batch.id}
-                        tooltip={batch.name}
-                        data-testid={`sidebar-schedule-${batch.id}`}
-                      >
-                        <Calendar className="w-4 h-4 shrink-0" />
-                        <div className="flex flex-col min-w-0">
-                          <span className="truncate text-sm">{batch.name}</span>
-                          <span className="text-[10px] text-muted-foreground">
-                            {batch.patientCount} patients
-                            {batch.status === "completed" && " · Complete"}
-                          </span>
-                        </div>
-                      </SidebarMenuButton>
+                      <div className="flex items-center w-full group">
+                        <SidebarMenuButton
+                          onClick={() => handleSelectSchedule(batch)}
+                          isActive={selectedBatchId === batch.id}
+                          tooltip={batch.name}
+                          data-testid={`sidebar-schedule-${batch.id}`}
+                          className="flex-1 min-w-0"
+                        >
+                          <Calendar className="w-4 h-4 shrink-0" />
+                          <div className="flex flex-col min-w-0">
+                            <span className="truncate text-sm">{batch.name}</span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {batch.patientCount} patients
+                              {batch.status === "completed" && " · Complete"}
+                            </span>
+                          </div>
+                        </SidebarMenuButton>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-1"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Delete "${batch.name}"?`)) deleteBatchMutation.mutate(batch.id);
+                          }}
+                          data-testid={`button-delete-schedule-${batch.id}`}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
                     </SidebarMenuItem>
                   ))
                 )}
@@ -480,12 +552,45 @@ export default function Home() {
         </SidebarContent>
       </Sidebar>
 
-      <div className="flex flex-col flex-1 min-w-0 relative">
-        <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-          style={{ backgroundImage: `url(${heroBg})` }}
-        />
-        <div className="absolute inset-0 bg-background/30 dark:bg-background/60" />
+      <div className="flex flex-col flex-1 min-w-0 relative bg-background">
+        <div className="bg-[#1e3a5f]/95 backdrop-blur-sm flex items-center gap-0 px-2 shrink-0 overflow-x-auto" data-testid="tab-bar">
+          {tabs.map((tab, i) => {
+            const isActive = i === activeTabIndex;
+            const label = tab.type === "home" ? "Home" : tab.type === "history" ? "Patient History" : tab.label;
+            const canClose = tabs.length > 1;
+            return (
+              <div
+                key={`${tab.type}-${tab.type === "schedule" ? tab.batchId : i}`}
+                className={`flex items-center gap-1.5 px-4 py-2 cursor-pointer text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+                  isActive
+                    ? "bg-white/15 text-white border-white"
+                    : "text-blue-200/70 border-transparent hover:text-white hover:bg-white/5"
+                }`}
+                onClick={() => setActiveTabIndex(i)}
+                data-testid={`tab-${tab.type}${tab.type === "schedule" ? `-${tab.batchId}` : ""}`}
+              >
+                <span className="truncate max-w-[180px]">{label}</span>
+                {canClose && (
+                  <button
+                    className="ml-1 p-0.5 rounded hover:bg-white/20 transition-colors"
+                    onClick={(e) => { e.stopPropagation(); closeTab(i); }}
+                    data-testid={`button-close-tab-${i}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          <button
+            className="flex items-center gap-1 px-3 py-2 text-blue-200/60 hover:text-white transition-colors text-sm"
+            onClick={handleNewSchedule}
+            data-testid="button-new-tab"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
         {view === "history" ? (
           <div className="flex flex-col h-full relative z-10">
             <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
@@ -642,7 +747,7 @@ export default function Home() {
               </div>
             </div>
           </div>
-        ) : view === "results" && selectedBatchId ? (
+        ) : view === "schedule" && selectedBatchId && (scheduleViewMode === "results" || (selectedBatch?.status === "completed" && scheduleViewMode !== "build")) ? (
           <ResultsView
             batch={selectedBatch}
             patients={patients}
@@ -652,7 +757,7 @@ export default function Home() {
             expandedPatient={expandedPatient}
             setExpandedPatient={setExpandedPatient}
           />
-        ) : view === "build" && selectedBatchId ? (
+        ) : view === "schedule" && selectedBatchId ? (
           <div className="flex flex-col h-full relative z-10">
             <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
               <StepTimeline current="build" onNavigate={handleTimelineNav} canGoToResults={completedCount > 0} />
@@ -728,7 +833,7 @@ export default function Home() {
                     <Card className="p-4">
                       <div className="flex items-center gap-2 mb-3">
                         <Upload className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm font-semibold">Upload File</span>
+                        <span className="text-base font-semibold">Upload File</span>
                       </div>
                       <div
                         className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${
@@ -765,7 +870,7 @@ export default function Home() {
                     <Card className="p-4">
                       <div className="flex items-center gap-2 mb-3">
                         <FileText className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm font-semibold">Paste List</span>
+                        <span className="text-base font-semibold">Paste List</span>
                       </div>
                       <Textarea
                         placeholder={"Paste patient list here — it will import automatically\n\n9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
@@ -800,7 +905,7 @@ export default function Home() {
                     <Card className="p-4">
                       <div className="flex items-center gap-2 mb-3">
                         <Plus className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm font-semibold">Manual Entry</span>
+                        <span className="text-base font-semibold">Manual Entry</span>
                       </div>
                       <Button
                         className="w-full gap-1.5"
@@ -821,7 +926,7 @@ export default function Home() {
                 {patients.length > 0 && (
                   <section>
                     <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-                      <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                      <h2 className="text-base font-semibold text-muted-foreground uppercase tracking-wider">
                         Schedule Generator ({patients.length})
                       </h2>
                       {completedCount > 0 && (
@@ -857,92 +962,92 @@ export default function Home() {
             </main>
           </div>
         ) : (
-          <div className="flex flex-col h-full relative z-10">
-            <header className="sticky top-0 z-50">
-              <div className="px-6 py-3 flex items-center">
-                <SidebarTrigger data-testid="button-sidebar-toggle-home" className="text-white/70 hover:text-white" />
+          <div className="flex flex-col h-full">
+            <header className="sticky top-0 z-50 bg-white/80 dark:bg-card/80 backdrop-blur-xl border-b border-slate-200/60">
+              <div className="px-8 py-3 flex items-center">
+                <SidebarTrigger data-testid="button-sidebar-toggle-home" />
               </div>
             </header>
 
-            <main className="relative z-10 flex-1 overflow-auto">
-              <div className="max-w-5xl mx-auto px-8 pt-8 pb-16">
-                <div className="mb-10">
-                  <h2 className="text-2xl font-semibold tracking-tight text-white drop-shadow-md" data-testid="text-home-heading">
+            <main className="flex-1 overflow-auto">
+              <div className="max-w-5xl mx-auto px-8 pt-10 pb-16">
+                <div className="mb-12">
+                  <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-foreground" data-testid="text-home-heading">
                     Plexus Ancillary Screening
                   </h2>
-                  <p className="text-sm text-white/60 mt-1 font-light">
+                  <p className="text-base text-slate-600 dark:text-muted-foreground mt-2">
                     AI-powered clinical analysis for diagnostic ancillaries
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                   <Card
-                    className={`group cursor-pointer rounded-2xl bg-white/85 dark:bg-card/85 backdrop-blur-xl border-0 shadow-sm hover:shadow-md transition-shadow duration-200 ${createBatchMutation.isPending ? "pointer-events-none opacity-60" : ""}`}
+                    className={`group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200 ${createBatchMutation.isPending ? "pointer-events-none opacity-60" : ""}`}
                     onClick={handleNewSchedule}
                     data-testid="tile-new-schedule"
                   >
-                    <div className="flex items-start gap-4 p-5">
+                    <div className="flex items-start gap-4 p-6">
                       <div className="shrink-0 mt-0.5">
                         {createBatchMutation.isPending ? (
-                          <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                          <Loader2 className="w-7 h-7 text-primary animate-spin" />
                         ) : (
-                          <Plus className="w-6 h-6 text-primary" />
+                          <Plus className="w-7 h-7 text-primary" />
                         )}
                       </div>
                       <div>
-                        <h3 className="font-medium text-sm text-slate-900 dark:text-foreground" data-testid="text-tile-new-schedule">New Schedule</h3>
-                        <p className="text-xs text-slate-500 dark:text-muted-foreground mt-0.5 leading-relaxed">Create a new patient screening schedule</p>
+                        <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-new-schedule">New Schedule</h3>
+                        <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Create a new patient screening schedule</p>
                       </div>
                     </div>
                   </Card>
 
                   <Card
-                    className="group cursor-pointer rounded-2xl bg-white/85 dark:bg-card/85 backdrop-blur-xl border-0 shadow-sm hover:shadow-md transition-shadow duration-200"
-                    onClick={() => setView("history")}
+                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
+                    onClick={openHistoryTab}
                     data-testid="tile-patient-database"
                   >
-                    <div className="flex items-start gap-4 p-5">
+                    <div className="flex items-start gap-4 p-6">
                       <div className="shrink-0 mt-0.5">
-                        <Users className="w-6 h-6 text-blue-600" />
+                        <Users className="w-7 h-7 text-blue-600" />
                       </div>
                       <div>
-                        <h3 className="font-medium text-sm text-slate-900 dark:text-foreground" data-testid="text-tile-patient-database">Patient Database</h3>
-                        <p className="text-xs text-slate-500 dark:text-muted-foreground mt-0.5 leading-relaxed">View and manage patient test history</p>
+                        <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-patient-database">Patient Database</h3>
+                        <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">View and manage patient test history</p>
                       </div>
                     </div>
                   </Card>
 
                   <Card
-                    className="rounded-2xl bg-white/85 dark:bg-card/85 backdrop-blur-xl border-0 shadow-sm"
+                    className="rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm"
                     data-testid="tile-billing"
                   >
-                    <div className="p-5">
-                      <div className="flex items-start gap-4 mb-4">
+                    <div className="p-6">
+                      <div className="flex items-start gap-4 mb-5">
                         <div className="shrink-0 mt-0.5">
-                          <DollarSign className="w-6 h-6 text-emerald-600" />
+                          <DollarSign className="w-7 h-7 text-emerald-600" />
                         </div>
                         <div>
-                          <h3 className="font-medium text-sm text-slate-900 dark:text-foreground" data-testid="text-tile-billing">Billing</h3>
-                          <p className="text-xs text-slate-500 dark:text-muted-foreground mt-0.5">Select a practice</p>
+                          <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-billing">Billing</h3>
+                          <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1">Select a practice</p>
                         </div>
                       </div>
-                      <div className="space-y-1.5 pl-10">
+                      <div className="space-y-2 pl-11">
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="w-full justify-start gap-2 h-8 text-xs font-normal text-slate-700 dark:text-foreground hover:bg-slate-100 dark:hover:bg-muted rounded-lg"
+                          className="w-full justify-start gap-2 h-9 text-sm font-normal rounded-lg"
                           data-testid="button-billing-nwpg"
                         >
-                          <Building2 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                          <Building2 className="w-4 h-4 flex-shrink-0" />
                           NWPG
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="w-full justify-start gap-2 h-8 text-xs font-normal text-slate-700 dark:text-foreground hover:bg-slate-100 dark:hover:bg-muted rounded-lg"
+                          className="w-full justify-start gap-2 h-9 text-sm font-normal rounded-lg"
                           data-testid="button-billing-taylor"
                         >
-                          <Building2 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                          <Building2 className="w-4 h-4 flex-shrink-0" />
                           Taylor Family Practice
                         </Button>
                       </div>
@@ -951,15 +1056,15 @@ export default function Home() {
                 </div>
 
                 {batches.length > 0 && (
-                  <div className="mt-8">
+                  <div className="mt-10">
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       onClick={() => setSidebarOpen(true)}
-                      className="gap-2 text-white/60 hover:text-white hover:bg-white/10 text-xs font-normal"
+                      className="gap-2 text-sm"
                       data-testid="button-view-history"
                     >
-                      <Clock className="w-3.5 h-3.5" />
+                      <Clock className="w-4 h-4" />
                       Schedule History ({batches.length})
                     </Button>
                   </div>
@@ -1011,7 +1116,7 @@ function PatientCard({
               value={localName}
               onChange={(e) => setLocalName(e.target.value)}
               onBlur={() => { if (localName !== (patient.name || "")) onUpdate("name", localName); }}
-              className="h-7 text-sm font-semibold px-2"
+              className="h-8 text-base font-semibold px-2"
               data-testid={`input-patient-name-${patient.id}`}
             />
             <Input
@@ -1049,8 +1154,8 @@ function PatientCard({
 
       <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
-          <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1 mb-1.5">
-            <Stethoscope className="w-3 h-3" /> Dx (Diagnoses)
+          <label className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5">
+            <Stethoscope className="w-3.5 h-3.5" /> Dx (Diagnoses)
           </label>
           <Textarea
             placeholder="HTN, DM2, HLD..."
@@ -1062,8 +1167,8 @@ function PatientCard({
           />
         </div>
         <div>
-          <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1 mb-1.5">
-            <FileText className="w-3 h-3" /> Hx (History / PMH)
+          <label className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5">
+            <FileText className="w-3.5 h-3.5" /> Hx (History / PMH)
           </label>
           <Textarea
             placeholder="MI 2019, CABG, TIA..."
@@ -1075,8 +1180,8 @@ function PatientCard({
           />
         </div>
         <div>
-          <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1 mb-1.5">
-            <Pill className="w-3 h-3" /> Rx (Medications)
+          <label className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5">
+            <Pill className="w-3.5 h-3.5" /> Rx (Medications)
           </label>
           <Textarea
             placeholder="Metformin, Lisinopril..."
@@ -1199,16 +1304,16 @@ function ResultsView({
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-start gap-4 min-w-0 flex-1">
                         {patient.time && (
-                          <span className="text-xs text-slate-900 font-medium shrink-0 mt-0.5 tabular-nums">{patient.time}</span>
+                          <span className="text-sm text-slate-900 font-medium shrink-0 mt-0.5 tabular-nums">{patient.time}</span>
                         )}
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 mb-1">
-                            <p className="font-semibold text-sm text-slate-900 truncate">{patient.name}</p>
-                            <span className="text-[11px] text-slate-900">
+                            <p className="font-semibold text-base text-slate-900 truncate">{patient.name}</p>
+                            <span className="text-xs text-slate-900">
                               {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
                             </span>
                           </div>
-                          <div className="flex items-center gap-3 text-[11px] text-slate-900">
+                          <div className="flex items-center gap-3 text-xs text-slate-900">
                             {patient.diagnoses && (
                               <span className="truncate max-w-[200px]" title={patient.diagnoses}>
                                 <span className="font-semibold">Dx:</span> {patient.diagnoses}
@@ -1256,7 +1361,7 @@ function ResultsView({
                   {isExpanded && allTests.length > 0 && (
                     <div className="border-t border-slate-100 bg-slate-50/60 p-5" data-testid={`row-expanded-${patient.id}`}>
                       <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-semibold text-sm text-slate-900">{patient.name} — Ancillary Details</h3>
+                        <h3 className="font-semibold text-base text-slate-900">{patient.name} — Ancillary Details</h3>
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setExpandedPatient(null); }} data-testid="button-close-detail">
                           <X className="w-4 h-4 text-slate-400" />
                         </Button>
