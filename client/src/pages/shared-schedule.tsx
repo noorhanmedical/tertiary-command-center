@@ -77,8 +77,8 @@ export default function SharedSchedule() {
       <div className="flex items-center justify-center h-screen bg-slate-50">
         <div className="text-center">
           <Stethoscope className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-          <h2 className="text-lg font-semibold text-slate-600">Schedule not found</h2>
-          <p className="text-sm text-slate-400 mt-1">This schedule may have been deleted or the link is invalid.</p>
+          <h2 className="text-lg font-semibold text-slate-900">Schedule not found</h2>
+          <p className="text-sm text-slate-900 mt-1">This schedule may have been deleted or the link is invalid.</p>
         </div>
       </div>
     );
@@ -92,7 +92,7 @@ export default function SharedSchedule() {
             <Stethoscope className="w-5 h-5 text-slate-600" />
             <div>
               <h1 className="text-base font-semibold tracking-tight" data-testid="text-shared-schedule-title">{batch.name}</h1>
-              <p className="text-xs text-slate-500" data-testid="text-shared-patient-count">{patients.length} patients screened</p>
+              <p className="text-xs text-slate-900" data-testid="text-shared-patient-count">{patients.length} patients screened</p>
             </div>
           </div>
         </div>
@@ -121,11 +121,11 @@ export default function SharedSchedule() {
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-4 min-w-0">
                       {patient.time && (
-                        <span className="text-xs text-slate-400 font-medium shrink-0" data-testid={`text-time-${patient.id}`}>{patient.time}</span>
+                        <span className="text-xs text-slate-900 font-medium shrink-0" data-testid={`text-time-${patient.id}`}>{patient.time}</span>
                       )}
                       <div className="min-w-0">
                         <p className="font-medium text-sm truncate" data-testid={`text-name-${patient.id}`}>{patient.name}</p>
-                        <p className="text-xs text-slate-400 mt-0.5">
+                        <p className="text-xs text-slate-900 mt-0.5">
                           {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
                         </p>
                       </div>
@@ -143,7 +143,7 @@ export default function SharedSchedule() {
                           </span>
                         )}
                         {allTests.length === 0 && (
-                          <span className="text-xs text-slate-300">No qualifying tests</span>
+                          <span className="text-xs text-slate-900 italic">No qualifying tests</span>
                         )}
                       </div>
                       {allTests.length > 0 && (
@@ -156,7 +156,7 @@ export default function SharedSchedule() {
                 {isExpanded && allTests.length > 0 && (
                   <div className="border-t border-slate-100 bg-slate-50/50 p-4" data-testid={`row-expanded-${patient.id}`}>
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-semibold text-sm text-slate-700">{patient.name} — Ancillary Details</h3>
+                      <h3 className="font-semibold text-sm text-slate-900">{patient.name} — Ancillary Details</h3>
                       <button
                         className="p-1 rounded-lg text-slate-400 hover:text-slate-600 transition-colors"
                         onClick={(e) => { e.stopPropagation(); setExpandedPatient(null); }}
@@ -215,19 +215,19 @@ export default function SharedSchedule() {
                                     {clinician && (
                                       <div className="rounded-lg bg-white/80 p-3 mb-2">
                                         <div className="flex items-center gap-1.5 mb-1">
-                                          <GraduationCap className="w-3.5 h-3.5 text-slate-400" />
-                                          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Clinician Understanding</span>
+                                          <GraduationCap className="w-3.5 h-3.5 text-slate-900" />
+                                          <span className="text-[10px] font-semibold text-slate-900 uppercase tracking-wider">Clinician Understanding</span>
                                         </div>
-                                        <p className="text-[11px] leading-relaxed text-slate-700">{clinician}</p>
+                                        <p className="text-[11px] leading-relaxed text-slate-900">{clinician}</p>
                                       </div>
                                     )}
                                     {talking && (
                                       <div className="rounded-lg bg-white/80 p-3 mb-2">
                                         <div className="flex items-center gap-1.5 mb-1">
-                                          <MessageCircle className="w-3.5 h-3.5 text-slate-400" />
-                                          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Patient Talking Points</span>
+                                          <MessageCircle className="w-3.5 h-3.5 text-slate-900" />
+                                          <span className="text-[10px] font-semibold text-slate-900 uppercase tracking-wider">Patient Talking Points</span>
                                         </div>
-                                        <p className="text-[11px] leading-relaxed text-slate-700">{talking}</p>
+                                        <p className="text-[11px] leading-relaxed text-slate-900">{talking}</p>
                                       </div>
                                     )}
                                   </div>

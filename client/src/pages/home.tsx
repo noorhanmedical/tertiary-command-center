@@ -1162,7 +1162,7 @@ function ResultsView({
             <SidebarTrigger data-testid="button-sidebar-toggle-results" />
             <div>
               <h1 className="text-base font-semibold tracking-tight" data-testid="text-results-title">{batch?.name} — Final Schedule</h1>
-              <p className="text-xs text-slate-500">{patients.length} patients screened</p>
+              <p className="text-xs text-slate-900">{patients.length} patients screened</p>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -1199,29 +1199,29 @@ function ResultsView({
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-start gap-4 min-w-0 flex-1">
                         {patient.time && (
-                          <span className="text-xs text-slate-400 font-medium shrink-0 mt-0.5 tabular-nums">{patient.time}</span>
+                          <span className="text-xs text-slate-900 font-medium shrink-0 mt-0.5 tabular-nums">{patient.time}</span>
                         )}
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 mb-1">
                             <p className="font-semibold text-sm text-slate-900 truncate">{patient.name}</p>
-                            <span className="text-[11px] text-slate-400">
+                            <span className="text-[11px] text-slate-900">
                               {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
                             </span>
                           </div>
-                          <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                          <div className="flex items-center gap-3 text-[11px] text-slate-900">
                             {patient.diagnoses && (
                               <span className="truncate max-w-[200px]" title={patient.diagnoses}>
-                                <span className="font-semibold text-slate-600">Dx:</span> {patient.diagnoses}
+                                <span className="font-semibold">Dx:</span> {patient.diagnoses}
                               </span>
                             )}
                             {patient.history && (
                               <span className="truncate max-w-[160px]" title={patient.history}>
-                                <span className="font-semibold text-slate-600">Hx:</span> {patient.history}
+                                <span className="font-semibold">Hx:</span> {patient.history}
                               </span>
                             )}
                             {patient.medications && (
                               <span className="truncate max-w-[160px]" title={patient.medications}>
-                                <span className="font-semibold text-slate-600">Rx:</span> {patient.medications}
+                                <span className="font-semibold">Rx:</span> {patient.medications}
                               </span>
                             )}
                           </div>
@@ -1241,7 +1241,7 @@ function ResultsView({
                             </span>
                           )}
                           {allTests.length === 0 && (
-                            <span className="text-xs text-slate-300 italic">No qualifying tests</span>
+                            <span className="text-xs text-slate-900 italic">No qualifying tests</span>
                           )}
                         </div>
                         {allTests.length > 0 && (
@@ -1256,7 +1256,7 @@ function ResultsView({
                   {isExpanded && allTests.length > 0 && (
                     <div className="border-t border-slate-100 bg-slate-50/60 p-5" data-testid={`row-expanded-${patient.id}`}>
                       <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-semibold text-sm text-slate-700">{patient.name} — Ancillary Details</h3>
+                        <h3 className="font-semibold text-sm text-slate-900">{patient.name} — Ancillary Details</h3>
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setExpandedPatient(null); }} data-testid="button-close-detail">
                           <X className="w-4 h-4 text-slate-400" />
                         </Button>
@@ -1329,9 +1329,9 @@ function ResultsView({
                                         <div className="rounded-xl bg-white/80 backdrop-blur-sm p-3 mb-2 shadow-sm">
                                           <div className="flex items-center gap-1.5 mb-1.5">
                                             <GraduationCap className="w-3.5 h-3.5 text-slate-400" />
-                                            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Clinician Understanding</span>
+                                            <span className="text-[10px] font-semibold text-slate-900 uppercase tracking-wider">Clinician Understanding</span>
                                           </div>
-                                          <p className="text-[11px] leading-relaxed text-slate-700">{clinician}</p>
+                                          <p className="text-[11px] leading-relaxed text-slate-900">{clinician}</p>
                                         </div>
                                       )}
 
@@ -1339,17 +1339,17 @@ function ResultsView({
                                         <div className="rounded-xl bg-white/80 backdrop-blur-sm p-3 mb-2 shadow-sm">
                                           <div className="flex items-center gap-1.5 mb-1.5">
                                             <MessageCircle className="w-3.5 h-3.5 text-slate-400" />
-                                            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Patient Talking Points</span>
+                                            <span className="text-[10px] font-semibold text-slate-900 uppercase tracking-wider">Patient Talking Points</span>
                                           </div>
-                                          <p className="text-[11px] leading-relaxed text-slate-700">{talking}</p>
+                                          <p className="text-[11px] leading-relaxed text-slate-900">{talking}</p>
                                         </div>
                                       )}
 
                                       {icd10Codes && icd10Codes.length > 0 && (
                                         <div className="flex items-center gap-1 flex-wrap mt-1.5" data-testid={`icd10-${test}`}>
-                                          <span className="text-[10px] text-slate-400 font-medium mr-0.5">ICD-10:</span>
+                                          <span className="text-[10px] text-slate-900 font-medium mr-0.5">ICD-10:</span>
                                           {icd10Codes.map((code, idx) => (
-                                            <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-slate-100 text-slate-500">
+                                            <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-slate-100 text-slate-900">
                                               {code}
                                             </span>
                                           ))}
@@ -1357,7 +1357,7 @@ function ResultsView({
                                       )}
 
                                       {!clinician && !talking && (
-                                        <p className="text-[11px] text-slate-400 italic">No detailed reasoning available.</p>
+                                        <p className="text-[11px] text-slate-900 italic">No detailed reasoning available.</p>
                                       )}
                                     </div>
                                   );
