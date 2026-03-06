@@ -236,68 +236,47 @@ For each patient, respond with a JSON object:
 
 Return ALL qualifying tests in qualifyingTests array, ordered by confidence (high first). Include reasoning for EVERY qualifying test.`;
 
-async function screenPatientsWithAI(patients: { name: string; time?: string | null; age?: number | null; gender?: string | null; diagnoses?: string | null; history?: string | null; medications?: string | null; notes?: string | null }[]): Promise<any[]> {
-  const results: any[] = [];
+async function screenSinglePatientWithAI(patient: { name: string; time?: string | null; age?: number | null; gender?: string | null; diagnoses?: string | null; history?: string | null; medications?: string | null; notes?: string | null }): Promise<any | null> {
+  const parts = [`Patient:`];
+  if (patient.name) parts.push(`Name: ${patient.name}`);
+  if (patient.time) parts.push(`Time: ${patient.time}`);
+  if (patient.age) parts.push(`Age: ${patient.age}`);
+  if (patient.gender) parts.push(`Gender: ${patient.gender}`);
+  if (patient.diagnoses) parts.push(`Diagnoses: ${patient.diagnoses}`);
+  if (patient.history) parts.push(`History/HPI: ${patient.history}`);
+  if (patient.medications) parts.push(`Medications: ${patient.medications}`);
+  if (patient.notes) parts.push(`Notes: ${patient.notes}`);
+  const description = parts.join("\n");
 
-  const patientChunks: typeof patients[] = [];
-  for (let i = 0; i < patients.length; i += 2) {
-    patientChunks.push(patients.slice(i, i + 2));
+  const response = await openai.chat.completions.create({
+    model: "gpt-5.2",
+    messages: [
+      { role: "system", content: SCREENING_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: `Analyze the following patient and qualify them for ancillary tests. Be VERY LENIENT - try to qualify for as many tests as possible.\n\n${description}`,
+      },
+    ],
+    temperature: 0.2,
+    response_format: { type: "json_object" },
+    max_completion_tokens: 16384,
+  });
+
+  const content = response.choices[0]?.message?.content || "{}";
+  const finishReason = response.choices[0]?.finish_reason;
+  if (finishReason === "length") {
+    console.error(`AI response truncated for patient: ${patient.name}`);
   }
-
-  const chunkResults = await batchProcess(
-    patientChunks,
-    async (chunk) => {
-      const patientDescriptions = chunk
-        .map((p, i) => {
-          const parts = [`Patient ${i + 1}:`];
-          if (p.name) parts.push(`Name: ${p.name}`);
-          if (p.time) parts.push(`Time: ${p.time}`);
-          if (p.age) parts.push(`Age: ${p.age}`);
-          if (p.gender) parts.push(`Gender: ${p.gender}`);
-          if (p.diagnoses) parts.push(`Diagnoses: ${p.diagnoses}`);
-          if (p.history) parts.push(`History/HPI: ${p.history}`);
-          if (p.medications) parts.push(`Medications: ${p.medications}`);
-          if (p.notes) parts.push(`Notes: ${p.notes}`);
-          return parts.join("\n");
-        })
-        .join("\n\n---\n\n");
-
-      const response = await openai.chat.completions.create({
-        model: "gpt-5.2",
-        messages: [
-          { role: "system", content: SCREENING_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: `Analyze the following patient(s) and qualify them for ancillary tests. Be VERY LENIENT - try to qualify for as many tests as possible.\n\n${patientDescriptions}`,
-          },
-        ],
-        temperature: 0.2,
-        response_format: { type: "json_object" },
-        max_completion_tokens: 16384,
-      });
-
-      const content = response.choices[0]?.message?.content || "{}";
-      const finishReason = response.choices[0]?.finish_reason;
-      if (finishReason === "length") {
-        console.error(`AI response truncated for chunk with patients: ${chunk.map(p => p.name).join(", ")}`);
-      }
-      try {
-        return JSON.parse(content);
-      } catch {
-        console.error(`Failed to parse AI response for patients: ${chunk.map(p => p.name).join(", ")}. First 300 chars: ${content.substring(0, 300)}`);
-        return { patients: [] };
-      }
-    },
-    { concurrency: 2, retries: 5 }
-  );
-
-  for (const chunkResult of chunkResults) {
-    if (chunkResult?.patients && Array.isArray(chunkResult.patients)) {
-      results.push(...chunkResult.patients);
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed?.patients && Array.isArray(parsed.patients)) {
+      return parsed.patients[0] || null;
     }
+    return parsed;
+  } catch {
+    console.error(`Failed to parse AI response for patient: ${patient.name}. First 300 chars: ${content.substring(0, 300)}`);
+    return null;
   }
-
-  return results;
 }
 
 async function checkCooldownsForPatients(
@@ -780,64 +759,76 @@ Respond ONLY with a valid JSON array, no markdown fences.`
 
       await storage.updateScreeningBatch(batchId, { status: "processing" });
 
-      const patientData = patients.map((p) => ({
-        name: p.name,
-        time: p.time,
-        age: p.age,
-        gender: p.gender,
-        diagnoses: p.diagnoses,
-        history: p.history,
-        medications: p.medications,
-        notes: p.notes,
-      }));
+      res.json({ success: true, patientCount: patients.length, async: true });
 
-      const aiResults = await screenPatientsWithAI(patientData);
+      const aiResults: Map<number, any> = new Map();
+
+      await batchProcess(
+        patients,
+        async (patient) => {
+          try {
+            const result = await screenSinglePatientWithAI({
+              name: patient.name,
+              time: patient.time,
+              age: patient.age,
+              gender: patient.gender,
+              diagnoses: patient.diagnoses,
+              history: patient.history,
+              medications: patient.medications,
+              notes: patient.notes,
+            });
+
+            if (result) {
+              const match = result?.patients?.[0] || result;
+              aiResults.set(patient.id, match);
+              await storage.updatePatientScreening(patient.id, {
+                qualifyingTests: match.qualifyingTests || [],
+                reasoning: match.reasoning || {},
+                diagnoses: match.diagnoses || patient.diagnoses || null,
+                history: match.history || patient.history || null,
+                medications: match.medications || patient.medications || null,
+                age: match.age || patient.age || null,
+                gender: match.gender || patient.gender || null,
+                status: "completed",
+              });
+            } else {
+              await storage.updatePatientScreening(patient.id, {
+                qualifyingTests: [],
+                reasoning: {},
+                status: "completed",
+              });
+            }
+          } catch (err: any) {
+            console.error(`Failed to analyze patient ${patient.name}:`, err.message);
+            await storage.updatePatientScreening(patient.id, {
+              qualifyingTests: [],
+              reasoning: {},
+              status: "completed",
+            });
+          }
+        },
+        { concurrency: 5, retries: 3 }
+      );
 
       const patientsForCooldown: { name: string; qualifyingTests: string[] }[] = [];
-      const matchMap = new Map<number, any>();
-
       for (const patient of patients) {
-        const match = aiResults.find(
-          (r) => r.name && r.name.toLowerCase().trim() === patient.name.toLowerCase().trim()
-        );
-        matchMap.set(patient.id, match);
+        const match = aiResults.get(patient.id);
         if (match?.qualifyingTests?.length > 0) {
           patientsForCooldown.push({ name: patient.name, qualifyingTests: match.qualifyingTests });
         }
       }
 
-      let cooldownResults: Record<string, any[]> = {};
       if (patientsForCooldown.length > 0) {
         try {
-          cooldownResults = await checkCooldownsForPatients(patientsForCooldown);
+          const cooldownResults = await checkCooldownsForPatients(patientsForCooldown);
+          for (const patient of patients) {
+            const cooldowns = cooldownResults[patient.name];
+            if (cooldowns && cooldowns.length > 0) {
+              await storage.updatePatientScreening(patient.id, { cooldownTests: cooldowns });
+            }
+          }
         } catch (e) {
           console.error("Batch cooldown check failed:", e);
-        }
-      }
-
-      for (const patient of patients) {
-        const match = matchMap.get(patient.id);
-        const cooldowns = cooldownResults[patient.name];
-
-        if (match) {
-          await storage.updatePatientScreening(patient.id, {
-            qualifyingTests: match.qualifyingTests || [],
-            reasoning: match.reasoning || {},
-            cooldownTests: cooldowns && cooldowns.length > 0 ? cooldowns : null,
-            diagnoses: match.diagnoses || patient.diagnoses || null,
-            history: match.history || patient.history || null,
-            medications: match.medications || patient.medications || null,
-            age: match.age || patient.age || null,
-            gender: match.gender || patient.gender || null,
-            status: "completed",
-          });
-        } else {
-          await storage.updatePatientScreening(patient.id, {
-            qualifyingTests: [],
-            reasoning: {},
-            cooldownTests: null,
-            status: "completed",
-          });
         }
       }
 
@@ -845,11 +836,8 @@ Respond ONLY with a valid JSON array, no markdown fences.`
         status: "completed",
         patientCount: patients.length,
       });
-
-      res.json({ success: true, patientCount: patients.length });
     } catch (error: any) {
       console.error("Analysis error:", error);
-      res.status(500).json({ error: error.message || "Analysis failed" });
     }
   });
 

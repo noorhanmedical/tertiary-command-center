@@ -296,18 +296,40 @@ export default function Home() {
     },
   });
 
+  const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
+
   const analyzeAllMutation = useMutation({
     mutationFn: async (batchId: number) => {
       const res = await apiRequest("POST", `/api/batches/${batchId}/analyze`);
-      return res.json();
+      const data = await res.json();
+      const total = data.patientCount || 0;
+      setAnalysisProgress({ completed: 0, total });
+
+      const pollProgress = async (): Promise<void> => {
+        const batchRes = await fetch(`/api/screening-batches/${batchId}`);
+        const batchData = await batchRes.json();
+        const completedCount = (batchData.patients || []).filter((p: any) => p.status === "completed").length;
+        setAnalysisProgress({ completed: completedCount, total });
+
+        if (batchData.status === "completed") {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        return pollProgress();
+      };
+
+      await pollProgress();
+      return data;
     },
     onSuccess: () => {
+      setAnalysisProgress(null);
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
       setView("results");
       toast({ title: "Analysis complete", description: "All patients have been screened." });
     },
     onError: (err: Error) => {
+      setAnalysisProgress(null);
       toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
     },
   });
@@ -677,8 +699,23 @@ export default function Home() {
                   <Card className="p-6">
                     <div className="flex flex-col items-center gap-3">
                       <Loader2 className="w-10 h-10 text-primary animate-spin" />
-                      <p className="font-semibold">Analyzing all patients...</p>
-                      <p className="text-sm text-muted-foreground">Screening with AI for ancillary qualifications</p>
+                      <p className="font-semibold">Analyzing patients...</p>
+                      {analysisProgress && (
+                        <>
+                          <p className="text-sm text-muted-foreground" data-testid="text-analysis-progress">
+                            {analysisProgress.completed} of {analysisProgress.total} completed
+                          </p>
+                          <div className="w-full max-w-xs bg-slate-200 dark:bg-muted rounded-full h-2 overflow-hidden">
+                            <div
+                              className="h-full bg-primary rounded-full transition-all duration-500 ease-out"
+                              style={{ width: `${analysisProgress.total > 0 ? (analysisProgress.completed / analysisProgress.total) * 100 : 0}%` }}
+                            />
+                          </div>
+                        </>
+                      )}
+                      {!analysisProgress && (
+                        <p className="text-sm text-muted-foreground">Starting AI screening...</p>
+                      )}
                     </div>
                   </Card>
                 )}
