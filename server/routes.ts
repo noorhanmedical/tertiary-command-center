@@ -7,9 +7,6 @@ import { parse } from "csv-parse/sync";
 import OpenAI from "openai";
 import { batchProcess } from "./replit_integrations/batch";
 import { z } from "zod";
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-const pdfParse = require("pdf-parse");
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -525,7 +522,9 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         } else if (ext === "csv") {
           allPatients.push(...parseCsvFile(file.buffer));
         } else if (ext === "pdf") {
-          const pdfData = await pdfParse(file.buffer);
+          const pdfParseModule = await import("pdf-parse");
+          const pdfParseFn = pdfParseModule.default || pdfParseModule;
+          const pdfData = await pdfParseFn(file.buffer);
           const extractionPrompt = `Extract all patient names and appointment times from this document/image. Return a JSON object: { "patients": [{ "name": "Full Name", "time": "time if visible" }] }. Only include actual patient names, not doctor names or staff.`;
           const response = await openai.chat.completions.create({
             model: "gpt-5.2",
