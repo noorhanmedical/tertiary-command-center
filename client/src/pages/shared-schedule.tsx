@@ -101,10 +101,10 @@ export default function SharedSchedule() {
   return (
     <div className="min-h-screen bg-background">
       <header className="bg-[#1a365d] sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-8 lg:px-12 py-5">
+        <div className="w-full px-6 md:px-10 lg:px-16 py-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <div className="p-2 bg-white/10 rounded-xl">
+              <div className="p-2.5 bg-white/10 rounded-xl">
                 <Stethoscope className="w-6 h-6 text-white" />
               </div>
               <div>
@@ -126,8 +126,8 @@ export default function SharedSchedule() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-8 lg:px-12 py-8">
-        <div className="space-y-4" data-testid="shared-schedule-list">
+      <main className="w-full px-6 md:px-10 lg:px-16 py-8">
+        <div className="space-y-3" data-testid="shared-schedule-list">
           {patients.map((patient) => {
             const allTests = patient.qualifyingTests || [];
             const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
@@ -138,156 +138,176 @@ export default function SharedSchedule() {
             return (
               <Card
                 key={patient.id}
-                className="rounded-2xl border border-slate-200/60 shadow-sm bg-white overflow-hidden transition-shadow hover:shadow-md"
+                className={`rounded-2xl border shadow-sm bg-white overflow-hidden transition-all duration-200 ${isExpanded ? "border-slate-300 shadow-md" : "border-slate-200/60 hover:shadow-md hover:border-slate-200"}`}
                 data-testid={`shared-row-${patient.id}`}
               >
                 <div
-                  className="p-5 cursor-pointer hover:bg-slate-50/60 transition-colors"
+                  className={`px-5 py-3.5 cursor-pointer transition-colors ${isExpanded ? "bg-slate-50/80" : "hover:bg-slate-50/40"}`}
                   onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
                   data-testid={`button-expand-${patient.id}`}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-start gap-4 min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-4 min-w-0 flex-1">
                       {patient.time && (
-                        <span className="text-sm text-slate-900 font-medium shrink-0 mt-0.5 tabular-nums" data-testid={`text-time-${patient.id}`}>{patient.time}</span>
+                        <span className="text-sm text-slate-500 font-medium shrink-0 tabular-nums w-[72px]" data-testid={`text-time-${patient.id}`}>{patient.time}</span>
                       )}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2.5 mb-1">
-                          <p className="font-semibold text-base text-slate-900 truncate" data-testid={`text-name-${patient.id}`}>{patient.name}</p>
-                          <span className="text-xs text-slate-600">
-                            {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
+                      <p className="font-semibold text-base text-slate-900 truncate shrink-0 max-w-[240px]" data-testid={`text-name-${patient.id}`}>{patient.name}</p>
+                      <span className="text-xs text-slate-500 shrink-0">
+                        {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
+                      </span>
+                      <div className="hidden md:flex items-center gap-2 text-xs text-slate-500 min-w-0 flex-1 overflow-hidden">
+                        {patient.diagnoses && (
+                          <span className="truncate" title={patient.diagnoses}>
+                            <span className="font-semibold text-slate-700">Dx:</span> {patient.diagnoses}
                           </span>
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-slate-600">
-                          {patient.diagnoses && (
-                            <span className="truncate max-w-[220px]" title={patient.diagnoses}>
-                              <span className="font-semibold text-slate-900">Dx:</span> {patient.diagnoses}
-                            </span>
-                          )}
-                          {patient.history && (
-                            <span className="truncate max-w-[180px]" title={patient.history}>
-                              <span className="font-semibold text-slate-900">Hx:</span> {patient.history}
-                            </span>
-                          )}
-                          {patient.medications && (
-                            <span className="truncate max-w-[180px]" title={patient.medications}>
-                              <span className="font-semibold text-slate-900">Rx:</span> {patient.medications}
-                            </span>
-                          )}
-                        </div>
+                        )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2.5 shrink-0">
-                      <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-[360px]">
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
                         {qualTests.map((test) => (
-                          <span key={test} className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getBadgeColor(getAncillaryCategory(test))}`}>
+                          <span key={test} className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${getBadgeColor(getAncillaryCategory(test))}`}>
                             {test}
                           </span>
                         ))}
                         {qualImaging.length > 0 && (
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getBadgeColor("ultrasound")}`}>
-                            <Scan className="w-3.5 h-3.5 mr-1" />
-                            Ultrasound Studies ({qualImaging.length})
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${getBadgeColor("ultrasound")}`}>
+                            <Scan className="w-3 h-3 mr-1" />
+                            Ultrasound ({qualImaging.length})
                           </span>
                         )}
                         {allTests.length === 0 && (
-                          <span className="text-sm text-slate-500 italic">No qualifying tests</span>
+                          <span className="text-xs text-slate-400 italic">None</span>
                         )}
                       </div>
-                      {allTests.length > 0 && (
-                        isExpanded ? <ChevronDown className="w-5 h-5 text-slate-400 transition-transform" /> : <ChevronRight className="w-5 h-5 text-slate-400 transition-transform" />
-                      )}
+                      {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
                     </div>
                   </div>
                 </div>
 
-                {isExpanded && allTests.length > 0 && (
-                  <div className="border-t border-slate-100 bg-slate-50/60 p-6" data-testid={`row-expanded-${patient.id}`}>
-                    <div className="flex items-center justify-between mb-5">
-                      <h3 className="font-bold text-base text-slate-900">{patient.name} — Ancillary Details</h3>
-                      <button
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-white/60 transition-colors"
-                        onClick={(e) => { e.stopPropagation(); setExpandedPatient(null); }}
-                        data-testid="button-close-detail"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {(() => {
-                        const grouped: Record<string, string[]> = {};
-                        for (const test of allTests) {
-                          const cat = getAncillaryCategory(test);
-                          if (!grouped[cat]) grouped[cat] = [];
-                          grouped[cat].push(test);
-                        }
-                        return ["brainwave", "vitalwave", "ultrasound", "other"].filter((c) => grouped[c]).map((cat) => {
-                          const tests = grouped[cat];
-                          const style = categoryStyles[cat];
-                          const IconComp = categoryIcons[cat];
-                          return (
-                            <div key={cat} className={`rounded-xl ${style.bg} border ${style.border} p-5`} data-testid={`card-ancillary-${cat}`}>
-                              <div className="flex items-center gap-2.5 mb-4">
-                                <IconComp className={`w-5 h-5 ${style.icon}`} />
-                                <span className={`font-bold text-sm ${style.accent}`}>{categoryLabels[cat]}</span>
-                              </div>
-                              {cat === "ultrasound" && tests.length > 1 && (
-                                <div className="flex items-center gap-1.5 flex-wrap mb-4">
-                                  {tests.map((t) => (
-                                    <span key={t} className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getBadgeColor(cat)}`}>{t}</span>
-                                  ))}
-                                </div>
-                              )}
-                              {tests.map((test) => {
-                                const reason = reasoning[test];
-                                const clinician = reason ? (typeof reason === "string" ? reason : reason.clinician_understanding) : null;
-                                const talking = reason ? (typeof reason === "string" ? null : reason.patient_talking_points) : null;
-                                const confidence = reason && typeof reason !== "string" ? reason.confidence : null;
-                                const confidenceStyles: Record<string, string> = {
-                                  high: "bg-emerald-100 text-emerald-700",
-                                  medium: "bg-amber-100 text-amber-700",
-                                  low: "bg-orange-100 text-orange-700",
-                                };
-                                return (
-                                  <div key={test} className="mb-4 last:mb-0">
-                                    <div className="flex items-center gap-2.5 mb-2 flex-wrap">
-                                      {(cat === "ultrasound" || tests.length > 1) && (
-                                        <p className={`text-sm font-semibold ${style.accent}`}>{test}</p>
-                                      )}
-                                      {confidence && (
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${confidenceStyles[confidence]}`}>
-                                          {confidence.toUpperCase()}
-                                        </span>
-                                      )}
-                                    </div>
-                                    {clinician && (
-                                      <div className="rounded-xl bg-white/90 backdrop-blur-sm p-4 mb-3 shadow-sm">
-                                        <div className="flex items-center gap-2 mb-2">
-                                          <GraduationCap className="w-4 h-4 text-slate-500" />
-                                          <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">Clinician Understanding</span>
-                                        </div>
-                                        <p className="text-sm leading-relaxed text-slate-800">{clinician}</p>
-                                      </div>
-                                    )}
-                                    {talking && (
-                                      <div className="rounded-xl bg-white/90 backdrop-blur-sm p-4 mb-3 shadow-sm">
-                                        <div className="flex items-center gap-2 mb-2">
-                                          <MessageCircle className="w-4 h-4 text-slate-500" />
-                                          <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">Patient Talking Points</span>
-                                        </div>
-                                        <p className="text-sm leading-relaxed text-slate-800">{talking}</p>
-                                      </div>
-                                    )}
-                                    {!clinician && !talking && (
-                                      <p className="text-sm text-slate-500 italic">No detailed reasoning available.</p>
-                                    )}
+                {isExpanded && (
+                  <div className="border-t border-slate-200/80 bg-white" data-testid={`row-expanded-${patient.id}`}>
+                    <div className="px-6 py-5">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h3 className="font-bold text-lg text-slate-900">{patient.name}</h3>
+                          <div className="flex items-center gap-4 mt-1 text-sm text-slate-600">
+                            {patient.age && <span>{patient.age}yo</span>}
+                            {patient.gender && <span>{patient.gender}</span>}
+                          </div>
+                        </div>
+                        <button
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                          onClick={(e) => { e.stopPropagation(); setExpandedPatient(null); }}
+                          data-testid="button-close-detail"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+                        {patient.diagnoses && (
+                          <div className="bg-slate-50 rounded-xl px-4 py-3">
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Diagnoses</p>
+                            <p className="text-sm text-slate-900">{patient.diagnoses}</p>
+                          </div>
+                        )}
+                        {patient.history && (
+                          <div className="bg-slate-50 rounded-xl px-4 py-3">
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">History</p>
+                            <p className="text-sm text-slate-900">{patient.history}</p>
+                          </div>
+                        )}
+                        {patient.medications && (
+                          <div className="bg-slate-50 rounded-xl px-4 py-3">
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Medications</p>
+                            <p className="text-sm text-slate-900">{patient.medications}</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {allTests.length > 0 && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                          {(() => {
+                            const grouped: Record<string, string[]> = {};
+                            for (const test of allTests) {
+                              const cat = getAncillaryCategory(test);
+                              if (!grouped[cat]) grouped[cat] = [];
+                              grouped[cat].push(test);
+                            }
+                            return ["brainwave", "vitalwave", "ultrasound", "other"].filter((c) => grouped[c]).map((cat) => {
+                              const tests = grouped[cat];
+                              const style = categoryStyles[cat];
+                              const IconComp = categoryIcons[cat];
+                              return (
+                                <div key={cat} className={`rounded-xl ${style.bg} border ${style.border} p-5`} data-testid={`card-ancillary-${cat}`}>
+                                  <div className="flex items-center gap-2.5 mb-4">
+                                    <IconComp className={`w-5 h-5 ${style.icon}`} />
+                                    <span className={`font-bold text-sm ${style.accent}`}>{categoryLabels[cat]}</span>
                                   </div>
-                                );
-                              })}
-                            </div>
-                          );
-                        });
-                      })()}
+                                  {cat === "ultrasound" && tests.length > 1 && (
+                                    <div className="flex items-center gap-1.5 flex-wrap mb-4">
+                                      {tests.map((t) => (
+                                        <span key={t} className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getBadgeColor(cat)}`}>{t}</span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {tests.map((test) => {
+                                    const reason = reasoning[test];
+                                    const clinician = reason ? (typeof reason === "string" ? reason : reason.clinician_understanding) : null;
+                                    const talking = reason ? (typeof reason === "string" ? null : reason.patient_talking_points) : null;
+                                    const confidence = reason && typeof reason !== "string" ? reason.confidence : null;
+                                    const confidenceStyles: Record<string, string> = {
+                                      high: "bg-emerald-100 text-emerald-700",
+                                      medium: "bg-amber-100 text-amber-700",
+                                      low: "bg-orange-100 text-orange-700",
+                                    };
+                                    return (
+                                      <div key={test} className="mb-4 last:mb-0">
+                                        <div className="flex items-center gap-2.5 mb-2 flex-wrap">
+                                          {(cat === "ultrasound" || tests.length > 1) && (
+                                            <p className={`text-sm font-semibold ${style.accent}`}>{test}</p>
+                                          )}
+                                          {confidence && (
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${confidenceStyles[confidence]}`}>
+                                              {confidence.toUpperCase()}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {clinician && (
+                                          <div className="rounded-xl bg-white/90 backdrop-blur-sm p-4 mb-3 shadow-sm">
+                                            <div className="flex items-center gap-2 mb-2">
+                                              <GraduationCap className="w-4 h-4 text-slate-500" />
+                                              <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">Clinician Understanding</span>
+                                            </div>
+                                            <p className="text-sm leading-relaxed text-slate-800">{clinician}</p>
+                                          </div>
+                                        )}
+                                        {talking && (
+                                          <div className="rounded-xl bg-white/90 backdrop-blur-sm p-4 mb-3 shadow-sm">
+                                            <div className="flex items-center gap-2 mb-2">
+                                              <MessageCircle className="w-4 h-4 text-slate-500" />
+                                              <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">Patient Talking Points</span>
+                                            </div>
+                                            <p className="text-sm leading-relaxed text-slate-800">{talking}</p>
+                                          </div>
+                                        )}
+                                        {!clinician && !talking && (
+                                          <p className="text-sm text-slate-500 italic">No detailed reasoning available.</p>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                      )}
+
+                      {allTests.length === 0 && (
+                        <p className="text-sm text-slate-500 italic">No qualifying tests for this patient.</p>
+                      )}
                     </div>
                   </div>
                 )}
@@ -305,7 +325,7 @@ export default function SharedSchedule() {
       </main>
 
       <footer className="border-t border-slate-200/60 bg-white/60 backdrop-blur-sm">
-        <div className="max-w-4xl mx-auto px-8 lg:px-12 py-4">
+        <div className="w-full px-6 md:px-10 lg:px-16 py-4">
           <p className="text-xs text-slate-400 text-center">Plexus Ancillary Screening · AI-powered patient qualification</p>
         </div>
       </footer>
