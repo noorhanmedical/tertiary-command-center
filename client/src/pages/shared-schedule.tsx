@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   Loader2,
   Brain,
@@ -13,10 +14,11 @@ import {
   MessageCircle,
   Stethoscope,
   X,
+  Download,
 } from "lucide-react";
 import type { PatientScreening } from "@shared/schema";
 
-type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[]; icd10_codes?: string[] };
+type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[] };
 
 const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
 
@@ -33,10 +35,10 @@ function isImagingTest(test: string): boolean {
 }
 
 const categoryStyles: Record<string, { bg: string; border: string; accent: string; icon: string }> = {
-  brainwave: { bg: "bg-violet-50/80", border: "border-violet-100", accent: "text-violet-700", icon: "text-violet-500" },
-  vitalwave: { bg: "bg-red-50/80", border: "border-red-100", accent: "text-red-700", icon: "text-red-500" },
-  ultrasound: { bg: "bg-emerald-50/80", border: "border-emerald-100", accent: "text-emerald-700", icon: "text-emerald-500" },
-  other: { bg: "bg-slate-50/80", border: "border-slate-100", accent: "text-slate-700", icon: "text-slate-500" },
+  brainwave: { bg: "bg-violet-50/80", border: "border-violet-200/60", accent: "text-violet-700", icon: "text-violet-500" },
+  vitalwave: { bg: "bg-red-50/80", border: "border-red-200/60", accent: "text-red-700", icon: "text-red-500" },
+  ultrasound: { bg: "bg-emerald-50/80", border: "border-emerald-200/60", accent: "text-emerald-700", icon: "text-emerald-500" },
+  other: { bg: "bg-slate-50/80", border: "border-slate-200/60", accent: "text-slate-700", icon: "text-slate-500" },
 };
 
 const categoryLabels: Record<string, string> = { brainwave: "BrainWave", vitalwave: "VitalWave", ultrasound: "Ultrasound Studies", other: "Other" };
@@ -64,42 +66,68 @@ export default function SharedSchedule() {
   const batch = batchData;
   const patients: PatientScreening[] = batchData?.patients || [];
 
+  const handleExport = async () => {
+    if (!batchId) return;
+    const res = await fetch(`/api/screening-batches/${batchId}/export`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `screening-results-${batchId}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-slate-50">
-        <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+      <div className="flex items-center justify-center h-screen bg-background">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   if (!batch) {
     return (
-      <div className="flex items-center justify-center h-screen bg-slate-50">
+      <div className="flex items-center justify-center h-screen bg-background">
         <div className="text-center">
-          <Stethoscope className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-          <h2 className="text-lg font-semibold text-slate-900">Schedule not found</h2>
-          <p className="text-sm text-slate-900 mt-1">This schedule may have been deleted or the link is invalid.</p>
+          <Stethoscope className="w-14 h-14 text-slate-300 mx-auto mb-5" />
+          <h2 className="text-xl font-bold text-slate-900" data-testid="text-not-found">Schedule not found</h2>
+          <p className="text-sm text-slate-600 mt-2">This schedule may have been deleted or the link is invalid.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50/50">
-      <header className="bg-white/80 backdrop-blur-xl border-b border-slate-200/60 sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-8 lg:px-[10%] py-4">
-          <div className="flex items-center gap-3">
-            <Stethoscope className="w-5 h-5 text-slate-600" />
-            <div>
-              <h1 className="text-base font-semibold tracking-tight" data-testid="text-shared-schedule-title">{batch.name}</h1>
-              <p className="text-xs text-slate-900" data-testid="text-shared-patient-count">{patients.length} patients screened</p>
+    <div className="min-h-screen bg-background">
+      <header className="bg-[#1a365d] sticky top-0 z-50">
+        <div className="max-w-4xl mx-auto px-8 lg:px-12 py-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="p-2 bg-white/10 rounded-xl">
+                <Stethoscope className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <p className="text-xs text-blue-200/70 font-medium tracking-wider uppercase mb-0.5">Plexus Ancillary Screening</p>
+                <h1 className="text-lg font-bold text-white tracking-tight" data-testid="text-shared-schedule-title">{batch.name}</h1>
+                <p className="text-sm text-blue-200/80 mt-0.5" data-testid="text-shared-patient-count">{patients.length} patients screened</p>
+              </div>
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExport}
+              className="gap-2 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:text-white rounded-xl"
+              data-testid="button-export-shared"
+            >
+              <Download className="w-4 h-4" /> Export CSV
+            </Button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-8 lg:px-[10%] py-6">
-        <div className="space-y-3">
+      <main className="max-w-4xl mx-auto px-8 lg:px-12 py-8">
+        <div className="space-y-4" data-testid="shared-schedule-list">
           {patients.map((patient) => {
             const allTests = patient.qualifyingTests || [];
             const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
@@ -110,62 +138,82 @@ export default function SharedSchedule() {
             return (
               <Card
                 key={patient.id}
-                className="rounded-2xl border-0 shadow-sm overflow-hidden"
+                className="rounded-2xl border border-slate-200/60 shadow-sm bg-white overflow-hidden transition-shadow hover:shadow-md"
                 data-testid={`shared-row-${patient.id}`}
               >
                 <div
-                  className="p-4 cursor-pointer hover:bg-slate-50/80 transition-colors"
+                  className="p-5 cursor-pointer hover:bg-slate-50/60 transition-colors"
                   onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
                   data-testid={`button-expand-${patient.id}`}
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-4 min-w-0">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-4 min-w-0 flex-1">
                       {patient.time && (
-                        <span className="text-xs text-slate-900 font-medium shrink-0" data-testid={`text-time-${patient.id}`}>{patient.time}</span>
+                        <span className="text-sm text-slate-900 font-medium shrink-0 mt-0.5 tabular-nums" data-testid={`text-time-${patient.id}`}>{patient.time}</span>
                       )}
-                      <div className="min-w-0">
-                        <p className="font-medium text-sm truncate" data-testid={`text-name-${patient.id}`}>{patient.name}</p>
-                        <p className="text-xs text-slate-900 mt-0.5">
-                          {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
-                        </p>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2.5 mb-1">
+                          <p className="font-semibold text-base text-slate-900 truncate" data-testid={`text-name-${patient.id}`}>{patient.name}</p>
+                          <span className="text-xs text-slate-600">
+                            {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs text-slate-600">
+                          {patient.diagnoses && (
+                            <span className="truncate max-w-[220px]" title={patient.diagnoses}>
+                              <span className="font-semibold text-slate-900">Dx:</span> {patient.diagnoses}
+                            </span>
+                          )}
+                          {patient.history && (
+                            <span className="truncate max-w-[180px]" title={patient.history}>
+                              <span className="font-semibold text-slate-900">Hx:</span> {patient.history}
+                            </span>
+                          )}
+                          {patient.medications && (
+                            <span className="truncate max-w-[180px]" title={patient.medications}>
+                              <span className="font-semibold text-slate-900">Rx:</span> {patient.medications}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <div className="flex items-center gap-1 flex-wrap justify-end">
+                    <div className="flex items-center gap-2.5 shrink-0">
+                      <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-[360px]">
                         {qualTests.map((test) => (
-                          <span key={test} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor(getAncillaryCategory(test))}`}>
+                          <span key={test} className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getBadgeColor(getAncillaryCategory(test))}`}>
                             {test}
                           </span>
                         ))}
                         {qualImaging.length > 0 && (
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor("ultrasound")}`}>
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getBadgeColor("ultrasound")}`}>
+                            <Scan className="w-3.5 h-3.5 mr-1" />
                             Ultrasound Studies ({qualImaging.length})
                           </span>
                         )}
                         {allTests.length === 0 && (
-                          <span className="text-xs text-slate-900 italic">No qualifying tests</span>
+                          <span className="text-sm text-slate-500 italic">No qualifying tests</span>
                         )}
                       </div>
                       {allTests.length > 0 && (
-                        isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />
+                        isExpanded ? <ChevronDown className="w-5 h-5 text-slate-400 transition-transform" /> : <ChevronRight className="w-5 h-5 text-slate-400 transition-transform" />
                       )}
                     </div>
                   </div>
                 </div>
 
                 {isExpanded && allTests.length > 0 && (
-                  <div className="border-t border-slate-100 bg-slate-50/50 p-4" data-testid={`row-expanded-${patient.id}`}>
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-semibold text-sm text-slate-900">{patient.name} — Ancillary Details</h3>
+                  <div className="border-t border-slate-100 bg-slate-50/60 p-6" data-testid={`row-expanded-${patient.id}`}>
+                    <div className="flex items-center justify-between mb-5">
+                      <h3 className="font-bold text-base text-slate-900">{patient.name} — Ancillary Details</h3>
                       <button
-                        className="p-1 rounded-lg text-slate-400 hover:text-slate-600 transition-colors"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-white/60 transition-colors"
                         onClick={(e) => { e.stopPropagation(); setExpandedPatient(null); }}
                         data-testid="button-close-detail"
                       >
                         <X className="w-4 h-4" />
                       </button>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {(() => {
                         const grouped: Record<string, string[]> = {};
                         for (const test of allTests) {
@@ -178,15 +226,15 @@ export default function SharedSchedule() {
                           const style = categoryStyles[cat];
                           const IconComp = categoryIcons[cat];
                           return (
-                            <div key={cat} className={`rounded-xl ${style.bg} border ${style.border} p-4`} data-testid={`card-ancillary-${cat}`}>
-                              <div className="flex items-center gap-2 mb-3">
-                                <IconComp className={`w-4 h-4 ${style.icon}`} />
-                                <span className={`font-semibold text-xs ${style.accent}`}>{categoryLabels[cat]}</span>
+                            <div key={cat} className={`rounded-xl ${style.bg} border ${style.border} p-5`} data-testid={`card-ancillary-${cat}`}>
+                              <div className="flex items-center gap-2.5 mb-4">
+                                <IconComp className={`w-5 h-5 ${style.icon}`} />
+                                <span className={`font-bold text-sm ${style.accent}`}>{categoryLabels[cat]}</span>
                               </div>
                               {cat === "ultrasound" && tests.length > 1 && (
-                                <div className="flex items-center gap-1.5 flex-wrap mb-3">
+                                <div className="flex items-center gap-1.5 flex-wrap mb-4">
                                   {tests.map((t) => (
-                                    <span key={t} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor(cat)}`}>{t}</span>
+                                    <span key={t} className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getBadgeColor(cat)}`}>{t}</span>
                                   ))}
                                 </div>
                               )}
@@ -201,34 +249,37 @@ export default function SharedSchedule() {
                                   low: "bg-orange-100 text-orange-700",
                                 };
                                 return (
-                                  <div key={test} className="mb-3 last:mb-0">
-                                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                  <div key={test} className="mb-4 last:mb-0">
+                                    <div className="flex items-center gap-2.5 mb-2 flex-wrap">
                                       {(cat === "ultrasound" || tests.length > 1) && (
-                                        <p className={`text-xs font-semibold ${style.accent}`}>{test}</p>
+                                        <p className={`text-sm font-semibold ${style.accent}`}>{test}</p>
                                       )}
                                       {confidence && (
-                                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${confidenceStyles[confidence]}`}>
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${confidenceStyles[confidence]}`}>
                                           {confidence.toUpperCase()}
                                         </span>
                                       )}
                                     </div>
                                     {clinician && (
-                                      <div className="rounded-lg bg-white/80 p-3 mb-2">
-                                        <div className="flex items-center gap-1.5 mb-1">
-                                          <GraduationCap className="w-3.5 h-3.5 text-slate-900" />
-                                          <span className="text-[10px] font-semibold text-slate-900 uppercase tracking-wider">Clinician Understanding</span>
+                                      <div className="rounded-xl bg-white/90 backdrop-blur-sm p-4 mb-3 shadow-sm">
+                                        <div className="flex items-center gap-2 mb-2">
+                                          <GraduationCap className="w-4 h-4 text-slate-500" />
+                                          <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">Clinician Understanding</span>
                                         </div>
-                                        <p className="text-[11px] leading-relaxed text-slate-900">{clinician}</p>
+                                        <p className="text-sm leading-relaxed text-slate-800">{clinician}</p>
                                       </div>
                                     )}
                                     {talking && (
-                                      <div className="rounded-lg bg-white/80 p-3 mb-2">
-                                        <div className="flex items-center gap-1.5 mb-1">
-                                          <MessageCircle className="w-3.5 h-3.5 text-slate-900" />
-                                          <span className="text-[10px] font-semibold text-slate-900 uppercase tracking-wider">Patient Talking Points</span>
+                                      <div className="rounded-xl bg-white/90 backdrop-blur-sm p-4 mb-3 shadow-sm">
+                                        <div className="flex items-center gap-2 mb-2">
+                                          <MessageCircle className="w-4 h-4 text-slate-500" />
+                                          <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">Patient Talking Points</span>
                                         </div>
-                                        <p className="text-[11px] leading-relaxed text-slate-900">{talking}</p>
+                                        <p className="text-sm leading-relaxed text-slate-800">{talking}</p>
                                       </div>
+                                    )}
+                                    {!clinician && !talking && (
+                                      <p className="text-sm text-slate-500 italic">No detailed reasoning available.</p>
                                     )}
                                   </div>
                                 );
@@ -244,7 +295,20 @@ export default function SharedSchedule() {
             );
           })}
         </div>
+
+        {patients.length === 0 && (
+          <div className="text-center py-20">
+            <Stethoscope className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+            <p className="text-base text-slate-600">No patients in this schedule.</p>
+          </div>
+        )}
       </main>
+
+      <footer className="border-t border-slate-200/60 bg-white/60 backdrop-blur-sm">
+        <div className="max-w-4xl mx-auto px-8 lg:px-12 py-4">
+          <p className="text-xs text-slate-400 text-center">Plexus Ancillary Screening · AI-powered patient qualification</p>
+        </div>
+      </footer>
     </div>
   );
 }

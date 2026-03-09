@@ -3,12 +3,15 @@ import {
   screeningBatches,
   patientScreenings,
   patientTestHistory,
+  patientReferenceData,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
   type InsertPatientScreening,
   type PatientTestHistory,
   type InsertTestHistory,
+  type PatientReference,
+  type InsertPatientReference,
   users,
   type User,
   type InsertUser,
@@ -38,6 +41,13 @@ export interface IStorage {
   searchTestHistory(nameQuery: string): Promise<PatientTestHistory[]>;
   deleteTestHistory(id: number): Promise<void>;
   deleteAllTestHistory(): Promise<void>;
+
+  createPatientReference(record: InsertPatientReference): Promise<PatientReference>;
+  createPatientReferenceBulk(records: InsertPatientReference[]): Promise<PatientReference[]>;
+  getAllPatientReferences(): Promise<PatientReference[]>;
+  searchPatientReferences(nameQuery: string): Promise<PatientReference[]>;
+  deletePatientReference(id: number): Promise<void>;
+  deleteAllPatientReferences(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -130,6 +140,35 @@ export class DatabaseStorage implements IStorage {
 
   async deleteAllTestHistory(): Promise<void> {
     await db.delete(patientTestHistory);
+  }
+
+  async createPatientReference(record: InsertPatientReference): Promise<PatientReference> {
+    const [result] = await db.insert(patientReferenceData).values(record).returning();
+    return result;
+  }
+
+  async createPatientReferenceBulk(records: InsertPatientReference[]): Promise<PatientReference[]> {
+    if (records.length === 0) return [];
+    const results = await db.insert(patientReferenceData).values(records).returning();
+    return results;
+  }
+
+  async getAllPatientReferences(): Promise<PatientReference[]> {
+    return db.select().from(patientReferenceData).orderBy(desc(patientReferenceData.createdAt));
+  }
+
+  async searchPatientReferences(nameQuery: string): Promise<PatientReference[]> {
+    return db.select().from(patientReferenceData)
+      .where(ilike(patientReferenceData.patientName, `%${nameQuery}%`))
+      .orderBy(desc(patientReferenceData.createdAt));
+  }
+
+  async deletePatientReference(id: number): Promise<void> {
+    await db.delete(patientReferenceData).where(eq(patientReferenceData.id, id));
+  }
+
+  async deleteAllPatientReferences(): Promise<void> {
+    await db.delete(patientReferenceData);
   }
 }
 

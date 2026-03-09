@@ -4,6 +4,9 @@
 AI-powered patient screening application that analyzes clinical data (schedules, past medical history, medications, notes) to qualify patients for diagnostic tests: BrainWave (EEG), VitalWave (ABI), Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Upper Extremity Arterial Doppler (93930), Abdominal Aortic Aneurysm Duplex (93978), Stress Echocardiogram (93350), Lower Extremity Venous Duplex (93971), and Upper Extremity Venous Duplex (93970). The system uses OpenAI GPT-5.2 for aggressive qualification - it qualifies patients for every test with any reasonable clinical justification.
 
 ## Recent Changes
+- 2026-03-09: Patient Reference Database: upload CSV/Excel or paste clinical data (Dx, Hx, Rx, Age, Gender, Insurance) per patient; auto-fills fields when patients are added to schedules via fuzzy name matching; new "Patient References" tab, tile, and sidebar entry
+- 2026-03-09: Cooldown info surfaced in results view with amber warning badges and expandable details
+- 2026-03-09: Removed ICD-10 codes from all UI views; shared schedule page redesigned with premium branded layout
 - 2026-03-06: Tab-based navigation: multiple schedules open simultaneously as tabs; tab bar below banner with close buttons; Home/Patient History/schedules as tab types; delete buttons on sidebar schedule items; no background image; solid icy blue-white background
 - 2026-03-06: Winter theme: CSS variables updated to icy blue-white palette (bg 210 35% 96%, primary 212 72% 40%); deep navy banner bg-[#1a365d]; dark mode deep navy tones; no background image overlay
 - 2026-03-06: Bigger text/tiles: banner title text-lg, home tiles p-6 with w-7 icons and text-base titles, patient name text-base, build section headers text-base, results view patient names text-base, Dx/Hx/Rx labels text-sm
@@ -55,9 +58,13 @@ AI-powered patient screening application that analyzes clinical data (schedules,
 - `POST /api/test-history/import` - Import test history from file or pasted text (AI-parsed)
 - `DELETE /api/test-history/:id` - Delete a test history record
 - `DELETE /api/test-history` - Clear all test history
+- `GET /api/patient-references` - List all patient reference records
+- `POST /api/patient-references/import` - Import references from file or pasted text (AI-parsed)
+- `DELETE /api/patient-references/:id` - Delete a single reference record
+- `DELETE /api/patient-references` - Clear all reference data
 
 ## Key Files
-- `shared/schema.ts` - Data models (screeningBatches, patientScreenings, patientTestHistory, testReasoningSchema)
+- `shared/schema.ts` - Data models (screeningBatches, patientScreenings, patientTestHistory, patientReferenceData, testReasoningSchema)
 - `server/routes.ts` - API routes with file upload, Zod validation, AI screening, export
 - `server/storage.ts` - Database CRUD operations
 - `client/src/pages/home.tsx` - Main UI with sidebar, schedule builder, patient editing, results view

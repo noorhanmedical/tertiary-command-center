@@ -80,6 +80,27 @@ export const insertTestHistorySchema = createInsertSchema(patientTestHistory).om
 export type PatientTestHistory = typeof patientTestHistory.$inferSelect;
 export type InsertTestHistory = z.infer<typeof insertTestHistorySchema>;
 
+export const patientReferenceData = pgTable("patient_reference_data", {
+  id: serial("id").primaryKey(),
+  patientName: text("patient_name").notNull(),
+  diagnoses: text("diagnoses"),
+  history: text("history"),
+  medications: text("medications"),
+  age: text("age"),
+  gender: text("gender"),
+  insurance: text("insurance"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertPatientReferenceSchema = createInsertSchema(patientReferenceData).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type PatientReference = typeof patientReferenceData.$inferSelect;
+export type InsertPatientReference = z.infer<typeof insertPatientReferenceSchema>;
+
 export const testReasoningSchema = z.object({
   clinician_understanding: z.string(),
   patient_talking_points: z.string(),

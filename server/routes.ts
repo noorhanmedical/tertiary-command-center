@@ -388,6 +388,65 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  async function enrichFromReferenceDb(patients: any[]): Promise<void> {
+    const allRefs = await storage.getAllPatientReferences();
+    if (allRefs.length === 0 || patients.length === 0) return;
+
+    const patientNames = patients.filter(p => p.name).map(p => ({ id: p.id, name: p.name }));
+    if (patientNames.length === 0) return;
+
+    try {
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a patient name matcher. Match newly added patients to a reference database of known patients.
+For each new patient, find the best match in the reference database using fuzzy name matching.
+Handle variations like "Last, First" vs "First Last", nicknames (Bill/William, Bob/Robert), minor spelling differences, and missing middle names.
+Only match if you're confident it's the same person. Return a JSON array of matches.
+
+Each match: { "patientId": <number>, "referenceId": <number> }
+If no match, omit that patient. Respond with ONLY a valid JSON array.`
+          },
+          {
+            role: "user",
+            content: `New patients:\n${JSON.stringify(patientNames)}\n\nReference database:\n${JSON.stringify(allRefs.map(r => ({ id: r.id, name: r.patientName })))}`
+          }
+        ],
+        temperature: 0,
+      });
+
+      const content = response.choices[0]?.message?.content?.trim() || "[]";
+      const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+      const matches: { patientId: number; referenceId: number }[] = JSON.parse(cleaned);
+
+      const refMap = new Map(allRefs.map(r => [r.id, r]));
+
+      for (const match of matches) {
+        const ref = refMap.get(match.referenceId);
+        if (!ref) continue;
+
+        const patient = patients.find(p => p.id === match.patientId);
+        if (!patient) continue;
+
+        const updates: any = {};
+        if (!patient.diagnoses && ref.diagnoses) updates.diagnoses = ref.diagnoses;
+        if (!patient.history && ref.history) updates.history = ref.history;
+        if (!patient.medications && ref.medications) updates.medications = ref.medications;
+        if (!patient.age && ref.age) updates.age = parseInt(ref.age) || null;
+        if (!patient.gender && ref.gender) updates.gender = ref.gender;
+        if (!patient.notes && ref.insurance) updates.notes = `Insurance: ${ref.insurance}`;
+
+        if (Object.keys(updates).length > 0) {
+          await storage.updatePatientScreening(match.patientId, updates);
+        }
+      }
+    } catch (err: any) {
+      console.error("Reference DB auto-fill failed:", err.message);
+    }
+  }
+
   app.post("/api/batches", async (req, res) => {
     try {
       const parsed = createBatchSchema.safeParse(req.body);
@@ -432,6 +491,15 @@ export async function registerRoutes(
       await storage.updateScreeningBatch(batchId, {
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
+
+      if (name.trim()) {
+        await enrichFromReferenceDb([patient]);
+        const updated = await storage.getPatientScreening(patient.id);
+        if (updated) {
+          res.json(updated);
+          return;
+        }
+      }
 
       res.json(patient);
     } catch (error: any) {
@@ -538,7 +606,12 @@ export async function registerRoutes(
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
-      res.json({ imported: created.length, patients: created });
+      await enrichFromReferenceDb(created);
+      const refreshed = await storage.getPatientScreeningsByBatch(batchId);
+      const createdIds = new Set(created.map(p => p.id));
+      const enrichedPatients = refreshed.filter(p => createdIds.has(p.id));
+
+      res.json({ imported: enrichedPatients.length, patients: enrichedPatients });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -641,7 +714,12 @@ Respond ONLY with a valid JSON array, no markdown fences.`
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
-      res.json({ imported: created.length, patients: created });
+      await enrichFromReferenceDb(created);
+      const refreshed2 = await storage.getPatientScreeningsByBatch(batchId);
+      const createdIds2 = new Set(created.map(p => p.id));
+      const enrichedPatients2 = refreshed2.filter(p => createdIds2.has(p.id));
+
+      res.json({ imported: enrichedPatients2.length, patients: enrichedPatients2 });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -666,6 +744,15 @@ Respond ONLY with a valid JSON array, no markdown fences.`
 
       const patient = await storage.updatePatientScreening(id, updates);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      if (data.name && data.name.trim() && !patient.diagnoses && !patient.history && !patient.medications) {
+        await enrichFromReferenceDb([patient]);
+        const enriched = await storage.getPatientScreening(id);
+        if (enriched) {
+          res.json(enriched);
+          return;
+        }
+      }
 
       res.json(patient);
     } catch (error: any) {
@@ -987,6 +1074,130 @@ Respond ONLY with a valid JSON array, no markdown fences.`
   app.delete("/api/test-history", async (_req, res) => {
     try {
       await storage.deleteAllTestHistory();
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/patient-references", async (req, res) => {
+    try {
+      const search = req.query.search as string | undefined;
+      if (search && search.trim()) {
+        const records = await storage.searchPatientReferences(search.trim());
+        res.json(records);
+      } else {
+        const records = await storage.getAllPatientReferences();
+        res.json(records);
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/patient-references/import", upload.single("file"), async (req: any, res) => {
+    try {
+      let text = "";
+
+      if (req.file) {
+        const ext = req.file.originalname.toLowerCase().split(".").pop();
+        if (ext === "xlsx" || ext === "xls") {
+          const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+          for (const sheetName of workbook.SheetNames) {
+            const sheet = workbook.Sheets[sheetName];
+            text += sheetName + "\n" + XLSX.utils.sheet_to_csv(sheet) + "\n\n";
+          }
+        } else if (ext === "csv") {
+          text = req.file.buffer.toString("utf-8");
+        } else {
+          text = req.file.buffer.toString("utf-8");
+        }
+      } else if (req.body.text) {
+        text = req.body.text;
+      } else {
+        return res.status(400).json({ error: "No file or text provided" });
+      }
+
+      if (!text.trim()) return res.status(400).json({ error: "Empty data" });
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a clinical data parser. Extract patient reference records from the provided data.
+For each patient, extract:
+- patientName: Full name (required)
+- age: Age as string if present, or null
+- gender: Gender if present (M/F/Male/Female), or null
+- diagnoses: All diagnoses, conditions, Dx mentioned (combine into one string), or null
+- history: Past medical history, Hx, PMH (combine into one string), or null
+- medications: All medications, Rx listed (combine into one string), or null
+- insurance: Insurance type/plan if present, or null
+- notes: Any additional notes, or null
+
+Parse common abbreviations: HTN=hypertension, DM=diabetes mellitus, COPD, CHF, CAD, A-fib, HLD=hyperlipidemia, CKD, OA=osteoarthritis, GERD, etc.
+
+Return JSON: { "records": [ { "patientName": "...", "age": "...", "gender": "...", "diagnoses": "...", "history": "...", "medications": "...", "insurance": "...", "notes": "..." } ] }
+
+Skip rows that are headers, empty, or don't contain valid patient data.`
+          },
+          {
+            role: "user",
+            content: text.substring(0, 30000)
+          }
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+        max_completion_tokens: 16000,
+      });
+
+      let records: any[] = [];
+      try {
+        const parsed = JSON.parse(response.choices[0]?.message?.content || '{"records":[]}');
+        records = parsed.records || [];
+      } catch {
+        return res.status(500).json({ error: "Failed to parse AI response" });
+      }
+
+      const validRecords = records
+        .filter((r: any) => r.patientName && typeof r.patientName === "string")
+        .map((r: any) => ({
+          patientName: r.patientName.trim(),
+          diagnoses: r.diagnoses || null,
+          history: r.history || null,
+          medications: r.medications || null,
+          age: r.age ? String(r.age) : null,
+          gender: r.gender || null,
+          insurance: r.insurance || null,
+          notes: r.notes || null,
+        }));
+
+      if (validRecords.length === 0) {
+        return res.json({ imported: 0, records: [] });
+      }
+
+      const created = await storage.createPatientReferenceBulk(validRecords);
+      res.json({ imported: created.length, records: created });
+    } catch (error: any) {
+      console.error("Patient reference import error:", error);
+      res.status(500).json({ error: error.message || "Import failed" });
+    }
+  });
+
+  app.delete("/api/patient-references/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deletePatientReference(id);
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/patient-references", async (_req, res) => {
+    try {
+      await storage.deleteAllPatientReferences();
       res.status(204).send();
     } catch (error: any) {
       res.status(500).json({ error: error.message });

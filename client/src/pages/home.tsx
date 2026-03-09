@@ -52,10 +52,10 @@ import {
   Share2,
   Copy,
 } from "lucide-react";
-import type { ScreeningBatch, PatientScreening, PatientTestHistory } from "@shared/schema";
+import type { ScreeningBatch, PatientScreening, PatientTestHistory, PatientReference } from "@shared/schema";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
-type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[]; icd10_codes?: string[] };
+type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[] };
 
 const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
 
@@ -138,7 +138,7 @@ function getBadgeColor(cat: string): string {
   }
 }
 
-type TabItem = { type: "home" } | { type: "history" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
+type TabItem = { type: "home" } | { type: "history" } | { type: "references" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
 
 export default function Home() {
   const [tabs, setTabs] = useState<TabItem[]>([{ type: "home" }]);
@@ -149,11 +149,13 @@ export default function Home() {
   const [analyzingPatients, setAnalyzingPatients] = useState<Set<number>>(new Set());
   const [historyPasteText, setHistoryPasteText] = useState("");
   const [historySearch, setHistorySearch] = useState("");
+  const [refPasteText, setRefPasteText] = useState("");
+  const [refSearch, setRefSearch] = useState("");
 
   const activeTab = tabs[activeTabIndex] || tabs[0] || { type: "home" };
   const selectedBatchId = activeTab.type === "schedule" ? activeTab.batchId : null;
   const scheduleViewMode = activeTab.type === "schedule" ? (activeTab.viewMode || "build") : null;
-  const view = activeTab.type === "history" ? "history" : activeTab.type === "schedule" ? "schedule" : "home";
+  const view = activeTab.type === "history" ? "history" : activeTab.type === "references" ? "references" : activeTab.type === "schedule" ? "schedule" : "home";
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -221,6 +223,62 @@ export default function Home() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/test-history"] });
       toast({ title: "All history cleared" });
+    },
+  });
+
+  const { data: patientReferences = [], isLoading: refsLoading } = useQuery<PatientReference[]>({
+    queryKey: ["/api/patient-references"],
+    enabled: view === "references" || tabs.some((t) => t.type === "references"),
+  });
+
+  const importRefFileMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/patient-references/import", { method: "POST", body: formData });
+      if (!res.ok) throw new Error((await res.json()).error || "Import failed");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patient-references"] });
+      toast({ title: `Imported ${data.imported} records` });
+    },
+    onError: (e: any) => {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const importRefTextMutation = useMutation({
+    mutationFn: async (text: string) => {
+      const res = await apiRequest("POST", "/api/patient-references/import", { text });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patient-references"] });
+      toast({ title: `Imported ${data.imported} records` });
+      setRefPasteText("");
+    },
+    onError: (e: any) => {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const deleteRefMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/patient-references/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patient-references"] });
+    },
+  });
+
+  const clearRefsMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", "/api/patient-references");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patient-references"] });
+      toast({ title: "All reference data cleared" });
     },
   });
 
@@ -462,6 +520,16 @@ export default function Home() {
     }
   }, [tabs]);
 
+  const openReferencesTab = useCallback(() => {
+    const existingIdx = tabs.findIndex((t) => t.type === "references");
+    if (existingIdx >= 0) {
+      setActiveTabIndex(existingIdx);
+    } else {
+      setTabs((prev) => [...prev, { type: "references" }]);
+      setActiveTabIndex(tabs.length);
+    }
+  }, [tabs]);
+
   return (
     <>
       <Sidebar collapsible="offcanvas" data-testid="sidebar-history">
@@ -481,6 +549,19 @@ export default function Home() {
                   >
                     <Database className="w-4 h-4 shrink-0" />
                     <span className="text-sm font-medium">Patient History</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    onClick={() => {
+                      openReferencesTab();
+                      setSidebarOpen(false);
+                    }}
+                    isActive={view === "references"}
+                    data-testid="sidebar-patient-references"
+                  >
+                    <FileText className="w-4 h-4 shrink-0" />
+                    <span className="text-sm font-medium">Patient References</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
@@ -556,7 +637,7 @@ export default function Home() {
         <div className="bg-[#1e3a5f]/95 backdrop-blur-sm flex items-center gap-0 px-2 shrink-0 overflow-x-auto" data-testid="tab-bar">
           {tabs.map((tab, i) => {
             const isActive = i === activeTabIndex;
-            const label = tab.type === "home" ? "Home" : tab.type === "history" ? "Patient History" : tab.label;
+            const label = tab.type === "home" ? "Home" : tab.type === "history" ? "Patient History" : tab.type === "references" ? "Patient References" : tab.label;
             const canClose = tabs.length > 1;
             return (
               <div
@@ -740,6 +821,160 @@ export default function Home() {
                 )}
 
                 {historyLoading && (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : view === "references" ? (
+          <div className="flex flex-col h-full relative z-10">
+            <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
+              <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
+                <div className="flex items-center gap-2">
+                  <SidebarTrigger data-testid="button-sidebar-toggle-refs" />
+                  <div>
+                    <h1 className="text-base font-bold tracking-tight flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      Patient References
+                    </h1>
+                    <p className="text-xs text-muted-foreground">{patientReferences.length} records — auto-fills Dx/Hx/Rx when patients are added</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {patientReferences.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (confirm("Clear all patient reference records?")) clearRefsMutation.mutate();
+                      }}
+                      className="gap-1.5 text-red-600"
+                      data-testid="button-clear-refs"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Clear All
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </header>
+            <div className="flex-1 overflow-auto p-4">
+              <div className="max-w-5xl mx-auto space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Card className="p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Upload className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm font-semibold">Upload File</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-2">Import from Excel or CSV with columns: Name, Dx, Hx, Rx, Age, Gender, Insurance</p>
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      className="text-xs"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) importRefFileMutation.mutate(file);
+                        e.target.value = "";
+                      }}
+                      data-testid="input-ref-file"
+                    />
+                    {importRefFileMutation.isPending && (
+                      <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Importing...
+                      </div>
+                    )}
+                  </Card>
+                  <Card className="p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FileText className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm font-semibold">Paste Data</span>
+                    </div>
+                    <Textarea
+                      placeholder="Paste patient reference data (Name, Dx, Hx, Rx)..."
+                      value={refPasteText}
+                      onChange={(e) => setRefPasteText(e.target.value)}
+                      className="text-xs min-h-[80px] mb-2"
+                      data-testid="input-ref-paste"
+                    />
+                    <Button
+                      size="sm"
+                      disabled={!refPasteText.trim() || importRefTextMutation.isPending}
+                      onClick={() => importRefTextMutation.mutate(refPasteText)}
+                      className="gap-1.5"
+                      data-testid="button-import-refs"
+                    >
+                      {importRefTextMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                      Import
+                    </Button>
+                  </Card>
+                </div>
+
+                {patientReferences.length > 0 && (
+                  <Card className="p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Search className="w-4 h-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search by patient name..."
+                        value={refSearch}
+                        onChange={(e) => setRefSearch(e.target.value)}
+                        className="text-xs h-8 max-w-xs"
+                        data-testid="input-ref-search"
+                      />
+                    </div>
+                    <div className="overflow-auto max-h-[60vh]">
+                      <table className="w-full border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-100 dark:bg-muted">
+                            <th className="border px-3 py-2 text-left font-semibold">Name</th>
+                            <th className="border px-3 py-2 text-left font-semibold">Dx</th>
+                            <th className="border px-3 py-2 text-left font-semibold">Hx</th>
+                            <th className="border px-3 py-2 text-left font-semibold">Rx</th>
+                            <th className="border px-3 py-2 text-left font-semibold">Insurance</th>
+                            <th className="border px-3 py-2 text-left font-semibold w-10"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {patientReferences
+                            .filter((r) => !refSearch || r.patientName.toLowerCase().includes(refSearch.toLowerCase()))
+                            .map((record) => (
+                              <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-muted/30" data-testid={`row-ref-${record.id}`}>
+                                <td className="border px-3 py-1.5 font-medium">{record.patientName}</td>
+                                <td className="border px-3 py-1.5 max-w-[200px] truncate">{record.diagnoses || "—"}</td>
+                                <td className="border px-3 py-1.5 max-w-[200px] truncate">{record.history || "—"}</td>
+                                <td className="border px-3 py-1.5 max-w-[200px] truncate">{record.medications || "—"}</td>
+                                <td className="border px-3 py-1.5">
+                                  {record.insurance ? (
+                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                      record.insurance.toLowerCase().includes("medicare")
+                                        ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                                        : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
+                                    }`}>
+                                      {record.insurance.toUpperCase()}
+                                    </span>
+                                  ) : "—"}
+                                </td>
+                                <td className="border px-3 py-1.5">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => deleteRefMutation.mutate(record.id)}
+                                    data-testid={`button-delete-ref-${record.id}`}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </Button>
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                )}
+
+                {refsLoading && (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                   </div>
@@ -980,7 +1215,7 @@ export default function Home() {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <Card
                     className={`group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200 ${createBatchMutation.isPending ? "pointer-events-none opacity-60" : ""}`}
                     onClick={handleNewSchedule}
@@ -1013,6 +1248,22 @@ export default function Home() {
                       <div>
                         <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-patient-database">Patient Database</h3>
                         <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">View and manage patient test history</p>
+                      </div>
+                    </div>
+                  </Card>
+
+                  <Card
+                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
+                    onClick={openReferencesTab}
+                    data-testid="tile-patient-references"
+                  >
+                    <div className="flex items-start gap-4 p-6">
+                      <div className="shrink-0 mt-0.5">
+                        <FileText className="w-7 h-7 text-teal-600" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-patient-references">Patient References</h3>
+                        <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Upload clinical data for auto-fill</p>
                       </div>
                     </div>
                   </Card>
@@ -1287,14 +1538,16 @@ function ResultsView({
             {patients.map((patient) => {
               const allTests = patient.qualifyingTests || [];
               const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
+              const cooldowns = (patient.cooldownTests || []) as { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[];
               const qualTests = allTests.filter((t) => !isImagingTest(t));
               const qualImaging = allTests.filter((t) => isImagingTest(t));
               const isExpanded = expandedPatient === patient.id;
+              const hasCooldowns = cooldowns.length > 0;
 
               return (
                 <Card
                   key={patient.id}
-                  className="rounded-2xl border-0 shadow-sm bg-white/85 backdrop-blur-sm overflow-hidden transition-shadow hover:shadow-md"
+                  className={`rounded-2xl border-0 shadow-sm bg-white/85 backdrop-blur-sm overflow-hidden transition-shadow hover:shadow-md ${hasCooldowns ? "ring-1 ring-amber-300 dark:ring-amber-700" : ""}`}
                   data-testid={`row-result-${patient.id}`}
                 >
                   <div
@@ -1312,6 +1565,12 @@ function ResultsView({
                             <span className="text-xs text-slate-900">
                               {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
                             </span>
+                            {hasCooldowns && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300" data-testid={`badge-cooldown-${patient.id}`}>
+                                <AlertTriangle className="w-3 h-3" />
+                                Cooldown ({cooldowns.length})
+                              </span>
+                            )}
                           </div>
                           <div className="flex items-center gap-3 text-xs text-slate-900">
                             {patient.diagnoses && (
@@ -1358,7 +1617,7 @@ function ResultsView({
                     </div>
                   </div>
 
-                  {isExpanded && allTests.length > 0 && (
+                  {isExpanded && (allTests.length > 0 || hasCooldowns) && (
                     <div className="border-t border-slate-100 bg-slate-50/60 p-5" data-testid={`row-expanded-${patient.id}`}>
                       <div className="flex items-center justify-between mb-4">
                         <h3 className="font-semibold text-base text-slate-900">{patient.name} — Ancillary Details</h3>
@@ -1366,6 +1625,38 @@ function ResultsView({
                           <X className="w-4 h-4 text-slate-400" />
                         </Button>
                       </div>
+
+                      {hasCooldowns && (
+                        <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-4 mb-4" data-testid={`card-cooldown-${patient.id}`}>
+                          <div className="flex items-center gap-2 mb-3">
+                            <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                            <span className="font-semibold text-sm text-amber-800 dark:text-amber-300">Cooldown Violations</span>
+                          </div>
+                          <div className="space-y-2">
+                            {cooldowns.map((cd, idx) => (
+                              <div key={idx} className="flex items-center justify-between gap-3 rounded-lg bg-white/80 dark:bg-amber-900/20 px-3 py-2" data-testid={`cooldown-item-${idx}`}>
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                  <span className="text-sm font-medium text-amber-900 dark:text-amber-200 truncate">{cd.test}</span>
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0 text-xs text-amber-700 dark:text-amber-400">
+                                  <span className="flex items-center gap-1">
+                                    <Calendar className="w-3 h-3" />
+                                    Last: {cd.lastDate}
+                                  </span>
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-200/60 dark:bg-amber-800/40 text-[10px] font-semibold uppercase">
+                                    {cd.insuranceType}
+                                  </span>
+                                  <span className="text-[10px]">
+                                    {cd.cooldownMonths}mo cooldown
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {(() => {
                           const grouped: Record<string, string[]> = {};
@@ -1399,8 +1690,6 @@ function ResultsView({
                                   const talking = reason ? (typeof reason === "string" ? null : reason.patient_talking_points) : null;
                                   const confidence = reason && typeof reason !== "string" ? reason.confidence : null;
                                   const qualifyingFactors = reason && typeof reason !== "string" ? reason.qualifying_factors : null;
-                                  const icd10Codes = reason && typeof reason !== "string" ? reason.icd10_codes : null;
-
                                   const confidenceStyles: Record<string, string> = {
                                     high: "bg-emerald-100 text-emerald-700",
                                     medium: "bg-amber-100 text-amber-700",
@@ -1447,17 +1736,6 @@ function ResultsView({
                                             <span className="text-[10px] font-semibold text-slate-900 uppercase tracking-wider">Patient Talking Points</span>
                                           </div>
                                           <p className="text-[11px] leading-relaxed text-slate-900">{talking}</p>
-                                        </div>
-                                      )}
-
-                                      {icd10Codes && icd10Codes.length > 0 && (
-                                        <div className="flex items-center gap-1 flex-wrap mt-1.5" data-testid={`icd10-${test}`}>
-                                          <span className="text-[10px] text-slate-900 font-medium mr-0.5">ICD-10:</span>
-                                          {icd10Codes.map((code, idx) => (
-                                            <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-slate-100 text-slate-900">
-                                              {code}
-                                            </span>
-                                          ))}
                                         </div>
                                       )}
 
