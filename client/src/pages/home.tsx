@@ -168,6 +168,7 @@ export default function Home() {
   const { data: selectedBatch, isLoading: batchLoading } = useQuery<ScreeningBatchWithPatients>({
     queryKey: ["/api/screening-batches", selectedBatchId],
     enabled: !!selectedBatchId,
+    refetchInterval: (query) => query.state.data?.status === "processing" ? 2000 : false,
   });
 
   const { data: testHistory = [], isLoading: historyLoading } = useQuery<PatientTestHistory[]>({
@@ -399,6 +400,7 @@ export default function Home() {
         const batchData = await batchRes.json();
         const completedCount = (batchData.patients || []).filter((p: any) => p.status === "completed").length;
         setAnalysisProgress({ completed: completedCount, total });
+        queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", batchId] });
 
         if (batchData.status === "completed") {
           return;

@@ -256,7 +256,7 @@ async function screenSinglePatientWithAI(patient: { name: string; time?: string 
     ],
     temperature: 0.2,
     response_format: { type: "json_object" },
-    max_completion_tokens: 16384,
+    max_completion_tokens: 4096,
   });
 
   const content = response.choices[0]?.message?.content || "{}";
@@ -783,7 +783,7 @@ Respond ONLY with a valid JSON array, no markdown fences.`
       const patient = await storage.getPatientScreening(id);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
 
-      const patientData = [{
+      const match = await screenSinglePatientWithAI({
         name: patient.name,
         time: patient.time,
         age: patient.age,
@@ -792,13 +792,7 @@ Respond ONLY with a valid JSON array, no markdown fences.`
         history: patient.history,
         medications: patient.medications,
         notes: patient.notes,
-      }];
-
-      const aiResults = await screenPatientsWithAI(patientData);
-
-      const match = aiResults.find(
-        (r) => r.name && r.name.toLowerCase().trim() === patient.name.toLowerCase().trim()
-      );
+      });
 
       const qualTests = match?.qualifyingTests || [];
 
