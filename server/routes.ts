@@ -197,9 +197,9 @@ function mergePatients(a: ParsedPatient, b: ParsedPatient): ParsedPatient {
   const richerName = richness(a) >= richness(b) ? a.name : b.name;
   return {
     name: richerName,
-    time: a.time ?? b.time,
+    time: pickRicher(a.time, b.time),
     age: a.age ?? b.age,
-    gender: a.gender ?? b.gender,
+    gender: pickRicher(a.gender, b.gender),
     diagnoses: pickRicher(a.diagnoses, b.diagnoses),
     history: pickRicher(a.history, b.history),
     medications: pickRicher(a.medications, b.medications),
