@@ -225,7 +225,7 @@ export default function SharedSchedule() {
                       {patient.time && (
                         <span className="text-sm text-slate-500 font-medium shrink-0 tabular-nums w-[72px]" data-testid={`text-time-${patient.id}`}>{patient.time}</span>
                       )}
-                      <p className="font-semibold text-base text-slate-900 truncate shrink-0 max-w-[200px] sm:max-w-xs" data-testid={`text-name-${patient.id}`}>{patient.name}</p>
+                      <p className="font-semibold text-base text-slate-900 truncate min-w-0" data-testid={`text-name-${patient.id}`}>{patient.name}</p>
                       <span className="text-xs text-slate-500 shrink-0">
                         {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
                       </span>
