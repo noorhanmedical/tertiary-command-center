@@ -1,6 +1,7 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "fs/promises";
+import { execSync } from "child_process";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -34,6 +35,13 @@ const allowlist = [
 ];
 
 async function buildAll() {
+  console.log("pushing database schema...");
+  try {
+    execSync("npm run db:push", { stdio: "inherit" });
+  } catch (e) {
+    console.warn("db:push warning (non-fatal):", e);
+  }
+
   await rm("dist", { recursive: true, force: true });
 
   console.log("building client...");
