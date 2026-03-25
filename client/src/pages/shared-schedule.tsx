@@ -69,7 +69,7 @@ export default function SharedSchedule() {
   const [, params] = useRoute("/schedule/:id");
   const batchId = params?.id ? parseInt(params.id) : null;
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
-  const [expandedClinical, setExpandedClinical] = useState<number | null>(null);
+
   const [selectedTestDetail, setSelectedTestDetail] = useState<{ category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null>(null);
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState(false);
@@ -117,7 +117,7 @@ export default function SharedSchedule() {
 
   if (!unlocked) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+      <div className="flex-1 bg-background flex items-center justify-center px-4">
         <Card className="w-full max-w-sm rounded-3xl shadow-xl border-slate-200/60 overflow-hidden">
           <div className="bg-[#1a365d] px-8 py-7 text-center">
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-white/10 mb-3">
@@ -148,7 +148,7 @@ export default function SharedSchedule() {
                     if (pin === CORRECT_PIN) { setUnlocked(true); } else { setPinError(true); setPin(""); }
                   }
                 }}
-                className={`w-full text-center text-2xl tracking-[0.5em] font-bold border rounded-2xl px-4 py-3 focus:outline-none transition-colors ${pinError ? "border-red-400 bg-red-50 text-red-600" : "border-slate-200 bg-slate-50 text-slate-800 focus:border-primary"}`}
+                className={`w-full text-left text-2xl tracking-[0.5em] font-bold border rounded-2xl px-4 py-3 focus:outline-none transition-colors ${pinError ? "border-red-400 bg-red-50 text-red-600" : "border-slate-200 bg-slate-50 text-slate-800 focus:border-primary"}`}
                 data-testid="input-pin"
                 autoFocus
               />
@@ -242,59 +242,6 @@ export default function SharedSchedule() {
                             </span>
                           )}
                         </div>
-                        {(patient.diagnoses || patient.history || patient.medications) && (
-                          <div
-                            className="flex items-center gap-3 text-xs text-slate-900 cursor-pointer hover:text-slate-700 group mt-0.5 rounded-lg px-1 -ml-1 py-0.5 hover:bg-slate-100/70 transition-colors"
-                            onClick={(e) => { e.stopPropagation(); setExpandedClinical(expandedClinical === patient.id ? null : patient.id); }}
-                            data-testid={`button-expand-clinical-${patient.id}`}
-                          >
-                            {patient.diagnoses && (
-                              <span className="truncate max-w-[200px]">
-                                <span className="font-semibold">Dx:</span> {patient.diagnoses}
-                              </span>
-                            )}
-                            {patient.history && (
-                              <span className="truncate max-w-[160px]">
-                                <span className="font-semibold">Hx:</span> {patient.history}
-                              </span>
-                            )}
-                            {patient.medications && (
-                              <span className="truncate max-w-[160px]">
-                                <span className="font-semibold">Rx:</span> {patient.medications}
-                              </span>
-                            )}
-                            {expandedClinical === patient.id
-                              ? <ChevronDown className="w-3 h-3 text-slate-400 shrink-0 ml-auto" />
-                              : <ChevronRight className="w-3 h-3 text-slate-400 shrink-0 ml-auto" />
-                            }
-                          </div>
-                        )}
-                        {expandedClinical === patient.id && (
-                          <div
-                            className="mt-2 rounded-xl bg-slate-50/80 border border-slate-200/70 px-4 py-3 grid grid-cols-1 sm:grid-cols-3 gap-3"
-                            onClick={(e) => e.stopPropagation()}
-                            data-testid={`panel-clinical-${patient.id}`}
-                          >
-                            {patient.diagnoses && (
-                              <div>
-                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Diagnoses</p>
-                                <p className="text-xs text-slate-900 leading-relaxed">{patient.diagnoses}</p>
-                              </div>
-                            )}
-                            {patient.history && (
-                              <div>
-                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">History</p>
-                                <p className="text-xs text-slate-900 leading-relaxed">{patient.history}</p>
-                              </div>
-                            )}
-                            {patient.medications && (
-                              <div>
-                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Medications</p>
-                                <p className="text-xs text-slate-900 leading-relaxed">{patient.medications}</p>
-                              </div>
-                            )}
-                          </div>
-                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -323,7 +270,7 @@ export default function SharedSchedule() {
                   </div>
                 </div>
 
-                {isExpanded && (allTests.length > 0 || hasCooldowns) && (
+                {isExpanded && (allTests.length > 0 || hasCooldowns || patient.diagnoses || patient.history || patient.medications) && (
                   <div className="border-t border-slate-100 bg-slate-50/60 p-5" data-testid={`row-expanded-${patient.id}`}>
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="font-semibold text-base text-slate-900">{patient.name} — Ancillary Details</h3>
@@ -335,6 +282,35 @@ export default function SharedSchedule() {
                         <X className="w-4 h-4" />
                       </button>
                     </div>
+
+                    {(patient.diagnoses || patient.history || patient.medications) && (
+                      <div className="rounded-xl bg-white border border-slate-200/70 px-4 py-3 mb-4" data-testid={`card-patient-history-${patient.id}`}>
+                        <div className="flex items-center gap-2 mb-3">
+                          <Stethoscope className="w-4 h-4 text-slate-500" />
+                          <span className="font-semibold text-sm text-slate-800">Patient History</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          {patient.diagnoses && (
+                            <div>
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Diagnoses (Dx)</p>
+                              <p className="text-xs text-slate-900 leading-relaxed" data-testid={`text-diagnoses-${patient.id}`}>{patient.diagnoses}</p>
+                            </div>
+                          )}
+                          {patient.history && (
+                            <div>
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">History (Hx)</p>
+                              <p className="text-xs text-slate-900 leading-relaxed" data-testid={`text-history-${patient.id}`}>{patient.history}</p>
+                            </div>
+                          )}
+                          {patient.medications && (
+                            <div>
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Medications (Rx)</p>
+                              <p className="text-xs text-slate-900 leading-relaxed" data-testid={`text-medications-${patient.id}`}>{patient.medications}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     {hasCooldowns && (
                       <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-4" data-testid={`card-cooldown-${patient.id}`}>
