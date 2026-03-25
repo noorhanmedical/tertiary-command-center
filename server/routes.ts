@@ -491,24 +491,50 @@ async function screenSinglePatientWithAI(patient: { name: string; time?: string 
     ],
     temperature: 0.2,
     response_format: { type: "json_object" },
-    max_completion_tokens: 4096,
+    max_completion_tokens: 16000,
   });
 
   const content = response.choices[0]?.message?.content || "{}";
   const finishReason = response.choices[0]?.finish_reason;
-  if (finishReason === "length") {
-    console.error(`AI response truncated for patient: ${patient.name}`);
-  }
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed?.patients && Array.isArray(parsed.patients)) {
-      return parsed.patients[0] || null;
+
+  const tryParse = (text: string): any | null => {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed?.patients && Array.isArray(parsed.patients)) {
+        return parsed.patients[0] || null;
+      }
+      return parsed;
+    } catch {
+      return null;
     }
-    return parsed;
-  } catch {
-    console.error(`Failed to parse AI response for patient: ${patient.name}. First 300 chars: ${content.substring(0, 300)}`);
+  };
+
+  if (finishReason === "length") {
+    console.error(`AI response truncated for patient: ${patient.name}. Attempting partial recovery.`);
+    const partial = tryParse(content);
+    if (partial && partial.qualifyingTests && Array.isArray(partial.qualifyingTests) && partial.qualifyingTests.length > 0) {
+      console.warn(`Partial recovery succeeded for patient: ${patient.name}. Recovered ${partial.qualifyingTests.length} qualifying tests.`);
+      return partial;
+    }
+    const arrayMatch = content.match(/"qualifyingTests"\s*:\s*(\[[\s\S]*?\])/);
+    if (arrayMatch) {
+      try {
+        const recoveredTests = JSON.parse(arrayMatch[1]);
+        console.warn(`Regex partial recovery succeeded for patient: ${patient.name}. Recovered ${recoveredTests.length} qualifying tests.`);
+        return { qualifyingTests: recoveredTests };
+      } catch {
+        // fall through to full parse attempt
+      }
+    }
+    console.error(`Partial recovery failed for patient: ${patient.name}. Returning null.`);
     return null;
   }
+
+  const result = tryParse(content);
+  if (result === null) {
+    console.error(`Failed to parse AI response for patient: ${patient.name}. First 300 chars: ${content.substring(0, 300)}`);
+  }
+  return result;
 }
 
 async function checkCooldownsForPatients(
