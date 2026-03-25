@@ -101,15 +101,7 @@ function csvToText(buffer: Buffer): string {
   }
 }
 
-async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
-  if (!rawText.trim()) return [];
-  try {
-    const aiResponse = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a clinical data parser. Extract every patient record from the input text.
+const PARSE_SYSTEM_PROMPT = `You are a clinical data parser. Extract EVERY patient record from the input text — do not stop early, do not skip any.
 
 For each patient return:
 - "name": full patient name (required — skip rows with no name)
@@ -121,40 +113,79 @@ For each patient return:
 - "medications": all medications/Rx combined into one string, or null
 
 Rules:
+- Extract ALL patients in the input — even if there are 20 or more.
 - Expand common abbreviations: HTN=hypertension, DM=diabetes mellitus, HLD=hyperlipidemia, CAD, CHF, COPD, CKD, OA=osteoarthritis, GERD, A-fib, etc.
 - The input may be tab-separated spreadsheet data, a simple name list, or mixed clinical notes — handle all formats.
 - If a row is clearly a header, summary, or empty — skip it.
 - If there is no clinical data for a patient, still include them with null clinical fields.
 
-Respond with a JSON object: { "patients": [ ...array of patient objects... ] }. No markdown.`,
-        },
-        { role: "user", content: rawText.substring(0, 30000) },
-      ],
-      temperature: 0.1,
-      response_format: { type: "json_object" },
-    });
+Respond with a JSON object: { "patients": [ ...array of ALL patient objects... ] }. No markdown. Do not truncate.`;
 
-    const content = aiResponse.choices[0]?.message?.content?.trim() || "{}";
-    let parsed: any;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-      parsed = JSON.parse(cleaned);
+async function parseSingleChunk(chunk: string): Promise<ParsedPatient[]> {
+  const aiResponse = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: PARSE_SYSTEM_PROMPT },
+      { role: "user", content: chunk },
+    ],
+    temperature: 0.1,
+    response_format: { type: "json_object" },
+    max_completion_tokens: 16000,
+  });
+
+  const content = aiResponse.choices[0]?.message?.content?.trim() || "{}";
+  let parsed: any;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    parsed = JSON.parse(cleaned);
+  }
+
+  const arr: any[] = Array.isArray(parsed) ? parsed : (parsed.patients || parsed.records || []);
+  return arr
+    .filter((p: any) => p.name && typeof p.name === "string" && p.name.trim())
+    .map((p: any) => ({
+      name: p.name.trim(),
+      time: p.time || undefined,
+      age: p.age ? parseInt(String(p.age)) : undefined,
+      gender: p.gender || undefined,
+      diagnoses: p.diagnoses || undefined,
+      history: p.history || undefined,
+      medications: p.medications || undefined,
+    }));
+}
+
+function splitIntoChunks(text: string, chunkSize = 8000): string[] {
+  if (text.length <= chunkSize) return [text];
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = start + chunkSize;
+    if (end < text.length) {
+      const breakAt = text.lastIndexOf("\n\n", end);
+      if (breakAt > start + chunkSize / 2) end = breakAt;
     }
+    chunks.push(text.slice(start, Math.min(end, text.length)));
+    start = end;
+  }
+  return chunks;
+}
 
-    const arr: any[] = Array.isArray(parsed) ? parsed : (parsed.patients || parsed.records || []);
-    return arr
-      .filter((p: any) => p.name && typeof p.name === "string" && p.name.trim())
-      .map((p: any) => ({
-        name: p.name.trim(),
-        time: p.time || undefined,
-        age: p.age ? parseInt(String(p.age)) : undefined,
-        gender: p.gender || undefined,
-        diagnoses: p.diagnoses || undefined,
-        history: p.history || undefined,
-        medications: p.medications || undefined,
-      }));
+async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
+  if (!rawText.trim()) return [];
+  try {
+    const trimmed = rawText.substring(0, 60000);
+    const chunks = splitIntoChunks(trimmed, 8000);
+    const results = await Promise.all(chunks.map(parseSingleChunk));
+    const allPatients = results.flat();
+    const seen = new Set<string>();
+    return allPatients.filter((p) => {
+      const key = p.name.toLowerCase().trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   } catch (err: any) {
     console.error("parseWithAI failed:", err.message);
     return [];
