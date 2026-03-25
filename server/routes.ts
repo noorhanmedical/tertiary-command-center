@@ -1085,8 +1085,8 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
   });
 
   app.post("/api/batches/:id/analyze", async (req, res) => {
+    const batchId = parseInt(req.params.id);
     try {
-      const batchId = parseInt(req.params.id);
       const batch = await storage.getScreeningBatch(batchId);
       if (!batch) return res.status(404).json({ error: "Batch not found" });
 
