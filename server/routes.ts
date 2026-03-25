@@ -533,7 +533,7 @@ async function screenSinglePatientWithAI(patient: { name: string; time?: string 
   const description = parts.join("\n");
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5.2",
+    model: "gpt-4o",
     messages: [
       { role: "system", content: SCREENING_SYSTEM_PROMPT },
       {
@@ -840,7 +840,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
           const pdfData = await pdfParseFn(file.buffer);
           const extractionPrompt = `Extract all patient names and appointment times from this document/image. Return a JSON object: { "patients": [{ "name": "Full Name", "time": "time if visible" }] }. Only include actual patient names, not doctor names or staff.`;
           const response = await openai.chat.completions.create({
-            model: "gpt-5.2",
+            model: "gpt-4o",
             messages: [
               { role: "user", content: `${extractionPrompt}\n\nDocument text:\n${pdfData.text}` },
             ],
@@ -865,7 +865,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
           const dataUrl = `data:${mimeType};base64,${base64}`;
           const extractionPrompt = `Extract all patient names and appointment times from this document/image. Return a JSON object: { "patients": [{ "name": "Full Name", "time": "time if visible" }] }. Only include actual patient names, not doctor names or staff.`;
           const response = await openai.chat.completions.create({
-            model: "gpt-5.2",
+            model: "gpt-4o",
             messages: [
               {
                 role: "user",
@@ -1172,8 +1172,13 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         status: "completed",
         patientCount: patients.length,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Analysis error:", error);
+      try {
+        await storage.updateScreeningBatch(batchId, { status: "draft" });
+      } catch (resetErr: unknown) {
+        console.error("Failed to reset batch status after analysis error:", resetErr);
+      }
     }
   });
 
