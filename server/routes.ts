@@ -101,10 +101,9 @@ function csvToText(buffer: Buffer): string {
   }
 }
 
-const END_BLOCK_SYSTEM_PROMPT = `You are a clinical data parser. The input contains patient records. Each record starts with "Patient: [Name]" followed by that patient's clinical notes.
+const END_BLOCK_SYSTEM_PROMPT = `You are a clinical data parser. The input contains numbered patient records separated by "---". Extract clinical data from each record IN ORDER.
 
-For each patient extract:
-- "name": copy the name exactly from the "Patient:" label (do not invent or substitute names)
+For each record extract:
 - "time": appointment time if present (e.g. "9:00 AM"), or null
 - "age": age as a number if present, or null
 - "gender": gender if present (M/F/Male/Female), or null
@@ -115,9 +114,10 @@ For each patient extract:
 Rules:
 - Expand abbreviations: HTN=hypertension, DM=diabetes mellitus, HLD=hyperlipidemia, CAD, CHF, COPD, CKD, OA=osteoarthritis, GERD, A-fib, etc.
 - For medications: only include actual drug/prescription names and dosages. If the only value looks like a visit reason, test name, or scheduling code (e.g. "BrainWave", "FU HGA", "med refills", "follow up", "physical"), set medications to null.
-- Include ALL patients from the input — do not skip any.
+- Return exactly one result object per record, in the same order as the input.
+- Do NOT include a name field — names are managed externally.
 
-Respond with JSON: { "patients": [ ...all patient objects... ] }. No markdown. Do not truncate.`;
+Respond with JSON: { "records": [ ...one object per input record, in order... ] }. No markdown. Do not truncate.`;
 
 const PARSE_SYSTEM_PROMPT = `You are a clinical data parser. Extract EVERY patient record from the input text — do not stop early, do not skip any.
 
@@ -206,7 +206,7 @@ function splitByEndDelimiter(text: string): { name: string; block: string }[] | 
 }
 
 async function parseEndDelimitedBlocks(segments: { name: string; block: string }[]): Promise<ParsedPatient[]> {
-  const combined = segments.map((s) => `Patient: ${s.name}\n${s.block}`).join("\n\n---\n\n");
+  const combined = segments.map((s, i) => `Record ${i + 1}:\n${s.block}`).join("\n\n---\n\n");
 
   const aiResponse = await openai.chat.completions.create({
     model: "gpt-4o-mini",
@@ -228,28 +228,20 @@ async function parseEndDelimitedBlocks(segments: { name: string; block: string }
     parsed = JSON.parse(cleaned);
   }
 
-  const arr: any[] = Array.isArray(parsed) ? parsed : (parsed.patients || parsed.records || []);
+  const arr: any[] = Array.isArray(parsed) ? parsed : (parsed.records || parsed.patients || []);
 
-  const segmentNameMap = new Map<string, string>();
-  for (const s of segments) {
-    segmentNameMap.set(s.name.trim().toLowerCase(), s.name.trim());
-  }
-
-  return arr
-    .filter((p: any) => p.name && typeof p.name === "string" && p.name.trim())
-    .map((p: any) => {
-      const aiName = p.name.trim();
-      const lockedName = segmentNameMap.get(aiName.toLowerCase()) || aiName;
-      return {
-        name: lockedName,
-        time: p.time || undefined,
-        age: p.age ? parseInt(String(p.age)) : undefined,
-        gender: p.gender || undefined,
-        diagnoses: p.diagnoses || undefined,
-        history: p.history || undefined,
-        medications: p.medications || undefined,
-      };
-    });
+  return segments.map((seg, i) => {
+    const r = arr[i] || {};
+    return {
+      name: seg.name.trim(),
+      time: r.time || undefined,
+      age: r.age ? parseInt(String(r.age)) : undefined,
+      gender: r.gender || undefined,
+      diagnoses: r.diagnoses || undefined,
+      history: r.history || undefined,
+      medications: r.medications || undefined,
+    };
+  });
 }
 
 function splitIntoChunks(text: string, chunkSize = 8000): string[] {
