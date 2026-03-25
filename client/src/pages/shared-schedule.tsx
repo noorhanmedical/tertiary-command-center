@@ -172,7 +172,7 @@ export default function SharedSchedule() {
   return (
     <div className="min-h-screen bg-background">
       <header className="bg-[#1a365d] sticky top-0 z-50">
-        <div className="w-full px-[5%] md:px-[10%] lg:px-[15%] py-5">
+        <div className="max-w-5xl mx-auto px-4 md:px-8 py-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="p-2.5 bg-white/10 rounded-xl">
@@ -200,7 +200,7 @@ export default function SharedSchedule() {
         </div>
       </header>
 
-      <main className="w-full px-[5%] md:px-[10%] lg:px-[15%] py-8">
+      <main className="max-w-5xl mx-auto px-4 md:px-8 py-8">
         <div className="space-y-3" data-testid="shared-schedule-list">
           {patients.map((patient) => {
             const allTests = patient.qualifyingTests || [];
@@ -225,7 +225,7 @@ export default function SharedSchedule() {
                       {patient.time && (
                         <span className="text-sm text-slate-500 font-medium shrink-0 tabular-nums w-[72px]" data-testid={`text-time-${patient.id}`}>{patient.time}</span>
                       )}
-                      <p className="font-semibold text-base text-slate-900 truncate shrink-0 max-w-[240px]" data-testid={`text-name-${patient.id}`}>{patient.name}</p>
+                      <p className="font-semibold text-base text-slate-900 truncate shrink-0 max-w-[200px] sm:max-w-xs" data-testid={`text-name-${patient.id}`}>{patient.name}</p>
                       <span className="text-xs text-slate-500 shrink-0">
                         {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
                       </span>
@@ -399,7 +399,7 @@ export default function SharedSchedule() {
       </main>
 
       <footer className="border-t border-slate-200/60 bg-white/60 backdrop-blur-sm">
-        <div className="w-full px-[5%] md:px-[10%] lg:px-[15%] py-4">
+        <div className="max-w-5xl mx-auto px-4 md:px-8 py-4">
           <p className="text-xs text-slate-400 text-center">Plexus Ancillary Screening · AI-powered patient qualification</p>
         </div>
       </footer>
