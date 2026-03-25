@@ -118,6 +118,7 @@ Rules:
 - The input may be tab-separated spreadsheet data, a simple name list, or mixed clinical notes — handle all formats.
 - If a row is clearly a header, summary, or empty — skip it.
 - If there is no clinical data for a patient, still include them with null clinical fields.
+- For the "medications" field: only include actual drug/prescription names and dosages. If the only value present looks like a visit reason, appointment note, scheduling code, or test name (e.g. "BrainWave", "VitalWave", "EEG", "FU HGA", "med refills", "follow up", "HGA", "new patient", "physical", "wellness"), set medications to null instead.
 
 Respond with a JSON object: { "patients": [ ...array of ALL patient objects... ] }. No markdown. Do not truncate.`;
 
@@ -172,15 +173,30 @@ function splitIntoChunks(text: string, chunkSize = 8000): string[] {
   return chunks;
 }
 
-function normalizeNameForDedup(name: string): string {
+function getNormalizedKeys(name: string): string[] {
   const t = name.trim();
+  let parts: string[];
+
   if (t.includes(",")) {
     const commaIdx = t.indexOf(",");
-    const last = t.slice(0, commaIdx).trim();
-    const first = t.slice(commaIdx + 1).trim();
-    return `${first} ${last}`.toLowerCase().replace(/\s+/g, " ").trim();
+    const last = t.slice(0, commaIdx).trim().toLowerCase();
+    const firstMiddle = t.slice(commaIdx + 1).trim().toLowerCase().replace(/\s+/g, " ");
+    const fmParts = firstMiddle.split(" ").filter(Boolean);
+    const full = `${firstMiddle} ${last}`.trim();
+    if (fmParts.length > 1) {
+      const short = `${fmParts[0]} ${last}`.trim();
+      return [full, short];
+    }
+    return [full];
   }
-  return t.toLowerCase().replace(/\s+/g, " ").trim();
+
+  parts = t.toLowerCase().replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  if (parts.length >= 3) {
+    const full = parts.join(" ");
+    const short = `${parts[0]} ${parts[parts.length - 1]}`;
+    return [full, short];
+  }
+  return [parts.join(" ")];
 }
 
 function richness(p: ParsedPatient): number {
@@ -209,17 +225,37 @@ function mergePatients(a: ParsedPatient, b: ParsedPatient): ParsedPatient {
 async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
   if (!rawText.trim()) return [];
   try {
-    const trimmed = rawText.substring(0, 60000);
-    const chunks = splitIntoChunks(trimmed, 8000);
+    const trimmed = rawText.substring(0, 200000);
+    const chunks = splitIntoChunks(trimmed, 12000);
     const results = await Promise.all(chunks.map(parseSingleChunk));
     const allPatients = results.flat();
 
     const grouped = new Map<string, ParsedPatient>();
+    const keyIndex = new Map<string, string>();
+
     for (const p of allPatients) {
-      const key = normalizeNameForDedup(p.name);
-      if (!key) continue;
-      const existing = grouped.get(key);
-      grouped.set(key, existing ? mergePatients(existing, p) : p);
+      const keys = getNormalizedKeys(p.name);
+      if (!keys.length || !keys[0]) continue;
+
+      let existingCanonical: string | undefined;
+      for (const k of keys) {
+        if (keyIndex.has(k)) {
+          existingCanonical = keyIndex.get(k)!;
+          break;
+        }
+      }
+
+      if (existingCanonical) {
+        const existing = grouped.get(existingCanonical)!;
+        grouped.set(existingCanonical, mergePatients(existing, p));
+        for (const k of keys) {
+          if (!keyIndex.has(k)) keyIndex.set(k, existingCanonical);
+        }
+      } else {
+        const canonical = keys[0];
+        grouped.set(canonical, p);
+        for (const k of keys) keyIndex.set(k, canonical);
+      }
     }
     return Array.from(grouped.values());
   } catch (err: any) {
