@@ -101,6 +101,24 @@ function csvToText(buffer: Buffer): string {
   }
 }
 
+const END_BLOCK_SYSTEM_PROMPT = `You are a clinical data parser. The input contains patient records. Each record starts with "Patient: [Name]" followed by that patient's clinical notes.
+
+For each patient extract:
+- "name": copy the name exactly from the "Patient:" label (do not invent or substitute names)
+- "time": appointment time if present (e.g. "9:00 AM"), or null
+- "age": age as a number if present, or null
+- "gender": gender if present (M/F/Male/Female), or null
+- "diagnoses": all diagnoses/conditions/Dx combined into one string, or null
+- "history": past medical history/Hx/PMH combined into one string, or null
+- "medications": all medications/Rx/prescriptions combined into one string, or null
+
+Rules:
+- Expand abbreviations: HTN=hypertension, DM=diabetes mellitus, HLD=hyperlipidemia, CAD, CHF, COPD, CKD, OA=osteoarthritis, GERD, A-fib, etc.
+- For medications: only include actual drug/prescription names and dosages. If the only value looks like a visit reason, test name, or scheduling code (e.g. "BrainWave", "FU HGA", "med refills", "follow up", "physical"), set medications to null.
+- Include ALL patients from the input — do not skip any.
+
+Respond with JSON: { "patients": [ ...all patient objects... ] }. No markdown. Do not truncate.`;
+
 const PARSE_SYSTEM_PROMPT = `You are a clinical data parser. Extract EVERY patient record from the input text — do not stop early, do not skip any.
 
 For each patient return:
@@ -155,6 +173,83 @@ async function parseSingleChunk(chunk: string): Promise<ParsedPatient[]> {
       history: p.history || undefined,
       medications: p.medications || undefined,
     }));
+}
+
+function splitByEndDelimiter(text: string): { name: string; block: string }[] | null {
+  const lines = text.split("\n");
+  const hasEnd = lines.some((l) => l.trim().toLowerCase() === "end");
+  if (!hasEnd) return null;
+
+  const segments: { name: string; block: string }[] = [];
+  let patientName: string | null = null;
+  let bodyLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.trim().toLowerCase() === "end") {
+      if (patientName) {
+        segments.push({ name: patientName, block: bodyLines.join("\n") });
+      }
+      patientName = null;
+      bodyLines = [];
+    } else if (!patientName) {
+      const trimmed = line.trim();
+      if (trimmed) patientName = trimmed;
+    } else {
+      bodyLines.push(line);
+    }
+  }
+  if (patientName) {
+    segments.push({ name: patientName, block: bodyLines.join("\n") });
+  }
+
+  return segments.length > 0 ? segments : null;
+}
+
+async function parseEndDelimitedBlocks(segments: { name: string; block: string }[]): Promise<ParsedPatient[]> {
+  const combined = segments.map((s) => `Patient: ${s.name}\n${s.block}`).join("\n\n---\n\n");
+
+  const aiResponse = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: END_BLOCK_SYSTEM_PROMPT },
+      { role: "user", content: combined },
+    ],
+    temperature: 0.1,
+    response_format: { type: "json_object" },
+    max_completion_tokens: 16000,
+  });
+
+  const content = aiResponse.choices[0]?.message?.content?.trim() || "{}";
+  let parsed: any;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    parsed = JSON.parse(cleaned);
+  }
+
+  const arr: any[] = Array.isArray(parsed) ? parsed : (parsed.patients || parsed.records || []);
+
+  const segmentNameMap = new Map<string, string>();
+  for (const s of segments) {
+    segmentNameMap.set(s.name.trim().toLowerCase(), s.name.trim());
+  }
+
+  return arr
+    .filter((p: any) => p.name && typeof p.name === "string" && p.name.trim())
+    .map((p: any) => {
+      const aiName = p.name.trim();
+      const lockedName = segmentNameMap.get(aiName.toLowerCase()) || aiName;
+      return {
+        name: lockedName,
+        time: p.time || undefined,
+        age: p.age ? parseInt(String(p.age)) : undefined,
+        gender: p.gender || undefined,
+        diagnoses: p.diagnoses || undefined,
+        history: p.history || undefined,
+        medications: p.medications || undefined,
+      };
+    });
 }
 
 function splitIntoChunks(text: string, chunkSize = 8000): string[] {
@@ -226,9 +321,17 @@ async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
   if (!rawText.trim()) return [];
   try {
     const trimmed = rawText.substring(0, 200000);
-    const chunks = splitIntoChunks(trimmed, 12000);
-    const results = await Promise.all(chunks.map(parseSingleChunk));
-    const allPatients = results.flat();
+
+    const segments = splitByEndDelimiter(trimmed);
+    let allPatients: ParsedPatient[];
+
+    if (segments) {
+      allPatients = await parseEndDelimitedBlocks(segments);
+    } else {
+      const chunks = splitIntoChunks(trimmed, 12000);
+      const results = await Promise.all(chunks.map(parseSingleChunk));
+      allPatients = results.flat();
+    }
 
     const grouped = new Map<string, ParsedPatient>();
     const keyIndex = new Map<string, string>();
