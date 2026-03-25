@@ -205,8 +205,8 @@ function splitByEndDelimiter(text: string): { name: string; block: string }[] | 
   return segments.length > 0 ? segments : null;
 }
 
-async function parseEndDelimitedBlocks(segments: { name: string; block: string }[]): Promise<ParsedPatient[]> {
-  const combined = segments.map((s, i) => `Record ${i + 1}:\n${s.block}`).join("\n\n---\n\n");
+async function parseEndDelimitedBatch(batch: { name: string; block: string }[], offset: number): Promise<ParsedPatient[]> {
+  const combined = batch.map((s, i) => `Record ${offset + i + 1}:\n${s.block}`).join("\n\n---\n\n");
 
   const aiResponse = await openai.chat.completions.create({
     model: "gpt-4o-mini",
@@ -230,7 +230,7 @@ async function parseEndDelimitedBlocks(segments: { name: string; block: string }
 
   const arr: any[] = Array.isArray(parsed) ? parsed : (parsed.records || parsed.patients || []);
 
-  return segments.map((seg, i) => {
+  return batch.map((seg, i) => {
     const r = arr[i] || {};
     return {
       name: seg.name.trim(),
@@ -242,6 +242,34 @@ async function parseEndDelimitedBlocks(segments: { name: string; block: string }
       medications: r.medications || undefined,
     };
   });
+}
+
+async function parseEndDelimitedBlocks(segments: { name: string; block: string }[]): Promise<ParsedPatient[]> {
+  const MAX_BATCH_CHARS = 80000;
+  const batches: { name: string; block: string }[][] = [];
+  let currentBatch: { name: string; block: string }[] = [];
+  let currentLen = 0;
+
+  for (const seg of segments) {
+    const segLen = seg.block.length + 20;
+    if (currentBatch.length > 0 && currentLen + segLen > MAX_BATCH_CHARS) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentLen = 0;
+    }
+    currentBatch.push(seg);
+    currentLen += segLen;
+  }
+  if (currentBatch.length > 0) batches.push(currentBatch);
+
+  const results: ParsedPatient[] = [];
+  let offset = 0;
+  for (const batch of batches) {
+    const batchResults = await parseEndDelimitedBatch(batch, offset);
+    results.push(...batchResults);
+    offset += batch.length;
+  }
+  return results;
 }
 
 function splitIntoChunks(text: string, chunkSize = 8000): string[] {
