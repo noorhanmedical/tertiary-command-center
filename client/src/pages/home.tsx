@@ -146,6 +146,7 @@ export default function Home() {
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
   const [pasteText, setPasteText] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [clinicianInput, setClinicianInput] = useState("");
   const [analyzingPatients, setAnalyzingPatients] = useState<Set<number>>(new Set());
   const [historyPasteText, setHistoryPasteText] = useState("");
   const [historySearch, setHistorySearch] = useState("");
@@ -385,6 +386,19 @@ export default function Home() {
       if (tabIdx >= 0) closeTab(tabIdx);
     },
   });
+
+  const updateClinicianMutation = useMutation({
+    mutationFn: async ({ id, clinicianName }: { id: number; clinicianName: string }) => {
+      await apiRequest("PATCH", `/api/screening-batches/${id}`, { clinicianName });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
+    },
+  });
+
+  useEffect(() => {
+    setClinicianInput(selectedBatch?.clinicianName || "");
+  }, [selectedBatch?.id, selectedBatch?.clinicianName]);
 
   const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
 
@@ -1003,7 +1017,21 @@ export default function Home() {
                   <SidebarTrigger data-testid="button-sidebar-toggle" />
                   <div>
                     <h1 className="text-base font-bold tracking-tight" data-testid="text-schedule-name">{selectedBatch?.name || "Loading..."}</h1>
-                    <p className="text-xs text-muted-foreground">{patients.length} patients</p>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <input
+                        type="text"
+                        placeholder="Clinician / Provider"
+                        value={clinicianInput}
+                        onChange={(e) => setClinicianInput(e.target.value)}
+                        onBlur={() => {
+                          if (selectedBatchId) {
+                            updateClinicianMutation.mutate({ id: selectedBatchId, clinicianName: clinicianInput });
+                          }
+                        }}
+                        className="text-xs text-muted-foreground bg-transparent border-0 border-b border-dashed border-muted-foreground/40 focus:border-primary focus:outline-none px-0 py-0.5 w-44 placeholder:text-muted-foreground/50"
+                        data-testid="input-clinician-name"
+                      />
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
@@ -1520,6 +1548,9 @@ function ResultsView({
             <SidebarTrigger data-testid="button-sidebar-toggle-results" />
             <div>
               <h1 className="text-base font-semibold tracking-tight" data-testid="text-results-title">{batch?.name} — Final Schedule</h1>
+              {batch?.clinicianName && (
+                <p className="text-xs font-medium text-primary" data-testid="text-results-clinician">Dr. {batch.clinicianName}</p>
+              )}
               <p className="text-xs text-slate-900">{patients.length} patients screened</p>
             </div>
           </div>

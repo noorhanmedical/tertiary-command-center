@@ -872,6 +872,18 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
     }
   });
 
+  app.patch("/api/screening-batches/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { clinicianName } = req.body;
+      const updated = await storage.updateScreeningBatch(id, { clinicianName: clinicianName ?? null });
+      if (!updated) return res.status(404).json({ error: "Batch not found" });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.delete("/api/screening-batches/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);

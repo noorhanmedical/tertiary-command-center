@@ -22,6 +22,7 @@ export type User = typeof users.$inferSelect;
 export const screeningBatches = pgTable("screening_batches", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  clinicianName: text("clinician_name"),
   patientCount: integer("patient_count").notNull().default(0),
   status: text("status").notNull().default("processing"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),

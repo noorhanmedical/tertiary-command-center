@@ -53,10 +53,15 @@ function getBadgeColor(cat: string): string {
   }
 }
 
+const CORRECT_PIN = "1111";
+
 export default function SharedSchedule() {
   const [, params] = useRoute("/schedule/:id");
   const batchId = params?.id ? parseInt(params.id) : null;
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
+  const [pin, setPin] = useState("");
+  const [pinError, setPinError] = useState(false);
+  const [unlocked, setUnlocked] = useState(false);
 
   const { data: batchData, isLoading } = useQuery<any>({
     queryKey: ["/api/screening-batches", batchId],
@@ -98,6 +103,72 @@ export default function SharedSchedule() {
     );
   }
 
+  if (!unlocked) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <Card className="w-full max-w-sm rounded-3xl shadow-xl border-slate-200/60 overflow-hidden">
+          <div className="bg-[#1a365d] px-8 py-7 text-center">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-white/10 mb-3">
+              <Stethoscope className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-xs text-blue-200/70 font-medium tracking-wider uppercase mb-1">Plexus Ancillary Screening</p>
+            <h1 className="text-base font-bold text-white">{batch.name}</h1>
+          </div>
+          <div className="px-8 py-7 space-y-5">
+            <div className="text-center">
+              <p className="text-sm font-semibold text-slate-800">Enter access code</p>
+              <p className="text-xs text-slate-500 mt-1">This schedule is protected</p>
+            </div>
+            <div className="space-y-3">
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="••••"
+                value={pin}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/\D/g, "").slice(0, 4);
+                  setPin(val);
+                  setPinError(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    if (pin === CORRECT_PIN) {
+                      setUnlocked(true);
+                    } else {
+                      setPinError(true);
+                      setPin("");
+                    }
+                  }
+                }}
+                className={`w-full text-center text-2xl tracking-[0.5em] font-bold border rounded-2xl px-4 py-3 focus:outline-none transition-colors ${pinError ? "border-red-400 bg-red-50 text-red-600" : "border-slate-200 bg-slate-50 text-slate-800 focus:border-primary"}`}
+                data-testid="input-pin"
+                autoFocus
+              />
+              {pinError && (
+                <p className="text-xs text-red-500 text-center" data-testid="text-pin-error">Incorrect code. Please try again.</p>
+              )}
+              <Button
+                className="w-full rounded-2xl"
+                onClick={() => {
+                  if (pin === CORRECT_PIN) {
+                    setUnlocked(true);
+                  } else {
+                    setPinError(true);
+                    setPin("");
+                  }
+                }}
+                data-testid="button-unlock"
+              >
+                View Schedule
+              </Button>
+            </div>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <header className="bg-[#1a365d] sticky top-0 z-50">
@@ -110,6 +181,9 @@ export default function SharedSchedule() {
               <div>
                 <p className="text-xs text-blue-200/70 font-medium tracking-wider uppercase mb-0.5">Plexus Ancillary Screening</p>
                 <h1 className="text-lg font-bold text-white tracking-tight" data-testid="text-shared-schedule-title">{batch.name}</h1>
+                {batch.clinicianName && (
+                  <p className="text-sm text-blue-100 font-medium mt-0.5" data-testid="text-shared-clinician">Dr. {batch.clinicianName}</p>
+                )}
                 <p className="text-sm text-blue-200/80 mt-0.5" data-testid="text-shared-patient-count">{patients.length} patients screened</p>
               </div>
             </div>
