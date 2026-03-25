@@ -1093,6 +1093,15 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
       const patients = await storage.getPatientScreeningsByBatch(batchId);
       if (patients.length === 0) return res.status(400).json({ error: "No patients in batch" });
 
+      // If the batch is stuck in "processing" from a previous failed run, reset it
+      // so the user can always recover by clicking Generate All again.
+      if (batch.status === "processing") {
+        await storage.updateScreeningBatch(batchId, { status: "draft" });
+        for (const p of patients.filter((p) => p.status === "processing")) {
+          await storage.updatePatientScreening(p.id, { status: "draft", qualifyingTests: [], reasoning: {} });
+        }
+      }
+
       await storage.updateScreeningBatch(batchId, { status: "processing" });
 
       res.json({ success: true, patientCount: patients.length, async: true });
