@@ -995,6 +995,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
       if (data.history !== undefined) updates.history = data.history || null;
       if (data.medications !== undefined) updates.medications = data.medications || null;
       if (data.notes !== undefined) updates.notes = data.notes || null;
+      if (data.qualifyingTests !== undefined) updates.qualifyingTests = data.qualifyingTests;
 
       const patient = await storage.updatePatientScreening(id, updates);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
