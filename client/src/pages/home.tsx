@@ -1657,7 +1657,7 @@ function ResultsView({
                               )}
                               {expandedClinical === patient.id
                                 ? <ChevronDown className="w-3 h-3 text-slate-400 shrink-0 ml-auto" />
-                                : <ChevronRight className="w-3 h-3 text-slate-400 shrink-0 ml-auto opacity-0 group-hover:opacity-100 transition-opacity" />
+                                : <ChevronRight className="w-3 h-3 text-slate-400 shrink-0 ml-auto" />
                               }
                             </div>
                           )}
