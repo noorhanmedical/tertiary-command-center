@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import {
   Sidebar,
@@ -144,6 +145,7 @@ export default function Home() {
   const [tabs, setTabs] = useState<TabItem[]>([{ type: "home" }]);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
+  const [selectedTestDetail, setSelectedTestDetail] = useState<{ patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null>(null);
   const [pasteText, setPasteText] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [clinicianInput, setClinicianInput] = useState("");
@@ -1007,6 +1009,8 @@ export default function Home() {
             onNavigate={handleTimelineNav}
             expandedPatient={expandedPatient}
             setExpandedPatient={setExpandedPatient}
+            selectedTestDetail={selectedTestDetail}
+            setSelectedTestDetail={setSelectedTestDetail}
           />
         ) : view === "schedule" && selectedBatchId ? (
           <div className="flex flex-col h-full relative z-10">
@@ -1507,6 +1511,8 @@ function ResultsView({
   onNavigate,
   expandedPatient,
   setExpandedPatient,
+  selectedTestDetail,
+  setSelectedTestDetail,
 }: {
   batch: ScreeningBatchWithPatients | undefined;
   patients: PatientScreening[];
@@ -1515,6 +1521,8 @@ function ResultsView({
   onNavigate: (step: "home" | "build" | "results") => void;
   expandedPatient: number | null;
   setExpandedPatient: (id: number | null) => void;
+  selectedTestDetail: { patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null;
+  setSelectedTestDetail: (v: { patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null) => void;
 }) {
   const { toast } = useToast();
   const [shareButtonText, setShareButtonText] = useState("Share");
@@ -1690,7 +1698,7 @@ function ResultsView({
                         </div>
                       )}
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="flex flex-wrap gap-2">
                         {(() => {
                           const grouped: Record<string, string[]> = {};
                           for (const test of allTests) {
@@ -1703,82 +1711,22 @@ function ResultsView({
                             const style = categoryStyles[cat];
                             const IconComp = categoryIcons[cat];
                             return (
-                              <div key={cat} className={`rounded-xl ${style.bg} border ${style.border} p-4 backdrop-blur-sm`} data-testid={`card-ancillary-${cat}`}>
-                                <div className="flex items-center gap-2 mb-3">
-                                  <IconComp className={`w-4 h-4 ${style.icon}`} />
-                                  <span className={`font-semibold text-xs ${style.accent}`}>{categoryLabels[cat]}</span>
-                                </div>
-
-                                {cat === "ultrasound" && tests.length > 1 && (
-                                  <div className="flex items-center gap-1.5 flex-wrap mb-3">
-                                    {tests.map((t) => (
-                                      <span key={t} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor(cat)}`}>{t}</span>
-                                    ))}
-                                  </div>
+                              <button
+                                key={cat}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTestDetail({ patientId: patient.id, category: cat, tests, reasoning });
+                                }}
+                                className={`flex items-center gap-2 rounded-xl ${style.bg} border ${style.border} px-4 py-3 hover:shadow-md transition-shadow cursor-pointer text-left`}
+                                data-testid={`card-ancillary-${cat}-${patient.id}`}
+                              >
+                                <IconComp className={`w-4 h-4 ${style.icon} shrink-0`} />
+                                <span className={`font-semibold text-sm ${style.accent}`}>{categoryLabels[cat]}</span>
+                                {tests.length > 1 && (
+                                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${getBadgeColor(cat)}`}>{tests.length}</span>
                                 )}
-
-                                {tests.map((test) => {
-                                  const reason = reasoning[test];
-                                  const clinician = reason ? (typeof reason === "string" ? reason : reason.clinician_understanding) : null;
-                                  const talking = reason ? (typeof reason === "string" ? null : reason.patient_talking_points) : null;
-                                  const confidence = reason && typeof reason !== "string" ? reason.confidence : null;
-                                  const qualifyingFactors = reason && typeof reason !== "string" ? reason.qualifying_factors : null;
-                                  const confidenceStyles: Record<string, string> = {
-                                    high: "bg-emerald-100 text-emerald-700",
-                                    medium: "bg-amber-100 text-amber-700",
-                                    low: "bg-orange-100 text-orange-700",
-                                  };
-
-                                  return (
-                                    <div key={test} className="mb-3 last:mb-0">
-                                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                                        {(cat === "ultrasound" || tests.length > 1) && (
-                                          <p className={`text-xs font-semibold ${style.accent}`}>{test}</p>
-                                        )}
-                                        {confidence && (
-                                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${confidenceStyles[confidence]}`} data-testid={`badge-confidence-${test}`}>
-                                            {confidence.toUpperCase()}
-                                          </span>
-                                        )}
-                                      </div>
-
-                                      {qualifyingFactors && qualifyingFactors.length > 0 && (
-                                        <div className="flex items-center gap-1 flex-wrap mb-2" data-testid={`factors-${test}`}>
-                                          {qualifyingFactors.map((factor, idx) => (
-                                            <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60">
-                                              {factor}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      )}
-
-                                      {clinician && (
-                                        <div className="rounded-xl bg-white/80 backdrop-blur-sm p-3 mb-2 shadow-sm">
-                                          <div className="flex items-center gap-1.5 mb-1.5">
-                                            <GraduationCap className="w-3.5 h-3.5 text-slate-400" />
-                                            <span className="text-[10px] font-semibold text-slate-900 uppercase tracking-wider">Clinician Understanding</span>
-                                          </div>
-                                          <p className="text-[11px] leading-relaxed text-slate-900">{clinician}</p>
-                                        </div>
-                                      )}
-
-                                      {talking && (
-                                        <div className="rounded-xl bg-white/80 backdrop-blur-sm p-3 mb-2 shadow-sm">
-                                          <div className="flex items-center gap-1.5 mb-1.5">
-                                            <MessageCircle className="w-3.5 h-3.5 text-slate-400" />
-                                            <span className="text-[10px] font-semibold text-slate-900 uppercase tracking-wider">Patient Talking Points</span>
-                                          </div>
-                                          <p className="text-[11px] leading-relaxed text-slate-900">{talking}</p>
-                                        </div>
-                                      )}
-
-                                      {!clinician && !talking && (
-                                        <p className="text-[11px] text-slate-900 italic">No detailed reasoning available.</p>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
+                                <ChevronRight className="w-3.5 h-3.5 text-slate-400 ml-1 shrink-0" />
+                              </button>
                             );
                           });
                         })()}
@@ -1791,6 +1739,93 @@ function ResultsView({
           </div>
         </div>
       </main>
+
+      <Sheet open={!!selectedTestDetail} onOpenChange={(open) => { if (!open) setSelectedTestDetail(null); }}>
+        <SheetContent side="bottom" className="h-[70vh] flex flex-col rounded-t-2xl p-0" data-testid="sheet-test-detail">
+          {selectedTestDetail && (() => {
+            const { category, tests, reasoning } = selectedTestDetail;
+            const style = categoryStyles[category];
+            const IconComp = categoryIcons[category];
+            const confidenceStyles: Record<string, string> = {
+              high: "bg-emerald-100 text-emerald-700",
+              medium: "bg-amber-100 text-amber-700",
+              low: "bg-orange-100 text-orange-700",
+            };
+            return (
+              <>
+                <SheetHeader className={`px-6 py-4 border-b border-slate-100 ${style.bg} rounded-t-2xl shrink-0`}>
+                  <div className="flex items-center justify-between">
+                    <SheetTitle className="flex items-center gap-2">
+                      <IconComp className={`w-5 h-5 ${style.icon}`} />
+                      <span className={`font-semibold text-base ${style.accent}`}>{categoryLabels[category]}</span>
+                    </SheetTitle>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedTestDetail(null)} data-testid="button-close-sheet">
+                      <X className="w-4 h-4 text-slate-400" />
+                    </Button>
+                  </div>
+                </SheetHeader>
+
+                <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+                  {tests.map((test) => {
+                    const reason = reasoning[test];
+                    const clinician = reason ? (typeof reason === "string" ? reason : reason.clinician_understanding) : null;
+                    const talking = reason ? (typeof reason === "string" ? null : reason.patient_talking_points) : null;
+                    const confidence = reason && typeof reason !== "string" ? reason.confidence : null;
+                    const qualifyingFactors = reason && typeof reason !== "string" ? reason.qualifying_factors : null;
+
+                    return (
+                      <div key={test} className={`rounded-xl border ${style.border} ${style.bg} p-4`} data-testid={`sheet-test-${test}`}>
+                        <div className="flex items-center gap-2 mb-3 flex-wrap">
+                          <p className={`text-sm font-semibold ${style.accent}`}>{test}</p>
+                          {confidence && (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${confidenceStyles[confidence]}`} data-testid={`badge-confidence-${test}`}>
+                              {confidence.toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+
+                        {qualifyingFactors && qualifyingFactors.length > 0 && (
+                          <div className="flex items-center gap-1.5 flex-wrap mb-3" data-testid={`factors-${test}`}>
+                            {qualifyingFactors.map((factor, idx) => (
+                              <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60">
+                                {factor}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {clinician && (
+                          <div className="rounded-xl bg-white/80 backdrop-blur-sm p-3 mb-2 shadow-sm">
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                              <GraduationCap className="w-3.5 h-3.5 text-slate-400" />
+                              <span className="text-[10px] font-semibold text-slate-900 uppercase tracking-wider">Clinician Understanding</span>
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-slate-900">{clinician}</p>
+                          </div>
+                        )}
+
+                        {talking && (
+                          <div className="rounded-xl bg-white/80 backdrop-blur-sm p-3 shadow-sm">
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                              <MessageCircle className="w-3.5 h-3.5 text-slate-400" />
+                              <span className="text-[10px] font-semibold text-slate-900 uppercase tracking-wider">Patient Talking Points</span>
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-slate-900">{talking}</p>
+                          </div>
+                        )}
+
+                        {!clinician && !talking && (
+                          <p className="text-[11px] text-slate-900 italic">No detailed reasoning available.</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            );
+          })()}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
