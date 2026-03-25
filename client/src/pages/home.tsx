@@ -1010,6 +1010,8 @@ export default function Home() {
             onNavigate={handleTimelineNav}
             expandedPatient={expandedPatient}
             setExpandedPatient={setExpandedPatient}
+            expandedClinical={expandedClinical}
+            setExpandedClinical={setExpandedClinical}
             selectedTestDetail={selectedTestDetail}
             setSelectedTestDetail={setSelectedTestDetail}
           />
@@ -1526,6 +1528,8 @@ function ResultsView({
   onNavigate,
   expandedPatient,
   setExpandedPatient,
+  expandedClinical,
+  setExpandedClinical,
   selectedTestDetail,
   setSelectedTestDetail,
 }: {
@@ -1536,6 +1540,8 @@ function ResultsView({
   onNavigate: (step: "home" | "build" | "results") => void;
   expandedPatient: number | null;
   setExpandedPatient: (id: number | null) => void;
+  expandedClinical: number | null;
+  setExpandedClinical: (id: number | null) => void;
   selectedTestDetail: { patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null;
   setSelectedTestDetail: (v: { patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null) => void;
 }) {
