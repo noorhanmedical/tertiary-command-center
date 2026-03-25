@@ -367,6 +367,10 @@ export default function Home() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
     },
+    onError: (err: any) => {
+      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
+    },
   });
 
   const deletePatientMutation = useMutation({

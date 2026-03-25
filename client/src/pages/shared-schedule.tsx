@@ -117,7 +117,7 @@ export default function SharedSchedule() {
 
   if (!unlocked) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-4 py-8">
+      <div className="h-screen bg-background flex items-center justify-center px-4">
         <Card className="w-full max-w-sm rounded-3xl shadow-xl border-slate-200/60 overflow-hidden">
           <div className="bg-[#1a365d] px-6 py-6 text-center">
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-white/10 mb-3">
