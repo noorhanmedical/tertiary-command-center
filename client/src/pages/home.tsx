@@ -1375,7 +1375,7 @@ function PatientCard({
 }: {
   patient: PatientScreening;
   isAnalyzing: boolean;
-  onUpdate: (field: string, value: string) => void;
+  onUpdate: (field: string, value: string | string[]) => void;
   onDelete: () => void;
   onAnalyze: () => void;
 }) {
@@ -1503,8 +1503,16 @@ function PatientCard({
             {tests.map((test) => {
               const cat = getAncillaryCategory(test);
               return (
-                <span key={test} className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>
+                <span key={test} className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>
                   {test}
+                  <button
+                    className="rounded hover:bg-black/10 transition-colors p-0.5 -mr-0.5 shrink-0"
+                    title={`Remove ${test}`}
+                    onClick={() => onUpdate("qualifyingTests", tests.filter((t) => t !== test))}
+                    data-testid={`button-remove-test-${patient.id}-${test.replace(/\s+/g, "-")}`}
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
                 </span>
               );
             })}
