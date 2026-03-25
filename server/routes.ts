@@ -59,6 +59,7 @@ interface ParsedPatient {
   name: string;
   age?: number;
   gender?: string;
+  insurance?: string;
   diagnoses?: string;
   history?: string;
   medications?: string;
@@ -74,9 +75,20 @@ function excelToText(buffer: Buffer): string {
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
     if (rows.length === 0) continue;
     const headers = Object.keys(rows[0]);
-    lines.push(headers.join("\t"));
-    for (const row of rows) {
-      lines.push(headers.map((h) => String(row[h] ?? "")).join("\t"));
+    const endColIdx = headers.findIndex((h) => h.trim().toLowerCase() === "end");
+    if (endColIdx >= 0) {
+      const dataHeaders = headers.filter((_, i) => i !== endColIdx);
+      for (const row of rows) {
+        const values = dataHeaders.map((h) => String(row[h] ?? ""));
+        if (values.every((v) => !v.trim())) continue;
+        lines.push(values.join("\t"));
+        lines.push("end");
+      }
+    } else {
+      lines.push(headers.join("\t"));
+      for (const row of rows) {
+        lines.push(headers.map((h) => String(row[h] ?? "")).join("\t"));
+      }
     }
   }
   return lines.join("\n");
@@ -107,6 +119,7 @@ For each record extract:
 - "time": appointment time if present (e.g. "9:00 AM"), or null
 - "age": age as a number if present, or null
 - "gender": gender if present (M/F/Male/Female), or null
+- "insurance": insurance carrier/plan name if present (e.g. "Blue Cross Blue Shield", "Medicare", "Cigna", "Aetna", "United Healthcare"), or null
 - "diagnoses": all diagnoses/conditions/Dx combined into one string, or null
 - "history": past medical history/Hx/PMH combined into one string, or null
 - "medications": all medications/Rx/prescriptions combined into one string, or null
@@ -126,6 +139,7 @@ For each patient return:
 - "time": appointment time if present (e.g. "9:00 AM"), or null
 - "age": age as a number if present, or null
 - "gender": gender if present (M/F/Male/Female), or null
+- "insurance": insurance carrier/plan name if present (e.g. "Blue Cross", "Medicare", "Cigna"), or null
 - "diagnoses": all diagnoses/conditions/Dx combined into one string, or null
 - "history": past medical history/Hx/PMH combined into one string, or null
 - "medications": all medications/Rx combined into one string, or null
@@ -169,6 +183,7 @@ async function parseSingleChunk(chunk: string): Promise<ParsedPatient[]> {
       time: p.time || undefined,
       age: p.age ? parseInt(String(p.age)) : undefined,
       gender: p.gender || undefined,
+      insurance: p.insurance || undefined,
       diagnoses: p.diagnoses || undefined,
       history: p.history || undefined,
       medications: p.medications || undefined,
@@ -181,26 +196,59 @@ function isProviderName(name: string): boolean {
   return PROVIDER_CREDENTIAL_RE.test(name);
 }
 
-function splitByEndDelimiter(text: string): { name: string; block: string }[] | null {
+function splitByEndDelimiter(text: string): { name: string; block: string; insurance?: string }[] | null {
   const lines = text.split("\n");
-  const hasEnd = lines.some((l) => l.trim().toLowerCase() === "end");
+
+  function isInlineEndRow(line: string): boolean {
+    const t = line.trim();
+    if (!t.includes("\t")) return false;
+    const fields = t.split("\t").map((f) => f.trim());
+    return fields.length >= 2 && fields[fields.length - 1].toLowerCase() === "end";
+  }
+
+  const hasEnd = lines.some((l) => l.trim().toLowerCase() === "end" || isInlineEndRow(l));
   if (!hasEnd) return null;
 
-  const segments: { name: string; block: string }[] = [];
+  const segments: { name: string; block: string; insurance?: string }[] = [];
   let patientName: string | null = null;
   let bodyLines: string[] = [];
+  let currentInsurance: string | undefined;
 
   for (const line of lines) {
-    if (line.trim().toLowerCase() === "end") {
+    const trimmed = line.trim();
+    const lower = trimmed.toLowerCase();
+
+    if (lower === "end") {
       if (patientName) {
-        segments.push({ name: patientName, block: bodyLines.join("\n") });
+        segments.push({ name: patientName, block: bodyLines.join("\n"), insurance: currentInsurance });
       }
       patientName = null;
       bodyLines = [];
-    } else if (!patientName) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+      currentInsurance = undefined;
+      continue;
+    }
 
+    if (isInlineEndRow(line)) {
+      if (patientName) {
+        segments.push({ name: patientName, block: bodyLines.join("\n"), insurance: currentInsurance });
+        patientName = null;
+        bodyLines = [];
+        currentInsurance = undefined;
+      }
+      const fields = trimmed.split("\t").map((f) => f.trim());
+      const nonEndFields = fields.slice(0, -1);
+      const first = nonEndFields[0] || "";
+      const second = nonEndFields[1] || "";
+      const combinedName = second ? `${first} ${second}` : first;
+      if (!isProviderName(combinedName)) {
+        const insurance = nonEndFields[nonEndFields.length - 1] || undefined;
+        segments.push({ name: combinedName, block: nonEndFields.join("\t"), insurance });
+      }
+      continue;
+    }
+
+    if (!patientName) {
+      if (!trimmed) continue;
       if (trimmed.includes("\t")) {
         const fields = trimmed.split("\t").map((f) => f.trim()).filter(Boolean);
         const first = fields[0] || "";
@@ -209,6 +257,7 @@ function splitByEndDelimiter(text: string): { name: string; block: string }[] | 
         if (isProviderName(combinedName)) continue;
         patientName = combinedName;
         bodyLines = [trimmed];
+        currentInsurance = fields.length >= 6 ? (fields[fields.length - 1] || undefined) : undefined;
       } else {
         if (isProviderName(trimmed)) continue;
         patientName = trimmed;
@@ -218,13 +267,13 @@ function splitByEndDelimiter(text: string): { name: string; block: string }[] | 
     }
   }
   if (patientName) {
-    segments.push({ name: patientName, block: bodyLines.join("\n") });
+    segments.push({ name: patientName, block: bodyLines.join("\n"), insurance: currentInsurance });
   }
 
   return segments.length > 0 ? segments : null;
 }
 
-async function parseEndDelimitedBatch(batch: { name: string; block: string }[], offset: number): Promise<ParsedPatient[]> {
+async function parseEndDelimitedBatch(batch: { name: string; block: string; insurance?: string }[], offset: number): Promise<ParsedPatient[]> {
   const combined = batch.map((s, i) => `Record ${offset + i + 1}:\n${s.block}`).join("\n\n---\n\n");
 
   const aiResponse = await openai.chat.completions.create({
@@ -256,6 +305,7 @@ async function parseEndDelimitedBatch(batch: { name: string; block: string }[], 
       time: r.time || undefined,
       age: r.age ? parseInt(String(r.age)) : undefined,
       gender: r.gender || undefined,
+      insurance: r.insurance || seg.insurance || undefined,
       diagnoses: r.diagnoses || undefined,
       history: r.history || undefined,
       medications: r.medications || undefined,
@@ -263,10 +313,10 @@ async function parseEndDelimitedBatch(batch: { name: string; block: string }[], 
   });
 }
 
-async function parseEndDelimitedBlocks(segments: { name: string; block: string }[]): Promise<ParsedPatient[]> {
-  const MAX_BATCH_CHARS = 80000;
-  const batches: { name: string; block: string }[][] = [];
-  let currentBatch: { name: string; block: string }[] = [];
+async function parseEndDelimitedBlocks(segments: { name: string; block: string; insurance?: string }[]): Promise<ParsedPatient[]> {
+  const MAX_BATCH_CHARS = 160000;
+  const batches: { name: string; block: string; insurance?: string }[][] = [];
+  let currentBatch: { name: string; block: string; insurance?: string }[] = [];
   let currentLen = 0;
 
   for (const seg of segments) {
@@ -350,6 +400,7 @@ function mergePatients(a: ParsedPatient, b: ParsedPatient): ParsedPatient {
     time: pickRicher(a.time, b.time),
     age: a.age ?? b.age,
     gender: pickRicher(a.gender, b.gender),
+    insurance: a.insurance || b.insurance,
     diagnoses: pickRicher(a.diagnoses, b.diagnoses),
     history: pickRicher(a.history, b.history),
     medications: pickRicher(a.medications, b.medications),
@@ -359,7 +410,7 @@ function mergePatients(a: ParsedPatient, b: ParsedPatient): ParsedPatient {
 async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
   if (!rawText.trim()) return [];
   try {
-    const trimmed = rawText.substring(0, 200000);
+    const trimmed = rawText.substring(0, 400000);
 
     const segments = splitByEndDelimiter(trimmed);
     let allPatients: ParsedPatient[];
@@ -851,6 +902,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
           time: p.time || null,
           age: p.age || null,
           gender: p.gender || null,
+          insurance: p.insurance || null,
           diagnoses: p.diagnoses || null,
           history: p.history || null,
           medications: p.medications || null,
@@ -899,6 +951,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
           time: p.time || null,
           age: p.age || null,
           gender: p.gender || null,
+          insurance: p.insurance || null,
           diagnoses: p.diagnoses || null,
           history: p.history || null,
           medications: p.medications || null,

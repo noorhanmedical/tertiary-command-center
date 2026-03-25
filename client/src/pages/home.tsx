@@ -1404,14 +1404,21 @@ function PatientCard({
               className="h-8 text-base font-semibold px-2"
               data-testid={`input-patient-name-${patient.id}`}
             />
-            <Input
-              placeholder="Time (optional)"
-              value={localTime}
-              onChange={(e) => setLocalTime(e.target.value)}
-              onBlur={() => { if (localTime !== (patient.time || "")) onUpdate("time", localTime); }}
-              className="h-6 text-xs px-2"
-              data-testid={`input-patient-time-${patient.id}`}
-            />
+            <div className="flex items-center gap-1.5">
+              <Input
+                placeholder="Time (optional)"
+                value={localTime}
+                onChange={(e) => setLocalTime(e.target.value)}
+                onBlur={() => { if (localTime !== (patient.time || "")) onUpdate("time", localTime); }}
+                className="h-6 text-xs px-2"
+                data-testid={`input-patient-time-${patient.id}`}
+              />
+              {patient.insurance && (
+                <span className="text-[11px] text-muted-foreground whitespace-nowrap truncate max-w-[130px]" title={patient.insurance} data-testid={`text-insurance-${patient.id}`}>
+                  {patient.insurance}
+                </span>
+              )}
+            </div>
           </div>
           {isCompleted && (
             <Badge variant="outline" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate">

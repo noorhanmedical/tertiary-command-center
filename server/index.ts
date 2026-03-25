@@ -67,6 +67,9 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE screening_batches ADD COLUMN IF NOT EXISTS clinician_name TEXT
     `);
+    await db.execute(sql`
+      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS insurance TEXT
+    `);
     console.log("[migration] schema up to date");
   } catch (err: any) {
     console.warn("[migration] warning:", err.message);

@@ -43,6 +43,7 @@ export const patientScreenings = pgTable("patient_screenings", {
   name: text("name").notNull(),
   age: integer("age"),
   gender: text("gender"),
+  insurance: text("insurance"),
   diagnoses: text("diagnoses"),
   history: text("history"),
   medications: text("medications"),
