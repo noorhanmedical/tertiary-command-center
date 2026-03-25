@@ -1431,7 +1431,14 @@ function PatientCard({
             {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             {isCompleted ? "Re-Generate" : "Generate"}
           </Button>
-          <Button variant="ghost" size="icon" onClick={onDelete} data-testid={`button-delete-patient-${patient.id}`}>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => { if (confirm("Remove this patient?")) onDelete(); }}
+            title="Remove patient"
+            className="text-muted-foreground hover:text-destructive"
+            data-testid={`button-delete-patient-${patient.id}`}
+          >
             <Trash2 className="w-3.5 h-3.5" />
           </Button>
         </div>
