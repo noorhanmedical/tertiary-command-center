@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import { parse } from "csv-parse/sync";
-import OpenAI from "openai";
+import OpenAI_import from "openai";
 import { batchProcess } from "./replit_integrations/batch";
 import { z } from "zod";
 
@@ -50,6 +50,7 @@ const importTextSchema = z.object({
   text: z.string().min(1, "Text is required"),
 });
 
+const OpenAI = ((OpenAI_import as any).default ?? OpenAI_import) as typeof OpenAI_import;
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
