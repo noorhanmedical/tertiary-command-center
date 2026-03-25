@@ -367,8 +367,9 @@ export default function Home() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
     },
-    onError: (err: any) => {
-      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      toast({ title: "Update failed", description: msg, variant: "destructive" });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
     },
   });
