@@ -18,6 +18,25 @@ import {
 } from "@shared/schema";
 import { eq, desc, ilike, sql } from "drizzle-orm";
 
+function parseTimeToMinutes(time: string | null | undefined): number {
+  if (!time) return Infinity;
+  const t = time.trim().toUpperCase();
+  const match12 = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+  if (match12) {
+    let h = parseInt(match12[1], 10);
+    const m = parseInt(match12[2], 10);
+    const period = match12[3];
+    if (period === "AM") { if (h === 12) h = 0; }
+    else { if (h !== 12) h += 12; }
+    return h * 60 + m;
+  }
+  const match24 = t.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) {
+    return parseInt(match24[1], 10) * 60 + parseInt(match24[2], 10);
+  }
+  return Infinity;
+}
+
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -96,7 +115,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPatientScreeningsByBatch(batchId: number): Promise<PatientScreening[]> {
-    return db.select().from(patientScreenings).where(eq(patientScreenings.batchId, batchId));
+    const rows = await db.select().from(patientScreenings).where(eq(patientScreenings.batchId, batchId));
+    return rows.sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
   }
 
   async getPatientScreening(id: number): Promise<PatientScreening | undefined> {
