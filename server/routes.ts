@@ -126,7 +126,7 @@ Rules:
 - If a row is clearly a header, summary, or empty — skip it.
 - If there is no clinical data for a patient, still include them with null clinical fields.
 
-Respond ONLY with a valid JSON array, no markdown.`,
+Respond with a JSON object: { "patients": [ ...array of patient objects... ] }. No markdown.`,
         },
         { role: "user", content: rawText.substring(0, 30000) },
       ],
