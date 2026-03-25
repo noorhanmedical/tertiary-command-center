@@ -66,110 +66,99 @@ interface ParsedPatient {
   rawText?: string;
 }
 
-function parseExcelFile(buffer: Buffer): ParsedPatient[] {
+function excelToText(buffer: Buffer): string {
   const workbook = XLSX.read(buffer, { type: "buffer" });
-  const patients: ParsedPatient[] = [];
-
+  const lines: string[] = [];
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
-
+    if (rows.length === 0) continue;
+    const headers = Object.keys(rows[0]);
+    lines.push(headers.join("\t"));
     for (const row of rows) {
-      const keys = Object.keys(row);
-      const findCol = (patterns: string[]) => {
-        const key = keys.find((k) =>
-          patterns.some((p) => k.toLowerCase().includes(p.toLowerCase()))
-        );
-        return key ? String(row[key] || "").trim() : undefined;
-      };
-
-      const name = findCol(["name", "patient", "pt name"]);
-      if (!name) continue;
-
-      const ageStr = findCol(["age", "dob"]);
-      const age = ageStr ? parseInt(ageStr) : undefined;
-
-      patients.push({
-        time: findCol(["time", "appt", "appointment", "schedule"]),
-        name,
-        age: age && !isNaN(age) ? age : undefined,
-        gender: findCol(["gender", "sex", "m/f"]),
-        diagnoses: findCol(["dx", "diagnos", "icd", "assessment", "problem"]),
-        history: findCol(["hx", "history", "hpi", "pmh", "subjective", "chief complaint"]),
-        medications: findCol(["rx", "med", "prescription", "drug"]),
-        notes: findCol(["note", "comment", "plan", "assessment"]),
-        rawText: JSON.stringify(row),
-      });
+      lines.push(headers.map((h) => String(row[h] ?? "")).join("\t"));
     }
   }
-
-  return patients;
+  return lines.join("\n");
 }
 
-function parseCsvFile(buffer: Buffer): ParsedPatient[] {
-  const text = buffer.toString("utf-8");
+function csvToText(buffer: Buffer): string {
   try {
-    const records = parse(text, {
+    const records = parse(buffer.toString("utf-8"), {
       columns: true,
       skip_empty_lines: true,
       relax_column_count: true,
       trim: true,
     }) as Record<string, string>[];
-
-    return records
-      .map((row) => {
-        const keys = Object.keys(row);
-        const findCol = (patterns: string[]) => {
-          const key = keys.find((k) =>
-            patterns.some((p) => k.toLowerCase().includes(p.toLowerCase()))
-          );
-          return key ? String(row[key] || "").trim() : undefined;
-        };
-
-        const name = findCol(["name", "patient", "pt name"]);
-        if (!name) return null;
-
-        const ageStr = findCol(["age", "dob"]);
-        const age = ageStr ? parseInt(ageStr) : undefined;
-
-        return {
-          time: findCol(["time", "appt", "appointment", "schedule"]),
-          name,
-          age: age && !isNaN(age) ? age : undefined,
-          gender: findCol(["gender", "sex", "m/f"]),
-          diagnoses: findCol(["dx", "diagnos", "icd", "assessment", "problem"]),
-          history: findCol(["hx", "history", "hpi", "pmh", "subjective"]),
-          medications: findCol(["rx", "med", "prescription", "drug"]),
-          notes: findCol(["note", "comment", "plan"]),
-          rawText: JSON.stringify(row),
-        } as ParsedPatient;
-      })
-      .filter((p): p is ParsedPatient => p !== null);
+    if (records.length === 0) return buffer.toString("utf-8");
+    const headers = Object.keys(records[0]);
+    return [
+      headers.join("\t"),
+      ...records.map((r) => headers.map((h) => r[h] ?? "").join("\t")),
+    ].join("\n");
   } catch {
-    return [];
+    return buffer.toString("utf-8");
   }
 }
 
-function parseTextForPatientNames(text: string): ParsedPatient[] {
-  const lines = text.split(/\n/).filter((l) => l.trim());
-  const patients: ParsedPatient[] = [];
+async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
+  if (!rawText.trim()) return [];
+  try {
+    const aiResponse = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are a clinical data parser. Extract every patient record from the input text.
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
+For each patient return:
+- "name": full patient name (required — skip rows with no name)
+- "time": appointment time if present (e.g. "9:00 AM"), or null
+- "age": age as a number if present, or null
+- "gender": gender if present (M/F/Male/Female), or null
+- "diagnoses": all diagnoses/conditions/Dx combined into one string, or null
+- "history": past medical history/Hx/PMH combined into one string, or null
+- "medications": all medications/Rx combined into one string, or null
 
-    const timeMatch = trimmed.match(/^(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?)\s*[-–,\s]\s*(.+)/i);
-    if (timeMatch) {
-      patients.push({
-        time: timeMatch[1].trim(),
-        name: timeMatch[2].trim(),
-      });
-    } else {
-      patients.push({ name: trimmed });
+Rules:
+- Expand common abbreviations: HTN=hypertension, DM=diabetes mellitus, HLD=hyperlipidemia, CAD, CHF, COPD, CKD, OA=osteoarthritis, GERD, A-fib, etc.
+- The input may be tab-separated spreadsheet data, a simple name list, or mixed clinical notes — handle all formats.
+- If a row is clearly a header, summary, or empty — skip it.
+- If there is no clinical data for a patient, still include them with null clinical fields.
+
+Respond ONLY with a valid JSON array, no markdown.`,
+        },
+        { role: "user", content: rawText.substring(0, 30000) },
+      ],
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+    });
+
+    const content = aiResponse.choices[0]?.message?.content?.trim() || "{}";
+    let parsed: any;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+      parsed = JSON.parse(cleaned);
     }
-  }
 
-  return patients;
+    const arr: any[] = Array.isArray(parsed) ? parsed : (parsed.patients || parsed.records || []);
+    return arr
+      .filter((p: any) => p.name && typeof p.name === "string" && p.name.trim())
+      .map((p: any) => ({
+        name: p.name.trim(),
+        time: p.time || undefined,
+        age: p.age ? parseInt(String(p.age)) : undefined,
+        gender: p.gender || undefined,
+        diagnoses: p.diagnoses || undefined,
+        history: p.history || undefined,
+        medications: p.medications || undefined,
+      }));
+  } catch (err: any) {
+    console.error("parseWithAI failed:", err.message);
+    return [];
+  }
 }
 
 const SCREENING_SYSTEM_PROMPT = `You are a clinical ancillary qualification specialist. Your job is to analyze patient clinical data and determine which ancillary diagnostic tests each patient qualifies for.
@@ -518,9 +507,9 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
       for (const file of files) {
         const ext = file.originalname.toLowerCase().split(".").pop();
         if (ext === "xlsx" || ext === "xls") {
-          allPatients.push(...parseExcelFile(file.buffer));
+          allPatients.push(...await parseWithAI(excelToText(file.buffer)));
         } else if (ext === "csv") {
-          allPatients.push(...parseCsvFile(file.buffer));
+          allPatients.push(...await parseWithAI(csvToText(file.buffer)));
         } else if (ext === "pdf") {
           const pdfParseModule = await import("pdf-parse");
           const pdfParseFn = pdfParseModule.default || pdfParseModule;
@@ -578,7 +567,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
             console.error("Failed to parse image AI extraction response");
           }
         } else {
-          allPatients.push(...parseTextForPatientNames(file.buffer.toString("utf-8")));
+          allPatients.push(...await parseWithAI(file.buffer.toString("utf-8")));
         }
       }
 
@@ -628,67 +617,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
 
       let patients: ParsedPatient[] = [];
 
-      const hasClinicalData = /\b(dx|hx|rx|diagnos|history|medicat|pmh|htn|dm|copd|chf|a-?fib|metformin|lisinopril|amlodipine|atorvastatin|aspirin|insulin|omeprazole|gabapentin|prednisone|levothyroxine|losartan|hydrochlorothiazide)\b/i.test(text);
-
-      if (hasClinicalData) {
-        try {
-          const aiResponse = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content: `You are a clinical data parser. Extract patient information from pasted text.
-Return a JSON array of patients. For each patient extract:
-- "name": Patient full name (required)
-- "time": Appointment time if present (e.g. "9:00 AM"), or null
-- "age": Age as a number if present, or null
-- "gender": Gender if present (M/F/Male/Female), or null
-- "diagnoses": All diagnoses, conditions, Dx mentioned (combine into one string), or null
-- "history": Past medical history, Hx, PMH, surgical history (combine into one string), or null  
-- "medications": All medications, Rx listed (combine into one string), or null
-
-Parse common abbreviations: HTN=hypertension, DM=diabetes mellitus, COPD, CHF, CAD, A-fib, HLD=hyperlipidemia, CKD, OA=osteoarthritis, GERD, etc.
-
-If the text is just a simple list of names with no clinical data, still return each name as a patient with null for clinical fields.
-
-Respond ONLY with a valid JSON array, no markdown fences.`
-              },
-              {
-                role: "user",
-                content: text
-              }
-            ],
-            temperature: 0.1,
-          });
-
-          const content = aiResponse.choices[0]?.message?.content?.trim() || "[]";
-          const cleanedContent = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-          const aiPatients = JSON.parse(cleanedContent);
-
-          if (Array.isArray(aiPatients)) {
-            patients = aiPatients
-              .filter((p: any) => p.name && typeof p.name === "string")
-              .map((p: any) => ({
-                name: p.name.trim(),
-                time: p.time || undefined,
-                age: p.age ? parseInt(String(p.age)) : undefined,
-                gender: p.gender || undefined,
-                diagnoses: p.diagnoses || undefined,
-                history: p.history || undefined,
-                medications: p.medications || undefined,
-              }));
-          }
-        } catch (aiError: any) {
-          console.error("AI parse failed, falling back to simple parse:", aiError.message);
-          patients = parseTextForPatientNames(text);
-        }
-      } else {
-        patients = parseTextForPatientNames(text);
-      }
-
-      if (patients.length === 0) {
-        patients = parseTextForPatientNames(text);
-      }
+      patients = await parseWithAI(text);
 
       const created = [];
       for (const p of patients) {
