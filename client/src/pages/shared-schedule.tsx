@@ -148,7 +148,7 @@ export default function SharedSchedule() {
                     if (pin === CORRECT_PIN) { setUnlocked(true); } else { setPinError(true); setPin(""); }
                   }
                 }}
-                className={`w-full text-center text-2xl tracking-[0.5em] font-bold border rounded-2xl px-4 py-3 focus:outline-none transition-colors ${pinError ? "border-red-400 bg-red-50 text-red-600" : "border-slate-200 bg-slate-50 text-slate-800 focus:border-primary"}`}
+                className={`w-full text-2xl tracking-[0.5em] font-bold border rounded-2xl px-4 py-3 focus:outline-none transition-colors ${pinError ? "border-red-400 bg-red-50 text-red-600" : "border-slate-200 bg-slate-50 text-slate-800 focus:border-primary"}`}
                 data-testid="input-pin"
                 autoFocus
               />
