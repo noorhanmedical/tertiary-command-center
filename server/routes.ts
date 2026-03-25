@@ -172,6 +172,40 @@ function splitIntoChunks(text: string, chunkSize = 8000): string[] {
   return chunks;
 }
 
+function normalizeNameForDedup(name: string): string {
+  const t = name.trim();
+  if (t.includes(",")) {
+    const commaIdx = t.indexOf(",");
+    const last = t.slice(0, commaIdx).trim();
+    const first = t.slice(commaIdx + 1).trim();
+    return `${first} ${last}`.toLowerCase().replace(/\s+/g, " ").trim();
+  }
+  return t.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function richness(p: ParsedPatient): number {
+  return [p.time, p.age, p.gender, p.diagnoses, p.history, p.medications].filter(Boolean).length;
+}
+
+function pickRicher(a: string | undefined, b: string | undefined): string | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return a.length >= b.length ? a : b;
+}
+
+function mergePatients(a: ParsedPatient, b: ParsedPatient): ParsedPatient {
+  const richerName = richness(a) >= richness(b) ? a.name : b.name;
+  return {
+    name: richerName,
+    time: a.time ?? b.time,
+    age: a.age ?? b.age,
+    gender: a.gender ?? b.gender,
+    diagnoses: pickRicher(a.diagnoses, b.diagnoses),
+    history: pickRicher(a.history, b.history),
+    medications: pickRicher(a.medications, b.medications),
+  };
+}
+
 async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
   if (!rawText.trim()) return [];
   try {
@@ -179,13 +213,15 @@ async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
     const chunks = splitIntoChunks(trimmed, 8000);
     const results = await Promise.all(chunks.map(parseSingleChunk));
     const allPatients = results.flat();
-    const seen = new Set<string>();
-    return allPatients.filter((p) => {
-      const key = p.name.toLowerCase().trim();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+
+    const grouped = new Map<string, ParsedPatient>();
+    for (const p of allPatients) {
+      const key = normalizeNameForDedup(p.name);
+      if (!key) continue;
+      const existing = grouped.get(key);
+      grouped.set(key, existing ? mergePatients(existing, p) : p);
+    }
+    return Array.from(grouped.values());
   } catch (err: any) {
     console.error("parseWithAI failed:", err.message);
     return [];
