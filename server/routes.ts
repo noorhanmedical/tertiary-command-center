@@ -175,6 +175,12 @@ async function parseSingleChunk(chunk: string): Promise<ParsedPatient[]> {
     }));
 }
 
+const PROVIDER_CREDENTIAL_RE = /\b(D\.O\.|M\.D\.|NP-BC|NP-C|APRN|ARNP|PA-C|PA\b|RN\b|DO\b|MD\b|NP\b|Ph\.D\.)/i;
+
+function isProviderName(name: string): boolean {
+  return PROVIDER_CREDENTIAL_RE.test(name);
+}
+
 function splitByEndDelimiter(text: string): { name: string; block: string }[] | null {
   const lines = text.split("\n");
   const hasEnd = lines.some((l) => l.trim().toLowerCase() === "end");
@@ -193,7 +199,20 @@ function splitByEndDelimiter(text: string): { name: string; block: string }[] | 
       bodyLines = [];
     } else if (!patientName) {
       const trimmed = line.trim();
-      if (trimmed) patientName = trimmed;
+      if (!trimmed) continue;
+
+      if (trimmed.includes("\t")) {
+        const fields = trimmed.split("\t").map((f) => f.trim()).filter(Boolean);
+        const first = fields[0] || "";
+        const second = fields[1] || "";
+        const combinedName = second ? `${first} ${second}` : first;
+        if (isProviderName(combinedName)) continue;
+        patientName = combinedName;
+        bodyLines = [trimmed];
+      } else {
+        if (isProviderName(trimmed)) continue;
+        patientName = trimmed;
+      }
     } else {
       bodyLines.push(line);
     }
@@ -357,6 +376,7 @@ async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
     const keyIndex = new Map<string, string>();
 
     for (const p of allPatients) {
+      if (isProviderName(p.name)) continue;
       const keys = getNormalizedKeys(p.name);
       if (!keys.length || !keys[0]) continue;
 
