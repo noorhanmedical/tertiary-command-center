@@ -43,6 +43,7 @@ const updatePatientSchema = z.object({
   history: z.string().nullable().optional(),
   medications: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  qualifyingTests: z.array(z.string()).optional(),
 });
 
 const importTextSchema = z.object({

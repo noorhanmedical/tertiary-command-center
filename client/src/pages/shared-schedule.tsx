@@ -173,34 +173,34 @@ export default function SharedSchedule() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="bg-[#1a365d] sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto px-4 md:px-8 py-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-2.5 bg-white/10 rounded-xl">
-                <Stethoscope className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <p className="text-xs text-blue-200/70 font-medium tracking-wider uppercase mb-0.5">Plexus Ancillary Screening</p>
-                <h1 className="text-lg font-bold text-white tracking-tight" data-testid="text-shared-schedule-title">{batch.name}</h1>
-                {batch.clinicianName && (
-                  <p className="text-sm text-blue-100 font-medium mt-0.5" data-testid="text-shared-clinician">Dr. {batch.clinicianName}</p>
-                )}
-                <p className="text-sm text-blue-200/80 mt-0.5" data-testid="text-shared-patient-count">{patients.length} patients screened</p>
-              </div>
+      <div className="sticky top-0 z-50">
+        <div className="bg-[#1a365d] px-4 md:px-8 py-2">
+          <div className="max-w-5xl mx-auto flex items-center gap-2">
+            <Stethoscope className="w-4 h-4 text-blue-200/80" />
+            <p className="text-xs text-blue-200/80 font-semibold tracking-wider uppercase">Plexus Ancillary Screening</p>
+          </div>
+        </div>
+        <div className="bg-blue-100/90 border-b border-blue-200/60 px-4 md:px-8 py-4 backdrop-blur-sm">
+          <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
+            <div>
+              <h1 className="text-lg font-bold text-slate-800 tracking-tight" data-testid="text-shared-schedule-title">{batch.name}</h1>
+              {batch.clinicianName && (
+                <p className="text-sm text-slate-700 font-medium mt-0.5" data-testid="text-shared-clinician">{batch.clinicianName}</p>
+              )}
+              <p className="text-sm text-slate-600 mt-0.5" data-testid="text-shared-patient-count">{patients.length} patients screened</p>
             </div>
             <Button
               variant="outline"
               size="sm"
               onClick={handleExport}
-              className="gap-2 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:text-white rounded-xl"
+              className="gap-2 border-blue-300 text-blue-800 hover:bg-blue-200/60 rounded-xl shrink-0"
               data-testid="button-export-shared"
             >
               <Download className="w-4 h-4" /> Export CSV
             </Button>
           </div>
         </div>
-      </header>
+      </div>
 
       <main className="max-w-5xl mx-auto px-4 md:px-8 py-8">
         <div className="space-y-3" data-testid="shared-schedule-list">
