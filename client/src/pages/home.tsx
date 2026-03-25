@@ -145,6 +145,7 @@ export default function Home() {
   const [tabs, setTabs] = useState<TabItem[]>([{ type: "home" }]);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
+  const [expandedClinical, setExpandedClinical] = useState<number | null>(null);
   const [selectedTestDetail, setSelectedTestDetail] = useState<{ patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null>(null);
   const [pasteText, setPasteText] = useState("");
   const [dragOver, setDragOver] = useState(false);
@@ -1627,23 +1628,59 @@ function ResultsView({
                               </span>
                             )}
                           </div>
-                          <div className="flex items-center gap-3 text-xs text-slate-900">
-                            {patient.diagnoses && (
-                              <span className="truncate max-w-[200px]" title={patient.diagnoses}>
-                                <span className="font-semibold">Dx:</span> {patient.diagnoses}
-                              </span>
-                            )}
-                            {patient.history && (
-                              <span className="truncate max-w-[160px]" title={patient.history}>
-                                <span className="font-semibold">Hx:</span> {patient.history}
-                              </span>
-                            )}
-                            {patient.medications && (
-                              <span className="truncate max-w-[160px]" title={patient.medications}>
-                                <span className="font-semibold">Rx:</span> {patient.medications}
-                              </span>
-                            )}
-                          </div>
+                          {(patient.diagnoses || patient.history || patient.medications) && (
+                            <div
+                              className="flex items-center gap-3 text-xs text-slate-900 cursor-pointer hover:text-slate-700 group mt-0.5 rounded-lg px-1 -ml-1 py-0.5 hover:bg-slate-100/70 transition-colors"
+                              onClick={(e) => { e.stopPropagation(); setExpandedClinical(expandedClinical === patient.id ? null : patient.id); }}
+                              data-testid={`button-expand-clinical-${patient.id}`}
+                            >
+                              {patient.diagnoses && (
+                                <span className="truncate max-w-[200px]">
+                                  <span className="font-semibold">Dx:</span> {patient.diagnoses}
+                                </span>
+                              )}
+                              {patient.history && (
+                                <span className="truncate max-w-[160px]">
+                                  <span className="font-semibold">Hx:</span> {patient.history}
+                                </span>
+                              )}
+                              {patient.medications && (
+                                <span className="truncate max-w-[160px]">
+                                  <span className="font-semibold">Rx:</span> {patient.medications}
+                                </span>
+                              )}
+                              {expandedClinical === patient.id
+                                ? <ChevronDown className="w-3 h-3 text-slate-400 shrink-0 ml-auto" />
+                                : <ChevronRight className="w-3 h-3 text-slate-400 shrink-0 ml-auto opacity-0 group-hover:opacity-100 transition-opacity" />
+                              }
+                            </div>
+                          )}
+                          {expandedClinical === patient.id && (
+                            <div
+                              className="mt-2 rounded-xl bg-slate-50/80 border border-slate-200/70 px-4 py-3 grid grid-cols-1 sm:grid-cols-3 gap-3"
+                              onClick={(e) => e.stopPropagation()}
+                              data-testid={`panel-clinical-${patient.id}`}
+                            >
+                              {patient.diagnoses && (
+                                <div>
+                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Diagnoses</p>
+                                  <p className="text-xs text-slate-900 leading-relaxed">{patient.diagnoses}</p>
+                                </div>
+                              )}
+                              {patient.history && (
+                                <div>
+                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">History</p>
+                                  <p className="text-xs text-slate-900 leading-relaxed">{patient.history}</p>
+                                </div>
+                              )}
+                              {patient.medications && (
+                                <div>
+                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Medications</p>
+                                  <p className="text-xs text-slate-900 leading-relaxed">{patient.medications}</p>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
