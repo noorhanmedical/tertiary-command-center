@@ -185,7 +185,7 @@ export default function SharedSchedule() {
             <div>
               <h1 className="text-lg font-bold text-slate-800 tracking-tight" data-testid="text-shared-schedule-title">{batch.name}</h1>
               {batch.clinicianName && (
-                <p className="text-sm text-slate-700 font-medium mt-0.5" data-testid="text-shared-clinician">{batch.clinicianName}</p>
+                <p className="text-sm text-slate-700 font-medium mt-0.5" data-testid="text-shared-clinician">Dr. {batch.clinicianName}</p>
               )}
               <p className="text-sm text-slate-600 mt-0.5" data-testid="text-shared-patient-count">{patients.length} patients screened</p>
             </div>
