@@ -417,18 +417,43 @@ export default function Home() {
       const total = data.patientCount || 0;
       setAnalysisProgress({ completed: 0, total });
 
-      const pollProgress = async (): Promise<void> => {
+      const MAX_POLLS = 180; // 6 minutes max (180 × 2s)
+      let lastCompletedCount = 0;
+      let stallStreak = 0;
+
+      const pollProgress = async (attempt = 0): Promise<void> => {
+        if (attempt >= MAX_POLLS) {
+          throw new Error("Analysis is taking longer than expected. Click Generate All to resume.");
+        }
+
         const batchRes = await fetch(`/api/screening-batches/${batchId}`);
+        if (!batchRes.ok) throw new Error("Lost connection during analysis. Click Generate All to resume.");
         const batchData = await batchRes.json();
+
         const completedCount = (batchData.patients || []).filter((p: any) => p.status === "completed").length;
         setAnalysisProgress({ completed: completedCount, total });
         queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", batchId] });
 
-        if (batchData.status === "completed") {
-          return;
+        if (batchData.status === "completed") return;
+
+        if (batchData.status === "error" || batchData.status === "draft") {
+          throw new Error("Analysis stopped unexpectedly. Click Generate All to try again.");
         }
+
+        // Detect stall: no new patients completing for 2 minutes AFTER the first one finishes
+        if (completedCount > lastCompletedCount) {
+          lastCompletedCount = completedCount;
+          stallStreak = 0;
+        } else if (lastCompletedCount > 0) {
+          // Only start stall counting after at least one patient completes
+          stallStreak++;
+          if (stallStreak >= 60) {
+            throw new Error("Analysis appears stalled. Click Generate All to resume.");
+          }
+        }
+
         await new Promise((resolve) => setTimeout(resolve, 2000));
-        return pollProgress();
+        return pollProgress(attempt + 1);
       };
 
       await pollProgress();
