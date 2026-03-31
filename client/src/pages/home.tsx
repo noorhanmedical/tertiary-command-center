@@ -1432,6 +1432,8 @@ function PatientCard({
   const isCompleted = patient.status === "completed";
   const serverTests = patient.qualifyingTests || [];
   const [localTests, setLocalTests] = useState<string[]>(serverTests);
+  const [generatingTests, setGeneratingTests] = useState<Set<string>>(new Set());
+  const cardQueryClient = useQueryClient();
 
   useEffect(() => { setLocalTests(patient.qualifyingTests || []); }, [patient.qualifyingTests]);
 
@@ -1440,7 +1442,21 @@ function PatientCard({
     const updated = [...localTests, test];
     setLocalTests(updated);
     onUpdate("qualifyingTests", updated);
-  }, [localTests, onUpdate]);
+    setGeneratingTests(prev => new Set([...prev, test]));
+    apiRequest("POST", `/api/patients/${patient.id}/analyze-test`, { testName: test })
+      .then(r => r.json())
+      .then(() => {
+        cardQueryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+      })
+      .catch(() => {})
+      .finally(() => {
+        setGeneratingTests(prev => {
+          const next = new Set(prev);
+          next.delete(test);
+          return next;
+        });
+      });
+  }, [localTests, onUpdate, patient.id, patient.batchId, cardQueryClient]);
 
   const handleRemoveTest = useCallback((test: string) => {
     const updated = localTests.filter((t) => t !== test);
@@ -1571,8 +1587,10 @@ function PatientCard({
               <span className="text-xs text-muted-foreground mr-1">Qualifying:</span>
               {tests.map((test) => {
                 const cat = getAncillaryCategory(test);
+                const isGenerating = generatingTests.has(test);
                 return (
                   <span key={test} className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>
+                    {isGenerating && <Loader2 className="w-2.5 h-2.5 animate-spin shrink-0" />}
                     {test}
                     <button
                       className="rounded hover:bg-black/10 transition-colors p-0.5 -mr-0.5 shrink-0"
@@ -1685,6 +1703,14 @@ const TEST_DESCRIPTIONS: Record<string, TestDesc> = {
 
 function normalizeTestName(test: string): string {
   return test.replace(/\s*\(\d{4,5}\)\s*$/, "").trim();
+}
+
+function getOneSentenceDesc(test: string): string {
+  const desc = TEST_DESCRIPTIONS[test] ?? TEST_DESCRIPTIONS[normalizeTestName(test)];
+  if (!desc) return "A non-invasive diagnostic test recommended based on the patient's history and risk factors.";
+  const full = desc.kind === "simple" ? desc.text : desc.intro;
+  const m = full.match(/^[^.!?]*[.!?]/);
+  return m ? m[0].trim() : full;
 }
 
 function getTestDescHTML(test: string): string {
@@ -1868,7 +1894,7 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
           const ancFactors = r && typeof r !== "string" ? r.qualifying_factors : null;
           const color = ancillaryColor[getAncillaryCategory(test)] || "#475569";
           const isLast = i === ancillaryTests.length - 1;
-          const ancExplain = oneSentence(clinician) || (ancFactors && ancFactors.length > 0 ? oneSentence(ancFactors[0]) : "");
+          const ancExplain = oneSentence(clinician) || (ancFactors && ancFactors.length > 0 ? oneSentence(ancFactors[0]) : "") || oneSentence(getOneSentenceDesc(test));
           return `
             <div style="margin-bottom:${isLast ? "0" : "14px"};padding-bottom:${isLast ? "0" : "14px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}">
               <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">
@@ -1888,7 +1914,7 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
           const factors = r && typeof r !== "string" ? r.qualifying_factors : null;
           const icon = getUltrasoundIcon(test, "#16a34a");
           const isLast = i === ultrasoundTests.length - 1;
-          const oneliner = oneSentence(clinician) || (factors && factors.length > 0 ? oneSentence(factors[0]) : "");
+          const oneliner = oneSentence(clinician) || (factors && factors.length > 0 ? oneSentence(factors[0]) : "") || oneSentence(getOneSentenceDesc(test));
           return `
             <div style="padding:${i === 0 ? "0 0 8px" : "7px 0 8px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}">
               <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;">
@@ -1947,15 +1973,6 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
         <div style="font-size:18px;font-weight:800;color:#1a365d;margin-bottom:1px;">${esc(p.name)}</div>
         <div style="font-size:10px;color:#64748b;">${demoLine}</div>
       </div>`;
-  };
-
-  // One-sentence plain-language test description (no bullet lists)
-  const getOneSentenceDesc = (test: string): string => {
-    const desc = TEST_DESCRIPTIONS[test] ?? TEST_DESCRIPTIONS[normalizeTestName(test)];
-    if (!desc) return "A non-invasive diagnostic test recommended based on the patient's history and risk factors.";
-    const full = desc.kind === "simple" ? desc.text : desc.intro;
-    const m = full.match(/^[^.!?]*[.!?]/);
-    return m ? m[0].trim() : full;
   };
 
   // Compact section label (colored, no extra spacing)

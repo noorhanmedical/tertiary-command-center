@@ -1085,6 +1085,69 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
     }
   });
 
+  app.post("/api/patients/:id/analyze-test", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { testName } = req.body;
+      if (!testName || typeof testName !== "string") {
+        return res.status(400).json({ error: "testName is required" });
+      }
+      const patient = await storage.getPatientScreening(id);
+      if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      const systemPrompt = `You are a clinical ancillary qualification specialist. Generate clinical reasoning for a specific diagnostic test for this patient.
+
+Return ONLY this JSON object:
+{
+  "clinician_understanding": "Technical 4-5 sentence evidence-based explanation citing the patient's specific conditions. Do NOT include ICD-10 codes in text.",
+  "patient_talking_points": "Warm 4-5 sentence plain-language explanation for a non-clinical outreach caller. Start with 'Based on...' or 'Your doctor noticed...'. Do NOT include ICD-10 codes in text.",
+  "confidence": "high",
+  "qualifying_factors": ["condition1", "medication1"],
+  "icd10_codes": ["I10", "E11.9"]
+}`;
+
+      const patientInfo = [
+        `Name: ${patient.name}`,
+        patient.age ? `Age: ${patient.age}` : null,
+        patient.gender ? `Gender: ${patient.gender}` : null,
+        patient.diagnoses ? `Diagnoses: ${patient.diagnoses}` : null,
+        patient.history ? `History/HPI: ${patient.history}` : null,
+        patient.medications ? `Medications: ${patient.medications}` : null,
+        patient.notes ? `Notes: ${patient.notes}` : null,
+      ].filter(Boolean).join("\n");
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Patient:\n${patientInfo}\n\nGenerate clinical reasoning for: ${testName}` },
+        ],
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        max_completion_tokens: 2000,
+      });
+
+      let testReasoning: any = null;
+      try {
+        testReasoning = JSON.parse(response.choices[0]?.message?.content || "{}");
+      } catch {
+        return res.status(500).json({ error: "Failed to parse AI response" });
+      }
+
+      const existingReasoning = (patient.reasoning as Record<string, any>) || {};
+      const mergedReasoning = { ...existingReasoning, [testName]: testReasoning };
+
+      const updated = await storage.updatePatientScreening(id, {
+        reasoning: mergedReasoning,
+      });
+
+      res.json({ reasoning: mergedReasoning, testName, patient: updated });
+    } catch (error: any) {
+      console.error("Single-test analysis error:", error);
+      res.status(500).json({ error: error.message || "Analysis failed" });
+    }
+  });
+
   app.post("/api/batches/:id/analyze", async (req, res) => {
     const batchId = parseInt(req.params.id);
     try {
