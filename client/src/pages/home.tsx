@@ -1879,26 +1879,32 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
 
     const ultrasoundTests = allTests.filter(t => getAncillaryCategory(t) === "ultrasound");
     if (ultrasoundTests.length > 0) {
+      const n = ultrasoundTests.length;
+      const mid = n > 4 ? Math.ceil(n / 2) : n;
+      const usPage1 = ultrasoundTests.slice(0, mid);
+      const usPage2 = n > 4 ? ultrasoundTests.slice(mid) : [];
+      const makePage = (tests: typeof ultrasoundTests, label: string) => `
+        <div class="page">
+          ${buildPatientTop(p, batchName, date, "Plexus Team Script")}
+          <div class="section-heading">${label}</div>
+          ${tests.map(renderTest).join("")}
+        </div>`;
+      resultPages.push(makePage(usPage1, `Ultrasound Studies (${n})`));
+      if (usPage2.length > 0) {
+        resultPages.push(makePage(usPage2, `Ultrasound Studies (continued)`));
+      }
+    }
+
+    const otherTests = allTests.filter(t => {
+      const cat = getAncillaryCategory(t);
+      return cat !== "brainwave" && cat !== "vitalwave" && cat !== "ultrasound";
+    });
+    if (otherTests.length > 0) {
       resultPages.push(`
-        <div class="page" style="padding:0;">
-          <table style="width:100%;border-collapse:collapse;">
-            <thead>
-              <tr>
-                <td style="padding:32px 36px 0 36px;">
-                  ${buildPatientTop(p, batchName, date, "Plexus Team Script")}
-                  <div class="section-heading">Ultrasound Studies (${ultrasoundTests.length})</div>
-                </td>
-              </tr>
-            </thead>
-            <tbody>
-              ${ultrasoundTests.map((test, i) => `
-                <tr style="break-inside:avoid;page-break-inside:avoid;">
-                  <td style="padding:0 36px ${i === ultrasoundTests.length - 1 ? "32px" : "0"} 36px;">
-                    ${renderTest(test)}
-                  </td>
-                </tr>`).join("")}
-            </tbody>
-          </table>
+        <div class="page">
+          ${top}
+          <div class="section-heading">Additional Studies (${otherTests.length})</div>
+          ${otherTests.map(renderTest).join("")}
         </div>`);
     }
 
