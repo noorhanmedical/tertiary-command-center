@@ -1725,7 +1725,6 @@ const PDF_BASE_STYLES = `
   .clinical-field-label { font-size:10px; font-weight:700; color:#475569; margin-bottom:3px; }
   .clinical-field-val { font-size:11px; color:#1e293b; line-height:1.55; }
   .section-heading { font-size:11px; font-weight:700; color:#1e293b; margin:0 0 10px; text-transform:uppercase; letter-spacing:0.05em; }
-  .test-card { border:1px solid #e2e8f0; border-radius:8px; padding:14px; margin-bottom:10px; break-inside:avoid; }
   .cooldown-box { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:12px; margin-bottom:14px; }
 `;
 
