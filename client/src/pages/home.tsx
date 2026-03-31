@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Calendar as CalendarPicker } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -184,6 +185,8 @@ export default function Home() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { setOpen: setSidebarOpen } = useSidebar();
+  const [newScheduleDialogOpen, setNewScheduleDialogOpen] = useState(false);
+  const [newScheduleDate, setNewScheduleDate] = useState<Date | undefined>(new Date());
 
   const { data: batches = [], isLoading: batchesLoading } = useQuery<ScreeningBatchWithPatients[]>({
     queryKey: ["/api/screening-batches"],
@@ -576,8 +579,16 @@ export default function Home() {
   }, [openScheduleTab, setSidebarOpen]);
 
   const handleNewSchedule = useCallback(() => {
-    createBatchMutation.mutate(`Schedule - ${new Date().toLocaleDateString()}`);
-  }, [createBatchMutation]);
+    setNewScheduleDate(new Date());
+    setNewScheduleDialogOpen(true);
+  }, []);
+
+  const handleNewScheduleConfirm = useCallback(() => {
+    const date = newScheduleDate ?? new Date();
+    createBatchMutation.mutate(`Schedule - ${date.toLocaleDateString()}`, {
+      onSuccess: () => setNewScheduleDialogOpen(false),
+    });
+  }, [createBatchMutation, newScheduleDate]);
 
   const openHistoryTab = useCallback(() => {
     const existingIdx = tabs.findIndex((t) => t.type === "history");
@@ -1412,6 +1423,35 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      <Dialog open={newScheduleDialogOpen} onOpenChange={(v) => { if (!v) setNewScheduleDialogOpen(false); }}>
+        <DialogContent className="max-w-sm" data-testid="dialog-new-schedule">
+          <DialogHeader>
+            <DialogTitle>New Schedule</DialogTitle>
+          </DialogHeader>
+          <div className="flex justify-center py-2">
+            <CalendarPicker
+              mode="single"
+              selected={newScheduleDate}
+              onSelect={setNewScheduleDate}
+              initialFocus
+              data-testid="calendar-new-schedule"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewScheduleDialogOpen(false)} data-testid="button-cancel-new-schedule">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleNewScheduleConfirm}
+              disabled={createBatchMutation.isPending}
+              data-testid="button-create-new-schedule"
+            >
+              {createBatchMutation.isPending ? "Creating..." : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
