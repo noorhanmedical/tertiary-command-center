@@ -7,6 +7,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import {
   Sidebar,
@@ -52,6 +55,8 @@ import {
   Building2,
   Share2,
   Copy,
+  Printer,
+  Users2,
 } from "lucide-react";
 import type { ScreeningBatch, PatientScreening, PatientTestHistory, PatientReference } from "@shared/schema";
 
@@ -1558,6 +1563,336 @@ function isImagingTest(test: string): boolean {
   return cat === "ultrasound";
 }
 
+// ─── PDF helpers ──────────────────────────────────────────────────────────────
+
+function esc(s: string | null | undefined): string {
+  if (!s) return "";
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+type TestDescSimple = { kind: "simple"; text: string };
+type TestDescBullets = { kind: "bullets"; intro: string; bullets: { label: string; text: string }[] };
+type TestDesc = TestDescSimple | TestDescBullets;
+
+const TEST_DESCRIPTIONS: Record<string, TestDesc> = {
+  "BrainWave": {
+    kind: "bullets",
+    intro: "A suite of non-invasive tests that examine how the brain and nervous system are functioning. Based on what the doctor ordered, it may include any combination of the following:",
+    bullets: [
+      { label: "Memory and thinking evaluation", text: "A structured series of questions and tasks that measures memory, attention span, processing speed, and problem-solving ability — designed to catch early signs of cognitive decline, dementia, or brain disease before symptoms become obvious." },
+      { label: "Brain wave recording", text: "Small sensors placed gently on the scalp pick up the brain's electrical signals to screen for seizure activity, abnormal brain patterns, and sleep-related disorders." },
+      { label: "Visual nerve response test", text: "Measures how quickly the brain responds to a visual signal to check for damage along the nerve pathway running from the eyes to the brain." },
+      { label: "Auditory and sound processing test", text: "Tests how well the brain receives and interprets sound — can detect nerve-related hearing issues or processing problems that a standard hearing test would miss." },
+    ],
+  },
+  "VitalWave": {
+    kind: "bullets",
+    intro: "A suite of non-invasive tests that assess how well the heart, blood vessels, and the nervous system controlling them are working together. It may include any combination of the following:",
+    bullets: [
+      { label: "Limb blood pressure mapping", text: "Blood pressure cuffs are placed at several points along the arms and legs to create a detailed map of blood flow and pinpoint exactly where arteries may be narrowed or blocked." },
+      { label: "Nervous system response test", text: "The patient lies flat and is slowly tilted upright while the machine tracks heart rate and blood pressure in real time — checks whether the nervous system properly adjusts to position changes, which explains dizziness, fainting, or unexplained falls." },
+      { label: "Heart rhythm recording", text: "A short electrical recording of the heart that checks for irregular rhythms, skipped beats, or other electrical problems that may not show up on a routine exam." },
+    ],
+  },
+  "Bilateral Carotid Duplex": { kind: "simple", text: "An ultrasound of the arteries on both sides of the neck. It uses sound waves — no radiation, no needles — to look for plaque buildup or narrowing that could cut off blood flow to the brain and cause a stroke." },
+  "Echocardiogram TTE": { kind: "simple", text: "An ultrasound of the heart taken through the chest wall. It shows the heart pumping in real time so the doctor can see how strong it is, whether the valves open and close properly, and whether there are any structural problems." },
+  "Renal Artery Doppler": { kind: "simple", text: "An ultrasound of the arteries that carry blood to the kidneys. Blockages here can silently damage the kidneys over time or make blood pressure nearly impossible to control with medication — this test finds those blockages early." },
+  "Lower Extremity Arterial Doppler": { kind: "simple", text: "An ultrasound of the arteries in both legs. It checks how well blood is flowing from the hips down to the feet, and identifies blockages that cause leg pain with walking, wounds that won't heal, or risk of limb loss." },
+  "Upper Extremity Arterial Doppler": { kind: "simple", text: "An ultrasound of the arteries in both arms. It looks for blockages or narrowing that cause arm pain, numbness, or a significant difference in blood pressure between the two arms — which can signal a serious artery disease." },
+  "Abdominal Aortic Aneurysm Duplex": { kind: "simple", text: "An ultrasound of the large main artery running through the abdomen. It measures the width of the aorta to check for dangerous ballooning — an aneurysm that goes undetected can rupture without warning and become life-threatening." },
+  "Stress Echocardiogram": { kind: "simple", text: "A heart ultrasound done before and right after exercise (or a medication that safely mimics exercise). Comparing the two images reveals blockages in the heart's arteries that only appear under physical stress and would look completely normal at rest." },
+  "Lower Extremity Venous Duplex": { kind: "simple", text: "An ultrasound of the veins in both legs. It checks for blood clots hiding deep in the leg — clots that can travel to the lungs — and also looks for damaged vein valves that cause chronic swelling and heaviness." },
+  "Upper Extremity Venous Duplex": { kind: "simple", text: "An ultrasound of the veins in both arms. It checks for blood clots or poorly functioning vein valves in the arms — especially important for patients with a history of IV lines, pacemakers, or unexplained arm swelling." },
+};
+
+function getTestDescHTML(test: string): string {
+  const desc = TEST_DESCRIPTIONS[test];
+  if (!desc) return `<p style="font-size:11px;color:#64748b;font-style:italic;">Description not available.</p>`;
+  if (desc.kind === "simple") {
+    return `<p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0;">${esc(desc.text)}</p>`;
+  }
+  const bullets = desc.bullets.map(b => `
+    <li style="margin-bottom:6px;">
+      <span style="font-weight:700;color:#1e293b;">${esc(b.label)}:</span>
+      <span style="color:#334155;"> ${esc(b.text)}</span>
+    </li>`).join("");
+  return `
+    <p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0 0 8px;">${esc(desc.intro)}</p>
+    <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.65;color:#334155;">${bullets}</ul>`;
+}
+
+const PDF_BASE_STYLES = `
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 0; color: #1e293b; }
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .page { page-break-after: always; }
+    .page:last-child { page-break-after: avoid; }
+  }
+  .cover { height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#1a365d; color:white; text-align:center; padding:40px; }
+  .cover h1 { font-size:30px; font-weight:800; margin:0 0 8px; }
+  .cover h2 { font-size:17px; font-weight:400; margin:0 0 20px; opacity:0.8; }
+  .cover .meta { font-size:13px; opacity:0.6; }
+  .page { padding:32px 36px; }
+  .patient-header { border-bottom:2px solid #1a365d; padding-bottom:14px; margin-bottom:18px; }
+  .patient-name { font-size:20px; font-weight:800; color:#1a365d; margin:0 0 4px; }
+  .patient-meta { font-size:12px; color:#64748b; }
+  .clinical-box { background:#f1f5f9; border-radius:8px; padding:14px; margin-bottom:16px; }
+  .clinical-label { font-size:10px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px; }
+  .clinical-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .clinical-field-label { font-size:10px; font-weight:700; color:#475569; margin-bottom:3px; }
+  .clinical-field-val { font-size:11px; color:#1e293b; line-height:1.55; }
+  .section-heading { font-size:11px; font-weight:700; color:#1e293b; margin:0 0 10px; text-transform:uppercase; letter-spacing:0.05em; }
+  .test-card { border:1px solid #e2e8f0; border-radius:8px; padding:14px; margin-bottom:10px; break-inside:avoid; }
+  .cooldown-box { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:12px; margin-bottom:14px; }
+`;
+
+function buildPrintWindow(title: string, bodyHtml: string): void {
+  const win = window.open("", "_blank");
+  if (!win) { alert("Please allow pop-ups to generate PDFs."); return; }
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PDF_BASE_STYLES}</style></head><body>${bodyHtml}</body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 600);
+}
+
+function generateClinicianPDF(batchName: string, patients: PatientScreening[]): void {
+  const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const confidencePill = (c: string | null | undefined) => {
+    if (!c) return "";
+    const bg = c === "high" ? "#d1fae5" : c === "medium" ? "#fef3c7" : "#ffedd5";
+    const fg = c === "high" ? "#065f46" : c === "medium" ? "#92400e" : "#9a3412";
+    return `<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:12px;background:${bg};color:${fg};margin-left:6px;">${c.toUpperCase()}</span>`;
+  };
+
+  const catColor: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#dc2626", ultrasound: "#059669", other: "#475569" };
+
+  const pages = patients.map(p => {
+    const allTests = (p.qualifyingTests || []) as string[];
+    const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
+    const cooldowns = (p.cooldownTests || []) as { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[];
+
+    const cooldownHtml = cooldowns.length > 0 ? `
+      <div class="cooldown-box">
+        <div style="font-size:11px;font-weight:700;color:#92400e;margin-bottom:6px;">⚠ Cooldown Violations</div>
+        ${cooldowns.map(cd => `<div style="font-size:11px;color:#92400e;margin-bottom:3px;"><strong>${esc(cd.test)}</strong> — Last: ${esc(cd.lastDate)} (${esc(cd.insuranceType)}, ${cd.cooldownMonths}mo cooldown)</div>`).join("")}
+      </div>` : "";
+
+    const testCardsHtml = allTests.map(test => {
+      const r = reasoning[test];
+      const clinician = r ? (typeof r === "string" ? r : r.clinician_understanding) : null;
+      const confidence = r && typeof r !== "string" ? r.confidence : null;
+      const factors = r && typeof r !== "string" ? r.qualifying_factors : null;
+      const color = catColor[getAncillaryCategory(test)] || "#475569";
+      return `
+        <div class="test-card">
+          <div style="display:flex;align-items:center;margin-bottom:8px;">
+            <span style="font-weight:700;font-size:13px;color:${color};">${esc(test)}</span>
+            ${confidencePill(confidence)}
+          </div>
+          ${factors && factors.length > 0 ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;">${factors.map(f => `<span style="font-size:10px;padding:2px 8px;border-radius:12px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;">${esc(f)}</span>`).join("")}</div>` : ""}
+          ${clinician ? `<div style="background:#f8fafc;border-radius:6px;padding:10px;border-left:3px solid ${color};"><div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Clinician Understanding</div><p style="font-size:11px;line-height:1.65;color:#1e293b;margin:0;">${esc(clinician)}</p></div>` : ""}
+        </div>`;
+    }).join("");
+
+    return `
+      <div class="page">
+        <div class="patient-header">
+          <div class="patient-name">${esc(p.name)}</div>
+          <div class="patient-meta">${[p.time, p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ")}</div>
+        </div>
+        ${(p.diagnoses || p.history || p.medications) ? `
+          <div class="clinical-box">
+            <div class="clinical-label">Clinical Summary</div>
+            <div class="clinical-grid">
+              ${p.diagnoses ? `<div><div class="clinical-field-label">Diagnoses</div><div class="clinical-field-val">${esc(p.diagnoses)}</div></div>` : ""}
+              ${p.history ? `<div><div class="clinical-field-label">History</div><div class="clinical-field-val">${esc(p.history)}</div></div>` : ""}
+              ${p.medications ? `<div><div class="clinical-field-label">Medications</div><div class="clinical-field-val">${esc(p.medications)}</div></div>` : ""}
+            </div>
+          </div>` : ""}
+        ${cooldownHtml}
+        <div class="section-heading">Qualifying Ancillaries (${allTests.length})</div>
+        ${testCardsHtml || `<p style="font-size:12px;color:#94a3b8;font-style:italic;">No qualifying tests identified.</p>`}
+      </div>`;
+  }).join("");
+
+  buildPrintWindow(
+    `Clinician Report — ${batchName}`,
+    `<div class="cover page"><h1>${esc(batchName)}</h1><h2>Clinician Report</h2><div class="meta">${esc(date)} · ${patients.length} patient${patients.length !== 1 ? "s" : ""}</div></div>${pages}`,
+  );
+}
+
+function generatePlexusPDF(batchName: string, patients: PatientScreening[]): void {
+  const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+
+  const pages = patients.map(p => {
+    const allTests = (p.qualifyingTests || []) as string[];
+    const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
+
+    const testCardsHtml = allTests.map(test => {
+      const r = reasoning[test];
+      const talking = r ? (typeof r === "string" ? r : r.patient_talking_points) : null;
+      const clinician = r ? (typeof r === "string" ? r : r.clinician_understanding) : null;
+      const factors = r && typeof r !== "string" ? r.qualifying_factors : null;
+      const cat = getAncillaryCategory(test);
+      const catBg: Record<string, string> = { brainwave: "#f5f3ff", vitalwave: "#fff1f2", ultrasound: "#f0fdf4", other: "#f8fafc" };
+      const catBorder: Record<string, string> = { brainwave: "#ddd6fe", vitalwave: "#fecdd3", ultrasound: "#bbf7d0", other: "#e2e8f0" };
+      const catAccent: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#be123c", ultrasound: "#047857", other: "#475569" };
+      const bg = catBg[cat] || catBg.other;
+      const border = catBorder[cat] || catBorder.other;
+      const accent = catAccent[cat] || catAccent.other;
+
+      return `
+        <div style="border:1px solid ${border};border-radius:8px;padding:16px;margin-bottom:12px;background:${bg};break-inside:avoid;">
+          <div style="font-size:14px;font-weight:800;color:${accent};margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid ${border};">${esc(test)}</div>
+
+          <div style="margin-bottom:12px;">
+            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">What is this test?</div>
+            ${getTestDescHTML(test)}
+          </div>
+
+          ${clinician ? `
+          <div style="margin-bottom:12px;">
+            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">Clinical rationale</div>
+            <div style="background:rgba(255,255,255,0.7);border-radius:6px;padding:10px;border-left:3px solid ${accent};">
+              <p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0;">${esc(clinician)}</p>
+            </div>
+          </div>` : ""}
+
+          ${talking ? `
+          <div style="margin-bottom:12px;">
+            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">When speaking with ${esc(p.name?.split(" ")[0] || "the patient")} about this test, here's what to say:</div>
+            <div style="background:rgba(255,255,255,0.7);border-radius:6px;padding:10px;border-left:3px solid ${accent};">
+              <p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0;">${esc(talking)}</p>
+            </div>
+          </div>` : ""}
+
+          ${factors && factors.length > 0 ? `
+          <div>
+            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">What in their chart qualifies them?</div>
+            <ul style="margin:0;padding-left:16px;font-size:12px;line-height:1.7;color:#1e293b;">
+              ${factors.map(f => `<li>${esc(f)}</li>`).join("")}
+            </ul>
+          </div>` : ""}
+        </div>`;
+    }).join("");
+
+    return `
+      <div class="page">
+        <div class="patient-header">
+          <div class="patient-name">${esc(p.name)}</div>
+          <div class="patient-meta">${[p.time, p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ")}</div>
+        </div>
+        ${(p.diagnoses || p.history || p.medications) ? `
+          <div class="clinical-box" style="margin-bottom:16px;">
+            <div class="clinical-label">Patient Chart Summary</div>
+            <div class="clinical-grid">
+              ${p.diagnoses ? `<div><div class="clinical-field-label">Diagnoses</div><div class="clinical-field-val">${esc(p.diagnoses)}</div></div>` : ""}
+              ${p.history ? `<div><div class="clinical-field-label">History</div><div class="clinical-field-val">${esc(p.history)}</div></div>` : ""}
+              ${p.medications ? `<div><div class="clinical-field-label">Medications</div><div class="clinical-field-val">${esc(p.medications)}</div></div>` : ""}
+            </div>
+          </div>` : ""}
+        <div class="section-heading">Ancillary Scripts (${allTests.length})</div>
+        ${testCardsHtml || `<p style="font-size:12px;color:#94a3b8;font-style:italic;">No qualifying tests identified.</p>`}
+      </div>`;
+  }).join("");
+
+  buildPrintWindow(
+    `Plexus Team Script — ${batchName}`,
+    `<div class="cover page"><h1>${esc(batchName)}</h1><h2>Plexus Team Script</h2><div class="meta">${esc(date)} · ${patients.length} patient${patients.length !== 1 ? "s" : ""}</div></div>${pages}`,
+  );
+}
+
+function PdfPatientSelectDialog({
+  open,
+  mode,
+  patients,
+  onClose,
+  onGenerate,
+}: {
+  open: boolean;
+  mode: "clinician" | "plexus" | null;
+  patients: PatientScreening[];
+  onClose: () => void;
+  onGenerate: (selected: PatientScreening[]) => void;
+}) {
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    if (open) setSelected(new Set(patients.map(p => p.id)));
+  }, [open, patients]);
+
+  const allSelected = selected.size === patients.length;
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(patients.map(p => p.id)));
+  const toggle = (id: number) => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const title = mode === "clinician" ? "Clinician PDF" : "Plexus Team PDF";
+  const desc = mode === "clinician"
+    ? "Select patients to include. Each gets a page with Dx/Hx/Rx and clinician reasoning per test."
+    : "Select patients to include. Each gets a page with chart summary, test explanations, and conversation scripts.";
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-md" data-testid="dialog-pdf-select">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {mode === "clinician" ? <Printer className="w-4 h-4 text-slate-500" /> : <Users2 className="w-4 h-4 text-slate-500" />}
+            {title}
+          </DialogTitle>
+          <p className="text-xs text-slate-500 mt-1">{desc}</p>
+        </DialogHeader>
+
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <div
+            className="flex items-center gap-3 px-4 py-3 bg-slate-50 border-b border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors"
+            onClick={toggleAll}
+            data-testid="checkbox-select-all-patients"
+          >
+            <Checkbox checked={allSelected} onCheckedChange={toggleAll} id="select-all" />
+            <Label htmlFor="select-all" className="text-sm font-semibold cursor-pointer select-none">
+              Select all patients
+            </Label>
+            <span className="ml-auto text-xs font-semibold text-slate-500">{selected.size}/{patients.length}</span>
+          </div>
+          <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+            {patients.map(p => (
+              <div
+                key={p.id}
+                className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors"
+                onClick={() => toggle(p.id)}
+                data-testid={`checkbox-patient-pdf-${p.id}`}
+              >
+                <Checkbox checked={selected.has(p.id)} onCheckedChange={() => toggle(p.id)} id={`pdf-p-${p.id}`} />
+                <div className="flex-1 min-w-0">
+                  <Label htmlFor={`pdf-p-${p.id}`} className="text-sm font-medium cursor-pointer select-none">{p.name}</Label>
+                  <p className="text-[11px] text-slate-400">{[p.time, p.age ? `${p.age}yo` : "", p.gender].filter(Boolean).join(" · ")}</p>
+                </div>
+                {(p.qualifyingTests || []).length > 0 && (
+                  <span className="text-[10px] font-semibold text-emerald-600 shrink-0">{(p.qualifyingTests || []).length} tests</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={onClose} data-testid="button-pdf-cancel">Cancel</Button>
+          <Button
+            size="sm"
+            disabled={selected.size === 0}
+            onClick={() => onGenerate(patients.filter(p => selected.has(p.id)))}
+            className="gap-1.5"
+            data-testid="button-pdf-generate"
+          >
+            {mode === "clinician" ? <Printer className="w-3.5 h-3.5" /> : <Users2 className="w-3.5 h-3.5" />}
+            Generate PDF ({selected.size})
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ResultsView({
   batch,
   patients,
@@ -1585,6 +1920,14 @@ function ResultsView({
 }) {
   const { toast } = useToast();
   const [shareButtonText, setShareButtonText] = useState("Share");
+  const [pdfMode, setPdfMode] = useState<"clinician" | "plexus" | null>(null);
+
+  const handlePdfGenerate = useCallback((selected: PatientScreening[]) => {
+    if (!batch) return;
+    setPdfMode(null);
+    if (pdfMode === "clinician") generateClinicianPDF(batch.name, selected);
+    else if (pdfMode === "plexus") generatePlexusPDF(batch.name, selected);
+  }, [batch, pdfMode]);
 
   const handleShare = useCallback(() => {
     if (!batch) return;
@@ -1627,6 +1970,26 @@ function ResultsView({
             </Button>
             <Button variant="outline" size="sm" onClick={onExport} className="gap-1.5 rounded-xl" data-testid="button-export">
               <Download className="w-3.5 h-3.5" /> Export CSV
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPdfMode("clinician")}
+              className="gap-1.5 rounded-xl"
+              data-testid="button-clinician-pdf"
+              disabled={patients.length === 0}
+            >
+              <Printer className="w-3.5 h-3.5" /> Clinician PDF
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPdfMode("plexus")}
+              className="gap-1.5 rounded-xl"
+              data-testid="button-plexus-pdf"
+              disabled={patients.length === 0}
+            >
+              <Users2 className="w-3.5 h-3.5" /> Plexus PDF
             </Button>
           </div>
         </div>
@@ -1921,6 +2284,14 @@ function ResultsView({
           })()}
         </SheetContent>
       </Sheet>
+
+      <PdfPatientSelectDialog
+        open={pdfMode !== null}
+        mode={pdfMode}
+        patients={patients}
+        onClose={() => setPdfMode(null)}
+        onGenerate={handlePdfGenerate}
+      />
     </div>
   );
 }
