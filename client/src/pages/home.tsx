@@ -1806,7 +1806,7 @@ function normalizeUltrasoundName(test: string): string {
 function getUltrasoundIcon(test: string): string {
   const entry = ULTRASOUND_ICONS[normalizeUltrasoundName(test)];
   if (!entry) return "";
-  return `<svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0;">${entry.paths(entry.color)}</svg>`;
+  return `<svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0;">${entry.paths(entry.color)}</svg>`;
 }
 
 
@@ -1882,7 +1882,7 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
             <div style="padding:${i === 0 ? "0 0 6px" : "5px 0 6px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}">
               <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;">
                 ${icon}
-                <span style="font-size:11.5px;font-weight:700;color:#1e293b;">${esc(test)}</span>
+                <span style="font-size:11.5px;font-weight:700;color:#1e293b;">${esc(normalizeUltrasoundName(test))}</span>
               </div>
               ${dxHxRx ? `<div style="font-size:8.5px;color:#64748b;line-height:1.4;margin-bottom:2px;padding-left:23px;">${esc(dxHxRx)}</div>` : ""}
               ${oneliner ? `<div style="font-size:9.5px;line-height:1.45;color:#475569;padding-left:23px;">${esc(oneliner)}</div>` : ""}
