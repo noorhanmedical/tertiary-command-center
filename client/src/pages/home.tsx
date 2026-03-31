@@ -1847,9 +1847,11 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
       : ancillaryTests.map((test, i) => {
           const r = reasoning[test];
           const clinician = r ? (typeof r === "string" ? r : r.clinician_understanding) : null;
+          const ancFactors = r && typeof r !== "string" ? r.qualifying_factors : null;
           const confidence = r && typeof r !== "string" ? r.confidence : null;
           const color = ancillaryColor[getAncillaryCategory(test)] || "#475569";
           const isLast = i === ancillaryTests.length - 1;
+          const ancExplain = oneSentence(clinician) || (ancFactors && ancFactors.length > 0 ? oneSentence(ancFactors[0]) : "");
           return `
             <div style="margin-bottom:${isLast ? "0" : "12px"};padding-bottom:${isLast ? "0" : "12px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}">
               <div style="margin-bottom:7px;">
@@ -1858,7 +1860,7 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
               ${p.diagnoses ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Dx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(trunc(p.diagnoses, 80))}</span></div>` : ""}
               ${p.history ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Hx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(trunc(p.history, 80))}</span></div>` : ""}
               ${p.medications ? `<div style="margin-bottom:6px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Rx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(trunc(p.medications, 80))}</span></div>` : ""}
-              ${clinician ? `<p style="font-size:10px;line-height:1.5;color:#475569;margin:0;font-style:italic;">${esc(oneSentence(clinician))}</p>` : ""}
+              ${ancExplain ? `<p style="font-size:10px;line-height:1.5;color:#475569;margin:0;font-style:italic;">${esc(ancExplain)}</p>` : ""}
             </div>`;
         }).join("");
 
