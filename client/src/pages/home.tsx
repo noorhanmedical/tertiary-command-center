@@ -1814,13 +1814,6 @@ function getUltrasoundIcon(test: string): string {
 function generateClinicianPDF(batchName: string, patients: PatientScreening[]): void {
   const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
-  const confBadge = (c: string | null | undefined) => {
-    if (!c) return "";
-    const bg = c === "high" ? "#d1fae5" : c === "medium" ? "#fef3c7" : "#ffedd5";
-    const fg = c === "high" ? "#065f46" : c === "medium" ? "#92400e" : "#9a3412";
-    return `<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${bg};color:${fg};margin-left:6px;vertical-align:middle;">${c.toUpperCase()}</span>`;
-  };
-
   const oneSentence = (text: string | null | undefined): string => {
     if (!text) return "";
     const m = text.match(/^[^.!?]*[.!?]/);
@@ -1849,7 +1842,6 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
           const r = reasoning[test];
           const clinician = r ? (typeof r === "string" ? r : r.clinician_understanding) : null;
           const ancFactors = r && typeof r !== "string" ? r.qualifying_factors : null;
-          const confidence = r && typeof r !== "string" ? r.confidence : null;
           const color = ancillaryColor[getAncillaryCategory(test)] || "#475569";
           const isLast = i === ancillaryTests.length - 1;
           const ancExplain = oneSentence(clinician) || (ancFactors && ancFactors.length > 0 ? oneSentence(ancFactors[0]) : "");
