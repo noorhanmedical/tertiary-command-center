@@ -1856,7 +1856,7 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
           return `
             <div style="margin-bottom:${isLast ? "0" : "12px"};padding-bottom:${isLast ? "0" : "12px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}">
               <div style="margin-bottom:7px;">
-                <span style="font-size:13px;font-weight:800;color:${color};">${esc(test)}</span>${confBadge(confidence)}
+                <span style="font-size:13px;font-weight:800;color:${color};">${esc(test)}</span>
               </div>
               ${p.diagnoses ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Dx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(trunc(p.diagnoses, 80))}</span></div>` : ""}
               ${p.history ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Hx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(trunc(p.history, 80))}</span></div>` : ""}
