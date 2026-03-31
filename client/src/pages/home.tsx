@@ -1820,13 +1820,10 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
     return m ? m[0].trim() : text.slice(0, 130).trim();
   };
 
-  const trunc = (s: string | null | undefined, n = 55) =>
-    !s ? "" : s.length > n ? s.slice(0, n - 1) + "…" : s;
-
   const renderFactors = (factors: string[] | null | undefined) => {
     if (!factors || factors.length === 0) return "";
     return factors.slice(0, 4).map(f =>
-      `<span style="display:inline-block;font-size:8px;font-weight:600;color:#475569;background:#f1f5f9;border-radius:4px;padding:1px 5px;margin:1px 2px 1px 0;">${esc(f)}</span>`
+      `<span style="display:inline-block;font-size:8.5px;font-weight:600;color:#475569;background:#f1f5f9;border-radius:4px;padding:1px 5px;margin:1px 2px 1px 0;">${esc(f)}</span>`
     ).join("");
   };
 
