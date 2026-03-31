@@ -1706,17 +1706,17 @@ function getTestDescHTML(test: string): string {
 const PDF_BASE_STYLES = `
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 0; color: #1e293b; }
-  @page { margin: 0; }
+  @page { size: letter portrait; margin: 0; }
   @media print {
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .page { page-break-after: always; }
-    .page:last-child { page-break-after: avoid; }
+    .page { page-break-after: always; break-after: page; }
+    .page:last-child { page-break-after: avoid; break-after: avoid; }
   }
   .cover { height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#1a365d; color:white; text-align:center; padding:40px; }
   .cover h1 { font-size:30px; font-weight:800; margin:0 0 8px; }
   .cover h2 { font-size:17px; font-weight:400; margin:0 0 20px; opacity:0.8; }
   .cover .meta { font-size:13px; opacity:0.6; }
-  .page { padding:32px 36px; }
+  .page { padding:32px 36px; min-height:100vh; }
   .patient-header { border-bottom:2px solid #1a365d; padding-bottom:14px; margin-bottom:18px; }
   .patient-name { font-size:20px; font-weight:800; color:#1a365d; margin:0 0 4px; }
   .patient-meta { font-size:12px; color:#64748b; }
