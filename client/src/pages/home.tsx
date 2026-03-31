@@ -2118,34 +2118,13 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
       sections.push(...otherTests.map((t, i) => renderTest(t, i === otherTests.length - 1)));
     }
 
-    // Outer .page = fixed letter page; inner .page-content = scaled by JS to guarantee fit
-    return [`<div class="page" style="height:100vh;overflow:hidden;padding:0;"><div class="page-content" style="padding:16px 20px;">${buildCompactTop(p)}${sections.join("")}</div></div>`];
+    // Single .page div per patient — content flows naturally across physical pages
+    return [`<div class="page" style="padding:16px 20px;">${buildCompactTop(p)}${sections.join("")}</div>`];
   });
-
-  // Auto-scale script: shrinks each patient page's content to fit exactly one letter page
-  const autoScaleScript = `
-    window.addEventListener('load', function() {
-      var pages = document.querySelectorAll('.page:not(.cover)');
-      pages.forEach(function(page) {
-        var content = page.querySelector('.page-content');
-        if (!content) return;
-        var pageH = page.offsetHeight;
-        var contentH = content.scrollHeight;
-        if (contentH > pageH * 0.98) {
-          var scale = (pageH * 0.97) / contentH;
-          content.style.transform = 'scale(' + scale + ')';
-          content.style.transformOrigin = 'top left';
-          content.style.width = Math.round(100 / scale) + '%';
-        }
-      });
-      setTimeout(function() { window.print(); }, 300);
-    });
-  `;
 
   buildPrintWindow(
     `Plexus Team Script — ${batchName}`,
     `<div class="cover page"><h1>${esc(batchName)}</h1><h2>Plexus Team Script</h2><div class="meta">${esc(date)} · ${patients.length} patient${patients.length !== 1 ? "s" : ""}</div></div>${pages.join("")}`,
-    { injectScript: autoScaleScript },
   );
 }
 
