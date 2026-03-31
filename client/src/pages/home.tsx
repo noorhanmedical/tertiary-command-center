@@ -63,7 +63,7 @@ import {
 import type { ScreeningBatch, PatientScreening, PatientTestHistory, PatientReference } from "@shared/schema";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
-type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[]; icd10_codes?: string[] };
+type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[]; icd10_codes?: string[]; pearls?: string[] };
 
 const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
 
@@ -2071,8 +2071,16 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
       const talking   = r ? (typeof r === "string" ? r : r.patient_talking_points) : null;
       const factors   = r && typeof r !== "string" ? r.qualifying_factors : null;
       const icd10     = r && typeof r !== "string" ? r.icd10_codes : null;
+      const pearls    = r && typeof r !== "string" ? r.pearls : null;
       const accent    = catAccent[getAncillaryCategory(test)] || "#475569";
       const whatIs    = getOneSentenceDesc(test);
+      const pearlsBlock = (pearls && pearls.length > 0) ? `
+          <div style="margin-top:5px;background:#f0f9ff;border-left:3px solid #0ea5e9;border-radius:3px;padding:4px 8px;break-inside:avoid;">
+            <div style="font-size:8px;font-weight:700;color:#0369a1;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px;">Pearls</div>
+            <ul style="margin:0;padding-left:14px;">
+              ${pearls.map(p => `<li style="font-size:9px;line-height:1.5;color:#1e293b;break-inside:avoid;">${esc(p)}</li>`).join("")}
+            </ul>
+          </div>` : "";
       return `
         <div style="margin-bottom:${isLast ? "0" : "8px"};padding-bottom:${isLast ? "0" : "8px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}break-inside:avoid;">
           <div style="font-size:11.5px;font-weight:800;color:${accent};margin-bottom:2px;">${esc(test)}</div>
@@ -2084,6 +2092,7 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
           <div style="font-size:8px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px;margin-top:${clinician ? "3px" : "0"};">Talking Points</div>
           <p style="font-size:9px;line-height:1.4;color:#1e293b;margin:0;">${talking ? esc(talking) : `Clinical indicators in this patient's chart support this study.`}</p>
           ${factorPills(factors)}
+          ${pearlsBlock}
         </div>`;
     };
 

@@ -109,6 +109,7 @@ export const testReasoningSchema = z.object({
   confidence: z.enum(["high", "medium", "low"]).optional(),
   qualifying_factors: z.array(z.string()).optional(),
   icd10_codes: z.array(z.string()).optional(),
+  pearls: z.array(z.string()).optional(),
 });
 
 export const patientScreeningResultSchema = z.object({

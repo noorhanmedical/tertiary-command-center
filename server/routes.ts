@@ -493,6 +493,7 @@ For each test the patient qualifies for, provide:
 - confidence: "high" | "medium" | "low" (how strong the clinical indication is)
 - qualifying_factors: Array of specific conditions/symptoms/medications from the patient's data that support qualification
 - icd10_codes: Array of relevant ICD-10 codes that support the qualification
+- pearls: Array of 2-3 short memorable one-liners (plain language, 15 words or fewer each) that outreach staff can read aloud to the patient on the phone. Each pearl should be a punchy, reassuring statement about the test or why it matters for this specific patient. Examples: "This test checks blood flow — quick, painless, no needles.", "Your blood pressure history makes this an important screening.", "Helps your doctor catch problems early, before symptoms appear."
 
 For each patient, respond with a JSON object:
 {
@@ -512,7 +513,8 @@ For each patient, respond with a JSON object:
           "patient_talking_points": "...",
           "confidence": "high",
           "qualifying_factors": ["hypertension", "diabetes"],
-          "icd10_codes": ["I10", "E11.9"]
+          "icd10_codes": ["I10", "E11.9"],
+          "pearls": ["Checks blood flow to prevent stroke risk.", "Quick, painless — no needles involved.", "Your doctor flagged this based on your blood pressure history."]
         }
       }
     }
@@ -1103,8 +1105,11 @@ Return ONLY this JSON object:
   "patient_talking_points": "Warm 4-5 sentence plain-language explanation for a non-clinical outreach caller. Start with 'Based on...' or 'Your doctor noticed...'. Do NOT include ICD-10 codes in text.",
   "confidence": "high",
   "qualifying_factors": ["condition1", "medication1"],
-  "icd10_codes": ["I10", "E11.9"]
-}`;
+  "icd10_codes": ["I10", "E11.9"],
+  "pearls": ["Short memorable pearl 1 (15 words or fewer).", "Short memorable pearl 2.", "Short memorable pearl 3."]
+}
+
+pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the patient — plain language, 15 words or fewer each, reassuring and specific to this patient's situation.`;
 
       const patientInfo = [
         `Name: ${patient.name}`,
