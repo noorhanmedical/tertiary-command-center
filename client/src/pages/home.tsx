@@ -1434,6 +1434,7 @@ function PatientCard({
   const [localTests, setLocalTests] = useState<string[]>(serverTests);
   const [generatingTests, setGeneratingTests] = useState<Set<string>>(new Set());
   const cardQueryClient = useQueryClient();
+  const { toast: cardToast } = useToast();
 
   useEffect(() => { setLocalTests(patient.qualifyingTests || []); }, [patient.qualifyingTests]);
 
@@ -1445,10 +1446,14 @@ function PatientCard({
     setGeneratingTests(prev => new Set([...prev, test]));
     apiRequest("POST", `/api/patients/${patient.id}/analyze-test`, { testName: test })
       .then(r => r.json())
-      .then(() => {
-        cardQueryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+      .then((data) => {
+        if (data?.reasoning) {
+          cardQueryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+        }
       })
-      .catch(() => {})
+      .catch(() => {
+        cardToast({ title: "Could not generate reasoning", description: `Qualification notes for ${test} were not generated. You can still proceed.`, variant: "destructive" });
+      })
       .finally(() => {
         setGeneratingTests(prev => {
           const next = new Set(prev);
@@ -1456,7 +1461,7 @@ function PatientCard({
           return next;
         });
       });
-  }, [localTests, onUpdate, patient.id, patient.batchId, cardQueryClient]);
+  }, [localTests, onUpdate, patient.id, patient.batchId, cardQueryClient, cardToast]);
 
   const handleRemoveTest = useCallback((test: string) => {
     const updated = localTests.filter((t) => t !== test);

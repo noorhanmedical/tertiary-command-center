@@ -1134,6 +1134,14 @@ Return ONLY this JSON object:
         return res.status(500).json({ error: "Failed to parse AI response" });
       }
 
+      if (
+        !testReasoning ||
+        typeof testReasoning.clinician_understanding !== "string" ||
+        typeof testReasoning.patient_talking_points !== "string"
+      ) {
+        return res.status(500).json({ error: "AI returned malformed reasoning" });
+      }
+
       const existingReasoning = (patient.reasoning as Record<string, any>) || {};
       const mergedReasoning = { ...existingReasoning, [testName]: testReasoning };
 
