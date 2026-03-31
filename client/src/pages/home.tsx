@@ -1605,9 +1605,13 @@ const TEST_DESCRIPTIONS: Record<string, TestDesc> = {
   "Upper Extremity Venous Duplex": { kind: "simple", text: "An ultrasound of the veins in both arms. It checks for blood clots or poorly functioning vein valves in the arms — especially important for patients with a history of IV lines, pacemakers, or unexplained arm swelling." },
 };
 
+function normalizeTestName(test: string): string {
+  return test.replace(/\s*\(\d{4,5}\)\s*$/, "").trim();
+}
+
 function getTestDescHTML(test: string): string {
-  const desc = TEST_DESCRIPTIONS[test];
-  if (!desc) return `<p style="font-size:11px;color:#64748b;font-style:italic;">Description not available.</p>`;
+  const desc = TEST_DESCRIPTIONS[test] ?? TEST_DESCRIPTIONS[normalizeTestName(test)];
+  if (!desc) return `<p style="font-size:12px;line-height:1.65;color:#475569;font-style:italic;">This test checks for conditions related to the patient's clinical history and risk factors.</p>`;
   if (desc.kind === "simple") {
     return `<p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0;">${esc(desc.text)}</p>`;
   }
@@ -1697,6 +1701,10 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
 
     return `
       <div class="page">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;margin-bottom:16px;border-bottom:1px solid #cbd5e1;">
+          <span style="font-size:11px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
+          <span style="font-size:10px;color:#94a3b8;">Clinician Report — ${esc(date)}</span>
+        </div>
         <div class="patient-header">
           <div class="patient-name">${esc(p.name)}</div>
           <div class="patient-meta">${[p.time, p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ")}</div>
@@ -1742,43 +1750,46 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
       const border = catBorder[cat] || catBorder.other;
       const accent = catAccent[cat] || catAccent.other;
 
+      const firstName = esc(p.name?.split(" ")[0] || "the patient");
       return `
         <div style="border:1px solid ${border};border-radius:8px;padding:16px;margin-bottom:12px;background:${bg};break-inside:avoid;">
           <div style="font-size:14px;font-weight:800;color:${accent};margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid ${border};">${esc(test)}</div>
 
           <div style="margin-bottom:12px;">
-            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">What is this test?</div>
+            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">1 — What is this test?</div>
             ${getTestDescHTML(test)}
           </div>
 
-          ${clinician ? `
           <div style="margin-bottom:12px;">
-            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">Clinical rationale</div>
+            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">2 — Why does ${firstName} need this?</div>
             <div style="background:rgba(255,255,255,0.7);border-radius:6px;padding:10px;border-left:3px solid ${accent};">
-              <p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0;">${esc(clinician)}</p>
+              <p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0;">${talking ? esc(talking) : `<em style="color:#64748b;">Clinical reasoning supports this test based on the patient's diagnosis and history.</em>`}</p>
             </div>
-          </div>` : ""}
+          </div>
 
-          ${talking ? `
           <div style="margin-bottom:12px;">
-            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">When speaking with ${esc(p.name?.split(" ")[0] || "the patient")} about this test, here's what to say:</div>
+            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">3 — Clinical rationale (for your reference)</div>
             <div style="background:rgba(255,255,255,0.7);border-radius:6px;padding:10px;border-left:3px solid ${accent};">
-              <p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0;">${esc(talking)}</p>
+              <p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0;">${clinician ? esc(clinician) : `<em style="color:#64748b;">See chart for clinical details.</em>`}</p>
             </div>
-          </div>` : ""}
+          </div>
 
-          ${factors && factors.length > 0 ? `
           <div>
-            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">What in their chart qualifies them?</div>
-            <ul style="margin:0;padding-left:16px;font-size:12px;line-height:1.7;color:#1e293b;">
-              ${factors.map(f => `<li>${esc(f)}</li>`).join("")}
-            </ul>
-          </div>` : ""}
+            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">4 — What in their chart qualifies them?</div>
+            ${factors && factors.length > 0
+              ? `<ul style="margin:0;padding-left:16px;font-size:12px;line-height:1.7;color:#1e293b;">${factors.map(f => `<li>${esc(f)}</li>`).join("")}</ul>`
+              : `<p style="font-size:12px;line-height:1.65;color:#64748b;font-style:italic;margin:0;">See patient Dx, Hx, and Rx above for qualifying conditions.</p>`
+            }
+          </div>
         </div>`;
     }).join("");
 
     return `
       <div class="page">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;margin-bottom:16px;border-bottom:1px solid #cbd5e1;">
+          <span style="font-size:11px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
+          <span style="font-size:10px;color:#94a3b8;">Plexus Team Script — ${esc(date)}</span>
+        </div>
         <div class="patient-header">
           <div class="patient-name">${esc(p.name)}</div>
           <div class="patient-meta">${[p.time, p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ")}</div>
