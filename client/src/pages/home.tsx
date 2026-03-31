@@ -1760,50 +1760,136 @@ function buildPatientTop(p: PatientScreening, batchName: string, date: string, r
     ${clinicalBlock}`;
 }
 
+function getUltrasoundIcon(test: string, color: string): string {
+  const t = test.toLowerCase();
+  let paths = "";
+  if (t.includes("carotid")) {
+    paths = `<path d="M12 3C9 3 6.5 5.5 6.5 9c0 2.5 1.5 4.5 4 5.5v4.5h3V14.5c2.5-1 4-3 4-5.5C17.5 5.5 15 3 12 3z" stroke="${color}" stroke-width="1.4" fill="none" stroke-linejoin="round"/>
+      <line x1="12" y1="3" x2="12" y2="19" stroke="${color}" stroke-width="1.2"/>
+      <path d="M9.5 7.5c0.5 1 1.5 1.5 2.5 1" stroke="${color}" stroke-width="1" fill="none"/>
+      <path d="M14.5 7.5c-0.5 1-1.5 1.5-2.5 1" stroke="${color}" stroke-width="1" fill="none"/>
+      <path d="M9.5 11c0.5-0.8 1.5-1 2.5-0.5" stroke="${color}" stroke-width="1" fill="none"/>
+      <path d="M14.5 11c-0.5-0.8-1.5-1-2.5-0.5" stroke="${color}" stroke-width="1" fill="none"/>`;
+  } else if (t.includes("echo") || t.includes("stress")) {
+    paths = `<path d="M12 20C12 20 3.5 15 3.5 9.5A4.75 4.75 0 0 1 12 7a4.75 4.75 0 0 1 8.5 2.5C20.5 15 12 20 12 20z" stroke="${color}" stroke-width="1.5" fill="none" stroke-linejoin="round"/>`;
+  } else if (t.includes("renal")) {
+    paths = `<path d="M10 3C7 3 5 5.5 5 8.5c0 4 2 8 5 9.5 1.5 0.8 2.5 0.2 2.5-1.5 0-1.2-1-2.2-1.5-3.5C10.5 11.5 11 10 12.5 9.5c1.5-0.5 2-2 1-3.5C12.5 4.5 11.5 3 10 3z" stroke="${color}" stroke-width="1.4" fill="none"/>
+      <path d="M14 3c3 0.5 5 3 5 6 0 3.5-1.5 6.5-4 8" stroke="${color}" stroke-width="1.4" fill="none" stroke-linecap="round"/>`;
+  } else if (t.includes("aortic") || t.includes("abdominal")) {
+    paths = `<path d="M12 3L20 9l-8 12L4 9z" stroke="${color}" stroke-width="1.4" fill="none" stroke-linejoin="round"/>
+      <line x1="12" y1="5" x2="12" y2="19" stroke="${color}" stroke-width="1.5"/>
+      <line x1="8" y1="12" x2="16" y2="12" stroke="${color}" stroke-width="1"/>`;
+  } else if (t.includes("lower extremity") || t.includes("lower ext") || (t.includes("lower") && (t.includes("arterial") || t.includes("venous")))) {
+    paths = `<path d="M9.5 2h4c0.5 2 0.5 6 0 9.5L16 22h-3l-1.5-7.5L10 22H7l2.5-10.5C9 8 9 4 9.5 2z" stroke="${color}" stroke-width="1.4" fill="none" stroke-linejoin="round"/>
+      <path d="M9.5 2c0.5-0.5 1.5-0.5 4 0" stroke="${color}" stroke-width="1.4" fill="none" stroke-linecap="round"/>`;
+  } else if (t.includes("upper extremity") || t.includes("upper ext") || (t.includes("upper") && (t.includes("arterial") || t.includes("venous")))) {
+    paths = `<path d="M8 3c2 0 3.5 1 3.5 3.5l3.5 9c0.5 1.5 0 2.5-1.5 2.5s-2-1-2.5-2.5L10 11.5l-1 5.5c-0.5 1.5-1.5 2-3 2s-2-1.5-2-2.5V6c0-2 1.5-3 4-3z" stroke="${color}" stroke-width="1.4" fill="none" stroke-linejoin="round"/>`;
+  }
+  if (!paths) return "";
+  return `<svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0;">${paths}</svg>`;
+}
+
 function generateClinicianPDF(batchName: string, patients: PatientScreening[]): void {
   const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-  const catColor: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#dc2626", ultrasound: "#059669", other: "#475569" };
+
   const confBadge = (c: string | null | undefined) => {
     if (!c) return "";
     const bg = c === "high" ? "#d1fae5" : c === "medium" ? "#fef3c7" : "#ffedd5";
     const fg = c === "high" ? "#065f46" : c === "medium" ? "#92400e" : "#9a3412";
-    return `<span style="font-size:10px;font-weight:600;padding:1px 7px;border-radius:10px;background:${bg};color:${fg};margin-left:8px;vertical-align:middle;">${c.toUpperCase()}</span>`;
+    return `<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${bg};color:${fg};margin-left:6px;vertical-align:middle;">${c.toUpperCase()}</span>`;
   };
+
+  const oneSentence = (text: string | null | undefined): string => {
+    if (!text) return "";
+    const m = text.match(/^[^.!?]*[.!?]/);
+    return m ? m[0].trim() : text.slice(0, 130).trim();
+  };
+
+  const trunc = (s: string | null | undefined, n = 55) =>
+    !s ? "" : s.length > n ? s.slice(0, n - 1) + "…" : s;
 
   const pages = patients.map(p => {
     const allTests = (p.qualifyingTests || []) as string[];
     const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
-    const cooldowns = (p.cooldownTests || []) as { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[];
+    const demoLine = [p.time, p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
 
-    const cooldownHtml = cooldowns.length > 0 ? `
-      <div class="cooldown-box">
-        <div style="font-size:11px;font-weight:700;color:#92400e;margin-bottom:6px;">⚠ Cooldown Violations</div>
-        ${cooldowns.map(cd => `<div style="font-size:11px;color:#92400e;margin-bottom:3px;"><strong>${esc(cd.test)}</strong> — Last: ${esc(cd.lastDate)} (${esc(cd.insuranceType)}, ${cd.cooldownMonths}mo cooldown)</div>`).join("")}
-      </div>` : "";
+    const ancillaryTests = allTests.filter(t => {
+      const cat = getAncillaryCategory(t);
+      return cat === "brainwave" || cat === "vitalwave";
+    });
+    const ultrasoundTests = allTests.filter(t => getAncillaryCategory(t) === "ultrasound");
 
-    const testsHtml = allTests.map((test, i) => {
-      const r = reasoning[test];
-      const clinician = r ? (typeof r === "string" ? r : r.clinician_understanding) : null;
-      const confidence = r && typeof r !== "string" ? r.confidence : null;
-      const factors = r && typeof r !== "string" ? r.qualifying_factors : null;
-      const color = catColor[getAncillaryCategory(test)] || "#475569";
-      const isLast = i === allTests.length - 1;
-      return `
-        <div style="margin-bottom:16px;padding-bottom:${isLast ? "0" : "16px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}break-inside:avoid;">
-          <div style="margin-bottom:6px;">
-            <span style="font-weight:800;font-size:14px;color:${color};">${esc(test)}</span>${confBadge(confidence)}
-          </div>
-          ${factors && factors.length > 0 ? `<ul style="margin:0 0 8px 0;padding-left:18px;font-size:12px;line-height:1.65;color:#334155;">${factors.map(f => `<li style="margin-bottom:3px;">${esc(f)}</li>`).join("")}</ul>` : ""}
-          ${clinician ? `<p style="font-size:12px;line-height:1.65;color:#475569;margin:0;">${esc(clinician)}</p>` : ""}
-        </div>`;
-    }).join("");
+    const ancillaryColor: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#dc2626" };
+    const isVenous = (test: string) => test.toLowerCase().includes("venous");
+    const usColor = (test: string) => isVenous(test) ? "#2563eb" : "#dc2626";
+
+    const leftHtml = ancillaryTests.length === 0
+      ? `<p style="font-size:10px;color:#94a3b8;font-style:italic;">No qualifying ancillary tests.</p>`
+      : ancillaryTests.map((test, i) => {
+          const r = reasoning[test];
+          const clinician = r ? (typeof r === "string" ? r : r.clinician_understanding) : null;
+          const confidence = r && typeof r !== "string" ? r.confidence : null;
+          const color = ancillaryColor[getAncillaryCategory(test)] || "#475569";
+          const isLast = i === ancillaryTests.length - 1;
+          return `
+            <div style="margin-bottom:${isLast ? "0" : "12px"};padding-bottom:${isLast ? "0" : "12px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}">
+              <div style="margin-bottom:7px;">
+                <span style="font-size:13px;font-weight:800;color:${color};">${esc(test)}</span>${confBadge(confidence)}
+              </div>
+              ${p.diagnoses ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Dx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(p.diagnoses)}</span></div>` : ""}
+              ${p.history ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Hx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(p.history)}</span></div>` : ""}
+              ${p.medications ? `<div style="margin-bottom:6px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Rx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(p.medications)}</span></div>` : ""}
+              ${clinician ? `<p style="font-size:10px;line-height:1.5;color:#475569;margin:0;font-style:italic;">${esc(oneSentence(clinician))}</p>` : ""}
+            </div>`;
+        }).join("");
+
+    const rightHtml = ultrasoundTests.length === 0
+      ? `<p style="font-size:10px;color:#94a3b8;font-style:italic;">No qualifying ultrasound studies.</p>`
+      : ultrasoundTests.map((test, i) => {
+          const r = reasoning[test];
+          const clinician = r ? (typeof r === "string" ? r : r.clinician_understanding) : null;
+          const factors = r && typeof r !== "string" ? r.qualifying_factors : null;
+          const color = usColor(test);
+          const icon = getUltrasoundIcon(test, color);
+          const isLast = i === ultrasoundTests.length - 1;
+          const oneliner = factors && factors.length > 0 ? factors[0] : oneSentence(clinician);
+          const dxHxRx = [
+            p.diagnoses ? `Dx: ${trunc(p.diagnoses)}` : "",
+            p.history ? `Hx: ${trunc(p.history)}` : "",
+            p.medications ? `Rx: ${trunc(p.medications)}` : "",
+          ].filter(Boolean).join("  ·  ");
+          return `
+            <div style="padding:${i === 0 ? "0 0 6px" : "5px 0 6px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}">
+              <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;">
+                ${icon}
+                <span style="font-size:11.5px;font-weight:700;color:#1e293b;">${esc(test)}</span>
+              </div>
+              ${dxHxRx ? `<div style="font-size:8.5px;color:#64748b;line-height:1.4;margin-bottom:2px;padding-left:23px;">${esc(dxHxRx)}</div>` : ""}
+              ${oneliner ? `<div style="font-size:9.5px;line-height:1.45;color:#475569;padding-left:23px;">${esc(oneliner)}</div>` : ""}
+            </div>`;
+        }).join("");
 
     return `
-      <div class="page">
-        ${buildPatientTop(p, batchName, date, "Clinician Report")}
-        ${cooldownHtml}
-        <div class="section-heading">Qualifying Ancillaries (${allTests.length})</div>
-        ${testsHtml || `<p style="font-size:12px;color:#94a3b8;font-style:italic;">No qualifying tests identified.</p>`}
+      <div class="page" style="padding:22px 28px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;margin-bottom:10px;border-bottom:1px solid #cbd5e1;">
+          <span style="font-size:10px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
+          <span style="font-size:9px;color:#94a3b8;">Clinician Summary — ${esc(date)}</span>
+        </div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px;">
+          <span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.09em;">Plexus Qualifying Ancillaries</span>
+          <span style="font-size:20px;font-weight:800;color:#1a365d;">${esc(p.name)}</span>
+        </div>
+        <div style="font-size:9.5px;color:#94a3b8;text-align:right;margin-bottom:12px;">${demoLine}</div>
+        <div style="display:grid;grid-template-columns:38% 1fr;gap:14px;border-top:2px solid #e2e8f0;padding-top:10px;">
+          <div>
+            <div style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;padding-bottom:4px;border-bottom:1px solid #e2e8f0;">Ancillary Tests</div>
+            ${leftHtml}
+          </div>
+          <div>
+            <div style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;padding-bottom:4px;border-bottom:1px solid #e2e8f0;">Ultrasounds</div>
+            ${rightHtml}
+          </div>
+        </div>
       </div>`;
   }).join("");
 
