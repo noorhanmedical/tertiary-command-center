@@ -2032,8 +2032,9 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
     ).join("")}</div>`;
   };
 
-  const pages = patients.map(p => {
+  const pages = patients.flatMap(p => {
     const allTests = (p.qualifyingTests || []) as string[];
+    if (allTests.length === 0) return [];
     const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
     const rawFirst = p.name.trim().includes(",")
       ? (p.name.split(",")[1]?.trim().split(/\s+/)[0] ?? "").trim() || p.name.trim()
@@ -2089,7 +2090,7 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
     }
 
     // Single .page div per patient — browser print engine handles natural overflow
-    return `<div class="page" style="padding:18px 22px;">${buildCompactTop(p)}${sections.join("")}</div>`;
+    return [`<div class="page" style="padding:18px 22px;">${buildCompactTop(p)}${sections.join("")}</div>`];
   });
 
   buildPrintWindow(
