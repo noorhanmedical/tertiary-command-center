@@ -2012,7 +2012,7 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
   // Compact page-top: run name + date bar, patient name, demo line + Dx/Hx/Rx mini row
   const buildCompactTop = (p: PatientScreening) => {
     const demoLine = [p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
-    const trunc = (s: string | null | undefined, max = 95) =>
+    const trunc = (s: string | null | undefined, max = 80) =>
       s ? (s.length > max ? esc(s.slice(0, max)) + "…" : esc(s)) : "";
     const clinFields = [
       p.diagnoses ? { label: "Dx", val: trunc(p.diagnoses) } : null,
@@ -2081,7 +2081,7 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
           <div style="font-size:8px;font-weight:700;color:#1a365d;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px;">Clinical Basis</div>
           <p style="font-size:9px;line-height:1.4;color:#334155;margin:0 0 1px;">${esc(clinician)}</p>
           ${icd10Pills(icd10)}` : ""}
-          <div style="font-size:8px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px;margin-top:${clinician ? "3px" : "0"};">Talking Points — ${firstName}</div>
+          <div style="font-size:8px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px;margin-top:${clinician ? "3px" : "0"};">Talking Points</div>
           <p style="font-size:9px;line-height:1.4;color:#1e293b;margin:0;">${talking ? esc(talking) : `Clinical indicators in this patient's chart support this study.`}</p>
           ${factorPills(factors)}
         </div>`;
