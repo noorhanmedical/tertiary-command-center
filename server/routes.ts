@@ -1213,9 +1213,19 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
             if (result) {
               const match = result?.patients?.[0] || result;
               aiResults.set(patient.id, match);
+              // Normalize pearls in each reasoning entry: must be undefined or string[]
+              const rawReasoning: Record<string, any> = match.reasoning || {};
+              for (const testKey of Object.keys(rawReasoning)) {
+                const entry = rawReasoning[testKey];
+                if (entry && typeof entry === "object" && entry.pearls !== undefined) {
+                  if (!Array.isArray(entry.pearls) || entry.pearls.some((p: unknown) => typeof p !== "string")) {
+                    entry.pearls = undefined;
+                  }
+                }
+              }
               await storage.updatePatientScreening(patient.id, {
                 qualifyingTests: match.qualifyingTests || [],
-                reasoning: match.reasoning || {},
+                reasoning: rawReasoning,
                 diagnoses: match.diagnoses || patient.diagnoses || null,
                 history: match.history || patient.history || null,
                 medications: match.medications || patient.medications || null,
