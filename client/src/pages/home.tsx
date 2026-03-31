@@ -1763,19 +1763,13 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
           <div style="margin-bottom:12px;">
             <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">2 — Why does ${firstName} need this?</div>
             <div style="background:rgba(255,255,255,0.7);border-radius:6px;padding:10px;border-left:3px solid ${accent};">
-              <p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0;">${talking ? esc(talking) : `<em style="color:#64748b;">Clinical reasoning supports this test based on the patient's diagnosis and history.</em>`}</p>
-            </div>
-          </div>
-
-          <div style="margin-bottom:12px;">
-            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">3 — Clinical rationale (for your reference)</div>
-            <div style="background:rgba(255,255,255,0.7);border-radius:6px;padding:10px;border-left:3px solid ${accent};">
-              <p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0;">${clinician ? esc(clinician) : `<em style="color:#64748b;">See chart for clinical details.</em>`}</p>
+              <p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0 0 8px 0;">${talking ? esc(talking) : `<em style="color:#64748b;">Clinical reasoning supports this test based on the patient's diagnosis and history.</em>`}</p>
+              ${clinician ? `<p style="font-size:10.5px;line-height:1.6;color:#64748b;margin:0;border-top:1px dashed #e2e8f0;padding-top:7px;"><strong>For your reference:</strong> ${esc(clinician)}</p>` : ""}
             </div>
           </div>
 
           <div>
-            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">4 — What in their chart qualifies them?</div>
+            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:5px;">3 — What in their chart qualifies them?</div>
             ${factors && factors.length > 0
               ? `<ul style="margin:0;padding-left:16px;font-size:12px;line-height:1.7;color:#1e293b;">${factors.map(f => `<li>${esc(f)}</li>`).join("")}</ul>`
               : `<p style="font-size:12px;line-height:1.65;color:#64748b;font-style:italic;margin:0;">See patient Dx, Hx, and Rx above for qualifying conditions.</p>`
@@ -1855,29 +1849,35 @@ function PdfPatientSelectDialog({
 
         <div className="border border-slate-200 rounded-lg overflow-hidden">
           <div
-            className="flex items-center gap-3 px-4 py-3 bg-slate-50 border-b border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors"
-            onClick={toggleAll}
+            className="flex items-center gap-3 px-4 py-3 bg-slate-50 border-b border-slate-200"
             data-testid="checkbox-select-all-patients"
           >
-            <Checkbox checked={allSelected} onCheckedChange={toggleAll} id="select-all" />
-            <Label htmlFor="select-all" className="text-sm font-semibold cursor-pointer select-none">
+            <Checkbox
+              checked={allSelected}
+              onCheckedChange={toggleAll}
+              id="select-all"
+            />
+            <Label htmlFor="select-all" className="text-sm font-semibold cursor-pointer select-none flex-1">
               Select all patients
             </Label>
-            <span className="ml-auto text-xs font-semibold text-slate-500">{selected.size}/{patients.length}</span>
+            <span className="text-xs font-semibold text-slate-500">{selected.size}/{patients.length}</span>
           </div>
           <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
             {patients.map(p => (
               <div
                 key={p.id}
-                className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors"
-                onClick={() => toggle(p.id)}
+                className="flex items-center gap-3 px-4 py-2.5"
                 data-testid={`checkbox-patient-pdf-${p.id}`}
               >
-                <Checkbox checked={selected.has(p.id)} onCheckedChange={() => toggle(p.id)} id={`pdf-p-${p.id}`} />
-                <div className="flex-1 min-w-0">
-                  <Label htmlFor={`pdf-p-${p.id}`} className="text-sm font-medium cursor-pointer select-none">{p.name}</Label>
-                  <p className="text-[11px] text-slate-400">{[p.time, p.age ? `${p.age}yo` : "", p.gender].filter(Boolean).join(" · ")}</p>
-                </div>
+                <Checkbox
+                  checked={selected.has(p.id)}
+                  onCheckedChange={() => toggle(p.id)}
+                  id={`pdf-p-${p.id}`}
+                />
+                <Label htmlFor={`pdf-p-${p.id}`} className="flex-1 min-w-0 cursor-pointer select-none">
+                  <span className="text-sm font-medium block">{p.name}</span>
+                  <span className="text-[11px] text-slate-400">{[p.time, p.age ? `${p.age}yo` : "", p.gender].filter(Boolean).join(" · ")}</span>
+                </Label>
                 {(p.qualifyingTests || []).length > 0 && (
                   <span className="text-[10px] font-semibold text-emerald-600 shrink-0">{(p.qualifyingTests || []).length} tests</span>
                 )}
