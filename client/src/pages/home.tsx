@@ -1903,11 +1903,11 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
         ${chartReview}
         <div style="display:grid;grid-template-columns:38% 1fr;gap:14px;border-top:2px solid #e2e8f0;padding-top:10px;">
           <div>
-            <div style="font-size:8.5px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;padding-bottom:4px;border-bottom:1px solid #e2e8f0;">Ancillary Tests</div>
+            <div style="font-size:8.5px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;">Qualified Tests</div>
             ${leftHtml}
           </div>
           <div>
-            <div style="font-size:8.5px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;padding-bottom:4px;border-bottom:1px solid #e2e8f0;">Ultrasounds</div>
+            <div style="font-size:8.5px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;">Qualified Ultrasounds</div>
             ${rightHtml}
           </div>
         </div>
