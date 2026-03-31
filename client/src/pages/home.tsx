@@ -1879,23 +1879,27 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
 
     const ultrasoundTests = allTests.filter(t => getAncillaryCategory(t) === "ultrasound");
     if (ultrasoundTests.length > 0) {
-      const mid = Math.ceil(ultrasoundTests.length / 2);
-      const usPage1 = ultrasoundTests.length > 4 ? ultrasoundTests.slice(0, mid) : ultrasoundTests;
-      const usPage2 = ultrasoundTests.length > 4 ? ultrasoundTests.slice(mid) : [];
       resultPages.push(`
-        <div class="page">
-          ${buildPatientTop(p, batchName, date, "Plexus Team Script")}
-          <div class="section-heading">Ultrasound Studies (${ultrasoundTests.length})</div>
-          ${usPage1.map(renderTest).join("")}
+        <div class="page" style="padding:0;">
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr>
+                <td style="padding:32px 36px 0 36px;">
+                  ${buildPatientTop(p, batchName, date, "Plexus Team Script")}
+                  <div class="section-heading">Ultrasound Studies (${ultrasoundTests.length})</div>
+                </td>
+              </tr>
+            </thead>
+            <tbody>
+              ${ultrasoundTests.map((test, i) => `
+                <tr style="break-inside:avoid;page-break-inside:avoid;">
+                  <td style="padding:0 36px ${i === ultrasoundTests.length - 1 ? "32px" : "0"} 36px;">
+                    ${renderTest(test)}
+                  </td>
+                </tr>`).join("")}
+            </tbody>
+          </table>
         </div>`);
-      if (usPage2.length > 0) {
-        resultPages.push(`
-          <div class="page">
-            ${buildPatientTop(p, batchName, date, "Plexus Team Script")}
-            <div class="section-heading">Ultrasound Studies (continued)</div>
-            ${usPage2.map(renderTest).join("")}
-          </div>`);
-      }
     }
 
     return resultPages;
