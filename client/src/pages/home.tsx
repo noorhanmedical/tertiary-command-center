@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
@@ -82,6 +83,20 @@ const categoryStyles: Record<string, { bg: string; border: string; accent: strin
 
 const categoryLabels: Record<string, string> = { brainwave: "BrainWave", vitalwave: "VitalWave", ultrasound: "Ultrasound Studies", other: "Other" };
 const categoryIcons: Record<string, typeof Brain> = { brainwave: Brain, vitalwave: Activity, ultrasound: Scan, other: Scan };
+
+const ALL_AVAILABLE_TESTS: string[] = [
+  "BrainWave",
+  "VitalWave",
+  "Bilateral Carotid Duplex",
+  "Echocardiogram TTE",
+  "Stress Echocardiogram",
+  "Lower Extremity Venous Duplex",
+  "Upper Extremity Venous Duplex",
+  "Renal Artery Doppler",
+  "Lower Extremity Arterial Doppler",
+  "Upper Extremity Arterial Doppler",
+  "Abdominal Aortic Aneurysm Duplex",
+];
 
 function StepTimeline({ current, onNavigate, canGoToResults }: { current: "home" | "build" | "results"; onNavigate: (step: "home" | "build" | "results") => void; canGoToResults: boolean }) {
   const steps = [
@@ -1415,7 +1430,25 @@ function PatientCard({
   onAnalyze: () => void;
 }) {
   const isCompleted = patient.status === "completed";
-  const tests = patient.qualifyingTests || [];
+  const serverTests = patient.qualifyingTests || [];
+  const [localTests, setLocalTests] = useState<string[]>(serverTests);
+
+  useEffect(() => { setLocalTests(patient.qualifyingTests || []); }, [patient.qualifyingTests]);
+
+  const handleAddTest = useCallback((test: string) => {
+    if (localTests.includes(test)) return;
+    const updated = [...localTests, test];
+    setLocalTests(updated);
+    onUpdate("qualifyingTests", updated);
+  }, [localTests, onUpdate]);
+
+  const handleRemoveTest = useCallback((test: string) => {
+    const updated = localTests.filter((t) => t !== test);
+    setLocalTests(updated);
+    onUpdate("qualifyingTests", updated);
+  }, [localTests, onUpdate]);
+
+  const tests = localTests;
 
   const [localName, setLocalName] = useState(patient.name || "");
   const [localTime, setLocalTime] = useState(patient.time || "");
@@ -1531,29 +1564,74 @@ function PatientCard({
         </div>
       </div>
 
-      {isCompleted && tests.length > 0 && (
-        <div className="px-4 pb-3">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs text-muted-foreground mr-1">Qualifying:</span>
-            {tests.map((test) => {
-              const cat = getAncillaryCategory(test);
-              return (
-                <span key={test} className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>
-                  {test}
-                  <button
-                    className="rounded hover:bg-black/10 transition-colors p-0.5 -mr-0.5 shrink-0"
-                    title={`Remove ${test}`}
-                    onClick={() => onUpdate("qualifyingTests", tests.filter((t) => t !== test))}
-                    data-testid={`button-remove-test-${patient.id}-${test.replace(/\s+/g, "-")}`}
-                  >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                </span>
-              );
-            })}
-          </div>
+      <div className="px-4 pb-3">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {tests.length > 0 && (
+            <>
+              <span className="text-xs text-muted-foreground mr-1">Qualifying:</span>
+              {tests.map((test) => {
+                const cat = getAncillaryCategory(test);
+                return (
+                  <span key={test} className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>
+                    {test}
+                    <button
+                      className="rounded hover:bg-black/10 transition-colors p-0.5 -mr-0.5 shrink-0"
+                      title={`Remove ${test}`}
+                      onClick={() => handleRemoveTest(test)}
+                      data-testid={`button-remove-test-${patient.id}-${test.replace(/\s+/g, "-")}`}
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </span>
+                );
+              })}
+            </>
+          )}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 px-2 text-[10px] gap-1"
+                data-testid={`button-add-test-${patient.id}`}
+              >
+                <Plus className="w-3 h-3" />
+                Add Test
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64 p-2" align="start" data-testid={`popover-test-picker-${patient.id}`}>
+              <p className="text-xs font-semibold text-muted-foreground mb-2 px-1">Select tests to add</p>
+              <div className="space-y-1">
+                {ALL_AVAILABLE_TESTS.map((test) => {
+                  const isSelected = tests.includes(test);
+                  const cat = getAncillaryCategory(test);
+                  return (
+                    <button
+                      key={test}
+                      disabled={isSelected}
+                      onClick={() => handleAddTest(test)}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors ${
+                        isSelected
+                          ? "opacity-50 cursor-not-allowed"
+                          : "hover:bg-accent cursor-pointer"
+                      }`}
+                      data-testid={`option-test-${patient.id}-${test.replace(/\s+/g, "-")}`}
+                    >
+                      <span className={`w-3.5 h-3.5 flex items-center justify-center shrink-0 rounded border ${isSelected ? "bg-primary border-primary" : "border-muted-foreground/40"}`}>
+                        {isSelected && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
+                      </span>
+                      <span className={`flex-1 ${isSelected ? "line-through" : ""}`}>{test}</span>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-sm font-medium ${getBadgeColor(cat)}`}>
+                        {cat === "brainwave" ? "BW" : cat === "vitalwave" ? "VW" : "US"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
-      )}
+      </div>
     </Card>
   );
 }
