@@ -1809,9 +1809,6 @@ function getUltrasoundIcon(test: string): string {
   return `<svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0;">${entry.paths(entry.color)}</svg>`;
 }
 
-function getUltrasoundColor(test: string): string {
-  return ULTRASOUND_ICONS[normalizeUltrasoundName(test)]?.color ?? "#dc2626";
-}
 
 function generateClinicianPDF(batchName: string, patients: PatientScreening[]): void {
   const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
@@ -1858,9 +1855,9 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
               <div style="margin-bottom:7px;">
                 <span style="font-size:13px;font-weight:800;color:${color};">${esc(test)}</span>${confBadge(confidence)}
               </div>
-              ${p.diagnoses ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Dx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(p.diagnoses)}</span></div>` : ""}
-              ${p.history ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Hx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(p.history)}</span></div>` : ""}
-              ${p.medications ? `<div style="margin-bottom:6px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Rx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(p.medications)}</span></div>` : ""}
+              ${p.diagnoses ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Dx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(trunc(p.diagnoses, 80))}</span></div>` : ""}
+              ${p.history ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Hx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(trunc(p.history, 80))}</span></div>` : ""}
+              ${p.medications ? `<div style="margin-bottom:6px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Rx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(trunc(p.medications, 80))}</span></div>` : ""}
               ${clinician ? `<p style="font-size:10px;line-height:1.5;color:#475569;margin:0;font-style:italic;">${esc(oneSentence(clinician))}</p>` : ""}
             </div>`;
         }).join("");
