@@ -1760,33 +1760,57 @@ function buildPatientTop(p: PatientScreening, batchName: string, date: string, r
     ${clinicalBlock}`;
 }
 
-function getUltrasoundIcon(test: string, color: string): string {
-  const t = test.toLowerCase();
-  let paths = "";
-  if (t.includes("carotid")) {
-    paths = `<path d="M12 3C9 3 6.5 5.5 6.5 9c0 2.5 1.5 4.5 4 5.5v4.5h3V14.5c2.5-1 4-3 4-5.5C17.5 5.5 15 3 12 3z" stroke="${color}" stroke-width="1.4" fill="none" stroke-linejoin="round"/>
-      <line x1="12" y1="3" x2="12" y2="19" stroke="${color}" stroke-width="1.2"/>
-      <path d="M9.5 7.5c0.5 1 1.5 1.5 2.5 1" stroke="${color}" stroke-width="1" fill="none"/>
-      <path d="M14.5 7.5c-0.5 1-1.5 1.5-2.5 1" stroke="${color}" stroke-width="1" fill="none"/>
-      <path d="M9.5 11c0.5-0.8 1.5-1 2.5-0.5" stroke="${color}" stroke-width="1" fill="none"/>
-      <path d="M14.5 11c-0.5-0.8-1.5-1-2.5-0.5" stroke="${color}" stroke-width="1" fill="none"/>`;
-  } else if (t.includes("echo") || t.includes("stress")) {
-    paths = `<path d="M12 20C12 20 3.5 15 3.5 9.5A4.75 4.75 0 0 1 12 7a4.75 4.75 0 0 1 8.5 2.5C20.5 15 12 20 12 20z" stroke="${color}" stroke-width="1.5" fill="none" stroke-linejoin="round"/>`;
-  } else if (t.includes("renal")) {
-    paths = `<path d="M10 3C7 3 5 5.5 5 8.5c0 4 2 8 5 9.5 1.5 0.8 2.5 0.2 2.5-1.5 0-1.2-1-2.2-1.5-3.5C10.5 11.5 11 10 12.5 9.5c1.5-0.5 2-2 1-3.5C12.5 4.5 11.5 3 10 3z" stroke="${color}" stroke-width="1.4" fill="none"/>
-      <path d="M14 3c3 0.5 5 3 5 6 0 3.5-1.5 6.5-4 8" stroke="${color}" stroke-width="1.4" fill="none" stroke-linecap="round"/>`;
-  } else if (t.includes("aortic") || t.includes("abdominal")) {
-    paths = `<path d="M12 3L20 9l-8 12L4 9z" stroke="${color}" stroke-width="1.4" fill="none" stroke-linejoin="round"/>
-      <line x1="12" y1="5" x2="12" y2="19" stroke="${color}" stroke-width="1.5"/>
-      <line x1="8" y1="12" x2="16" y2="12" stroke="${color}" stroke-width="1"/>`;
-  } else if (t.includes("lower extremity") || t.includes("lower ext") || (t.includes("lower") && (t.includes("arterial") || t.includes("venous")))) {
-    paths = `<path d="M9.5 2h4c0.5 2 0.5 6 0 9.5L16 22h-3l-1.5-7.5L10 22H7l2.5-10.5C9 8 9 4 9.5 2z" stroke="${color}" stroke-width="1.4" fill="none" stroke-linejoin="round"/>
-      <path d="M9.5 2c0.5-0.5 1.5-0.5 4 0" stroke="${color}" stroke-width="1.4" fill="none" stroke-linecap="round"/>`;
-  } else if (t.includes("upper extremity") || t.includes("upper ext") || (t.includes("upper") && (t.includes("arterial") || t.includes("venous")))) {
-    paths = `<path d="M8 3c2 0 3.5 1 3.5 3.5l3.5 9c0.5 1.5 0 2.5-1.5 2.5s-2-1-2.5-2.5L10 11.5l-1 5.5c-0.5 1.5-1.5 2-3 2s-2-1.5-2-2.5V6c0-2 1.5-3 4-3z" stroke="${color}" stroke-width="1.4" fill="none" stroke-linejoin="round"/>`;
-  }
-  if (!paths) return "";
-  return `<svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0;">${paths}</svg>`;
+const ULTRASOUND_ICONS: Record<string, { paths: (c: string) => string; color: string }> = {
+  "Bilateral Carotid Duplex": {
+    color: "#dc2626",
+    paths: c => `<path d="M12 3C9 3 6.5 5.5 6.5 9c0 2.5 1.5 4.5 4 5.5v4.5h3V14.5c2.5-1 4-3 4-5.5C17.5 5.5 15 3 12 3z" stroke="${c}" stroke-width="1.4" fill="none" stroke-linejoin="round"/><line x1="12" y1="3" x2="12" y2="19" stroke="${c}" stroke-width="1.2"/><path d="M9.5 7.5c0.5 1 1.5 1.5 2.5 1" stroke="${c}" stroke-width="1" fill="none"/><path d="M14.5 7.5c-0.5 1-1.5 1.5-2.5 1" stroke="${c}" stroke-width="1" fill="none"/><path d="M9.5 11c0.5-0.8 1.5-1 2.5-0.5" stroke="${c}" stroke-width="1" fill="none"/><path d="M14.5 11c-0.5-0.8-1.5-1-2.5-0.5" stroke="${c}" stroke-width="1" fill="none"/>`,
+  },
+  "Echocardiogram TTE": {
+    color: "#dc2626",
+    paths: c => `<path d="M12 20C12 20 3.5 15 3.5 9.5A4.75 4.75 0 0 1 12 7a4.75 4.75 0 0 1 8.5 2.5C20.5 15 12 20 12 20z" stroke="${c}" stroke-width="1.5" fill="none" stroke-linejoin="round"/>`,
+  },
+  "Renal Artery Doppler": {
+    color: "#dc2626",
+    paths: c => `<path d="M10 3C7 3 5 5.5 5 8.5c0 4 2 8 5 9.5 1.5 0.8 2.5 0.2 2.5-1.5 0-1.2-1-2.2-1.5-3.5C10.5 11.5 11 10 12.5 9.5c1.5-0.5 2-2 1-3.5C12.5 4.5 11.5 3 10 3z" stroke="${c}" stroke-width="1.4" fill="none"/><path d="M14 3c3 0.5 5 3 5 6 0 3.5-1.5 6.5-4 8" stroke="${c}" stroke-width="1.4" fill="none" stroke-linecap="round"/>`,
+  },
+  "Lower Extremity Arterial Doppler": {
+    color: "#dc2626",
+    paths: c => `<path d="M9.5 2h4c0.5 2 0.5 6 0 9.5L16 22h-3l-1.5-7.5L10 22H7l2.5-10.5C9 8 9 4 9.5 2z" stroke="${c}" stroke-width="1.4" fill="none" stroke-linejoin="round"/><path d="M9.5 2c0.5-0.5 1.5-0.5 4 0" stroke="${c}" stroke-width="1.4" fill="none" stroke-linecap="round"/>`,
+  },
+  "Upper Extremity Arterial Doppler": {
+    color: "#dc2626",
+    paths: c => `<path d="M8 3c2 0 3.5 1 3.5 3.5l3.5 9c0.5 1.5 0 2.5-1.5 2.5s-2-1-2.5-2.5L10 11.5l-1 5.5c-0.5 1.5-1.5 2-3 2s-2-1.5-2-2.5V6c0-2 1.5-3 4-3z" stroke="${c}" stroke-width="1.4" fill="none" stroke-linejoin="round"/>`,
+  },
+  "Abdominal Aortic Aneurysm Duplex": {
+    color: "#dc2626",
+    paths: c => `<path d="M12 3L20 9l-8 12L4 9z" stroke="${c}" stroke-width="1.4" fill="none" stroke-linejoin="round"/><line x1="12" y1="5" x2="12" y2="19" stroke="${c}" stroke-width="1.5"/><line x1="8" y1="12" x2="16" y2="12" stroke="${c}" stroke-width="1"/>`,
+  },
+  "Stress Echocardiogram": {
+    color: "#dc2626",
+    paths: c => `<path d="M12 20C12 20 3.5 15 3.5 9.5A4.75 4.75 0 0 1 12 7a4.75 4.75 0 0 1 8.5 2.5C20.5 15 12 20 12 20z" stroke="${c}" stroke-width="1.5" fill="none" stroke-linejoin="round"/>`,
+  },
+  "Lower Extremity Venous Duplex": {
+    color: "#2563eb",
+    paths: c => `<path d="M9.5 2h4c0.5 2 0.5 6 0 9.5L16 22h-3l-1.5-7.5L10 22H7l2.5-10.5C9 8 9 4 9.5 2z" stroke="${c}" stroke-width="1.4" fill="none" stroke-linejoin="round"/><path d="M9.5 2c0.5-0.5 1.5-0.5 4 0" stroke="${c}" stroke-width="1.4" fill="none" stroke-linecap="round"/>`,
+  },
+  "Upper Extremity Venous Duplex": {
+    color: "#2563eb",
+    paths: c => `<path d="M8 3c2 0 3.5 1 3.5 3.5l3.5 9c0.5 1.5 0 2.5-1.5 2.5s-2-1-2.5-2.5L10 11.5l-1 5.5c-0.5 1.5-1.5 2-3 2s-2-1.5-2-2.5V6c0-2 1.5-3 4-3z" stroke="${c}" stroke-width="1.4" fill="none" stroke-linejoin="round"/>`,
+  },
+};
+
+function normalizeUltrasoundName(test: string): string {
+  return test.replace(/\s*\(\d{4,5}\)\s*$/, "").trim();
+}
+
+function getUltrasoundIcon(test: string): string {
+  const entry = ULTRASOUND_ICONS[normalizeUltrasoundName(test)];
+  if (!entry) return "";
+  return `<svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0;">${entry.paths(entry.color)}</svg>`;
+}
+
+function getUltrasoundColor(test: string): string {
+  return ULTRASOUND_ICONS[normalizeUltrasoundName(test)]?.color ?? "#dc2626";
 }
 
 function generateClinicianPDF(batchName: string, patients: PatientScreening[]): void {
@@ -1820,8 +1844,6 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
     const ultrasoundTests = allTests.filter(t => getAncillaryCategory(t) === "ultrasound");
 
     const ancillaryColor: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#dc2626" };
-    const isVenous = (test: string) => test.toLowerCase().includes("venous");
-    const usColor = (test: string) => isVenous(test) ? "#2563eb" : "#dc2626";
 
     const leftHtml = ancillaryTests.length === 0
       ? `<p style="font-size:10px;color:#94a3b8;font-style:italic;">No qualifying ancillary tests.</p>`
@@ -1849,10 +1871,10 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
           const r = reasoning[test];
           const clinician = r ? (typeof r === "string" ? r : r.clinician_understanding) : null;
           const factors = r && typeof r !== "string" ? r.qualifying_factors : null;
-          const color = usColor(test);
-          const icon = getUltrasoundIcon(test, color);
+          const color = getUltrasoundColor(test);
+          const icon = getUltrasoundIcon(test);
           const isLast = i === ultrasoundTests.length - 1;
-          const oneliner = factors && factors.length > 0 ? factors[0] : oneSentence(clinician);
+          const oneliner = oneSentence(clinician) || (factors && factors.length > 0 ? factors[0] : "");
           const dxHxRx = [
             p.diagnoses ? `Dx: ${trunc(p.diagnoses)}` : "",
             p.history ? `Hx: ${trunc(p.history)}` : "",
