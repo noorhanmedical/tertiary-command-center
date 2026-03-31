@@ -1871,10 +1871,9 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
           const r = reasoning[test];
           const clinician = r ? (typeof r === "string" ? r : r.clinician_understanding) : null;
           const factors = r && typeof r !== "string" ? r.qualifying_factors : null;
-          const color = getUltrasoundColor(test);
           const icon = getUltrasoundIcon(test);
           const isLast = i === ultrasoundTests.length - 1;
-          const oneliner = oneSentence(clinician) || (factors && factors.length > 0 ? factors[0] : "");
+          const oneliner = oneSentence(clinician) || (factors && factors.length > 0 ? oneSentence(factors[0]) : "");
           const dxHxRx = [
             p.diagnoses ? `Dx: ${trunc(p.diagnoses)}` : "",
             p.history ? `Hx: ${trunc(p.history)}` : "",
