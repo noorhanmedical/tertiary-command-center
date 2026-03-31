@@ -1706,6 +1706,7 @@ function getTestDescHTML(test: string): string {
 const PDF_BASE_STYLES = `
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 0; color: #1e293b; }
+  @page { margin: 0; }
   @media print {
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .page { page-break-after: always; }
@@ -1832,7 +1833,7 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
   const pages = patients.map(p => {
     const allTests = (p.qualifyingTests || []) as string[];
     const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
-    const demoLine = [p.time, p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
+    const demoLine = [p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
 
     const ancillaryTests = allTests.filter(t => {
       const cat = getAncillaryCategory(t);
