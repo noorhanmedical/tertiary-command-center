@@ -1804,10 +1804,11 @@ function normalizeUltrasoundName(test: string): string {
   return test.replace(/\s*\(\d{4,5}\)\s*$/, "").trim();
 }
 
-function getUltrasoundIcon(test: string): string {
+function getUltrasoundIcon(test: string, colorOverride?: string): string {
   const entry = ULTRASOUND_ICONS[normalizeUltrasoundName(test)];
   if (!entry) return "";
-  return `<svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0;">${entry.paths(entry.color)}</svg>`;
+  const c = colorOverride ?? entry.color;
+  return `<svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0;">${entry.paths(c)}</svg>`;
 }
 
 
@@ -1860,7 +1861,7 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
           return `
             <div style="margin-bottom:${isLast ? "0" : "14px"};padding-bottom:${isLast ? "0" : "14px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}">
               <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">
-                <span style="font-size:15px;color:${color};line-height:1;">&#9744;</span>
+                <span style="font-size:20px;color:${color};line-height:1;">&#9744;</span>
                 <span style="font-size:16px;font-weight:800;color:${color};">${esc(test)}</span>
               </div>
               ${ancFactors && ancFactors.length > 0 ? `<div style="margin-bottom:4px;line-height:1.6;">${renderFactors(ancFactors)}</div>` : ""}
@@ -1874,15 +1875,15 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
           const r = reasoning[test];
           const clinician = r ? (typeof r === "string" ? r : r.clinician_understanding) : null;
           const factors = r && typeof r !== "string" ? r.qualifying_factors : null;
-          const icon = getUltrasoundIcon(test);
+          const icon = getUltrasoundIcon(test, "#16a34a");
           const isLast = i === ultrasoundTests.length - 1;
           const oneliner = oneSentence(clinician) || (factors && factors.length > 0 ? oneSentence(factors[0]) : "");
           return `
             <div style="padding:${i === 0 ? "0 0 8px" : "7px 0 8px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}">
               <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;">
-                <span style="font-size:13px;color:#475569;line-height:1;">&#9744;</span>
+                <span style="font-size:20px;color:#16a34a;line-height:1;">&#9744;</span>
                 ${icon}
-                <span style="font-size:14px;font-weight:700;color:#1e293b;">${esc(normalizeUltrasoundName(test))}</span>
+                <span style="font-size:16px;font-weight:700;color:#16a34a;">${esc(normalizeUltrasoundName(test))}</span>
               </div>
               ${factors && factors.length > 0 ? `<div style="margin-bottom:3px;padding-left:24px;line-height:1.6;">${renderFactors(factors)}</div>` : ""}
               ${oneliner ? `<div style="font-size:9px;line-height:1.45;color:#475569;padding-left:24px;font-style:italic;">${esc(oneliner)}</div>` : ""}
@@ -1903,11 +1904,11 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
         ${chartReview}
         <div style="display:grid;grid-template-columns:38% 1fr;gap:14px;border-top:2px solid #e2e8f0;padding-top:10px;">
           <div>
-            <div style="font-size:8.5px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;">Qualified Tests</div>
+            <div style="font-size:12px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;">Qualified Tests</div>
             ${leftHtml}
           </div>
           <div>
-            <div style="font-size:8.5px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;">Qualified Ultrasounds</div>
+            <div style="font-size:12px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;">Qualified Ultrasounds</div>
             ${rightHtml}
           </div>
         </div>
