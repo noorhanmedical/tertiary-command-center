@@ -1823,6 +1823,13 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
   const trunc = (s: string | null | undefined, n = 55) =>
     !s ? "" : s.length > n ? s.slice(0, n - 1) + "…" : s;
 
+  const renderFactors = (factors: string[] | null | undefined) => {
+    if (!factors || factors.length === 0) return "";
+    return factors.slice(0, 4).map(f =>
+      `<span style="display:inline-block;font-size:8px;font-weight:600;color:#475569;background:#f1f5f9;border-radius:4px;padding:1px 5px;margin:1px 2px 1px 0;">${esc(f)}</span>`
+    ).join("");
+  };
+
   const pages = patients.map(p => {
     const allTests = (p.qualifyingTests || []) as string[];
     const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
@@ -1836,6 +1843,14 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
 
     const ancillaryColor: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#dc2626" };
 
+    const chartReview = (p.diagnoses || p.history || p.medications) ? `
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 12px;margin-bottom:10px;">
+        <div style="font-size:8.5px;font-weight:700;color:#1a365d;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:6px;">${esc(p.name)} Chart Review</div>
+        ${p.diagnoses ? `<div style="display:flex;gap:6px;margin-bottom:3px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Dx</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.diagnoses)}</span></div>` : ""}
+        ${p.history ? `<div style="display:flex;gap:6px;margin-bottom:3px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Hx</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.history)}</span></div>` : ""}
+        ${p.medications ? `<div style="display:flex;gap:6px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Rx</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.medications)}</span></div>` : ""}
+      </div>` : "";
+
     const leftHtml = ancillaryTests.length === 0
       ? `<p style="font-size:10px;color:#94a3b8;font-style:italic;">No qualifying ancillary tests.</p>`
       : ancillaryTests.map((test, i) => {
@@ -1846,14 +1861,13 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
           const isLast = i === ancillaryTests.length - 1;
           const ancExplain = oneSentence(clinician) || (ancFactors && ancFactors.length > 0 ? oneSentence(ancFactors[0]) : "");
           return `
-            <div style="margin-bottom:${isLast ? "0" : "12px"};padding-bottom:${isLast ? "0" : "12px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}">
-              <div style="margin-bottom:7px;">
-                <span style="font-size:13px;font-weight:800;color:${color};">${esc(test)}</span>
+            <div style="margin-bottom:${isLast ? "0" : "14px"};padding-bottom:${isLast ? "0" : "14px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">
+                <span style="font-size:15px;color:${color};line-height:1;">&#9744;</span>
+                <span style="font-size:16px;font-weight:800;color:${color};">${esc(test)}</span>
               </div>
-              ${p.diagnoses ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Dx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(trunc(p.diagnoses, 80))}</span></div>` : ""}
-              ${p.history ? `<div style="margin-bottom:2px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Hx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(trunc(p.history, 80))}</span></div>` : ""}
-              ${p.medications ? `<div style="margin-bottom:6px;display:flex;gap:5px;"><span style="font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:14px;padding-top:1px;">Rx</span><span style="font-size:10px;color:#334155;line-height:1.4;">${esc(trunc(p.medications, 80))}</span></div>` : ""}
-              ${ancExplain ? `<p style="font-size:10px;line-height:1.5;color:#475569;margin:0;font-style:italic;">${esc(ancExplain)}</p>` : ""}
+              ${ancFactors && ancFactors.length > 0 ? `<div style="margin-bottom:4px;line-height:1.6;">${renderFactors(ancFactors)}</div>` : ""}
+              ${ancExplain ? `<p style="font-size:9.5px;line-height:1.5;color:#475569;margin:0;font-style:italic;">${esc(ancExplain)}</p>` : ""}
             </div>`;
         }).join("");
 
@@ -1866,19 +1880,15 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
           const icon = getUltrasoundIcon(test);
           const isLast = i === ultrasoundTests.length - 1;
           const oneliner = oneSentence(clinician) || (factors && factors.length > 0 ? oneSentence(factors[0]) : "");
-          const dxHxRx = [
-            p.diagnoses ? `Dx: ${trunc(p.diagnoses)}` : "",
-            p.history ? `Hx: ${trunc(p.history)}` : "",
-            p.medications ? `Rx: ${trunc(p.medications)}` : "",
-          ].filter(Boolean).join("  ·  ");
           return `
-            <div style="padding:${i === 0 ? "0 0 6px" : "5px 0 6px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}">
-              <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;">
+            <div style="padding:${i === 0 ? "0 0 8px" : "7px 0 8px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}">
+              <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;">
+                <span style="font-size:13px;color:#475569;line-height:1;">&#9744;</span>
                 ${icon}
-                <span style="font-size:11.5px;font-weight:700;color:#1e293b;">${esc(normalizeUltrasoundName(test))}</span>
+                <span style="font-size:14px;font-weight:700;color:#1e293b;">${esc(normalizeUltrasoundName(test))}</span>
               </div>
-              ${dxHxRx ? `<div style="font-size:8.5px;color:#64748b;line-height:1.4;margin-bottom:2px;padding-left:23px;">${esc(dxHxRx)}</div>` : ""}
-              ${oneliner ? `<div style="font-size:9.5px;line-height:1.45;color:#475569;padding-left:23px;">${esc(oneliner)}</div>` : ""}
+              ${factors && factors.length > 0 ? `<div style="margin-bottom:3px;padding-left:24px;line-height:1.6;">${renderFactors(factors)}</div>` : ""}
+              ${oneliner ? `<div style="font-size:9px;line-height:1.45;color:#475569;padding-left:24px;font-style:italic;">${esc(oneliner)}</div>` : ""}
             </div>`;
         }).join("");
 
@@ -1892,7 +1902,8 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
           <span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.09em;">Plexus Qualifying Ancillaries</span>
           <span style="font-size:20px;font-weight:800;color:#1a365d;">${esc(p.name)}</span>
         </div>
-        <div style="font-size:9.5px;color:#94a3b8;text-align:right;margin-bottom:12px;">${demoLine}</div>
+        <div style="font-size:9.5px;color:#94a3b8;text-align:right;margin-bottom:10px;">${demoLine}</div>
+        ${chartReview}
         <div style="display:grid;grid-template-columns:38% 1fr;gap:14px;border-top:2px solid #e2e8f0;padding-top:10px;">
           <div>
             <div style="font-size:8.5px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;padding-bottom:4px;border-bottom:1px solid #e2e8f0;">Ancillary Tests</div>
