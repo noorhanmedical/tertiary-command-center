@@ -1832,9 +1832,17 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
     const allTests = (p.qualifyingTests || []) as string[];
     const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
     const demoLine = [p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
-    const firstName = p.name.includes(",")
-      ? (p.name.split(",")[1] ?? "").trim().split(/\s+/)[0]
-      : p.name.trim().split(/\s+/)[0];
+    const firstName = (() => {
+      const name = p.name.trim();
+      if (!name) return name;
+      if (name.includes(",")) {
+        const after = name.split(",")[1]?.trim() ?? "";
+        const token = after.split(/\s+/)[0] ?? "";
+        return token || name;
+      }
+      const token = name.split(/\s+/)[0] ?? "";
+      return token || name;
+    })();
 
     const ancillaryTests = allTests.filter(t => {
       const cat = getAncillaryCategory(t);
