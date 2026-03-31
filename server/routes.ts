@@ -1147,6 +1147,16 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
         return res.status(500).json({ error: "AI returned malformed reasoning" });
       }
 
+      // Normalize pearls: must be undefined or an array of strings; drop malformed values
+      if (testReasoning.pearls !== undefined) {
+        if (
+          !Array.isArray(testReasoning.pearls) ||
+          testReasoning.pearls.some((p: unknown) => typeof p !== "string")
+        ) {
+          testReasoning.pearls = undefined;
+        }
+      }
+
       const existingReasoning = (patient.reasoning as Record<string, any>) || {};
       const mergedReasoning = { ...existingReasoning, [testName]: testReasoning };
 
