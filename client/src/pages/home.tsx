@@ -1913,7 +1913,7 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
         </div>
         <div style="font-size:9.5px;color:#94a3b8;text-align:right;margin-bottom:10px;">${demoLine}</div>
         ${chartReview}
-        <div style="font-size:22px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:16px;">Qualified Ancillary Tests for ${esc(firstName)}</div>
+        <div style="font-size:20px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;text-align:center;margin-top:10px;margin-bottom:16px;">Qualified Ancillary Tests for ${esc(firstName)}</div>
         <div style="display:grid;grid-template-columns:38% 1fr;gap:14px;border-top:2px solid #e2e8f0;padding-top:14px;">
           <div>
             ${leftHtml}
