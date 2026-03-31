@@ -1916,7 +1916,7 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
 
   buildPrintWindow(
     `Clinician Report — ${batchName}`,
-    `<div class="cover page"><h1>${esc(batchName)}</h1><h2>Clinician Report</h2><div class="meta">${esc(date)} · ${patients.length} patient${patients.length !== 1 ? "s" : ""}</div></div>${pages}`,
+    pages,
   );
 }
 
