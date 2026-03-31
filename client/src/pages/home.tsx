@@ -1935,94 +1935,106 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
   const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   const catAccent: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#be123c", ultrasound: "#047857", other: "#475569" };
 
+  // Compact page-top: run name + date bar, patient name, demo line — no Dx/Hx/Rx
+  const buildCompactTop = (p: PatientScreening) => {
+    const demoLine = [p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;margin-bottom:8px;border-bottom:1px solid #cbd5e1;">
+        <span style="font-size:10px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
+        <span style="font-size:9px;color:#94a3b8;">Plexus Team Script — ${esc(date)}</span>
+      </div>
+      <div style="margin-bottom:10px;">
+        <div style="font-size:18px;font-weight:800;color:#1a365d;margin-bottom:1px;">${esc(p.name)}</div>
+        <div style="font-size:10px;color:#64748b;">${demoLine}</div>
+      </div>`;
+  };
+
+  // One-sentence plain-language test description (no bullet lists)
+  const getOneSentenceDesc = (test: string): string => {
+    const desc = TEST_DESCRIPTIONS[test] ?? TEST_DESCRIPTIONS[normalizeTestName(test)];
+    if (!desc) return "A non-invasive diagnostic test recommended based on the patient's history and risk factors.";
+    const full = desc.kind === "simple" ? desc.text : desc.intro;
+    const m = full.match(/^[^.!?]*[.!?]/);
+    return m ? m[0].trim() : full;
+  };
+
+  // Compact section label (colored, no extra spacing)
+  const sectionLabel = (label: string, color: string) =>
+    `<div style="font-size:10px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid ${color};">${esc(label)}</div>`;
+
+  // Factor pills (up to 3)
+  const factorPills = (factors: string[] | null | undefined) => {
+    if (!factors || factors.length === 0) return "";
+    return `<div style="margin-top:4px;line-height:1.8;">${factors.slice(0, 3).map(f =>
+      `<span style="display:inline-block;font-size:8.5px;font-weight:600;color:#475569;background:#f1f5f9;border-radius:4px;padding:1px 6px;margin:1px 3px 1px 0;">${esc(f)}</span>`
+    ).join("")}</div>`;
+  };
+
   const pages = patients.flatMap(p => {
     const allTests = (p.qualifyingTests || []) as string[];
     const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
-    const firstName = esc(p.name?.split(" ")[0] || "the patient");
-    const top = buildPatientTop(p, batchName, date, "Plexus Team Script");
+    const rawFirst = p.name.trim().includes(",")
+      ? (p.name.split(",")[1]?.trim().split(/\s+/)[0] ?? "").trim() || p.name.trim()
+      : p.name.trim().split(/\s+/)[0] || p.name.trim();
+    const firstName = esc(rawFirst || "the patient");
 
-    const renderTest = (test: string) => {
+    // Compact test card: 2 sections only — no clinician block, no 3-section numbered list
+    const renderTest = (test: string, isLast: boolean) => {
       const r = reasoning[test];
       const talking = r ? (typeof r === "string" ? r : r.patient_talking_points) : null;
-      const clinician = r ? (typeof r === "string" ? r : r.clinician_understanding) : null;
       const factors = r && typeof r !== "string" ? r.qualifying_factors : null;
       const accent = catAccent[getAncillaryCategory(test)] || "#475569";
+      const whatIs = getOneSentenceDesc(test);
       return `
-        <div style="margin-bottom:22px;break-inside:avoid;">
-          <div style="font-size:15px;font-weight:800;color:${accent};margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e2e8f0;">${esc(test)}</div>
-
-          <div style="margin-bottom:10px;">
-            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">1 — What is this test?</div>
-            ${getTestDescHTML(test)}
-          </div>
-
-          <div style="margin-bottom:10px;">
-            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">2 — Why does ${firstName} need this?</div>
-            <p style="font-size:12px;line-height:1.65;color:#1e293b;margin:0${clinician ? " 0 5px 0" : ""};">${talking ? esc(talking) : `<em style="color:#64748b;">Clinical reasoning supports this test based on the patient's diagnosis and history.</em>`}</p>
-            ${clinician ? `<p style="font-size:11px;line-height:1.6;color:#64748b;margin:0;"><strong>For your reference:</strong> ${esc(clinician)}</p>` : ""}
-          </div>
-
-          <div>
-            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px;">3 — What in their chart qualifies them?</div>
-            ${factors && factors.length > 0
-              ? `<ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.7;color:#1e293b;">${factors.map(f => `<li style="margin-bottom:3px;">${esc(f)}</li>`).join("")}</ul>`
-              : `<p style="font-size:12px;line-height:1.65;color:#64748b;font-style:italic;margin:0;">See patient Dx, Hx, and Rx above for qualifying conditions.</p>`
-            }
-          </div>
+        <div style="margin-bottom:${isLast ? "0" : "10px"};padding-bottom:${isLast ? "0" : "10px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}break-inside:avoid;">
+          <div style="font-size:13px;font-weight:800;color:${accent};margin-bottom:4px;">${esc(test)}</div>
+          <p style="font-size:10px;line-height:1.45;color:#64748b;margin:0 0 5px;font-style:italic;">${esc(whatIs)}</p>
+          <div style="font-size:9.5px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:3px;">Why ${firstName} qualifies</div>
+          <p style="font-size:11px;line-height:1.55;color:#1e293b;margin:0;">${talking ? esc(talking) : `Clinical indicators in this patient's chart support this study.`}</p>
+          ${factorPills(factors)}
         </div>`;
     };
 
     const resultPages: string[] = [];
+    const pad = `style="padding:18px 22px;"`;
 
+    // BrainWave + VitalWave combined on ONE page
     const brainwaveTest = allTests.find(t => getAncillaryCategory(t) === "brainwave");
-    if (brainwaveTest) {
-      resultPages.push(`
-        <div class="page">
-          ${top}
-          <div class="section-heading">BrainWave</div>
-          ${renderTest(brainwaveTest)}
-        </div>`);
-    }
-
     const vitalwaveTest = allTests.find(t => getAncillaryCategory(t) === "vitalwave");
-    if (vitalwaveTest) {
-      resultPages.push(`
-        <div class="page">
-          ${top}
-          <div class="section-heading">VitalWave</div>
-          ${renderTest(vitalwaveTest)}
-        </div>`);
+    if (brainwaveTest || vitalwaveTest) {
+      const bwBlock = brainwaveTest ? `
+        ${sectionLabel("BrainWave", catAccent.brainwave)}
+        ${renderTest(brainwaveTest, !vitalwaveTest)}` : "";
+      const vwBlock = vitalwaveTest ? `
+        <div style="${brainwaveTest ? "margin-top:14px;" : ""}">
+          ${sectionLabel("VitalWave", catAccent.vitalwave)}
+          ${renderTest(vitalwaveTest, true)}
+        </div>` : "";
+      resultPages.push(`<div class="page" ${pad}>${buildCompactTop(p)}${bwBlock}${vwBlock}</div>`);
     }
 
+    // Ultrasounds: max 2 pages, always split at midpoint if > 1 test
     const ultrasoundTests = allTests.filter(t => getAncillaryCategory(t) === "ultrasound");
     if (ultrasoundTests.length > 0) {
       const n = ultrasoundTests.length;
-      const mid = n > 4 ? Math.ceil(n / 2) : n;
+      const mid = n > 1 ? Math.ceil(n / 2) : n;
       const usPage1 = ultrasoundTests.slice(0, mid);
-      const usPage2 = n > 4 ? ultrasoundTests.slice(mid) : [];
-      const makePage = (tests: typeof ultrasoundTests, label: string) => `
-        <div class="page">
-          ${buildPatientTop(p, batchName, date, "Plexus Team Script")}
-          <div class="section-heading">${label}</div>
-          ${tests.map(renderTest).join("")}
-        </div>`;
-      resultPages.push(makePage(usPage1, `Ultrasound Studies (${n})`));
+      const usPage2 = ultrasoundTests.slice(mid);
+      const makeUsPage = (tests: string[], label: string) =>
+        `<div class="page" ${pad}>${buildCompactTop(p)}${sectionLabel(label, catAccent.ultrasound)}${tests.map((t, i) => renderTest(t, i === tests.length - 1)).join("")}</div>`;
+      resultPages.push(makeUsPage(usPage1, `Ultrasound Studies (${n})`));
       if (usPage2.length > 0) {
-        resultPages.push(makePage(usPage2, `Ultrasound Studies (continued)`));
+        resultPages.push(makeUsPage(usPage2, `Ultrasound Studies — continued`));
       }
     }
 
+    // Other tests
     const otherTests = allTests.filter(t => {
       const cat = getAncillaryCategory(t);
       return cat !== "brainwave" && cat !== "vitalwave" && cat !== "ultrasound";
     });
     if (otherTests.length > 0) {
-      resultPages.push(`
-        <div class="page">
-          ${top}
-          <div class="section-heading">Additional Studies (${otherTests.length})</div>
-          ${otherTests.map(renderTest).join("")}
-        </div>`);
+      resultPages.push(`<div class="page" ${pad}>${buildCompactTop(p)}${sectionLabel(`Additional Studies (${otherTests.length})`, catAccent.other)}${otherTests.map((t, i) => renderTest(t, i === otherTests.length - 1)).join("")}</div>`);
     }
 
     return resultPages;
