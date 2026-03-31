@@ -2032,7 +2032,7 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
     ).join("")}</div>`;
   };
 
-  const pages = patients.flatMap(p => {
+  const pages = patients.map(p => {
     const allTests = (p.qualifyingTests || []) as string[];
     const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
     const rawFirst = p.name.trim().includes(",")
@@ -2040,7 +2040,7 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
       : p.name.trim().split(/\s+/)[0] || p.name.trim();
     const firstName = esc(rawFirst || "the patient");
 
-    // Compact test card: 2 sections only — no clinician block, no 3-section numbered list
+    // Compact test card: break-inside:avoid keeps each card on one physical page
     const renderTest = (test: string, isLast: boolean) => {
       const r = reasoning[test];
       const talking = r ? (typeof r === "string" ? r : r.patient_talking_points) : null;
@@ -2057,49 +2057,39 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
         </div>`;
     };
 
-    const resultPages: string[] = [];
-    const pad = `style="padding:18px 22px;"`;
-
-    // BrainWave + VitalWave combined on ONE page
-    const brainwaveTest = allTests.find(t => getAncillaryCategory(t) === "brainwave");
-    const vitalwaveTest = allTests.find(t => getAncillaryCategory(t) === "vitalwave");
-    if (brainwaveTest || vitalwaveTest) {
-      const bwBlock = brainwaveTest ? `
-        ${sectionLabel("BrainWave", catAccent.brainwave)}
-        ${renderTest(brainwaveTest, !vitalwaveTest)}` : "";
-      const vwBlock = vitalwaveTest ? `
-        <div style="${brainwaveTest ? "margin-top:14px;" : ""}">
-          ${sectionLabel("VitalWave", catAccent.vitalwave)}
-          ${renderTest(vitalwaveTest, true)}
-        </div>` : "";
-      resultPages.push(`<div class="page" ${pad}>${buildCompactTop(p)}${bwBlock}${vwBlock}</div>`);
-    }
-
-    // Ultrasounds: max 2 pages, always split at midpoint if > 1 test
+    // Group by category — section labels are visual dividers only, no page breaks
+    const brainwaveTests = allTests.filter(t => getAncillaryCategory(t) === "brainwave");
+    const vitalwaveTests  = allTests.filter(t => getAncillaryCategory(t) === "vitalwave");
     const ultrasoundTests = allTests.filter(t => getAncillaryCategory(t) === "ultrasound");
-    if (ultrasoundTests.length > 0) {
-      const n = ultrasoundTests.length;
-      const mid = n > 1 ? Math.ceil(n / 2) : n;
-      const usPage1 = ultrasoundTests.slice(0, mid);
-      const usPage2 = ultrasoundTests.slice(mid);
-      const makeUsPage = (tests: string[], label: string) =>
-        `<div class="page" ${pad}>${buildCompactTop(p)}${sectionLabel(label, catAccent.ultrasound)}${tests.map((t, i) => renderTest(t, i === tests.length - 1)).join("")}</div>`;
-      resultPages.push(makeUsPage(usPage1, `Ultrasound Studies (${n})`));
-      if (usPage2.length > 0) {
-        resultPages.push(makeUsPage(usPage2, `Ultrasound Studies — continued`));
-      }
-    }
-
-    // Other tests
-    const otherTests = allTests.filter(t => {
-      const cat = getAncillaryCategory(t);
-      return cat !== "brainwave" && cat !== "vitalwave" && cat !== "ultrasound";
+    const otherTests      = allTests.filter(t => {
+      const c = getAncillaryCategory(t);
+      return c !== "brainwave" && c !== "vitalwave" && c !== "ultrasound";
     });
-    if (otherTests.length > 0) {
-      resultPages.push(`<div class="page" ${pad}>${buildCompactTop(p)}${sectionLabel(`Additional Studies (${otherTests.length})`, catAccent.other)}${otherTests.map((t, i) => renderTest(t, i === otherTests.length - 1)).join("")}</div>`);
+
+    const sections: string[] = [];
+
+    if (brainwaveTests.length) {
+      sections.push(sectionLabel("BrainWave", catAccent.brainwave));
+      sections.push(...brainwaveTests.map((t, i) => renderTest(t, i === brainwaveTests.length - 1 && !vitalwaveTests.length && !ultrasoundTests.length && !otherTests.length)));
+    }
+    if (vitalwaveTests.length) {
+      if (sections.length) sections.push(`<div style="margin-top:14px;"></div>`);
+      sections.push(sectionLabel("VitalWave", catAccent.vitalwave));
+      sections.push(...vitalwaveTests.map((t, i) => renderTest(t, i === vitalwaveTests.length - 1 && !ultrasoundTests.length && !otherTests.length)));
+    }
+    if (ultrasoundTests.length) {
+      if (sections.length) sections.push(`<div style="margin-top:14px;"></div>`);
+      sections.push(sectionLabel(`Ultrasound Studies (${ultrasoundTests.length})`, catAccent.ultrasound));
+      sections.push(...ultrasoundTests.map((t, i) => renderTest(t, i === ultrasoundTests.length - 1 && !otherTests.length)));
+    }
+    if (otherTests.length) {
+      if (sections.length) sections.push(`<div style="margin-top:14px;"></div>`);
+      sections.push(sectionLabel(`Additional Studies (${otherTests.length})`, catAccent.other));
+      sections.push(...otherTests.map((t, i) => renderTest(t, i === otherTests.length - 1)));
     }
 
-    return resultPages;
+    // Single .page div per patient — browser print engine handles natural overflow
+    return `<div class="page" style="padding:18px 22px;">${buildCompactTop(p)}${sections.join("")}</div>`;
   });
 
   buildPrintWindow(
