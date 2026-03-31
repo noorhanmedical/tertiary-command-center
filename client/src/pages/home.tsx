@@ -1832,6 +1832,9 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
     const allTests = (p.qualifyingTests || []) as string[];
     const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
     const demoLine = [p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
+    const firstName = p.name.includes(",")
+      ? (p.name.split(",")[1] ?? "").trim().split(/\s+/)[0]
+      : p.name.trim().split(/\s+/)[0];
 
     const ancillaryTests = allTests.filter(t => {
       const cat = getAncillaryCategory(t);
@@ -1904,11 +1907,11 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
         ${chartReview}
         <div style="display:grid;grid-template-columns:38% 1fr;gap:14px;border-top:2px solid #e2e8f0;padding-top:10px;">
           <div>
-            <div style="font-size:12px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;">Qualified Tests</div>
+            <div style="font-size:22px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;">Qualified Tests for ${esc(firstName)}</div>
             ${leftHtml}
           </div>
           <div>
-            <div style="font-size:12px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;">Qualified Ultrasounds</div>
+            <div style="font-size:22px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:9px;">Qualified Ultrasounds for ${esc(firstName)}</div>
             ${rightHtml}
           </div>
         </div>
