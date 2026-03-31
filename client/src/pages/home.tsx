@@ -63,7 +63,7 @@ import {
 import type { ScreeningBatch, PatientScreening, PatientTestHistory, PatientReference } from "@shared/schema";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
-type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[] };
+type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[]; icd10_codes?: string[] };
 
 const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
 
@@ -1800,13 +1800,16 @@ const PDF_BASE_STYLES = `
   .cooldown-box { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:12px; margin-bottom:14px; }
 `;
 
-function buildPrintWindow(title: string, bodyHtml: string): void {
+function buildPrintWindow(title: string, bodyHtml: string, options?: { injectScript?: string }): void {
   const win = window.open("", "_blank");
   if (!win) { alert("Please allow pop-ups to generate PDFs."); return; }
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PDF_BASE_STYLES}</style></head><body>${bodyHtml}</body></html>`);
+  const scriptTag = options?.injectScript ? `<script>${options.injectScript}<\/script>` : "";
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PDF_BASE_STYLES}</style></head><body>${bodyHtml}${scriptTag}</body></html>`);
   win.document.close();
   win.focus();
-  setTimeout(() => win.print(), 600);
+  if (!options?.injectScript) {
+    setTimeout(() => win.print(), 600);
+  }
 }
 
 function buildPatientTop(p: PatientScreening, batchName: string, date: string, reportLabel: string): string {
@@ -2006,29 +2009,49 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
   const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   const catAccent: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#be123c", ultrasound: "#047857", other: "#475569" };
 
-  // Compact page-top: run name + date bar, patient name, demo line — no Dx/Hx/Rx
+  // Compact page-top: run name + date bar, patient name, demo line + Dx/Hx/Rx mini row
   const buildCompactTop = (p: PatientScreening) => {
     const demoLine = [p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
+    const trunc = (s: string | null | undefined, max = 95) =>
+      s ? (s.length > max ? esc(s.slice(0, max)) + "…" : esc(s)) : "";
+    const clinFields = [
+      p.diagnoses ? { label: "Dx", val: trunc(p.diagnoses) } : null,
+      p.history   ? { label: "Hx", val: trunc(p.history) }   : null,
+      p.medications ? { label: "Rx", val: trunc(p.medications) } : null,
+    ].filter(Boolean) as { label: string; val: string }[];
+    const clinRow = clinFields.length ? `
+      <div style="display:grid;grid-template-columns:repeat(${clinFields.length},1fr);gap:8px;margin-top:5px;padding:5px 8px;background:#f8fafc;border-radius:4px;border:1px solid #e2e8f0;">
+        ${clinFields.map(f => `<div><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">${f.label} </span><span style="font-size:8.5px;color:#475569;">${f.val}</span></div>`).join("")}
+      </div>` : "";
     return `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;margin-bottom:8px;border-bottom:1px solid #cbd5e1;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;margin-bottom:6px;border-bottom:1px solid #cbd5e1;">
         <span style="font-size:10px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
         <span style="font-size:9px;color:#94a3b8;">Plexus Team Script — ${esc(date)}</span>
       </div>
       <div style="margin-bottom:10px;">
-        <div style="font-size:18px;font-weight:800;color:#1a365d;margin-bottom:1px;">${esc(p.name)}</div>
+        <div style="font-size:17px;font-weight:800;color:#1a365d;margin-bottom:1px;">${esc(p.name)}</div>
         <div style="font-size:10px;color:#64748b;">${demoLine}</div>
+        ${clinRow}
       </div>`;
   };
 
-  // Compact section label (colored, no extra spacing)
+  // Section label (visual divider, no page break)
   const sectionLabel = (label: string, color: string) =>
-    `<div style="font-size:10px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;padding-bottom:4px;border-bottom:2px solid ${color};">${esc(label)}</div>`;
+    `<div style="font-size:9.5px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;padding-bottom:3px;border-bottom:2px solid ${color};">${esc(label)}</div>`;
 
   // Factor pills (up to 3)
   const factorPills = (factors: string[] | null | undefined) => {
     if (!factors || factors.length === 0) return "";
-    return `<div style="margin-top:4px;line-height:1.8;">${factors.slice(0, 3).map(f =>
-      `<span style="display:inline-block;font-size:8.5px;font-weight:600;color:#475569;background:#f1f5f9;border-radius:4px;padding:1px 6px;margin:1px 3px 1px 0;">${esc(f)}</span>`
+    return `<div style="margin-top:3px;line-height:1.8;">${factors.slice(0, 3).map(f =>
+      `<span style="display:inline-block;font-size:8px;font-weight:600;color:#475569;background:#f1f5f9;border-radius:3px;padding:1px 5px;margin:1px 3px 1px 0;">${esc(f)}</span>`
+    ).join("")}</div>`;
+  };
+
+  // ICD-10 code pills
+  const icd10Pills = (codes: string[] | null | undefined) => {
+    if (!codes || codes.length === 0) return "";
+    return `<div style="margin-top:3px;">${codes.slice(0, 4).map(c =>
+      `<span style="display:inline-block;font-size:7.5px;font-weight:600;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:3px;padding:1px 4px;margin:1px 2px 1px 0;">${esc(c)}</span>`
     ).join("")}</div>`;
   };
 
@@ -2041,24 +2064,30 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
       : p.name.trim().split(/\s+/)[0] || p.name.trim();
     const firstName = esc(rawFirst || "the patient");
 
-    // Compact test card: break-inside:avoid keeps each card on one physical page
+    // Test card: Clinical Basis (clinician_understanding) + Talking Points (patient_talking_points)
     const renderTest = (test: string, isLast: boolean) => {
       const r = reasoning[test];
-      const talking = r ? (typeof r === "string" ? r : r.patient_talking_points) : null;
-      const factors = r && typeof r !== "string" ? r.qualifying_factors : null;
-      const accent = catAccent[getAncillaryCategory(test)] || "#475569";
-      const whatIs = getOneSentenceDesc(test);
+      const clinician = r && typeof r !== "string" ? r.clinician_understanding : null;
+      const talking   = r ? (typeof r === "string" ? r : r.patient_talking_points) : null;
+      const factors   = r && typeof r !== "string" ? r.qualifying_factors : null;
+      const icd10     = r && typeof r !== "string" ? r.icd10_codes : null;
+      const accent    = catAccent[getAncillaryCategory(test)] || "#475569";
+      const whatIs    = getOneSentenceDesc(test);
       return `
-        <div style="margin-bottom:${isLast ? "0" : "10px"};padding-bottom:${isLast ? "0" : "10px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}break-inside:avoid;">
-          <div style="font-size:13px;font-weight:800;color:${accent};margin-bottom:4px;">${esc(test)}</div>
-          <p style="font-size:10px;line-height:1.45;color:#64748b;margin:0 0 5px;font-style:italic;">${esc(whatIs)}</p>
-          <div style="font-size:9.5px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:3px;">Why ${firstName} qualifies</div>
-          <p style="font-size:11px;line-height:1.55;color:#1e293b;margin:0;">${talking ? esc(talking) : `Clinical indicators in this patient's chart support this study.`}</p>
+        <div style="margin-bottom:${isLast ? "0" : "8px"};padding-bottom:${isLast ? "0" : "8px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}break-inside:avoid;">
+          <div style="font-size:11.5px;font-weight:800;color:${accent};margin-bottom:2px;">${esc(test)}</div>
+          <p style="font-size:8.5px;line-height:1.35;color:#64748b;margin:0 0 3px;font-style:italic;">${esc(whatIs)}</p>
+          ${clinician ? `
+          <div style="font-size:8px;font-weight:700;color:#1a365d;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px;">Clinical Basis</div>
+          <p style="font-size:9px;line-height:1.4;color:#334155;margin:0 0 1px;">${esc(clinician)}</p>
+          ${icd10Pills(icd10)}` : ""}
+          <div style="font-size:8px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px;margin-top:${clinician ? "3px" : "0"};">Talking Points — ${firstName}</div>
+          <p style="font-size:9px;line-height:1.4;color:#1e293b;margin:0;">${talking ? esc(talking) : `Clinical indicators in this patient's chart support this study.`}</p>
           ${factorPills(factors)}
         </div>`;
     };
 
-    // Group by category — section labels are visual dividers only, no page breaks
+    // Group by category — section labels are visual dividers only
     const brainwaveTests = allTests.filter(t => getAncillaryCategory(t) === "brainwave");
     const vitalwaveTests  = allTests.filter(t => getAncillaryCategory(t) === "vitalwave");
     const ultrasoundTests = allTests.filter(t => getAncillaryCategory(t) === "ultrasound");
@@ -2074,28 +2103,49 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
       sections.push(...brainwaveTests.map((t, i) => renderTest(t, i === brainwaveTests.length - 1 && !vitalwaveTests.length && !ultrasoundTests.length && !otherTests.length)));
     }
     if (vitalwaveTests.length) {
-      if (sections.length) sections.push(`<div style="margin-top:14px;"></div>`);
+      if (sections.length) sections.push(`<div style="margin-top:10px;"></div>`);
       sections.push(sectionLabel("VitalWave", catAccent.vitalwave));
       sections.push(...vitalwaveTests.map((t, i) => renderTest(t, i === vitalwaveTests.length - 1 && !ultrasoundTests.length && !otherTests.length)));
     }
     if (ultrasoundTests.length) {
-      if (sections.length) sections.push(`<div style="margin-top:14px;"></div>`);
+      if (sections.length) sections.push(`<div style="margin-top:10px;"></div>`);
       sections.push(sectionLabel(`Ultrasound Studies (${ultrasoundTests.length})`, catAccent.ultrasound));
       sections.push(...ultrasoundTests.map((t, i) => renderTest(t, i === ultrasoundTests.length - 1 && !otherTests.length)));
     }
     if (otherTests.length) {
-      if (sections.length) sections.push(`<div style="margin-top:14px;"></div>`);
+      if (sections.length) sections.push(`<div style="margin-top:10px;"></div>`);
       sections.push(sectionLabel(`Additional Studies (${otherTests.length})`, catAccent.other));
       sections.push(...otherTests.map((t, i) => renderTest(t, i === otherTests.length - 1)));
     }
 
-    // Single .page div per patient — browser print engine handles natural overflow
-    return [`<div class="page" style="padding:18px 22px;">${buildCompactTop(p)}${sections.join("")}</div>`];
+    // Outer .page = fixed letter page; inner .page-content = scaled by JS to guarantee fit
+    return [`<div class="page" style="height:100vh;overflow:hidden;padding:0;"><div class="page-content" style="padding:16px 20px;">${buildCompactTop(p)}${sections.join("")}</div></div>`];
   });
+
+  // Auto-scale script: shrinks each patient page's content to fit exactly one letter page
+  const autoScaleScript = `
+    window.addEventListener('load', function() {
+      var pages = document.querySelectorAll('.page:not(.cover)');
+      pages.forEach(function(page) {
+        var content = page.querySelector('.page-content');
+        if (!content) return;
+        var pageH = page.offsetHeight;
+        var contentH = content.scrollHeight;
+        if (contentH > pageH * 0.98) {
+          var scale = (pageH * 0.97) / contentH;
+          content.style.transform = 'scale(' + scale + ')';
+          content.style.transformOrigin = 'top left';
+          content.style.width = Math.round(100 / scale) + '%';
+        }
+      });
+      setTimeout(function() { window.print(); }, 300);
+    });
+  `;
 
   buildPrintWindow(
     `Plexus Team Script — ${batchName}`,
     `<div class="cover page"><h1>${esc(batchName)}</h1><h2>Plexus Team Script</h2><div class="meta">${esc(date)} · ${patients.length} patient${patients.length !== 1 ? "s" : ""}</div></div>${pages.join("")}`,
+    { injectScript: autoScaleScript },
   );
 }
 
