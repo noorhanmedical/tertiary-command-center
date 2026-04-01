@@ -2015,6 +2015,7 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
     const trunc = (s: string | null | undefined, max = 80) =>
       s ? (s.length > max ? esc(s.slice(0, max)) + "…" : esc(s)) : "";
     const clinFields = [
+      p.insurance ? { label: "Insurance", val: trunc(p.insurance, 40) } : null,
       p.diagnoses ? { label: "Dx", val: trunc(p.diagnoses) } : null,
       p.history   ? { label: "Hx", val: trunc(p.history) }   : null,
       p.medications ? { label: "Rx", val: trunc(p.medications) } : null,
