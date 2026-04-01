@@ -1905,7 +1905,7 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
   const pages = patients.map(p => {
     const allTests = (p.qualifyingTests || []) as string[];
     const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
-    const demoLine = [p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
+    const demoLine = [p.time, p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
     const firstName = (() => {
       const name = p.name.trim();
       if (!name) return name;
@@ -2011,7 +2011,7 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[]): voi
 
   // Compact page-top: run name + date bar, patient name, demo line + Dx/Hx/Rx mini row
   const buildCompactTop = (p: PatientScreening) => {
-    const demoLine = [p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
+    const demoLine = [p.time, p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
     const trunc = (s: string | null | undefined, max = 80) =>
       s ? (s.length > max ? esc(s.slice(0, max)) + "…" : esc(s)) : "";
     const clinFields = [
