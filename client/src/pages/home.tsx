@@ -176,6 +176,7 @@ export default function Home() {
   const [historySearch, setHistorySearch] = useState("");
   const [refPasteText, setRefPasteText] = useState("");
   const [refSearch, setRefSearch] = useState("");
+  const [selectedBatchIds, setSelectedBatchIds] = useState<Set<number>>(new Set());
 
   const activeTab = tabs[activeTabIndex] || tabs[0] || { type: "home" };
   const selectedBatchId = activeTab.type === "schedule" ? activeTab.batchId : null;
@@ -648,7 +649,23 @@ export default function Home() {
             </SidebarGroupContent>
           </SidebarGroup>
           <SidebarGroup>
-            <SidebarGroupLabel>Schedule History</SidebarGroupLabel>
+            <div className="flex items-center justify-between px-2 pt-2 pb-1">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Schedule History</span>
+              {batches.length > 0 && (
+                <button
+                  className="text-[10px] text-primary hover:underline"
+                  onClick={() =>
+                    setSelectedBatchIds(selectedBatchIds.size === batches.length
+                      ? new Set()
+                      : new Set(batches.map((b) => b.id))
+                    )
+                  }
+                  data-testid="button-select-all-schedules"
+                >
+                  {selectedBatchIds.size === batches.length && batches.length > 0 ? "Deselect All" : "Select All"}
+                </button>
+              )}
+            </div>
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
@@ -675,6 +692,20 @@ export default function Home() {
                   batches.map((batch) => (
                     <SidebarMenuItem key={batch.id}>
                       <div className="flex items-center w-full group">
+                        {selectedBatchIds.size > 0 && (
+                          <Checkbox
+                            checked={selectedBatchIds.has(batch.id)}
+                            onCheckedChange={() => {
+                              setSelectedBatchIds((prev) => {
+                                const next = new Set(prev);
+                                next.has(batch.id) ? next.delete(batch.id) : next.add(batch.id);
+                                return next;
+                              });
+                            }}
+                            className="shrink-0 ml-1 mr-1"
+                            data-testid={`checkbox-schedule-${batch.id}`}
+                          />
+                        )}
                         <SidebarMenuButton
                           onClick={() => handleSelectSchedule(batch)}
                           isActive={selectedBatchId === batch.id}
@@ -691,23 +722,45 @@ export default function Home() {
                             </span>
                           </div>
                         </SidebarMenuButton>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-1"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (confirm(`Delete "${batch.name}"?`)) deleteBatchMutation.mutate(batch.id);
-                          }}
-                          data-testid={`button-delete-schedule-${batch.id}`}
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
+                        {selectedBatchIds.size === 0 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Delete "${batch.name}"?`)) deleteBatchMutation.mutate(batch.id);
+                            }}
+                            data-testid={`button-delete-schedule-${batch.id}`}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        )}
                       </div>
                     </SidebarMenuItem>
                   ))
                 )}
               </SidebarMenu>
+              {selectedBatchIds.size > 0 && (
+                <div className="px-2 pt-2 pb-1">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="w-full text-xs h-7 gap-1"
+                    onClick={async () => {
+                      if (!confirm(`Delete ${selectedBatchIds.size} schedule(s)?`)) return;
+                      for (const id of Array.from(selectedBatchIds)) {
+                        await deleteBatchMutation.mutateAsync(id);
+                      }
+                      setSelectedBatchIds(new Set());
+                    }}
+                    data-testid="button-delete-selected-schedules"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    Delete Selected ({selectedBatchIds.size})
+                  </Button>
+                </div>
+              )}
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>
