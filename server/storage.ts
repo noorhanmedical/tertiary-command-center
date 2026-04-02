@@ -16,7 +16,7 @@ import {
   type User,
   type InsertUser,
 } from "@shared/schema";
-import { eq, desc, ilike, sql } from "drizzle-orm";
+import { eq, desc, ilike, sql, and } from "drizzle-orm";
 
 function parseTimeToMinutes(time: string | null | undefined): number {
   if (!time) return Infinity;
@@ -56,6 +56,7 @@ export interface IStorage {
 
   createTestHistory(record: InsertTestHistory): Promise<PatientTestHistory>;
   createTestHistoryBulk(records: InsertTestHistory[]): Promise<PatientTestHistory[]>;
+  bulkInsertTestHistoryIfNotExists(records: InsertTestHistory[]): Promise<void>;
   getAllTestHistory(): Promise<PatientTestHistory[]>;
   searchTestHistory(nameQuery: string): Promise<PatientTestHistory[]>;
   deleteTestHistory(id: number): Promise<void>;
@@ -142,6 +143,22 @@ export class DatabaseStorage implements IStorage {
     if (records.length === 0) return [];
     const results = await db.insert(patientTestHistory).values(records).returning();
     return results;
+  }
+
+  async bulkInsertTestHistoryIfNotExists(records: InsertTestHistory[]): Promise<void> {
+    for (const r of records) {
+      const existing = await db.select({ id: patientTestHistory.id })
+        .from(patientTestHistory)
+        .where(and(
+          ilike(patientTestHistory.patientName, r.patientName),
+          eq(patientTestHistory.testName, r.testName),
+          eq(patientTestHistory.dateOfService, r.dateOfService)
+        ))
+        .limit(1);
+      if (existing.length === 0) {
+        await db.insert(patientTestHistory).values(r);
+      }
+    }
   }
 
   async getAllTestHistory(): Promise<PatientTestHistory[]> {

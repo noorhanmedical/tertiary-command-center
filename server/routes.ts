@@ -1080,6 +1080,25 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         status: "completed",
       });
 
+      // Auto-capture test history for this patient
+      if (qualTests.length > 0) {
+        try {
+          const today = new Date().toISOString().split("T")[0];
+          const insuranceRaw = (patient.insurance || "").toLowerCase();
+          const insuranceType = insuranceRaw.includes("medicare") ? "medicare" : "ppo";
+          const records = qualTests.map((testName: string) => ({
+            patientName: patient.name,
+            testName,
+            dateOfService: today,
+            insuranceType,
+            clinic: "NWPG",
+          }));
+          await storage.bulkInsertTestHistoryIfNotExists(records);
+        } catch (e) {
+          console.error("Auto test history capture failed (per-patient):", e);
+        }
+      }
+
       res.json(updated);
     } catch (error: any) {
       console.error("Per-patient analysis error:", error);
@@ -1272,6 +1291,26 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
         } catch (e) {
           console.error("Batch cooldown check failed:", e);
         }
+      }
+
+      // Auto-capture test history from completed schedule
+      try {
+        const today = new Date().toISOString().split("T")[0];
+        const historyRecords: { patientName: string; testName: string; dateOfService: string; insuranceType: string; clinic: string }[] = [];
+        for (const patient of patients) {
+          const match = aiResults.get(patient.id);
+          const tests: string[] = match?.qualifyingTests || [];
+          const insuranceRaw = ((patient.insurance) || "").toLowerCase();
+          const insuranceType = insuranceRaw.includes("medicare") ? "medicare" : "ppo";
+          for (const testName of tests) {
+            historyRecords.push({ patientName: patient.name, testName, dateOfService: today, insuranceType, clinic: "NWPG" });
+          }
+        }
+        if (historyRecords.length > 0) {
+          await storage.bulkInsertTestHistoryIfNotExists(historyRecords);
+        }
+      } catch (e) {
+        console.error("Auto test history capture failed:", e);
       }
 
       await storage.updateScreeningBatch(batchId, {
