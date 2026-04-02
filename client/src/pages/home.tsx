@@ -432,6 +432,15 @@ export default function Home() {
     setClinicianInput(selectedBatch?.clinicianName || "");
   }, [selectedBatch?.id, selectedBatch?.clinicianName]);
 
+  useEffect(() => {
+    if (selectedBatchIds.size === 0) return;
+    const validIds = new Set(batches.map((b) => b.id));
+    setSelectedBatchIds((prev) => {
+      const pruned = new Set(Array.from(prev).filter((id) => validIds.has(id)));
+      return pruned.size === prev.size ? prev : pruned;
+    });
+  }, [batches]);
+
   const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
 
   const analyzeAllMutation = useMutation({
@@ -692,20 +701,18 @@ export default function Home() {
                   batches.map((batch) => (
                     <SidebarMenuItem key={batch.id}>
                       <div className="flex items-center w-full group">
-                        {selectedBatchIds.size > 0 && (
-                          <Checkbox
-                            checked={selectedBatchIds.has(batch.id)}
-                            onCheckedChange={() => {
-                              setSelectedBatchIds((prev) => {
-                                const next = new Set(prev);
-                                next.has(batch.id) ? next.delete(batch.id) : next.add(batch.id);
-                                return next;
-                              });
-                            }}
-                            className="shrink-0 ml-1 mr-1"
-                            data-testid={`checkbox-schedule-${batch.id}`}
-                          />
-                        )}
+                        <Checkbox
+                          checked={selectedBatchIds.has(batch.id)}
+                          onCheckedChange={() => {
+                            setSelectedBatchIds((prev) => {
+                              const next = new Set(prev);
+                              next.has(batch.id) ? next.delete(batch.id) : next.add(batch.id);
+                              return next;
+                            });
+                          }}
+                          className="shrink-0 ml-1 mr-1 opacity-40 group-hover:opacity-100 data-[state=checked]:opacity-100 transition-opacity"
+                          data-testid={`checkbox-schedule-${batch.id}`}
+                        />
                         <SidebarMenuButton
                           onClick={() => handleSelectSchedule(batch)}
                           isActive={selectedBatchId === batch.id}
