@@ -1083,7 +1083,8 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
       // Auto-capture test history for this patient
       if (qualTests.length > 0) {
         try {
-          const today = new Date().toISOString().split("T")[0];
+          const _d = new Date();
+          const today = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
           const insuranceRaw = (patient.insurance || "").toLowerCase();
           const insuranceType = insuranceRaw.includes("medicare") ? "medicare" : "ppo";
           const records = qualTests.map((testName: string) => ({
@@ -1295,7 +1296,8 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
 
       // Auto-capture test history from completed schedule
       try {
-        const today = new Date().toISOString().split("T")[0];
+        const _d = new Date();
+        const today = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
         const historyRecords: { patientName: string; testName: string; dateOfService: string; insuranceType: string; clinic: string }[] = [];
         for (const patient of patients) {
           const match = aiResults.get(patient.id);
