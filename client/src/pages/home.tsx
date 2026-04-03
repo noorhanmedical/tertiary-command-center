@@ -852,7 +852,7 @@ export default function Home() {
                       <Upload className="w-4 h-4 text-muted-foreground" />
                       <span className="text-sm font-semibold">Upload File</span>
                     </div>
-                    <p className="text-xs text-muted-foreground mb-2">Import from Excel, CSV, or text files</p>
+                    <p className="text-xs text-muted-foreground mb-2">Import from Excel, CSV, or text files. CSV columns: PatientName, TestName, DOS, InsuranceType</p>
                     <input
                       type="file"
                       accept=".xlsx,.xls,.csv,.txt"

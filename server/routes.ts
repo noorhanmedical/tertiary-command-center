@@ -10,6 +10,19 @@ import { z } from "zod";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
+function normalizeInsuranceType(raw: string): "medicare" | "ppo" {
+  const s = raw.toLowerCase().trim();
+  const isMedicareAdvantage =
+    s.includes("medicare advantage") ||
+    s.includes("hmo medicare") ||
+    s.includes("ma plan") ||
+    s.includes("mapd") ||
+    s.includes("ma-pd");
+  if (isMedicareAdvantage) return "ppo";
+  if (s.includes("medicare")) return "medicare";
+  return "ppo";
+}
+
 const createBatchSchema = z.object({
   name: z.string().optional(),
 });
@@ -619,7 +632,9 @@ Your job is to match patients by name (fuzzy matching - handle "Last, First" vs 
 
 COOLDOWN RULES:
 - PPO insurance: 6 month cooldown from date of service
-- Medicare insurance: 12 month cooldown from date of service
+- Straight/Traditional/Original Medicare: 12 month cooldown from date of service
+- Medicare Advantage (HMO Medicare, MA plan, MAPD): treat as PPO, 6 month cooldown
+- The insurance_type field in records is already normalized: "medicare" = straight Medicare (12 mo), "ppo" = everything else including Medicare Advantage (6 mo)
 - Today's date is: ${new Date().toISOString().split('T')[0]}
 
 TEST NAME MATCHING:
@@ -659,6 +674,59 @@ Only include patients who have cooldown violations. If no violations found, retu
   }
 }
 
+const CSV_COLUMN_ALIASES: Record<string, string> = {
+  patientname: "patientName",
+  patient: "patientName",
+  name: "patientName",
+  "patient name": "patientName",
+  testname: "testName",
+  test: "testName",
+  "test name": "testName",
+  service: "testName",
+  dos: "dateOfService",
+  "date of service": "dateOfService",
+  date: "dateOfService",
+  servicedate: "dateOfService",
+  insurancetype: "insuranceType",
+  insurance: "insuranceType",
+  "insurance type": "insuranceType",
+  payer: "insuranceType",
+};
+
+function parseHistoryCsv(text: string): { patientName: string; testName: string; dateOfService: string; insuranceType: string }[] | null {
+  try {
+    const rows = parse(text, { skip_empty_lines: true, relax_column_count: true }) as string[][];
+    if (rows.length < 2) return null;
+
+    const headerRow = rows[0].map(h => h.trim().toLowerCase());
+    const colMap: Record<string, number> = {};
+    for (let i = 0; i < headerRow.length; i++) {
+      const normalized = CSV_COLUMN_ALIASES[headerRow[i]];
+      if (normalized && !(normalized in colMap)) {
+        colMap[normalized] = i;
+      }
+    }
+
+    const required = ["patientName", "testName", "dateOfService"];
+    if (!required.every(k => k in colMap)) return null;
+
+    const results: { patientName: string; testName: string; dateOfService: string; insuranceType: string }[] = [];
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      const patientName = (row[colMap.patientName] || "").trim();
+      const testName = (row[colMap.testName] || "").trim();
+      const dateOfService = (row[colMap.dateOfService] || "").trim();
+      if (!patientName || !testName || !dateOfService) continue;
+      const rawInsurance = colMap.insuranceType !== undefined ? (row[colMap.insuranceType] || "") : "";
+      const insuranceType = normalizeInsuranceType(rawInsurance);
+      results.push({ patientName, testName, dateOfService, insuranceType });
+    }
+    return results.length > 0 ? results : null;
+  } catch {
+    return null;
+  }
+}
+
 async function parseHistoryImport(text: string): Promise<{ patientName: string; testName: string; dateOfService: string; insuranceType: string }[]> {
   const response = await openai.chat.completions.create({
     model: "gpt-4o-mini",
@@ -669,7 +737,7 @@ async function parseHistoryImport(text: string): Promise<{ patientName: string; 
 - patientName: The patient's full name (Last, First format)
 - testName: The type of test performed. Look at the section header or context to determine the test type. Common tests: BrainWave, VitalWave, Bilateral Carotid Duplex, Echocardiogram TTE, Renal Artery Doppler, Lower Extremity Arterial Doppler, Upper Extremity Arterial Doppler, Abdominal Aortic Aneurysm Duplex, Stress Echocardiogram, Lower Extremity Venous Duplex, Upper Extremity Venous Duplex
 - dateOfService: The date in YYYY-MM-DD format
-- insuranceType: "medicare" or "ppo". Look for insurance info in the record. If it mentions Medicare, HMO Medicare, use "medicare". Otherwise default to "ppo".
+- insuranceType: "medicare" or "ppo". Use "medicare" ONLY for straight/traditional/original Medicare. Medicare Advantage, HMO Medicare, MA plan, MAPD → use "ppo". Default to "ppo" when unclear.
 
 The data is tab-separated and may have multiple columns. Focus on extracting the Date of Service (first column usually), Patient name (second column), and any insurance information available.
 
@@ -1085,8 +1153,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         try {
           const _d = new Date();
           const today = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
-          const insuranceRaw = (patient.insurance || "").toLowerCase();
-          const insuranceType = insuranceRaw.includes("medicare") ? "medicare" : "ppo";
+          const insuranceType = normalizeInsuranceType(patient.insurance || "");
           const records = qualTests.map((testName: string) => ({
             patientName: patient.name,
             testName,
@@ -1302,8 +1369,7 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
         for (const patient of patients) {
           const match = aiResults.get(patient.id);
           const tests: string[] = match?.qualifyingTests || [];
-          const insuranceRaw = ((patient.insurance) || "").toLowerCase();
-          const insuranceType = insuranceRaw.includes("medicare") ? "medicare" : "ppo";
+          const insuranceType = normalizeInsuranceType(patient.insurance || "");
           for (const testName of tests) {
             historyRecords.push({ patientName: patient.name, testName, dateOfService: today, insuranceType, clinic: "NWPG" });
           }
@@ -1453,7 +1519,14 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
 
       if (!text.trim()) return res.status(400).json({ error: "Empty data" });
 
-      const records = await parseHistoryImport(text);
+      const isCsvFile = req.file && req.file.originalname.toLowerCase().endsWith(".csv");
+      let records: { patientName: string; testName: string; dateOfService: string; insuranceType: string }[] | null = null;
+      if (isCsvFile) {
+        records = parseHistoryCsv(text);
+      }
+      if (!records) {
+        records = await parseHistoryImport(text);
+      }
       if (records.length === 0) return res.json({ imported: 0, records: [] });
 
       const validRecords = records
