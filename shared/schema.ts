@@ -25,6 +25,7 @@ export const screeningBatches = pgTable("screening_batches", {
   clinicianName: text("clinician_name"),
   patientCount: integer("patient_count").notNull().default(0),
   status: text("status").notNull().default("processing"),
+  facility: text("facility"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
@@ -43,7 +44,10 @@ export const patientScreenings = pgTable("patient_screenings", {
   name: text("name").notNull(),
   age: integer("age"),
   gender: text("gender"),
+  dob: text("dob"),
+  phoneNumber: text("phone_number"),
   insurance: text("insurance"),
+  facility: text("facility"),
   diagnoses: text("diagnoses"),
   history: text("history"),
   medications: text("medications"),
@@ -52,6 +56,8 @@ export const patientScreenings = pgTable("patient_screenings", {
   reasoning: jsonb("reasoning"),
   cooldownTests: jsonb("cooldown_tests"),
   status: text("status").notNull().default("pending"),
+  appointmentStatus: text("appointment_status").notNull().default("pending"),
+  patientType: text("patient_type").notNull().default("visit"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 

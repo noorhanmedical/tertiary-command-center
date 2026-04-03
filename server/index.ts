@@ -70,6 +70,24 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS insurance TEXT
     `);
+    await db.execute(sql`
+      ALTER TABLE screening_batches ADD COLUMN IF NOT EXISTS facility TEXT
+    `);
+    await db.execute(sql`
+      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS dob TEXT
+    `);
+    await db.execute(sql`
+      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS phone_number TEXT
+    `);
+    await db.execute(sql`
+      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS appointment_status TEXT DEFAULT 'pending'
+    `);
+    await db.execute(sql`
+      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS patient_type TEXT DEFAULT 'visit'
+    `);
+    await db.execute(sql`
+      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS facility TEXT
+    `);
     console.log("[migration] schema up to date");
   } catch (err: any) {
     console.warn("[migration] warning:", err.message);

@@ -59,7 +59,12 @@ import {
   Copy,
   Printer,
   Users2,
+  Archive,
+  Lock,
+  Phone,
 } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ScreeningBatch, PatientScreening, PatientTestHistory, PatientReference } from "@shared/schema";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
@@ -160,6 +165,14 @@ function getBadgeColor(cat: string): string {
   }
 }
 
+const FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
+type Facility = typeof FACILITIES[number];
+
+const APPOINTMENT_STATUSES = ["Completed", "No Show", "Rescheduled", "Scheduled Different Day", "Cancelled", "Pending"] as const;
+type AppointmentStatus = typeof APPOINTMENT_STATUSES[number];
+
+const IMPORT_ACCESS_CODE = "1234";
+
 type TabItem = { type: "home" } | { type: "history" } | { type: "references" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
 
 export default function Home() {
@@ -188,6 +201,10 @@ export default function Home() {
   const { setOpen: setSidebarOpen } = useSidebar();
   const [newScheduleDialogOpen, setNewScheduleDialogOpen] = useState(false);
   const [newScheduleDate, setNewScheduleDate] = useState<Date | undefined>(new Date());
+  const [newScheduleFacility, setNewScheduleFacility] = useState<string>("");
+  const [importUnlocked, setImportUnlocked] = useState(false);
+  const [importCodeInput, setImportCodeInput] = useState("");
+  const [importCodeError, setImportCodeError] = useState(false);
 
   const { data: batches = [], isLoading: batchesLoading } = useQuery<ScreeningBatchWithPatients[]>({
     queryKey: ["/api/screening-batches"],
@@ -336,8 +353,8 @@ export default function Home() {
   }, []);
 
   const createBatchMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const res = await apiRequest("POST", "/api/batches", { name });
+    mutationFn: async ({ name, facility }: { name: string; facility: string }) => {
+      const res = await apiRequest("POST", "/api/batches", { name, facility });
       return res.json();
     },
     onSuccess: (data) => {
@@ -595,10 +612,13 @@ export default function Home() {
 
   const handleNewScheduleConfirm = useCallback(() => {
     const date = newScheduleDate ?? new Date();
-    createBatchMutation.mutate(`Schedule - ${date.toLocaleDateString()}`, {
-      onSuccess: () => setNewScheduleDialogOpen(false),
+    createBatchMutation.mutate({ name: `Schedule - ${date.toLocaleDateString()}`, facility: newScheduleFacility }, {
+      onSuccess: () => {
+        setNewScheduleDialogOpen(false);
+        setNewScheduleFacility("");
+      },
     });
-  }, [createBatchMutation, newScheduleDate]);
+  }, [createBatchMutation, newScheduleDate, newScheduleFacility]);
 
   const openHistoryTab = useCallback(() => {
     const existingIdx = tabs.findIndex((t) => t.type === "history");
@@ -652,6 +672,14 @@ export default function Home() {
                   >
                     <FileText className="w-4 h-4 shrink-0" />
                     <span className="text-sm font-medium">Patient References</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild data-testid="sidebar-archive">
+                    <Link href="/archive" onClick={() => setSidebarOpen(false)}>
+                      <Archive className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium">Patient Archive</span>
+                    </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
@@ -1135,6 +1163,7 @@ export default function Home() {
             setExpandedClinical={setExpandedClinical}
             selectedTestDetail={selectedTestDetail}
             setSelectedTestDetail={setSelectedTestDetail}
+            onUpdatePatient={(id, updates) => updatePatientMutation.mutate({ id, updates })}
           />
         ) : view === "schedule" && selectedBatchId ? (
           <div className="flex flex-col h-full relative z-10">
@@ -1160,6 +1189,12 @@ export default function Home() {
                         data-testid="input-clinician-name"
                       />
                     </div>
+                    {selectedBatch?.facility && (
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <Building2 className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground" data-testid="text-facility-build">{selectedBatch.facility}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
@@ -1223,77 +1258,137 @@ export default function Home() {
                 <section>
                   <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Add Patients</h2>
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                    <Card className="p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Upload className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-base font-semibold">Upload File</span>
-                      </div>
-                      <div
-                        className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${
-                          dragOver ? "border-primary bg-primary/5" : "border-border"
-                        }`}
-                        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                        onDragLeave={() => setDragOver(false)}
-                        onDrop={handleDrop}
-                        onClick={() => {
-                          const input = document.createElement("input");
-                          input.type = "file";
-                          input.multiple = true;
-                          input.accept = ".xlsx,.xls,.csv,.txt,.text,.pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp";
-                          input.onchange = (e) => {
-                            const files = (e.target as HTMLInputElement).files;
-                            if (files) handleFileUpload(files);
-                          };
-                          input.click();
-                        }}
-                        data-testid="dropzone-upload"
-                      >
-                        {importFileMutation.isPending ? (
-                          <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
-                        ) : (
-                          <>
-                            <Upload className="w-6 h-6 text-muted-foreground mb-1.5" />
-                            <p className="text-xs text-muted-foreground text-center">Drop files or click to browse</p>
-                            <p className="text-[10px] text-muted-foreground mt-0.5">Excel, CSV, PDF, images, text</p>
-                          </>
-                        )}
-                      </div>
-                    </Card>
+                    {importUnlocked ? (
+                      <>
+                        <Card className="p-4">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Upload className="w-4 h-4 text-muted-foreground" />
+                            <span className="text-base font-semibold">Upload File</span>
+                          </div>
+                          <div
+                            className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${
+                              dragOver ? "border-primary bg-primary/5" : "border-border"
+                            }`}
+                            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                            onDragLeave={() => setDragOver(false)}
+                            onDrop={handleDrop}
+                            onClick={() => {
+                              const input = document.createElement("input");
+                              input.type = "file";
+                              input.multiple = true;
+                              input.accept = ".xlsx,.xls,.csv,.txt,.text,.pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp";
+                              input.onchange = (e) => {
+                                const files = (e.target as HTMLInputElement).files;
+                                if (files) handleFileUpload(files);
+                              };
+                              input.click();
+                            }}
+                            data-testid="dropzone-upload"
+                          >
+                            {importFileMutation.isPending ? (
+                              <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+                            ) : (
+                              <>
+                                <Upload className="w-6 h-6 text-muted-foreground mb-1.5" />
+                                <p className="text-xs text-muted-foreground text-center">Drop files or click to browse</p>
+                                <p className="text-[10px] text-muted-foreground mt-0.5">Excel, CSV, PDF, images, text</p>
+                              </>
+                            )}
+                          </div>
+                        </Card>
 
-                    <Card className="p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <FileText className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-base font-semibold">Paste List</span>
-                      </div>
-                      <Textarea
-                        placeholder={"Paste patient list here — it will import automatically\n\n9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
-                        className="min-h-[82px] resize-none text-sm mb-2"
-                        value={pasteText}
-                        onChange={(e) => setPasteText(e.target.value)}
-                        onPaste={(e) => {
-                          const pasted = e.clipboardData.getData("text");
-                          if (pasted.trim() && selectedBatchId) {
-                            e.preventDefault();
-                            setPasteText(pasted);
-                            importTextMutation.mutate({ batchId: selectedBatchId, text: pasted.trim() });
-                          }
-                        }}
-                        data-testid="input-paste-list"
-                      />
-                      <Button
-                        className="w-full gap-1.5"
-                        variant="outline"
-                        onClick={() => {
-                          if (!pasteText.trim() || !selectedBatchId) return;
-                          importTextMutation.mutate({ batchId: selectedBatchId, text: pasteText.trim() });
-                        }}
-                        disabled={!pasteText.trim() || importTextMutation.isPending}
-                        data-testid="button-import-text"
-                      >
-                        {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                        Import List
-                      </Button>
-                    </Card>
+                        <Card className="p-4">
+                          <div className="flex items-center gap-2 mb-3">
+                            <FileText className="w-4 h-4 text-muted-foreground" />
+                            <span className="text-base font-semibold">Paste List</span>
+                          </div>
+                          <Textarea
+                            placeholder={"Paste patient list here — it will import automatically\n\n9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
+                            className="min-h-[82px] resize-none text-sm mb-2"
+                            value={pasteText}
+                            onChange={(e) => setPasteText(e.target.value)}
+                            onPaste={(e) => {
+                              const pasted = e.clipboardData.getData("text");
+                              if (pasted.trim() && selectedBatchId) {
+                                e.preventDefault();
+                                setPasteText(pasted);
+                                importTextMutation.mutate({ batchId: selectedBatchId, text: pasted.trim() });
+                              }
+                            }}
+                            data-testid="input-paste-list"
+                          />
+                          <Button
+                            className="w-full gap-1.5"
+                            variant="outline"
+                            onClick={() => {
+                              if (!pasteText.trim() || !selectedBatchId) return;
+                              importTextMutation.mutate({ batchId: selectedBatchId, text: pasteText.trim() });
+                            }}
+                            disabled={!pasteText.trim() || importTextMutation.isPending}
+                            data-testid="button-import-text"
+                          >
+                            {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                            Import List
+                          </Button>
+                        </Card>
+                      </>
+                    ) : (
+                      <Card className="p-4 col-span-1 lg:col-span-2">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Lock className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-base font-semibold">Import Access</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mb-3">
+                          File upload and paste import require an access code. Manual entry is always available.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="password"
+                            inputMode="numeric"
+                            maxLength={4}
+                            placeholder="Enter 4-digit code"
+                            value={importCodeInput}
+                            onChange={(e) => {
+                              setImportCodeInput(e.target.value.replace(/\D/g, "").slice(0, 4));
+                              setImportCodeError(false);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                if (importCodeInput === IMPORT_ACCESS_CODE) {
+                                  setImportUnlocked(true);
+                                  setImportCodeInput("");
+                                  setImportCodeError(false);
+                                } else {
+                                  setImportCodeError(true);
+                                  setImportCodeInput("");
+                                }
+                              }
+                            }}
+                            className={`max-w-[160px] ${importCodeError ? "border-red-400" : ""}`}
+                            data-testid="input-import-code"
+                          />
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              if (importCodeInput === IMPORT_ACCESS_CODE) {
+                                setImportUnlocked(true);
+                                setImportCodeInput("");
+                                setImportCodeError(false);
+                              } else {
+                                setImportCodeError(true);
+                                setImportCodeInput("");
+                              }
+                            }}
+                            data-testid="button-import-unlock"
+                          >
+                            Unlock
+                          </Button>
+                        </div>
+                        {importCodeError && (
+                          <p className="text-xs text-red-500 mt-1.5" data-testid="text-import-code-error">Incorrect code. Please try again.</p>
+                        )}
+                      </Card>
+                    )}
 
                     <Card className="p-4">
                       <div className="flex items-center gap-2 mb-3">
@@ -1335,7 +1430,11 @@ export default function Home() {
                           patient={patient}
                           isAnalyzing={analyzingPatients.has(patient.id)}
                           onUpdate={(field, value) => {
-                            updatePatientMutation.mutate({ id: patient.id, updates: { [field]: value } });
+                            const updates: Record<string, unknown> = { [field]: value };
+                            if (field === "time") {
+                              updates.patientType = (value as string).trim() ? "visit" : "outreach";
+                            }
+                            updatePatientMutation.mutate({ id: patient.id, updates });
                           }}
                           onDelete={() => deletePatientMutation.mutate(patient.id)}
                           onAnalyze={() => analyzeOnePatient(patient.id)}
@@ -1498,13 +1597,26 @@ export default function Home() {
               data-testid="calendar-new-schedule"
             />
           </div>
+          <div className="px-1 pb-2">
+            <label className="text-sm font-medium text-muted-foreground mb-1 block">Facility</label>
+            <Select value={newScheduleFacility} onValueChange={setNewScheduleFacility}>
+              <SelectTrigger data-testid="select-facility">
+                <SelectValue placeholder="Select a facility..." />
+              </SelectTrigger>
+              <SelectContent>
+                {FACILITIES.map((f) => (
+                  <SelectItem key={f} value={f}>{f}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setNewScheduleDialogOpen(false)} data-testid="button-cancel-new-schedule">
               Cancel
             </Button>
             <Button
               onClick={handleNewScheduleConfirm}
-              disabled={createBatchMutation.isPending}
+              disabled={createBatchMutation.isPending || !newScheduleFacility}
               data-testid="button-create-new-schedule"
             >
               {createBatchMutation.isPending ? "Creating..." : "Create"}
@@ -1573,12 +1685,18 @@ function PatientCard({
 
   const [localName, setLocalName] = useState(patient.name || "");
   const [localTime, setLocalTime] = useState(patient.time || "");
+  const [localDob, setLocalDob] = useState(patient.dob || "");
+  const [localPhone, setLocalPhone] = useState(patient.phoneNumber || "");
+  const [localInsurance, setLocalInsurance] = useState(patient.insurance || "");
   const [localDx, setLocalDx] = useState(patient.diagnoses || "");
   const [localHx, setLocalHx] = useState(patient.history || "");
   const [localRx, setLocalRx] = useState(patient.medications || "");
 
   useEffect(() => { setLocalName(patient.name || ""); }, [patient.name]);
   useEffect(() => { setLocalTime(patient.time || ""); }, [patient.time]);
+  useEffect(() => { setLocalDob(patient.dob || ""); }, [patient.dob]);
+  useEffect(() => { setLocalPhone(patient.phoneNumber || ""); }, [patient.phoneNumber]);
+  useEffect(() => { setLocalInsurance(patient.insurance || ""); }, [patient.insurance]);
   useEffect(() => { setLocalDx(patient.diagnoses || ""); }, [patient.diagnoses]);
   useEffect(() => { setLocalHx(patient.history || ""); }, [patient.history]);
   useEffect(() => { setLocalRx(patient.medications || ""); }, [patient.medications]);
@@ -1605,11 +1723,32 @@ function PatientCard({
                 className="h-6 text-xs px-2"
                 data-testid={`input-patient-time-${patient.id}`}
               />
-              {patient.insurance && (
-                <span className="text-[11px] text-muted-foreground whitespace-nowrap truncate max-w-[130px]" title={patient.insurance} data-testid={`text-insurance-${patient.id}`}>
-                  {patient.insurance}
-                </span>
-              )}
+              <Input
+                placeholder="DOB"
+                value={localDob}
+                onChange={(e) => setLocalDob(e.target.value)}
+                onBlur={() => { if (localDob !== (patient.dob || "")) onUpdate("dob", localDob); }}
+                className="h-6 text-xs px-2"
+                data-testid={`input-patient-dob-${patient.id}`}
+              />
+              <Input
+                placeholder="Phone"
+                value={localPhone}
+                onChange={(e) => setLocalPhone(e.target.value)}
+                onBlur={() => { if (localPhone !== (patient.phoneNumber || "")) onUpdate("phoneNumber", localPhone); }}
+                className="h-6 text-xs px-2"
+                data-testid={`input-patient-phone-${patient.id}`}
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Input
+                placeholder="Insurance"
+                value={localInsurance}
+                onChange={(e) => setLocalInsurance(e.target.value)}
+                onBlur={() => { if (localInsurance !== (patient.insurance || "")) onUpdate("insurance", localInsurance); }}
+                className="h-6 text-xs px-2"
+                data-testid={`input-patient-insurance-${patient.id}`}
+              />
             </div>
           </div>
           {isCompleted && (
@@ -2306,6 +2445,7 @@ function ResultsView({
   setExpandedClinical,
   selectedTestDetail,
   setSelectedTestDetail,
+  onUpdatePatient,
 }: {
   batch: ScreeningBatchWithPatients | undefined;
   patients: PatientScreening[];
@@ -2318,6 +2458,7 @@ function ResultsView({
   setExpandedClinical: (id: number | null) => void;
   selectedTestDetail: { patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null;
   setSelectedTestDetail: (v: { patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null) => void;
+  onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
 }) {
   const { toast } = useToast();
   const [shareButtonText, setShareButtonText] = useState("Share");
@@ -2361,6 +2502,12 @@ function ResultsView({
               <h1 className="text-base font-semibold tracking-tight" data-testid="text-results-title">{batch?.name} — Final Schedule</h1>
               {batch?.clinicianName && (
                 <p className="text-xs font-medium text-primary" data-testid="text-results-clinician">Dr. {batch.clinicianName}</p>
+              )}
+              {batch?.facility && (
+                <p className="text-xs text-slate-600 flex items-center gap-1" data-testid="text-results-facility">
+                  <Building2 className="w-3 h-3 inline" />
+                  {batch.facility}
+                </p>
               )}
               <p className="text-xs text-slate-900">{patients.length} patients screened</p>
             </div>
@@ -2424,10 +2571,26 @@ function ResultsView({
                           <span className="text-sm text-slate-900 font-medium shrink-0 mt-0.5 tabular-nums">{patient.time}</span>
                         )}
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 mb-1">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
                             <p className="font-semibold text-base text-slate-900 truncate">{patient.name}</p>
                             <span className="text-xs text-slate-900">
                               {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
+                            </span>
+                            <span
+                              className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold capitalize cursor-pointer select-none ${
+                                (patient.patientType || "visit") === "outreach"
+                                  ? "bg-orange-100 text-orange-800"
+                                  : "bg-teal-100 text-teal-800"
+                              }`}
+                              title="Click to toggle patient type"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const newType = (patient.patientType || "visit") === "visit" ? "outreach" : "visit";
+                                onUpdatePatient(patient.id, { patientType: newType });
+                              }}
+                              data-testid={`badge-patient-type-${patient.id}`}
+                            >
+                              {patient.patientType || "visit"}
                             </span>
                             {hasCooldowns && (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300" data-testid={`badge-cooldown-${patient.id}`}>
@@ -2491,7 +2654,28 @@ function ResultsView({
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex flex-col items-end gap-2 shrink-0">
+                        <div className="flex items-center gap-2">
+                          <select
+                            className="text-[10px] border border-slate-200 rounded-lg px-2 py-0.5 bg-white font-medium cursor-pointer capitalize focus:outline-none focus:ring-1 focus:ring-primary"
+                            value={patient.appointmentStatus || "pending"}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              onUpdatePatient(patient.id, { appointmentStatus: e.target.value });
+                            }}
+                            data-testid={`select-appointment-status-${patient.id}`}
+                          >
+                            {APPOINTMENT_STATUSES.map((s) => (
+                              <option key={s} value={s.toLowerCase()}>{s}</option>
+                            ))}
+                          </select>
+                          {allTests.length > 0 && (
+                            isExpanded
+                              ? <ChevronDown className="w-4 h-4 text-slate-400 transition-transform" />
+                              : <ChevronRight className="w-4 h-4 text-slate-400 transition-transform" />
+                          )}
+                        </div>
                         <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-[340px]">
                           {qualTests.map((test) => (
                             <span key={test} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor(getAncillaryCategory(test))}`}>
@@ -2508,11 +2692,6 @@ function ResultsView({
                             <span className="text-xs text-slate-900 italic">No qualifying tests</span>
                           )}
                         </div>
-                        {allTests.length > 0 && (
-                          isExpanded
-                            ? <ChevronDown className="w-4 h-4 text-slate-400 transition-transform" />
-                            : <ChevronRight className="w-4 h-4 text-slate-400 transition-transform" />
-                        )}
                       </div>
                     </div>
                   </div>

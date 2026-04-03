@@ -23,8 +23,12 @@ function normalizeInsuranceType(raw: string): "medicare" | "ppo" {
   return "ppo";
 }
 
+const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
+type ValidFacility = typeof VALID_FACILITIES[number];
+
 const createBatchSchema = z.object({
   name: z.string().optional(),
+  facility: z.enum(VALID_FACILITIES),
 });
 
 const addTestHistorySchema = z.object({
@@ -41,6 +45,8 @@ const addPatientSchema = z.object({
   time: z.string().optional(),
   age: z.union([z.string(), z.number()]).optional(),
   gender: z.string().optional(),
+  dob: z.string().optional(),
+  phoneNumber: z.string().optional(),
   diagnoses: z.string().optional(),
   history: z.string().optional(),
   medications: z.string().optional(),
@@ -52,11 +58,16 @@ const updatePatientSchema = z.object({
   time: z.string().nullable().optional(),
   age: z.union([z.string(), z.number()]).nullable().optional(),
   gender: z.string().nullable().optional(),
+  dob: z.string().nullable().optional(),
+  phoneNumber: z.string().nullable().optional(),
+  insurance: z.string().nullable().optional(),
   diagnoses: z.string().nullable().optional(),
   history: z.string().nullable().optional(),
   medications: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
   qualifyingTests: z.array(z.string()).optional(),
+  appointmentStatus: z.string().nullable().optional(),
+  patientType: z.string().nullable().optional(),
 });
 
 const importTextSchema = z.object({
@@ -837,6 +848,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         name: parsed.data.name || `Batch - ${new Date().toLocaleDateString()}`,
         patientCount: 0,
         status: "draft",
+        facility: parsed.data.facility || null,
       });
       res.json(batch);
     } catch (error: any) {
@@ -852,7 +864,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
 
       const parsed = addPatientSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      const { name, time, age, gender, diagnoses, history, medications, notes } = parsed.data;
+      const { name, time, age, gender, dob, phoneNumber, diagnoses, history, medications, notes } = parsed.data;
 
       const patient = await storage.createPatientScreening({
         batchId,
@@ -860,6 +872,9 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         time: time || null,
         age: age ? parseInt(String(age)) : null,
         gender: gender || null,
+        dob: dob || null,
+        phoneNumber: phoneNumber || null,
+        facility: batch.facility || null,
         diagnoses: diagnoses || null,
         history: history || null,
         medications: medications || null,
@@ -867,6 +882,8 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         qualifyingTests: [],
         reasoning: {},
         status: "draft",
+        appointmentStatus: "pending",
+        patientType: time ? "visit" : "outreach",
       });
 
       await storage.updateScreeningBatch(batchId, {
@@ -975,6 +992,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
           age: p.age || null,
           gender: p.gender || null,
           insurance: p.insurance || null,
+          facility: batch.facility || null,
           diagnoses: p.diagnoses || null,
           history: p.history || null,
           medications: p.medications || null,
@@ -982,6 +1000,8 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
           qualifyingTests: [],
           reasoning: {},
           status: "draft",
+          appointmentStatus: "pending",
+          patientType: p.time ? "visit" : "outreach",
         });
         created.push(patient);
       }
@@ -1024,6 +1044,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
           age: p.age || null,
           gender: p.gender || null,
           insurance: p.insurance || null,
+          facility: batch.facility || null,
           diagnoses: p.diagnoses || null,
           history: p.history || null,
           medications: p.medications || null,
@@ -1031,6 +1052,8 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
           qualifyingTests: [],
           reasoning: {},
           status: "draft",
+          appointmentStatus: "pending",
+          patientType: p.time ? "visit" : "outreach",
         });
         created.push(patient);
       }
@@ -1062,11 +1085,16 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
       if (data.time !== undefined) updates.time = data.time || null;
       if (data.age !== undefined) updates.age = data.age ? parseInt(String(data.age)) : null;
       if (data.gender !== undefined) updates.gender = data.gender || null;
+      if (data.dob !== undefined) updates.dob = data.dob || null;
+      if (data.phoneNumber !== undefined) updates.phoneNumber = data.phoneNumber || null;
+      if (data.insurance !== undefined) updates.insurance = data.insurance || null;
       if (data.diagnoses !== undefined) updates.diagnoses = data.diagnoses || null;
       if (data.history !== undefined) updates.history = data.history || null;
       if (data.medications !== undefined) updates.medications = data.medications || null;
       if (data.notes !== undefined) updates.notes = data.notes || null;
       if (data.qualifyingTests !== undefined) updates.qualifyingTests = data.qualifyingTests;
+      if (data.appointmentStatus !== undefined) updates.appointmentStatus = data.appointmentStatus || "pending";
+      if (data.patientType !== undefined) updates.patientType = data.patientType || "visit";
 
       const patient = await storage.updatePatientScreening(id, updates);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
@@ -1395,6 +1423,20 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
     }
   });
 
+  app.get("/api/archive", async (_req, res) => {
+    try {
+      const batches = await storage.getAllScreeningBatches();
+      const result = [];
+      for (const batch of batches) {
+        const patients = await storage.getPatientScreeningsByBatch(batch.id);
+        result.push({ ...batch, patients });
+      }
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/screening-batches", async (_req, res) => {
     try {
       const batches = await storage.getAllScreeningBatches();
@@ -1420,8 +1462,11 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
   app.patch("/api/screening-batches/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { clinicianName } = req.body;
-      const updated = await storage.updateScreeningBatch(id, { clinicianName: clinicianName ?? null });
+      const { clinicianName, facility } = req.body;
+      const batchUpdates: Partial<{ clinicianName: string | null; facility: string | null }> = {};
+      if (clinicianName !== undefined) batchUpdates.clinicianName = clinicianName ?? null;
+      if (facility !== undefined) batchUpdates.facility = facility ?? null;
+      const updated = await storage.updateScreeningBatch(id, batchUpdates);
       if (!updated) return res.status(404).json({ error: "Batch not found" });
       res.json(updated);
     } catch (error: any) {

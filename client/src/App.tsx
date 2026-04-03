@@ -7,6 +7,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import SharedSchedule from "@/pages/shared-schedule";
+import ArchivePage from "@/pages/archive";
 
 function App() {
   const style = {
@@ -30,6 +31,7 @@ function App() {
                   <Toaster />
                   <Switch>
                     <Route path="/" component={Home} />
+                    <Route path="/archive" component={ArchivePage} />
                     <Route component={NotFound} />
                   </Switch>
                 </div>
