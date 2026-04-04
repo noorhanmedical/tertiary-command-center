@@ -62,6 +62,7 @@ import {
   Archive,
   Lock,
   Phone,
+  ClipboardList,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1561,6 +1562,23 @@ export default function Home() {
                       </div>
                     </div>
                   </Card>
+
+                  <Link href="/plexus" className="md:col-span-2">
+                    <Card
+                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
+                      data-testid="tile-plexus-documents"
+                    >
+                      <div className="flex items-start gap-4 p-6">
+                        <div className="shrink-0 mt-0.5">
+                          <ClipboardList className="w-7 h-7 text-violet-600" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-plexus-documents">Plexus Documents</h3>
+                          <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Generate pre-procedure, post-procedure, and billing documents</p>
+                        </div>
+                      </div>
+                    </Card>
+                  </Link>
                 </div>
 
                 {batches.length > 0 && (
