@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
-import { ArrowLeft, FileText, Building2, Calendar, ChevronDown, ChevronRight, Copy, Trash2, RefreshCw } from "lucide-react";
+import { ArrowLeft, FileText, Building2, Calendar, ChevronDown, ChevronRight, Copy, Printer, Trash2, RefreshCw } from "lucide-react";
 
 type NoteSection = { heading: string; body: string };
 type GeneratedNote = {
@@ -286,6 +286,19 @@ export default function DocumentsPage() {
                                               data-testid={`button-copy-note-${note.id}`}
                                             >
                                               <Copy className="w-3 h-3" />
+                                            </button>
+                                            <button
+                                              className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                const content = note.sections.map((s) => `<p style="margin:0 0 6px"><strong>${s.heading}:</strong> ${s.body}</p>`).join("");
+                                                const html = `<!DOCTYPE html><html><head><title>${note.title}</title><style>body{font-family:Arial,sans-serif;font-size:12px;margin:24px;}</style></head><body><h3>${note.title}</h3><hr>${content}</body></html>`;
+                                                const w = window.open("", "_blank");
+                                                if (w) { w.document.write(html); w.document.close(); w.print(); }
+                                              }}
+                                              data-testid={`button-print-note-${note.id}`}
+                                            >
+                                              <Printer className="w-3 h-3" />
                                             </button>
                                             {expandedNotes.has(note.id) ? (
                                               <ChevronDown className="w-3 h-3 text-slate-400" />
