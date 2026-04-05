@@ -29,7 +29,7 @@ type ValidFacility = typeof VALID_FACILITIES[number];
 const createBatchSchema = z.object({
   name: z.string().optional(),
   facility: z.enum(VALID_FACILITIES),
-  scheduleDate: z.string().optional(),
+  scheduleDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 const addTestHistorySchema = z.object({
