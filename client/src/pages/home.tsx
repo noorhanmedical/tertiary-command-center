@@ -63,10 +63,28 @@ import {
   Lock,
   Phone,
   ClipboardList,
+  RefreshCw,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ScreeningBatch, PatientScreening, PatientTestHistory, PatientReference } from "@shared/schema";
+import {
+  ULTRASOUND_CONFIG,
+  VITALWAVE_CONFIG,
+  BRAINWAVE_MAPPING,
+  type GeneratedDocument,
+  type UltrasoundScreeningData,
+  type VitalWaveScreeningData,
+  type BrainWaveScreeningData,
+  generateVitalWaveDocuments,
+  generateUltrasoundDocuments,
+  generateBrainWaveDocuments,
+  vitalWaveScreeningToResult,
+  ultrasoundScreeningToResult,
+  brainWaveScreeningToResult,
+  DEFAULT_CLINIC,
+  resolveClinicForClinician,
+} from "@shared/plexus";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[]; icd10_codes?: string[]; pearls?: string[] };
@@ -682,6 +700,14 @@ export default function Home() {
                     <Link href="/archive" onClick={() => setSidebarOpen(false)}>
                       <Archive className="w-4 h-4 shrink-0" />
                       <span className="text-sm font-medium">Patient Archive</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild data-testid="sidebar-documents">
+                    <Link href="/documents" onClick={() => setSidebarOpen(false)}>
+                      <FileText className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium">Clinical Notes</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -1565,7 +1591,7 @@ export default function Home() {
                     </div>
                   </Card>
 
-                  <Link href="/plexus" className="md:col-span-2">
+                  <Link href="/plexus">
                     <Card
                       className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
                       data-testid="tile-plexus-documents"
@@ -1577,6 +1603,23 @@ export default function Home() {
                         <div>
                           <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-plexus-documents">Plexus Documents</h3>
                           <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Generate pre-procedure, post-procedure, and billing documents</p>
+                        </div>
+                      </div>
+                    </Card>
+                  </Link>
+
+                  <Link href="/documents">
+                    <Card
+                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
+                      data-testid="tile-documents"
+                    >
+                      <div className="flex items-start gap-4 p-6">
+                        <div className="shrink-0 mt-0.5">
+                          <FileText className="w-7 h-7 text-teal-600" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-documents">Clinical Notes</h3>
+                          <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Browse saved clinical notes organized by clinic, date, and patient</p>
                         </div>
                       </div>
                     </Card>
@@ -2105,6 +2148,135 @@ function getUltrasoundIcon(test: string, colorOverride?: string): string {
 }
 
 
+const TEST_TO_ULTRASOUND_KEY: Record<string, string> = {
+  "Bilateral Carotid Duplex": "Carotid Duplex",
+  "Abdominal Aortic Aneurysm Duplex": "Abdominal Aorta",
+  "Renal Artery Doppler": "Renal Artery Duplex",
+  "Lower Extremity Arterial Doppler": "Lower Extremity Arterial",
+  "Lower Extremity Venous Duplex": "Lower Extremity Venous",
+  "Echocardiogram TTE": "Echocardiogram TTE",
+  "Stress Echocardiogram": "Stress Echocardiogram",
+  "Upper Extremity Arterial Doppler": "Upper Extremity Arterial",
+  "Upper Extremity Venous Duplex": "Upper Extremity Venous",
+};
+
+function autoGeneratePatientNotes(
+  patient: PatientScreening,
+  scheduleDate: string | null | undefined,
+  facility: string | null | undefined,
+  clinicianName: string | null | undefined,
+): GeneratedDocument[] {
+  const tests = patient.qualifyingTests || [];
+  const reasoning = (patient.reasoning || {}) as Record<string, { qualifying_factors?: string[]; icd10_codes?: string[]; clinician_understanding?: string } | string>;
+
+  const dos = scheduleDate || (() => {
+    const _d = new Date();
+    return `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
+  })();
+
+  const patientDemographics = {
+    patientName: patient.name,
+    dateOfBirth: patient.dob || undefined,
+    dateOfService: dos,
+    sex: patient.gender || undefined,
+  };
+
+  const clinician = clinicianName
+    ? { name: clinicianName }
+    : { name: "Ordering Clinician" };
+
+  const clinic = clinicianName ? resolveClinicForClinician(clinicianName) : DEFAULT_CLINIC;
+  const input = { patient: patientDemographics, clinician, clinic };
+
+  const docs: GeneratedDocument[] = [];
+
+  const getIcd10 = (test: string): string[] => {
+    const r = reasoning[test];
+    if (r && typeof r === "object" && r.icd10_codes) return r.icd10_codes;
+    return [];
+  };
+
+  const getFactors = (test: string): string[] => {
+    const r = reasoning[test];
+    if (r && typeof r === "object" && r.qualifying_factors) return r.qualifying_factors;
+    return [];
+  };
+
+  const hasBrainWave = tests.some((t) => t.toLowerCase().includes("brain"));
+  const hasVitalWave = tests.some((t) => t.toLowerCase().includes("vital"));
+  const ultrasoundTests = tests.filter((t) => isImagingTest(t));
+
+  if (hasBrainWave) {
+    const bwTest = tests.find((t) => t.toLowerCase().includes("brain")) || "BrainWave";
+    const icd10 = getIcd10(bwTest);
+    const factors = getFactors(bwTest);
+    const screening: BrainWaveScreeningData = { group1: {}, group2: {}, group3: {} };
+    factors.forEach((f) => {
+      if (BRAINWAVE_MAPPING[f]) {
+        const mapped = BRAINWAVE_MAPPING[f];
+        (mapped.groups || [1]).forEach((g) => {
+          const key = `group${g}` as keyof BrainWaveScreeningData;
+          if (!screening[key]) screening[key] = {};
+          (screening[key] as Record<string, boolean>)[f] = true;
+        });
+      }
+    });
+    const screeningResult = brainWaveScreeningToResult({ mapping: BRAINWAVE_MAPPING, screening });
+    if (icd10.length > 0) screeningResult.icd10Codes = [...icd10, ...screeningResult.icd10Codes].filter((v, i, a) => a.indexOf(v) === i);
+    if (factors.length > 0) screeningResult.selectedConditions = factors;
+    const generated = generateBrainWaveDocuments({ input, screeningResult });
+    docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
+  }
+
+  if (hasVitalWave) {
+    const vwTest = tests.find((t) => t.toLowerCase().includes("vital")) || "VitalWave";
+    const icd10 = getIcd10(vwTest);
+    const factors = getFactors(vwTest);
+    const screening: VitalWaveScreeningData = {};
+    Object.entries(VITALWAVE_CONFIG).forEach(([groupKey, group]) => {
+      group.conditions.forEach((cond) => {
+        if (factors.some((f) => f.toLowerCase().includes(cond.name.toLowerCase()) || cond.name.toLowerCase().includes(f.toLowerCase()))) {
+          if (!screening[groupKey]) screening[groupKey] = {};
+          screening[groupKey][cond.name] = true;
+        }
+      });
+    });
+    const screeningResult = vitalWaveScreeningToResult({ config: VITALWAVE_CONFIG, screening });
+    if (icd10.length > 0) screeningResult.icd10Codes = [...icd10, ...screeningResult.icd10Codes].filter((v, i, a) => a.indexOf(v) === i);
+    if (factors.length > 0 && screeningResult.selectedConditions.length === 0) screeningResult.selectedConditions = factors;
+    const generated = generateVitalWaveDocuments({ input, screeningResult });
+    docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
+  }
+
+  if (ultrasoundTests.length > 0) {
+    const icd10: string[] = [];
+    const factors: string[] = [];
+    ultrasoundTests.forEach((t) => {
+      icd10.push(...getIcd10(t));
+      factors.push(...getFactors(t));
+    });
+    const selection = ultrasoundTests
+      .map((t) => TEST_TO_ULTRASOUND_KEY[t] || t.replace(/\s*\(\d{4,5}\)\s*$/, "").trim())
+      .filter((k) => ULTRASOUND_CONFIG[k]);
+    const conditions: Record<string, boolean> = {};
+    selection.forEach((key) => {
+      const cfg = ULTRASOUND_CONFIG[key];
+      if (!cfg) return;
+      cfg.conditions.forEach((cond) => {
+        if (cond.name !== "Other") conditions[cond.name] = true;
+      });
+    });
+    const usScreening: UltrasoundScreeningData = { selection, conditions };
+    const screeningResult = ultrasoundScreeningToResult({ config: ULTRASOUND_CONFIG, screening: usScreening });
+    if (icd10.length > 0) screeningResult.icd10Codes = [...icd10, ...screeningResult.icd10Codes].filter((v, i, a) => a.indexOf(v) === i);
+    if (factors.length > 0 && screeningResult.selectedConditions.length === 0) screeningResult.selectedConditions = factors;
+    const generated = generateUltrasoundDocuments({ input, screeningResult, screening: usScreening, config: ULTRASOUND_CONFIG });
+    docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
+  }
+
+  return docs;
+}
+
 function formatScheduleDate(scheduleDate: string | null | undefined, createdAt: string | Date | null | undefined): string {
   if (scheduleDate) {
     const [yyyy, mm, dd] = scheduleDate.split("-").map(Number);
@@ -2493,8 +2665,67 @@ function ResultsView({
   onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
 }) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [shareButtonText, setShareButtonText] = useState("Share");
   const [pdfMode, setPdfMode] = useState<"clinician" | "plexus" | null>(null);
+  const [generatingNotesFor, setGeneratingNotesFor] = useState<Set<number>>(new Set());
+  const [patientNotes, setPatientNotes] = useState<Record<number, GeneratedDocument[]>>({});
+
+  const { data: batchNotes = [] } = useQuery<Array<{ id: number; patientId: number; service: string; docKind: string; title: string; sections: Array<{ heading: string; body: string }> }>>({
+    queryKey: ["/api/generated-notes/batch", batch?.id],
+    enabled: !!batch?.id,
+  });
+
+  const savedNotesByPatient = batchNotes.reduce<Record<number, typeof batchNotes>>((acc, n) => {
+    if (!acc[n.patientId]) acc[n.patientId] = [];
+    acc[n.patientId].push(n);
+    return acc;
+  }, {});
+
+  const saveNotesMutation = useMutation({
+    mutationFn: async (payload: Array<{
+      patientId: number; batchId: number; facility?: string | null; scheduleDate?: string | null;
+      patientName: string; service: string; docKind: string; title: string;
+      sections: Array<{ heading: string; body: string }>;
+    }>) => {
+      const res = await apiRequest("POST", "/api/generated-notes", payload);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/generated-notes/batch", batch?.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/generated-notes"] });
+    },
+    onError: (e: any) => {
+      toast({ title: "Failed to save notes", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const handleStatusChange = (patient: PatientScreening, newStatus: string) => {
+    onUpdatePatient(patient.id, { appointmentStatus: newStatus });
+    if (newStatus.toLowerCase() === "completed" && (patient.qualifyingTests || []).length > 0) {
+      setGeneratingNotesFor((prev) => new Set(Array.from(prev).concat(patient.id)));
+      try {
+        const docs = autoGeneratePatientNotes(patient, batch?.scheduleDate, batch?.facility, batch?.clinicianName);
+        if (docs.length > 0) {
+          setPatientNotes((prev) => ({ ...prev, [patient.id]: docs }));
+          const payload = docs.map((doc) => ({
+            patientId: patient.id,
+            batchId: batch!.id,
+            facility: batch?.facility ?? null,
+            scheduleDate: batch?.scheduleDate ?? null,
+            patientName: patient.name,
+            service: doc.service,
+            docKind: doc.kind,
+            title: doc.title,
+            sections: doc.sections,
+          }));
+          saveNotesMutation.mutate(payload);
+        }
+      } finally {
+        setGeneratingNotesFor((prev) => { const s = new Set(prev); s.delete(patient.id); return s; });
+      }
+    }
+  };
 
   const handlePdfGenerate = useCallback((selected: PatientScreening[]) => {
     if (!batch) return;
@@ -2694,7 +2925,7 @@ function ResultsView({
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => {
                               e.stopPropagation();
-                              onUpdatePatient(patient.id, { appointmentStatus: e.target.value });
+                              handleStatusChange(patient, e.target.value);
                             }}
                             data-testid={`select-appointment-status-${patient.id}`}
                           >
@@ -2801,6 +3032,82 @@ function ResultsView({
                           });
                         })()}
                       </div>
+
+                      {(() => {
+                        const pNotes = patientNotes[patient.id] || [];
+                        const pSaved = savedNotesByPatient[patient.id] || [];
+                        const docsToShow = pNotes.length > 0 ? pNotes : pSaved.map((n) => ({
+                          service: n.service, kind: n.docKind, title: n.title, sections: n.sections,
+                        })) as GeneratedDocument[];
+                        const isGenerating = generatingNotesFor.has(patient.id);
+                        if (!isGenerating && docsToShow.length === 0) return null;
+                        return (
+                          <div className="mt-4 border-t border-slate-100 pt-4" data-testid={`section-clinical-notes-${patient.id}`}>
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-2">
+                                <FileText className="w-4 h-4 text-teal-600" />
+                                <span className="font-semibold text-sm text-slate-800">Clinical Notes</span>
+                                {isGenerating && <span className="text-xs text-slate-400 animate-pulse">Generating…</span>}
+                              </div>
+                              {(patient.appointmentStatus || "").toLowerCase() === "completed" && allTests.length > 0 && (
+                                <button
+                                  className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const docs = autoGeneratePatientNotes(patient, batch?.scheduleDate, batch?.facility, batch?.clinicianName);
+                                    if (docs.length > 0) {
+                                      setPatientNotes((prev) => ({ ...prev, [patient.id]: docs }));
+                                      const payload = docs.map((doc) => ({
+                                        patientId: patient.id, batchId: batch!.id,
+                                        facility: batch?.facility ?? null, scheduleDate: batch?.scheduleDate ?? null,
+                                        patientName: patient.name, service: doc.service, docKind: doc.kind,
+                                        title: doc.title, sections: doc.sections,
+                                      }));
+                                      saveNotesMutation.mutate(payload);
+                                    }
+                                  }}
+                                  data-testid={`button-regenerate-notes-${patient.id}`}
+                                >
+                                  <RefreshCw className="w-3 h-3" />
+                                  Regenerate
+                                </button>
+                              )}
+                            </div>
+                            <div className="space-y-3">
+                              {docsToShow.map((doc, di) => (
+                                <div key={di} className="rounded-xl border border-slate-100 bg-slate-50 p-3" data-testid={`note-doc-${patient.id}-${di}`}>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-xs font-semibold text-slate-700">{doc.title}</span>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        className="text-[10px] text-slate-500 hover:text-slate-700 px-2 py-0.5 rounded border border-slate-200 bg-white flex items-center gap-1"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const text = doc.sections.map((s) => `${s.heading}\n${s.body}`).join("\n\n");
+                                          navigator.clipboard.writeText(text);
+                                          toast({ title: "Copied!", description: `${doc.title} copied to clipboard.` });
+                                        }}
+                                        data-testid={`button-copy-note-${patient.id}-${di}`}
+                                      >
+                                        <Copy className="w-3 h-3" />
+                                        Copy
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    {doc.sections.map((s, si) => (
+                                      <div key={si} className="text-[11px] text-slate-700 leading-snug">
+                                        <span className="font-semibold">{s.heading}: </span>
+                                        <span>{s.body}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </Card>

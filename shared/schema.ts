@@ -110,6 +110,28 @@ export const insertPatientReferenceSchema = createInsertSchema(patientReferenceD
 export type PatientReference = typeof patientReferenceData.$inferSelect;
 export type InsertPatientReference = z.infer<typeof insertPatientReferenceSchema>;
 
+export const generatedNotes = pgTable("generated_notes", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull().references(() => patientScreenings.id, { onDelete: "cascade" }),
+  batchId: integer("batch_id").notNull().references(() => screeningBatches.id, { onDelete: "cascade" }),
+  facility: text("facility"),
+  scheduleDate: text("schedule_date"),
+  patientName: text("patient_name").notNull(),
+  service: text("service").notNull(),
+  docKind: text("doc_kind").notNull(),
+  title: text("title").notNull(),
+  sections: jsonb("sections").notNull(),
+  generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertGeneratedNoteSchema = createInsertSchema(generatedNotes).omit({
+  id: true,
+  generatedAt: true,
+});
+
+export type GeneratedNote = typeof generatedNotes.$inferSelect;
+export type InsertGeneratedNote = z.infer<typeof insertGeneratedNoteSchema>;
+
 export const testReasoningSchema = z.object({
   clinician_understanding: z.string(),
   patient_talking_points: z.string(),

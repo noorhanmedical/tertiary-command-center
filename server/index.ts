@@ -91,6 +91,21 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE screening_batches ADD COLUMN IF NOT EXISTS schedule_date TEXT
     `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS generated_notes (
+        id SERIAL PRIMARY KEY,
+        patient_id INTEGER NOT NULL REFERENCES patient_screenings(id) ON DELETE CASCADE,
+        batch_id INTEGER NOT NULL REFERENCES screening_batches(id) ON DELETE CASCADE,
+        facility TEXT,
+        schedule_date TEXT,
+        patient_name TEXT NOT NULL,
+        service TEXT NOT NULL,
+        doc_kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        sections JSONB NOT NULL,
+        generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+      )
+    `);
     console.log("[migration] schema up to date");
   } catch (err: any) {
     console.warn("[migration] warning:", err.message);

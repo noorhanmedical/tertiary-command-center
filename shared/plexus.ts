@@ -241,6 +241,46 @@ export const ULTRASOUND_CONFIG: UltrasoundConfig = {
       { name: 'Other', icd: 'Other', sentence: 'Lower extremity venous duplex ordered for evaluation.' },
     ]
   },
+  'Echocardiogram TTE': {
+    cpt: '93306',
+    conditions: [
+      { name: 'Heart Failure', icd: 'I50.9 – Heart Failure, Unspecified', sentence: 'Patient has heart failure requiring echocardiographic evaluation of cardiac function.' },
+      { name: 'Atrial Fibrillation', icd: 'I48.91 – Unspecified Atrial Fibrillation', sentence: 'Patient has atrial fibrillation requiring echocardiogram to assess cardiac structure and function.' },
+      { name: 'Essential Hypertension', icd: 'I10 – Essential (primary) Hypertension', sentence: 'Patient has essential hypertension requiring echocardiogram to evaluate for hypertensive heart disease.' },
+      { name: 'Cardiomyopathy', icd: 'I42.9 – Cardiomyopathy, Unspecified', sentence: 'Patient has cardiomyopathy requiring echocardiographic evaluation.' },
+      { name: 'Valvular Heart Disease', icd: 'I38 – Endocarditis, Valve Unspecified', sentence: 'Patient has valvular heart disease requiring echocardiographic assessment.' },
+      { name: 'Other', icd: 'Other', sentence: 'Echocardiogram TTE ordered for cardiac evaluation.' },
+    ]
+  },
+  'Stress Echocardiogram': {
+    cpt: '93350',
+    conditions: [
+      { name: 'Chest Pain / Angina', icd: 'I20.9 – Angina Pectoris, Unspecified', sentence: 'Patient has chest pain/angina requiring stress echocardiogram for ischemia evaluation.' },
+      { name: 'Coronary Artery Disease', icd: 'I25.10 – Atherosclerotic Heart Disease of Native Coronary Artery Without Angina Pectoris', sentence: 'Patient has coronary artery disease requiring stress echocardiogram for functional assessment.' },
+      { name: 'Shortness of Breath on Exertion', icd: 'R06.09 – Other Forms of Dyspnea', sentence: 'Patient has exertional dyspnea requiring stress echocardiogram for cardiac evaluation.' },
+      { name: 'Essential Hypertension', icd: 'I10 – Essential (primary) Hypertension', sentence: 'Patient has hypertension with cardiac risk factors requiring stress echocardiographic evaluation.' },
+      { name: 'Other', icd: 'Other', sentence: 'Stress echocardiogram ordered for cardiac stress evaluation.' },
+    ]
+  },
+  'Upper Extremity Arterial': {
+    cpt: '93930',
+    conditions: [
+      { name: 'Peripheral Arterial Disease (Upper)', icd: 'I73.9 – Peripheral Vascular Disease, Unspecified', sentence: 'Patient has peripheral arterial disease requiring upper extremity arterial duplex evaluation.' },
+      { name: 'Arm Pain / Claudication', icd: 'M79.622 – Pain in Left Upper Arm', sentence: 'Patient has arm pain/claudication requiring upper extremity arterial assessment.' },
+      { name: 'Subclavian Steal Syndrome', icd: 'G45.8 – Other Transient Cerebral Ischemic Attacks', sentence: 'Patient has suspected subclavian steal syndrome requiring upper extremity arterial duplex.' },
+      { name: 'Diabetes with Neuropathy', icd: 'E11.40 – Type 2 Diabetes Mellitus With Diabetic Neuropathy, Unspecified', sentence: 'Patient has diabetes with neuropathy requiring upper extremity arterial evaluation.' },
+      { name: 'Other', icd: 'Other', sentence: 'Upper extremity arterial duplex ordered for evaluation.' },
+    ]
+  },
+  'Upper Extremity Venous': {
+    cpt: '93970',
+    conditions: [
+      { name: 'Upper Extremity DVT', icd: 'I82.401 – Acute DVT of Unspecified Deep Veins of Right Lower Extremity', sentence: 'Patient has suspected upper extremity deep vein thrombosis requiring venous duplex evaluation.' },
+      { name: 'Arm Swelling / Edema', icd: 'R60.0 – Localized Edema', sentence: 'Patient has arm swelling/edema requiring upper extremity venous evaluation.' },
+      { name: 'Central Line Complication', icd: 'T80.219A – Unspecified Local Infection Due to Central Venous Catheter', sentence: 'Patient has history of central line with suspected venous complication requiring upper extremity venous duplex.' },
+      { name: 'Other', icd: 'Other', sentence: 'Upper extremity venous duplex ordered for evaluation.' },
+    ]
+  },
 };
 
 export type ConditionMapping = Record<string, { icdCodes: string[]; sentence: string; groups?: number[] }>;

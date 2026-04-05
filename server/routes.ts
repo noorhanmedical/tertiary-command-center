@@ -1737,5 +1737,63 @@ Skip rows that are headers, empty, or don't contain valid patient data.`
     }
   });
 
+  const saveGeneratedNoteSchema = z.object({
+    patientId: z.number().int(),
+    batchId: z.number().int(),
+    facility: z.string().nullable().optional(),
+    scheduleDate: z.string().nullable().optional(),
+    patientName: z.string(),
+    service: z.string(),
+    docKind: z.string(),
+    title: z.string(),
+    sections: z.array(z.object({ heading: z.string(), body: z.string() })),
+  });
+
+  app.get("/api/generated-notes", async (_req, res) => {
+    try {
+      const notes = await storage.getAllGeneratedNotes();
+      res.json(notes);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/generated-notes/batch/:batchId", async (req, res) => {
+    try {
+      const batchId = parseInt(req.params.batchId);
+      if (isNaN(batchId)) return res.status(400).json({ error: "Invalid batchId" });
+      const notes = await storage.getGeneratedNotesByBatch(batchId);
+      res.json(notes);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/generated-notes", async (req, res) => {
+    try {
+      const body = req.body;
+      if (!Array.isArray(body)) return res.status(400).json({ error: "Expected array of note records" });
+      const records = body.map((r: any) => saveGeneratedNoteSchema.parse(r));
+      if (records.length === 0) return res.json([]);
+      const patientId = records[0].patientId;
+      await storage.deleteGeneratedNotesByPatient(patientId);
+      const saved = await storage.saveGeneratedNotes(records);
+      res.status(201).json(saved);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/generated-notes/patient/:patientId", async (req, res) => {
+    try {
+      const patientId = parseInt(req.params.patientId);
+      if (isNaN(patientId)) return res.status(400).json({ error: "Invalid patientId" });
+      await storage.deleteGeneratedNotesByPatient(patientId);
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }

@@ -4,6 +4,7 @@ import {
   patientScreenings,
   patientTestHistory,
   patientReferenceData,
+  generatedNotes,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
@@ -12,6 +13,8 @@ import {
   type InsertTestHistory,
   type PatientReference,
   type InsertPatientReference,
+  type GeneratedNote,
+  type InsertGeneratedNote,
   users,
   type User,
   type InsertUser,
@@ -68,6 +71,11 @@ export interface IStorage {
   searchPatientReferences(nameQuery: string): Promise<PatientReference[]>;
   deletePatientReference(id: number): Promise<void>;
   deleteAllPatientReferences(): Promise<void>;
+
+  saveGeneratedNotes(records: InsertGeneratedNote[]): Promise<GeneratedNote[]>;
+  getGeneratedNotesByBatch(batchId: number): Promise<GeneratedNote[]>;
+  getAllGeneratedNotes(): Promise<GeneratedNote[]>;
+  deleteGeneratedNotesByPatient(patientId: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -206,6 +214,27 @@ export class DatabaseStorage implements IStorage {
 
   async deleteAllPatientReferences(): Promise<void> {
     await db.delete(patientReferenceData);
+  }
+
+  async saveGeneratedNotes(records: InsertGeneratedNote[]): Promise<GeneratedNote[]> {
+    if (records.length === 0) return [];
+    const results = await db.insert(generatedNotes).values(records).returning();
+    return results;
+  }
+
+  async getGeneratedNotesByBatch(batchId: number): Promise<GeneratedNote[]> {
+    return db.select().from(generatedNotes)
+      .where(eq(generatedNotes.batchId, batchId))
+      .orderBy(generatedNotes.generatedAt);
+  }
+
+  async getAllGeneratedNotes(): Promise<GeneratedNote[]> {
+    return db.select().from(generatedNotes)
+      .orderBy(desc(generatedNotes.generatedAt));
+  }
+
+  async deleteGeneratedNotesByPatient(patientId: number): Promise<void> {
+    await db.delete(generatedNotes).where(eq(generatedNotes.patientId, patientId));
   }
 }
 
