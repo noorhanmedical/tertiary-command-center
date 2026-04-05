@@ -354,8 +354,8 @@ export default function Home() {
   }, []);
 
   const createBatchMutation = useMutation({
-    mutationFn: async ({ name, facility }: { name: string; facility: string }) => {
-      const res = await apiRequest("POST", "/api/batches", { name, facility });
+    mutationFn: async ({ name, facility, scheduleDate }: { name: string; facility: string; scheduleDate?: string }) => {
+      const res = await apiRequest("POST", "/api/batches", { name, facility, scheduleDate });
       return res.json();
     },
     onSuccess: (data) => {
@@ -613,7 +613,9 @@ export default function Home() {
 
   const handleNewScheduleConfirm = useCallback(() => {
     const date = newScheduleDate ?? new Date();
-    createBatchMutation.mutate({ name: `Schedule - ${date.toLocaleDateString()}`, facility: newScheduleFacility }, {
+    const _d = date;
+    const scheduleDateStr = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
+    createBatchMutation.mutate({ name: `Schedule - ${date.toLocaleDateString()}`, facility: newScheduleFacility, scheduleDate: scheduleDateStr }, {
       onSuccess: () => {
         setNewScheduleDialogOpen(false);
         setNewScheduleFacility("");
@@ -2103,8 +2105,20 @@ function getUltrasoundIcon(test: string, colorOverride?: string): string {
 }
 
 
-function generateClinicianPDF(batchName: string, patients: PatientScreening[]): void {
-  const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+function formatScheduleDate(scheduleDate: string | null | undefined, createdAt: string | Date | null | undefined): string {
+  if (scheduleDate) {
+    const [yyyy, mm, dd] = scheduleDate.split("-").map(Number);
+    const d = new Date(yyyy, mm - 1, dd);
+    return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  }
+  if (createdAt) {
+    return new Date(createdAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  }
+  return new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+}
+
+function generateClinicianPDF(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): void {
+  const date = formatScheduleDate(scheduleDate, createdAt);
 
   const oneSentence = (text: string | null | undefined): string => {
     if (!text) return "";
@@ -2222,8 +2236,8 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[]): 
   );
 }
 
-function generatePlexusPDF(batchName: string, patients: PatientScreening[]): void {
-  const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+function generatePlexusPDF(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): void {
+  const date = formatScheduleDate(scheduleDate, createdAt);
   const catAccent: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#be123c", ultrasound: "#047857", other: "#475569" };
 
   // Compact page-top: run name + date bar, patient name, demo line + Dx/Hx/Rx mini row
@@ -2485,8 +2499,8 @@ function ResultsView({
   const handlePdfGenerate = useCallback((selected: PatientScreening[]) => {
     if (!batch) return;
     setPdfMode(null);
-    if (pdfMode === "clinician") generateClinicianPDF(batch.name, selected);
-    else if (pdfMode === "plexus") generatePlexusPDF(batch.name, selected);
+    if (pdfMode === "clinician") generateClinicianPDF(batch.name, selected, (batch as any).scheduleDate, batch.createdAt);
+    else if (pdfMode === "plexus") generatePlexusPDF(batch.name, selected, (batch as any).scheduleDate, batch.createdAt);
   }, [batch, pdfMode]);
 
   const handleShare = useCallback(() => {

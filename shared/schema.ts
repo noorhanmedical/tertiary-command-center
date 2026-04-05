@@ -26,6 +26,7 @@ export const screeningBatches = pgTable("screening_batches", {
   patientCount: integer("patient_count").notNull().default(0),
   status: text("status").notNull().default("processing"),
   facility: text("facility"),
+  scheduleDate: text("schedule_date"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 

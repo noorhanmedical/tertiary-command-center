@@ -29,6 +29,7 @@ type ValidFacility = typeof VALID_FACILITIES[number];
 const createBatchSchema = z.object({
   name: z.string().optional(),
   facility: z.enum(VALID_FACILITIES),
+  scheduleDate: z.string().optional(),
 });
 
 const addTestHistorySchema = z.object({
@@ -849,6 +850,7 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         patientCount: 0,
         status: "draft",
         facility: parsed.data.facility || null,
+        scheduleDate: parsed.data.scheduleDate || null,
       });
       res.json(batch);
     } catch (error: any) {
