@@ -2499,8 +2499,8 @@ function ResultsView({
   const handlePdfGenerate = useCallback((selected: PatientScreening[]) => {
     if (!batch) return;
     setPdfMode(null);
-    if (pdfMode === "clinician") generateClinicianPDF(batch.name, selected, (batch as any).scheduleDate, batch.createdAt);
-    else if (pdfMode === "plexus") generatePlexusPDF(batch.name, selected, (batch as any).scheduleDate, batch.createdAt);
+    if (pdfMode === "clinician") generateClinicianPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
+    else if (pdfMode === "plexus") generatePlexusPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
   }, [batch, pdfMode]);
 
   const handleShare = useCallback(() => {
