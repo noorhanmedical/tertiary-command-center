@@ -1309,99 +1309,81 @@ export default function Home() {
 
             <main className="flex-1 overflow-auto">
               <div className="max-w-5xl mx-auto px-8 pt-10 pb-16">
-                <div className="mb-12">
-                  <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-foreground" data-testid="text-home-heading">
-                    Plexus Ancillary Screening
-                  </h2>
-                  <p className="text-base text-slate-600 dark:text-muted-foreground mt-2">
-                    AI-powered clinical analysis for diagnostic ancillaries
-                  </p>
+                <div className="mb-12 text-center">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-16 h-16 rounded-2xl bg-indigo-500 flex items-center justify-center shadow-md">
+                      <Activity className="w-9 h-9 text-white" />
+                    </div>
+                    <div>
+                      <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-foreground" data-testid="text-home-heading">
+                        Plexus
+                      </h2>
+                      <p className="text-sm text-slate-500 dark:text-muted-foreground mt-0.5 tracking-wide uppercase font-medium">
+                        Ancillary Screening
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
                   <Card
-                    className={`group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200 ${createBatchMutation.isPending ? "pointer-events-none opacity-60" : ""}`}
+                    className={`group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03] ${createBatchMutation.isPending ? "pointer-events-none opacity-60" : ""}`}
                     onClick={handleNewSchedule}
                     data-testid="tile-new-schedule"
                   >
-                    <div className="flex items-start gap-4 p-6">
-                      <div className="shrink-0 mt-0.5">
-                        {createBatchMutation.isPending ? (
-                          <Loader2 className="w-7 h-7 text-primary animate-spin" />
-                        ) : (
-                          <Plus className="w-7 h-7 text-primary" />
-                        )}
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-new-schedule">New Schedule</h3>
-                        <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Create a new patient screening schedule</p>
-                      </div>
+                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
+                      {createBatchMutation.isPending ? (
+                        <Loader2 className="w-14 h-14 text-indigo-500 animate-spin" strokeWidth={1.75} />
+                      ) : (
+                        <Plus className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
+                      )}
+                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-new-schedule">New Schedule</span>
                     </div>
                   </Card>
 
                   <Card
-                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
+                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
                     onClick={openReferencesTab}
                     data-testid="tile-patient-directory"
                   >
-                    <div className="flex items-start gap-4 p-6">
-                      <div className="shrink-0 mt-0.5">
-                        <Users className="w-7 h-7 text-teal-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-patient-directory">Patient Directory</h3>
-                        <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">View completed tests &amp; next eligible dates</p>
-                      </div>
+                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
+                      <Users className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
+                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
                     </div>
                   </Card>
 
                   <Link href="/billing">
                     <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
+                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
                       data-testid="tile-billing"
                     >
-                      <div className="flex items-start gap-4 p-6">
-                        <div className="shrink-0 mt-0.5">
-                          <DollarSign className="w-7 h-7 text-emerald-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-billing">Billing</h3>
-                          <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Track billing status across BrainWave, VitalWave, and Ultrasound services</p>
-                        </div>
+                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
+                        <DollarSign className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
+                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-billing">Billing</span>
                       </div>
                     </Card>
                   </Link>
 
                   <Link href="/plexus">
                     <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
+                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
                       data-testid="tile-plexus-documents"
                     >
-                      <div className="flex items-start gap-4 p-6">
-                        <div className="shrink-0 mt-0.5">
-                          <ClipboardList className="w-7 h-7 text-violet-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-plexus-documents">Plexus Documents</h3>
-                          <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Generate pre-procedure, post-procedure, and billing documents</p>
-                        </div>
+                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
+                        <ClipboardList className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
+                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-plexus-documents">Plexus Documents</span>
                       </div>
                     </Card>
                   </Link>
 
                   <Link href="/documents">
                     <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
+                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
                       data-testid="tile-documents"
                     >
-                      <div className="flex items-start gap-4 p-6">
-                        <div className="shrink-0 mt-0.5">
-                          <FileText className="w-7 h-7 text-teal-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-documents">Clinical Notes</h3>
-                          <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Browse saved clinical notes organized by clinic, date, and patient</p>
-                        </div>
+                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
+                        <FileText className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
+                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Clinical Notes</span>
                       </div>
                     </Card>
                   </Link>
