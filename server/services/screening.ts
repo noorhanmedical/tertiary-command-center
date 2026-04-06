@@ -14,6 +14,7 @@ IMPORTANT RULES:
 8. Medications often reveal diagnoses not listed (e.g., metformin = diabetes, amlodipine = hypertension, statins = hyperlipidemia, gabapentin = neuropathy).
 9. Multiple risk factors compound qualification. Even minor risk factors together justify screening.
 10. When in doubt, QUALIFY. Only exclude if the test is clearly inappropriate.
+11. UNDER-40 ULTRASOUND RULE: For patients whose age is known and is under 40, each of the 9 ultrasound/Doppler studies (all qualifying tests EXCEPT BrainWave and VitalWave) requires a stricter dual-criteria check. If the patient has BOTH (a) documented risk factors or diagnoses in Dx/Hx AND (b) medications that treat those conditions, set approvalRequired: false — they are fully qualified. If the patient is under 40 and does NOT meet both criteria simultaneously, still include the ultrasound test in qualifyingTests but set approvalRequired: true, meaning physician approval from Dr. Ali Imran or Dr. Ayman Alhadheri is required before scheduling. BrainWave and VitalWave are never subject to this under-40 rule (always approvalRequired: false). Patients 40 and older always have approvalRequired: false for all tests.
 
 Available ancillary tests (ONLY qualify for these 11 tests - no others):
 - BrainWave: EEG/neurocognitive testing for cognitive, neurological, mood disorders, headaches, migraines, dizziness, vertigo, syncope, seizures, memory issues, neuropathy, TBI, anxiety, depression, insomnia, brain fog, fatigue, numbness/tingling, stroke/TIA history, tremors, balance issues, tinnitus, chronic pain
@@ -55,7 +56,8 @@ For each patient, respond with a JSON object:
           "confidence": "high",
           "qualifying_factors": ["hypertension", "diabetes"],
           "icd10_codes": ["I10", "E11.9"],
-          "pearls": ["Checks blood flow to prevent stroke risk.", "Quick, painless — no needles involved.", "Your doctor flagged this based on your blood pressure history."]
+          "pearls": ["Checks blood flow to prevent stroke risk.", "Quick, painless — no needles involved.", "Your doctor flagged this based on your blood pressure history."],
+          "approvalRequired": false
         }
       }
     }

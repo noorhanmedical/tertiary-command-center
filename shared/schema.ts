@@ -162,6 +162,7 @@ export const testReasoningSchema = z.object({
   qualifying_factors: z.array(z.string()).optional(),
   icd10_codes: z.array(z.string()).optional(),
   pearls: z.array(z.string()).optional(),
+  approvalRequired: z.boolean().optional(),
 });
 
 export const patientScreeningResultSchema = z.object({

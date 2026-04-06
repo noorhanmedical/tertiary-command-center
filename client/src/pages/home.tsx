@@ -90,7 +90,7 @@ import {
 } from "@shared/plexus";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
-type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[]; icd10_codes?: string[]; pearls?: string[] };
+type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[]; icd10_codes?: string[]; pearls?: string[]; approvalRequired?: boolean };
 
 const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
 
@@ -3408,14 +3408,21 @@ function ResultsView({
                     const talking = reason ? (typeof reason === "string" ? null : reason.patient_talking_points) : null;
                     const confidence = reason && typeof reason !== "string" ? reason.confidence : null;
                     const qualifyingFactors = reason && typeof reason !== "string" ? reason.qualifying_factors : null;
+                    const approvalRequired = reason && typeof reason !== "string" ? reason.approvalRequired : false;
 
                     return (
                       <div key={test} className={`rounded-xl border ${style.border} ${style.bg} p-4`} data-testid={`sheet-test-${test}`}>
                         <div className="flex items-center gap-2 mb-3 flex-wrap">
                           <p className={`text-sm font-semibold ${style.accent}`}>{test}</p>
-                          {confidence && (
+                          {confidence && !approvalRequired && (
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${confidenceStyles[confidence]}`} data-testid={`badge-confidence-${test}`}>
                               {confidence.toUpperCase()}
+                            </span>
+                          )}
+                          {approvalRequired && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-300" data-testid={`badge-approval-required-${test}`}>
+                              <AlertTriangle className="w-3 h-3" />
+                              Requires Approval: Dr. Ali Imran / Dr. Ayman Alhadheri
                             </span>
                           )}
                         </div>
