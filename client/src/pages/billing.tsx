@@ -605,6 +605,7 @@ export default function BillingPage() {
 
   const { data: googleStatus } = useQuery<{
     sheets: { connected: boolean; lastSyncedBilling: string | null; billingSpreadsheetUrl: string | null };
+    drive: { connected: boolean; email: string | null };
   }>({ queryKey: ["/api/google/status"], refetchInterval: 30000 });
 
   useEffect(() => {
@@ -793,6 +794,11 @@ export default function BillingPage() {
                     <ExternalLink className="w-2.5 h-2.5" />Open
                   </a>
                 )}
+              </span>
+            )}
+            {googleStatus?.drive?.email && (
+              <span className="text-[10px] text-slate-400 whitespace-nowrap" data-testid="text-drive-email-billing">
+                Drive: {googleStatus.drive.email}
               </span>
             )}
             <Button size="sm" variant="outline" className="gap-1.5 text-xs h-8" onClick={() => setShowAddRow(true)} data-testid="button-add-billing-row">

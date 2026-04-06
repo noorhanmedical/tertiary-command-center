@@ -2480,6 +2480,7 @@ function PatientDirectoryView({ testHistory, historyLoading, dirPasteText, setDi
       lastSyncedPatients: string | null;
       patientsSpreadsheetUrl: string | null;
     };
+    drive: { connected: boolean; email: string | null };
   }>({ queryKey: ["/api/google/status"], refetchInterval: 30000 });
 
   useEffect(() => {
@@ -2663,6 +2664,11 @@ function PatientDirectoryView({ testHistory, historyLoading, dirPasteText, setDi
                       <ExternalLink className="w-2.5 h-2.5" />Open
                     </a>
                   )}
+                </span>
+              )}
+              {googleStatus?.drive?.email && (
+                <span className="text-[10px] text-slate-400 whitespace-nowrap" data-testid="text-drive-email-patients">
+                  Drive: {googleStatus.drive.email}
                 </span>
               )}
             </div>
