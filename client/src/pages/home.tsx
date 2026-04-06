@@ -71,6 +71,7 @@ import type { ScreeningBatch, PatientScreening, PatientTestHistory } from "@shar
 import { SiGooglesheets } from "react-icons/si";
 import { ExternalLink } from "lucide-react";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
+import { PlexusDrive } from "@/components/PlexusDrive";
 import {
   ULTRASOUND_CONFIG,
   VITALWAVE_CONFIG,
@@ -1413,6 +1414,8 @@ export default function Home() {
                     </Button>
                   </div>
                 )}
+
+                <PlexusDrive />
               </div>
             </main>
           </div>

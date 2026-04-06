@@ -1688,5 +1688,222 @@ export async function registerRoutes(
     }
   });
 
+  async function getPlexusRootId(): Promise<string> {
+    const { getUncachableGoogleDriveClient, getOrCreateFolder } = await import("./googleDrive");
+    const { getSetting, setSetting } = await import("./dbSettings");
+    const rootKey = "DRIVE_FOLDER_plexus_ancillary_platform";
+    let rootId = await getSetting(rootKey);
+    if (!rootId) {
+      const drive = await getUncachableGoogleDriveClient();
+      rootId = await getOrCreateFolder(drive, "Plexus Ancillary Platform");
+      await setSetting(rootKey, rootId);
+    }
+    return rootId;
+  }
+
+  async function isDescendantOfRoot(
+    drive: any,
+    folderId: string,
+    rootId: string
+  ): Promise<boolean> {
+    if (folderId === rootId) return true;
+    let currentId = folderId;
+    let depth = 0;
+    while (currentId && depth < 15) {
+      try {
+        const resp = await drive.files.get({ fileId: currentId, fields: "parents" });
+        const parents = resp.data.parents || [];
+        if (parents.includes(rootId)) return true;
+        currentId = parents[0] || "";
+      } catch {
+        return false;
+      }
+      depth++;
+    }
+    return false;
+  }
+
+  app.get("/api/plexus-drive/folder", async (req, res) => {
+    try {
+      const { getUncachableGoogleDriveClient } = await import("./googleDrive");
+
+      const rootId = await getPlexusRootId();
+      const requestedId = req.query.folderId as string | undefined;
+      const targetFolderId = requestedId || rootId;
+
+      if (targetFolderId !== rootId) {
+        const drive = await getUncachableGoogleDriveClient();
+        const inScope = await isDescendantOfRoot(drive, targetFolderId, rootId);
+        if (!inScope) {
+          return res.status(403).json({ error: "Folder is outside the Plexus Ancillary Platform tree" });
+        }
+      }
+
+      const drive = await getUncachableGoogleDriveClient();
+      const escapedId = targetFolderId.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      const listResp = await drive.files.list({
+        q: `'${escapedId}' in parents and trashed = false`,
+        fields: "files(id,name,mimeType,webViewLink,size,modifiedTime)",
+        orderBy: "folder,name",
+        pageSize: 200,
+        spaces: "drive",
+      });
+
+      const files = (listResp.data.files || []).map((f) => ({
+        id: f.id!,
+        name: f.name!,
+        mimeType: f.mimeType!,
+        isFolder: f.mimeType === "application/vnd.google-apps.folder",
+        webViewLink: f.webViewLink || null,
+        size: f.size || null,
+        modifiedTime: f.modifiedTime || null,
+      }));
+
+      res.json({ folderId: targetFolderId, files });
+    } catch (error: any) {
+      console.error("Plexus Drive folder error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/plexus-drive/search", async (req, res) => {
+    try {
+      const query = req.query.q as string;
+      if (!query || query.trim().length < 1) {
+        return res.status(400).json({ error: "Search query is required" });
+      }
+
+      const { getUncachableGoogleDriveClient } = await import("./googleDrive");
+      const rootId = await getPlexusRootId();
+      const drive = await getUncachableGoogleDriveClient();
+
+      const escapedQuery = query.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      const searchResp = await drive.files.list({
+        q: `name contains '${escapedQuery}' and trashed = false`,
+        fields: "files(id,name,mimeType,webViewLink,parents)",
+        pageSize: 200,
+        spaces: "drive",
+      });
+
+      const allFiles = searchResp.data.files || [];
+
+      const buildPath = async (fileParents: string[] | undefined): Promise<string> => {
+        if (!fileParents || fileParents.length === 0) return "";
+        const parts: string[] = [];
+        let currentId = fileParents[0];
+        let depth = 0;
+        while (currentId && depth < 10) {
+          if (currentId === rootId) {
+            parts.unshift("Plexus Ancillary Platform");
+            break;
+          }
+          try {
+            const parentResp = await drive.files.get({ fileId: currentId, fields: "id,name,parents" });
+            parts.unshift(parentResp.data.name || "");
+            currentId = parentResp.data.parents?.[0] || "";
+          } catch {
+            break;
+          }
+          depth++;
+        }
+        return parts.join(" / ");
+      };
+
+      const results: { id: string; name: string; mimeType: string; isFolder: boolean; webViewLink: string | null; path: string }[] = [];
+
+      for (const file of allFiles) {
+        const fileParents = file.parents || [];
+        const pathStr = await buildPath(fileParents);
+        if (!pathStr.startsWith("Plexus Ancillary Platform")) continue;
+
+        results.push({
+          id: file.id!,
+          name: file.name!,
+          mimeType: file.mimeType!,
+          isFolder: file.mimeType === "application/vnd.google-apps.folder",
+          webViewLink: file.webViewLink || null,
+          path: pathStr,
+        });
+      }
+
+      res.json({ results });
+    } catch (error: any) {
+      console.error("Plexus Drive search error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/plexus-drive/move", async (req, res) => {
+    try {
+      const { fileId, destinationFolderId } = req.body;
+      if (!fileId || !destinationFolderId) {
+        return res.status(400).json({ error: "fileId and destinationFolderId are required" });
+      }
+
+      const { getUncachableGoogleDriveClient } = await import("./googleDrive");
+      const rootId = await getPlexusRootId();
+      const drive = await getUncachableGoogleDriveClient();
+
+      const [fileInScope, destInScope] = await Promise.all([
+        isDescendantOfRoot(drive, fileId, rootId),
+        isDescendantOfRoot(drive, destinationFolderId, rootId),
+      ]);
+
+      if (!fileInScope) {
+        return res.status(403).json({ error: "Source file is outside the Plexus Ancillary Platform tree" });
+      }
+      if (!destInScope) {
+        return res.status(403).json({ error: "Destination folder is outside the Plexus Ancillary Platform tree" });
+      }
+
+      const fileResp = await drive.files.get({ fileId, fields: "parents" });
+      const currentParents = (fileResp.data.parents || []).join(",");
+
+      await drive.files.update({
+        fileId,
+        addParents: destinationFolderId,
+        removeParents: currentParents,
+        fields: "id,parents",
+      });
+
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Plexus Drive move error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/plexus-drive/folder-tree", async (req, res) => {
+    try {
+      const { getUncachableGoogleDriveClient } = await import("./googleDrive");
+      const rootId = await getPlexusRootId();
+      const drive = await getUncachableGoogleDriveClient();
+
+      const buildTree = async (folderId: string, depth: number): Promise<any[]> => {
+        if (depth > 4) return [];
+        const listResp = await drive.files.list({
+          q: `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+          fields: "files(id,name)",
+          orderBy: "name",
+          pageSize: 100,
+          spaces: "drive",
+        });
+        const folders = listResp.data.files || [];
+        const result = [];
+        for (const folder of folders) {
+          const children = await buildTree(folder.id!, depth + 1);
+          result.push({ id: folder.id!, name: folder.name!, children });
+        }
+        return result;
+      };
+
+      const children = await buildTree(rootId, 0);
+      res.json({ id: rootId, name: "Plexus Ancillary Platform", children });
+    } catch (error: any) {
+      console.error("Plexus Drive folder-tree error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }
