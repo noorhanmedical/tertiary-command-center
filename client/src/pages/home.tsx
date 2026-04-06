@@ -2542,6 +2542,40 @@ interface PatientDirectoryViewProps {
 }
 
 function PatientDirectoryView({ testHistory, historyLoading, dirPasteText, setDirPasteText, dirSearch, setDirSearch, onImportFile, onImportText, onClearAll, importFilePending, importTextPending }: PatientDirectoryViewProps) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [addRecordOpen, setAddRecordOpen] = useState(false);
+  const [addRecordName, setAddRecordName] = useState("");
+  const [addRecordTest, setAddRecordTest] = useState("");
+  const [addRecordDos, setAddRecordDos] = useState<Date | undefined>(new Date());
+  const [addRecordInsurance, setAddRecordInsurance] = useState<"ppo" | "medicare">("ppo");
+
+  const addRecordMutation = useMutation({
+    mutationFn: async () => {
+      const _d = addRecordDos || new Date();
+      const dos = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
+      const res = await apiRequest("POST", "/api/test-history", {
+        patientName: addRecordName.trim(),
+        testName: addRecordTest.trim(),
+        dateOfService: dos,
+        insuranceType: addRecordInsurance,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/test-history"] });
+      toast({ title: "Record added" });
+      setAddRecordOpen(false);
+      setAddRecordName("");
+      setAddRecordTest("");
+      setAddRecordDos(new Date());
+      setAddRecordInsurance("ppo");
+    },
+    onError: (e: any) => {
+      toast({ title: "Failed to add record", description: e.message, variant: "destructive" });
+    },
+  });
+
   const patientMap = new Map<string, { displayName: string; dob?: string; records: PatientTestHistory[] }>();
   for (const record of testHistory) {
     const key = record.patientName.trim().toLowerCase();
@@ -2559,6 +2593,82 @@ function PatientDirectoryView({ testHistory, historyLoading, dirPasteText, setDi
 
   return (
     <div className="flex flex-col h-full relative z-10">
+      <Dialog open={addRecordOpen} onOpenChange={setAddRecordOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add Record</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-1">
+              <Label className="text-xs">Patient Name</Label>
+              <Input
+                placeholder="Full name"
+                value={addRecordName}
+                onChange={(e) => setAddRecordName(e.target.value)}
+                data-testid="input-add-record-name"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Test Name</Label>
+              <Select value={addRecordTest} onValueChange={setAddRecordTest}>
+                <SelectTrigger data-testid="select-add-record-test">
+                  <SelectValue placeholder="Select test" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ALL_AVAILABLE_TESTS.map((t) => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Date of Service</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="w-full justify-start gap-2 font-normal" data-testid="button-add-record-dos">
+                    <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                    {addRecordDos ? `${addRecordDos.getFullYear()}-${String(addRecordDos.getMonth() + 1).padStart(2, "0")}-${String(addRecordDos.getDate()).padStart(2, "0")}` : "Pick a date"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <CalendarPicker mode="single" selected={addRecordDos} onSelect={setAddRecordDos} initialFocus />
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Insurance Type</Label>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant={addRecordInsurance === "ppo" ? "default" : "outline"}
+                  onClick={() => setAddRecordInsurance("ppo")}
+                  className="flex-1"
+                  data-testid="button-add-record-ppo"
+                >PPO</Button>
+                <Button
+                  size="sm"
+                  variant={addRecordInsurance === "medicare" ? "default" : "outline"}
+                  onClick={() => setAddRecordInsurance("medicare")}
+                  className="flex-1"
+                  data-testid="button-add-record-medicare"
+                >Medicare</Button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setAddRecordOpen(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              disabled={!addRecordName.trim() || !addRecordTest.trim() || !addRecordDos || addRecordMutation.isPending}
+              onClick={() => addRecordMutation.mutate()}
+              data-testid="button-add-record-submit"
+            >
+              {addRecordMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+              Add Record
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
           <div className="flex items-center gap-2">
@@ -2572,6 +2682,16 @@ function PatientDirectoryView({ testHistory, historyLoading, dirPasteText, setDi
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setAddRecordOpen(true)}
+              className="gap-1.5"
+              data-testid="button-add-record"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Record
+            </Button>
             {testHistory.length > 0 && (
               <Button
                 variant="outline"

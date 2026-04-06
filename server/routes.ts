@@ -1085,6 +1085,10 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
 
       const data = parsed.data;
+
+      // Fetch current patient state before update (for transition guard)
+      const previousPatient = data.appointmentStatus ? await storage.getPatientScreening(id) : null;
+
       const updates: any = {};
       if (data.name !== undefined) updates.name = data.name;
       if (data.time !== undefined) updates.time = data.time || null;
@@ -1103,6 +1107,31 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
 
       const patient = await storage.updatePatientScreening(id, updates);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      // Auto-capture test history only when transitioning INTO "completed" (not already completed)
+      const wasAlreadyCompleted = previousPatient?.appointmentStatus?.toLowerCase() === "completed";
+      if (data.appointmentStatus && data.appointmentStatus.toLowerCase() === "completed" && !wasAlreadyCompleted) {
+        try {
+          const qualTests: string[] = patient.qualifyingTests || [];
+          if (qualTests.length > 0) {
+            const batch = await storage.getScreeningBatch(patient.batchId);
+            const _d = new Date();
+            const today = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
+            const dos = batch?.scheduleDate || today;
+            const insuranceType = normalizeInsuranceType(patient.insurance || "");
+            const records = qualTests.map((testName: string) => ({
+              patientName: patient.name,
+              testName,
+              dateOfService: dos,
+              insuranceType,
+              clinic: "NWPG",
+            }));
+            await storage.bulkInsertTestHistoryIfNotExists(records);
+          }
+        } catch (e) {
+          console.error("Auto test history capture on completion failed:", e);
+        }
+      }
 
       res.json(patient);
     } catch (error: any) {
@@ -1173,25 +1202,6 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         gender: match?.gender || patient.gender || null,
         status: "completed",
       });
-
-      // Auto-capture test history for this patient
-      if (qualTests.length > 0) {
-        try {
-          const _d = new Date();
-          const today = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
-          const insuranceType = normalizeInsuranceType(patient.insurance || "");
-          const records = qualTests.map((testName: string) => ({
-            patientName: patient.name,
-            testName,
-            dateOfService: today,
-            insuranceType,
-            clinic: "NWPG",
-          }));
-          await storage.bulkInsertTestHistoryIfNotExists(records);
-        } catch (e) {
-          console.error("Auto test history capture failed (per-patient):", e);
-        }
-      }
 
       res.json(updated);
     } catch (error: any) {
@@ -1386,26 +1396,6 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
         } catch (e) {
           console.error("Batch cooldown check failed:", e);
         }
-      }
-
-      // Auto-capture test history from completed schedule
-      try {
-        const _d = new Date();
-        const today = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
-        const historyRecords: { patientName: string; testName: string; dateOfService: string; insuranceType: string; clinic: string }[] = [];
-        for (const patient of patients) {
-          const match = aiResults.get(patient.id);
-          const tests: string[] = match?.qualifyingTests || [];
-          const insuranceType = normalizeInsuranceType(patient.insurance || "");
-          for (const testName of tests) {
-            historyRecords.push({ patientName: patient.name, testName, dateOfService: today, insuranceType, clinic: "NWPG" });
-          }
-        }
-        if (historyRecords.length > 0) {
-          await storage.bulkInsertTestHistoryIfNotExists(historyRecords);
-        }
-      } catch (e) {
-        console.error("Auto test history capture failed:", e);
       }
 
       await storage.updateScreeningBatch(batchId, {
