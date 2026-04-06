@@ -1304,12 +1304,11 @@ export async function registerRoutes(
   app.get("/api/google/status", async (_req, res) => {
     try {
       const { isGoogleSheetsConnected } = await import("./googleSheets");
-      const { isGoogleDriveConnected, getDriveUserEmail } = await import("./googleDrive");
+      const { getDriveStatus } = await import("./googleDrive");
       const { getSetting } = await import("./dbSettings");
-      const [sheets, drive, driveEmail, dbPatientsAt, dbBillingAt, dbPatientsSid, dbBillingSid] = await Promise.all([
+      const [sheets, driveStatus, dbPatientsAt, dbBillingAt, dbPatientsSid, dbBillingSid] = await Promise.all([
         isGoogleSheetsConnected(),
-        isGoogleDriveConnected(),
-        getDriveUserEmail(),
+        getDriveStatus(),
         getSetting("PATIENTS_LAST_SYNCED_AT"),
         getSetting("BILLING_LAST_SYNCED_AT"),
         getSetting("PATIENTS_SPREADSHEET_ID"),
@@ -1327,7 +1326,7 @@ export async function registerRoutes(
           patientsSpreadsheetUrl: patientsSid ? `https://docs.google.com/spreadsheets/d/${patientsSid}` : null,
           billingSpreadsheetUrl: billingSid ? `https://docs.google.com/spreadsheets/d/${billingSid}` : null,
         },
-        drive: { connected: drive, email: driveEmail },
+        drive: { connected: driveStatus.connected, email: driveStatus.email },
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

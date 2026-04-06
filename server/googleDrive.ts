@@ -58,24 +58,25 @@ export async function getUncachableGoogleDriveClient() {
   return google.drive({ version: "v3", auth: oauth2Client });
 }
 
-export async function isGoogleDriveConnected(): Promise<boolean> {
-  try {
-    const drive = await getUncachableGoogleDriveClient();
-    await drive.about.get({ fields: "user" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function getDriveUserEmail(): Promise<string | null> {
+export async function getDriveStatus(): Promise<{ connected: boolean; email: string | null }> {
   try {
     const drive = await getUncachableGoogleDriveClient();
     const resp = await drive.about.get({ fields: "user" });
-    return resp.data.user?.emailAddress ?? null;
+    const email = resp.data.user?.emailAddress ?? null;
+    return { connected: true, email };
   } catch {
-    return null;
+    return { connected: false, email: null };
   }
+}
+
+export async function isGoogleDriveConnected(): Promise<boolean> {
+  const { connected } = await getDriveStatus();
+  return connected;
+}
+
+export async function getDriveUserEmail(): Promise<string | null> {
+  const { email } = await getDriveStatus();
+  return email;
 }
 
 const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
