@@ -81,6 +81,8 @@ export interface IStorage {
   getAllGeneratedNotes(): Promise<GeneratedNote[]>;
   deleteGeneratedNotesByPatient(patientId: number): Promise<void>;
   getGeneratedNotesByPatient(patientId: number): Promise<GeneratedNote[]>;
+  getGeneratedNote(id: number): Promise<GeneratedNote | undefined>;
+  updateGeneratedNoteDriveInfo(id: number, driveFileId: string, driveWebViewLink: string): Promise<GeneratedNote | undefined>;
 
   getAllBillingRecords(): Promise<BillingRecord[]>;
   getBillingRecordByPatientAndService(patientId: number, service: string): Promise<BillingRecord | undefined>;
@@ -258,6 +260,19 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(generatedNotes)
       .where(eq(generatedNotes.patientId, patientId))
       .orderBy(generatedNotes.generatedAt);
+  }
+
+  async getGeneratedNote(id: number): Promise<GeneratedNote | undefined> {
+    const [result] = await db.select().from(generatedNotes).where(eq(generatedNotes.id, id));
+    return result;
+  }
+
+  async updateGeneratedNoteDriveInfo(id: number, driveFileId: string, driveWebViewLink: string): Promise<GeneratedNote | undefined> {
+    const [result] = await db.update(generatedNotes)
+      .set({ driveFileId, driveWebViewLink })
+      .where(eq(generatedNotes.id, id))
+      .returning();
+    return result;
   }
 
   async getAllBillingRecords(): Promise<BillingRecord[]> {

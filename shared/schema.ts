@@ -5,6 +5,11 @@ import { z } from "zod";
 
 export * from "./models/chat";
 
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
@@ -135,6 +140,8 @@ export const generatedNotes = pgTable("generated_notes", {
   title: text("title").notNull(),
   sections: jsonb("sections").notNull(),
   generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  driveFileId: text("drive_file_id"),
+  driveWebViewLink: text("drive_web_view_link"),
 }, (table) => [
   index("idx_generated_notes_patient_id").on(table.patientId),
   index("idx_generated_notes_batch_id").on(table.batchId),

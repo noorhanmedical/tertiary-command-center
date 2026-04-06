@@ -359,6 +359,7 @@ export async function registerRoutes(
               clinic: "NWPG",
             }));
             await storage.bulkInsertTestHistoryIfNotExists(records);
+            void backgroundSyncPatients();
           }
         } catch (e) {
           console.error("Auto test history capture on completion failed:", e);
@@ -737,6 +738,7 @@ export async function registerRoutes(
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       const record = await storage.createTestHistory(parsed.data);
       res.json(record);
+      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -791,6 +793,7 @@ export async function registerRoutes(
 
       const created = await storage.createTestHistoryBulk(validRecords);
       res.json({ imported: created.length, records: created });
+      void backgroundSyncPatients();
     } catch (error: any) {
       console.error("Test history import error:", error);
       res.status(500).json({ error: error.message || "Import failed" });
@@ -802,6 +805,7 @@ export async function registerRoutes(
       const id = parseInt(req.params.id);
       await storage.deleteTestHistory(id);
       res.status(204).send();
+      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -811,6 +815,7 @@ export async function registerRoutes(
     try {
       await storage.deleteAllTestHistory();
       res.status(204).send();
+      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -878,6 +883,7 @@ export async function registerRoutes(
 
       const created = await storage.createPatientReferenceBulk(validRecords);
       res.json({ imported: created.length, records: created });
+      void backgroundSyncPatients();
     } catch (error: any) {
       console.error("Patient reference import error:", error);
       res.status(500).json({ error: error.message || "Import failed" });
@@ -889,6 +895,7 @@ export async function registerRoutes(
       const id = parseInt(req.params.id);
       await storage.deletePatientReference(id);
       res.status(204).send();
+      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -898,6 +905,7 @@ export async function registerRoutes(
     try {
       await storage.deleteAllPatientReferences();
       res.status(204).send();
+      void backgroundSyncPatients();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1026,6 +1034,7 @@ export async function registerRoutes(
         }
       }
 
+      let billingAutoCreated = 0;
       for (const { patient, batch } of allScreenedPatients) {
         const tests: string[] = patient.qualifyingTests || [];
         const services: string[] = [];
@@ -1045,8 +1054,13 @@ export async function registerRoutes(
               patientName: patient.name,
               clinician: batch.clinicianName || null,
             });
+            billingAutoCreated++;
           }
         }
+      }
+
+      if (billingAutoCreated > 0) {
+        void backgroundSyncBilling();
       }
 
       const records = await storage.getAllBillingRecords();
@@ -1081,6 +1095,7 @@ export async function registerRoutes(
         clinician: clinician ?? null,
       });
       res.status(201).json(record);
+      void backgroundSyncBilling();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1097,6 +1112,7 @@ export async function registerRoutes(
       const record = await storage.updateBillingRecord(id, updates);
       if (!record) return res.status(404).json({ error: "Billing record not found" });
       res.json(record);
+      void backgroundSyncBilling();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1107,7 +1123,281 @@ export async function registerRoutes(
       const id = parseInt(req.params.id);
       await storage.deleteBillingRecord(id);
       res.status(204).send();
+      void backgroundSyncBilling();
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ─── Google Workspace Integration ──────────────────────────────────────────
+
+  const patientsSyncState = { lastSyncedAt: null as string | null };
+  const billingSyncState = { lastSyncedAt: null as string | null };
+  const patientsSyncLock = { running: false, pending: false };
+  const billingSyncLock = { running: false, pending: false };
+
+  interface PatientsSyncResult {
+    spreadsheetId: string;
+    patientCount: number;
+    testHistoryCount: number;
+    syncedAt: string;
+  }
+
+  async function executeSyncPatients(): Promise<PatientsSyncResult> {
+    const { getOrCreateSpreadsheet, upsertSheetData } = await import("./googleSheets");
+    const { setSetting } = await import("./dbSettings");
+    const spreadsheetId = await getOrCreateSpreadsheet("GOOGLE_SHEETS_PATIENTS_ID", "Plexus Patient Directory");
+    const [references, testHistory] = await Promise.all([
+      storage.getAllPatientReferences(),
+      storage.getAllTestHistory(),
+    ]);
+    await upsertSheetData(
+      spreadsheetId, "Patient Directory",
+      ["ID", "Patient Name", "Age", "Gender", "Insurance", "Diagnoses", "History", "Medications", "Notes", "Created At"],
+      references.map((r) => [r.id, r.patientName, r.age ?? "", r.gender ?? "", r.insurance ?? "", r.diagnoses ?? "", r.history ?? "", r.medications ?? "", r.notes ?? "", r.createdAt.toISOString()])
+    );
+    await upsertSheetData(
+      spreadsheetId, "Test History",
+      ["ID", "Patient Name", "DOB", "Test Name", "Date of Service", "Insurance Type", "Clinic", "Notes", "Created At"],
+      testHistory.map((t) => [t.id, t.patientName, t.dob ?? "", t.testName, t.dateOfService, t.insuranceType, t.clinic, t.notes ?? "", t.createdAt.toISOString()])
+    );
+    const syncedAt = new Date().toISOString();
+    patientsSyncState.lastSyncedAt = syncedAt;
+    await setSetting("PATIENTS_LAST_SYNCED_AT", syncedAt);
+    await setSetting("PATIENTS_SPREADSHEET_ID", spreadsheetId);
+    return { spreadsheetId, patientCount: references.length, testHistoryCount: testHistory.length, syncedAt };
+  }
+
+  async function runPatientsSyncWithLock(throwOnError: boolean): Promise<PatientsSyncResult | null> {
+    if (patientsSyncLock.running) {
+      patientsSyncLock.pending = true;
+      return null;
+    }
+    patientsSyncLock.running = true;
+    try {
+      return await executeSyncPatients();
+    } catch (err) {
+      if (throwOnError) throw err;
+      console.warn("Background patient sync skipped:", (err as Error).message);
+      return null;
+    } finally {
+      patientsSyncLock.running = false;
+      if (patientsSyncLock.pending) {
+        patientsSyncLock.pending = false;
+        void runPatientsSyncWithLock(false);
+      }
+    }
+  }
+
+  function backgroundSyncPatients(): void {
+    void runPatientsSyncWithLock(false);
+  }
+
+  interface BillingSyncResult {
+    spreadsheetId: string;
+    recordCount: number;
+    syncedAt: string;
+  }
+
+  async function executeSyncBilling(): Promise<BillingSyncResult> {
+    const { getOrCreateSpreadsheet, upsertSheetData } = await import("./googleSheets");
+    const { setSetting } = await import("./dbSettings");
+    const spreadsheetId = await getOrCreateSpreadsheet("GOOGLE_SHEETS_BILLING_ID", "Plexus Billing Tracker");
+    const records = await storage.getAllBillingRecords();
+    await upsertSheetData(
+      spreadsheetId, "Billing Records",
+      ["ID", "Patient Name", "Service", "Facility", "Date of Service", "Clinician", "Insurance", "Billing", "Paid", "Billed", "NWPG Invoice Sent", "Paid Final", "Comments", "Created At"],
+      records.map((r) => [
+        r.id, r.patientName, r.service, r.facility ?? "", r.dateOfService ?? "",
+        r.clinician ?? "", r.insuranceInfo ?? "", r.billing ?? "",
+        r.paid ? "Yes" : "No", r.billed ? "Yes" : "No",
+        r.nwpgInvoiceSent ? "Yes" : "No", r.paidFinal ? "Yes" : "No",
+        r.comments ?? "", r.createdAt.toISOString()
+      ])
+    );
+    const syncedAt = new Date().toISOString();
+    billingSyncState.lastSyncedAt = syncedAt;
+    await setSetting("BILLING_LAST_SYNCED_AT", syncedAt);
+    await setSetting("BILLING_SPREADSHEET_ID", spreadsheetId);
+    return { spreadsheetId, recordCount: records.length, syncedAt };
+  }
+
+  async function runBillingSyncWithLock(throwOnError: boolean): Promise<BillingSyncResult | null> {
+    if (billingSyncLock.running) {
+      billingSyncLock.pending = true;
+      return null;
+    }
+    billingSyncLock.running = true;
+    try {
+      return await executeSyncBilling();
+    } catch (err) {
+      if (throwOnError) throw err;
+      console.warn("Background billing sync skipped:", (err as Error).message);
+      return null;
+    } finally {
+      billingSyncLock.running = false;
+      if (billingSyncLock.pending) {
+        billingSyncLock.pending = false;
+        void runBillingSyncWithLock(false);
+      }
+    }
+  }
+
+  function backgroundSyncBilling(): void {
+    void runBillingSyncWithLock(false);
+  }
+
+  app.get("/api/google/status", async (_req, res) => {
+    try {
+      const { isGoogleSheetsConnected } = await import("./googleSheets");
+      const { isGoogleDriveConnected } = await import("./googleDrive");
+      const { getSetting } = await import("./dbSettings");
+      const [sheets, drive, dbPatientsAt, dbBillingAt, dbPatientsSid, dbBillingSid] = await Promise.all([
+        isGoogleSheetsConnected(),
+        isGoogleDriveConnected(),
+        getSetting("PATIENTS_LAST_SYNCED_AT"),
+        getSetting("BILLING_LAST_SYNCED_AT"),
+        getSetting("PATIENTS_SPREADSHEET_ID"),
+        getSetting("BILLING_SPREADSHEET_ID"),
+      ]);
+      const patientsAt = patientsSyncState.lastSyncedAt ?? dbPatientsAt;
+      const billingAt = billingSyncState.lastSyncedAt ?? dbBillingAt;
+      const patientsSid = dbPatientsSid ?? process.env.GOOGLE_SHEETS_PATIENTS_ID ?? null;
+      const billingSid = dbBillingSid ?? process.env.GOOGLE_SHEETS_BILLING_ID ?? null;
+      res.json({
+        sheets: {
+          connected: sheets,
+          lastSyncedPatients: patientsAt,
+          lastSyncedBilling: billingAt,
+          patientsSpreadsheetUrl: patientsSid ? `https://docs.google.com/spreadsheets/d/${patientsSid}` : null,
+          billingSpreadsheetUrl: billingSid ? `https://docs.google.com/spreadsheets/d/${billingSid}` : null,
+        },
+        drive: { connected: drive },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/google/sync/patients", async (_req, res) => {
+    try {
+      const result = await runPatientsSyncWithLock(true);
+      if (!result) {
+        res.json({ success: true, message: "Sync already in progress, queued" });
+        return;
+      }
+      res.json({
+        success: true,
+        spreadsheetId: result.spreadsheetId,
+        spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${result.spreadsheetId}`,
+        syncedAt: result.syncedAt,
+        patientCount: result.patientCount,
+        testHistoryCount: result.testHistoryCount,
+      });
+    } catch (error: any) {
+      console.error("Patient sync error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/google/sync/billing", async (_req, res) => {
+    try {
+      const result = await runBillingSyncWithLock(true);
+      if (!result) {
+        res.json({ success: true, message: "Sync already in progress, queued" });
+        return;
+      }
+      res.json({
+        success: true,
+        spreadsheetId: result.spreadsheetId,
+        spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${result.spreadsheetId}`,
+        syncedAt: result.syncedAt,
+        recordCount: result.recordCount,
+      });
+    } catch (error: any) {
+      console.error("Billing sync error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/google/drive/export-note", async (req, res) => {
+    try {
+      const { noteId } = req.body;
+      if (!noteId || typeof noteId !== "number") {
+        return res.status(400).json({ error: "noteId is required" });
+      }
+
+      const note = await storage.getGeneratedNote(noteId);
+      if (!note) return res.status(404).json({ error: "Note not found" });
+
+      const { uploadTextAsGoogleDoc } = await import("./googleDrive");
+
+      const sections = (note.sections as { heading: string; body: string }[]) || [];
+      const content = sections
+        .filter((s) => s.heading !== "__screening_meta__")
+        .map((s) => `${s.heading}\n${s.body}`)
+        .join("\n\n");
+
+      const filename = `${note.patientName} - ${note.title} (${note.scheduleDate || note.generatedAt.toISOString().split("T")[0]})`;
+
+      const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content);
+
+      const updated = await storage.updateGeneratedNoteDriveInfo(noteId, driveFileId, webViewLink);
+
+      res.json({
+        success: true,
+        driveFileId,
+        webViewLink,
+        note: updated,
+      });
+    } catch (error: any) {
+      console.error("Drive export error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/google/drive/export-all", async (req, res) => {
+    try {
+      const { uploadTextAsGoogleDoc } = await import("./googleDrive");
+      const BATCH_LIMIT = 50;
+
+      const allNotes = await storage.getAllGeneratedNotes();
+      const unsynced = allNotes.filter((n) => !n.driveFileId).slice(0, BATCH_LIMIT);
+
+      const results: { noteId: number; driveFileId: string; webViewLink: string }[] = [];
+      const errors: { noteId: number; error: string }[] = [];
+
+      for (const note of unsynced) {
+        try {
+          const sections = (note.sections as { heading: string; body: string }[]) || [];
+          const content = sections
+            .filter((s) => s.heading !== "__screening_meta__")
+            .map((s) => `${s.heading}\n${s.body}`)
+            .join("\n\n");
+
+          const filename = `${note.patientName} - ${note.title} (${note.scheduleDate || note.generatedAt.toISOString().split("T")[0]})`;
+
+          const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content);
+          await storage.updateGeneratedNoteDriveInfo(note.id, driveFileId, webViewLink);
+          results.push({ noteId: note.id, driveFileId, webViewLink });
+        } catch (e: any) {
+          errors.push({ noteId: note.id, error: e.message });
+        }
+      }
+
+      const totalUnsynced = allNotes.filter((n) => !n.driveFileId).length;
+      const remaining = Math.max(0, totalUnsynced - results.length - errors.length);
+
+      res.json({
+        success: true,
+        exported: results.length,
+        failed: errors.length,
+        remaining,
+        results,
+        errors,
+      });
+    } catch (error: any) {
+      console.error("Drive export-all error:", error);
       res.status(500).json({ error: error.message });
     }
   });

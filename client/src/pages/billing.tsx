@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card } from "@/components/ui/card";
@@ -15,7 +15,10 @@ import {
   X,
   FileText,
   Plus,
+  RefreshCw,
+  ExternalLink,
 } from "lucide-react";
+import { SiGooglesheets, SiGoogledrive } from "react-icons/si";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -60,6 +63,8 @@ type GeneratedNote = {
   title: string;
   sections: NoteSection[];
   generatedAt: string;
+  driveFileId: string | null;
+  driveWebViewLink: string | null;
 };
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -108,10 +113,14 @@ function NotesModal({
   notes,
   title,
   onClose,
+  onExportToDrive,
+  exportingNoteIds,
 }: {
   notes: GeneratedNote[];
   title: string;
   onClose: () => void;
+  onExportToDrive?: (noteId: number) => void;
+  exportingNoteIds?: Set<number>;
 }) {
   const visible = notes.filter(
     (n) => !n.sections.every((s) => s.heading === "__screening_meta__")
@@ -196,6 +205,32 @@ function NotesModal({
                     <span className="text-xs font-semibold text-slate-700">{note.title}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
+                    {note.driveWebViewLink ? (
+                      <a
+                        href={note.driveWebViewLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-blue-600 hover:text-blue-800 px-2 py-0.5 rounded border border-blue-200 bg-blue-50 flex items-center gap-1"
+                        data-testid={`link-drive-billing-${note.id}`}
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        Drive
+                      </a>
+                    ) : onExportToDrive ? (
+                      <button
+                        className="text-[10px] text-blue-600 hover:text-blue-800 px-2 py-0.5 rounded border border-blue-200 bg-blue-50 flex items-center gap-1"
+                        onClick={() => onExportToDrive(note.id)}
+                        disabled={exportingNoteIds?.has(note.id)}
+                        data-testid={`button-save-drive-billing-${note.id}`}
+                      >
+                        {exportingNoteIds?.has(note.id) ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <SiGoogledrive className="w-3 h-3" />
+                        )}
+                        Save to Drive
+                      </button>
+                    ) : null}
                     <button
                       className="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-colors"
                       onClick={() => handleCopy(note)}
@@ -516,6 +551,60 @@ export default function BillingPage() {
     updateMutation.mutate({ id, updates: { [field]: value } });
   }
 
+  const [billingSyncedAt, setBillingSyncedAt] = useState<string | null>(null);
+  const [billingSheetUrl, setBillingSheetUrl] = useState<string | null>(null);
+  const [exportingNoteIds, setExportingNoteIds] = useState<Set<number>>(new Set());
+
+  const { data: googleStatus } = useQuery<{
+    sheets: {
+      connected: boolean;
+      lastSyncedBilling: string | null;
+      billingSpreadsheetUrl: string | null;
+    };
+  }>({ queryKey: ["/api/google/status"], refetchInterval: 30000 });
+
+  useEffect(() => {
+    if (!googleStatus?.sheets) return;
+    setBillingSyncedAt(googleStatus.sheets.lastSyncedBilling ?? null);
+    setBillingSheetUrl(googleStatus.sheets.billingSpreadsheetUrl ?? null);
+  }, [googleStatus]);
+
+  const exportNoteMutation = useMutation({
+    mutationFn: async (noteId: number) => {
+      setExportingNoteIds((prev) => new Set(prev).add(noteId));
+      const res = await apiRequest("POST", "/api/google/drive/export-note", { noteId });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setExportingNoteIds((prev) => { const s = new Set(prev); s.delete(data.note?.id); return s; });
+      queryClient.invalidateQueries({ queryKey: ["/api/generated-notes"] });
+      toast({ title: "Saved to Google Drive" });
+    },
+    onError: (err: Error, noteId) => {
+      setExportingNoteIds((prev) => { const s = new Set(prev); s.delete(noteId); return s; });
+      toast({ title: "Drive export failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const syncBillingMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/google/sync/billing");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      if (data.syncedAt) {
+        setBillingSyncedAt(data.syncedAt);
+        if (data.spreadsheetUrl) setBillingSheetUrl(data.spreadsheetUrl);
+        toast({ title: "Synced to Google Sheets", description: `${data.recordCount} records pushed` });
+      } else {
+        toast({ title: "Sync queued", description: "Another sync is in progress; your changes will be included" });
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Sync failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   function handleAddRow(data: { patientName: string; dateOfService: string; facility: string; clinician: string }) {
     const svc = activeTab === "Ultrasounds" ? "Ultrasound" : activeTab;
     createMutation.mutate({
@@ -599,7 +688,34 @@ export default function BillingPage() {
               <p className="text-xs text-slate-500 mt-0.5">Track billing status for screened patients</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => syncBillingMutation.mutate()}
+                disabled={syncBillingMutation.isPending}
+                className="gap-1.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                data-testid="button-sync-billing-sheets"
+              >
+                {syncBillingMutation.isPending ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <SiGooglesheets className="w-3.5 h-3.5" />
+                )}
+                Sync to Sheets
+              </Button>
+              {billingSyncedAt && (
+                <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                  Synced {new Date(billingSyncedAt).toLocaleTimeString()}
+                  {billingSheetUrl && (
+                    <a href={billingSheetUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-emerald-600 hover:underline inline-flex items-center gap-0.5">
+                      <ExternalLink className="w-2.5 h-2.5" />Open
+                    </a>
+                  )}
+                </span>
+              )}
+            </div>
             <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
             <select
               className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -743,6 +859,8 @@ export default function BillingPage() {
           notes={docModal.notes}
           title={docModal.title}
           onClose={() => setDocModal(null)}
+          onExportToDrive={(noteId) => exportNoteMutation.mutate(noteId)}
+          exportingNoteIds={exportingNoteIds}
         />
       )}
 

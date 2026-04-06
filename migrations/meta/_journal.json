@@ -15,6 +15,13 @@
       "when": 1743994000000,
       "tag": "0001_add_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775457438231,
+      "tag": "0002_add_app_settings_and_drive_fields",
+      "breakpoints": true
     }
   ]
 }

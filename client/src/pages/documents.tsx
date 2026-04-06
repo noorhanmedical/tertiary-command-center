@@ -5,7 +5,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
-import { ArrowLeft, FileText, Building2, Calendar, ChevronDown, ChevronRight, Copy, Printer, Trash2, RefreshCw, ClipboardList } from "lucide-react";
+import { ArrowLeft, FileText, Building2, Calendar, ChevronDown, ChevronRight, Copy, Printer, Trash2, RefreshCw, ClipboardList, ExternalLink } from "lucide-react";
+import { SiGoogledrive } from "react-icons/si";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
 
 type NoteSection = { heading: string; body: string };
@@ -21,6 +22,8 @@ type GeneratedNote = {
   title: string;
   sections: NoteSection[];
   generatedAt: string;
+  driveFileId: string | null;
+  driveWebViewLink: string | null;
 };
 type BatchSummary = { id: number; clinicianName: string | null };
 
@@ -108,6 +111,43 @@ export default function DocumentsPage() {
   const [expandedPatients, setExpandedPatients] = useState<Set<number>>(new Set());
   const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
   const [screeningFormNote, setScreeningFormNote] = useState<GeneratedNote | null>(null);
+  const [exportingNoteIds, setExportingNoteIds] = useState<Set<number>>(new Set());
+
+  const exportNoteMutation = useMutation({
+    mutationFn: async (noteId: number) => {
+      setExportingNoteIds((prev) => new Set(prev).add(noteId));
+      const res = await apiRequest("POST", "/api/google/drive/export-note", { noteId });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setExportingNoteIds((prev) => { const s = new Set(prev); s.delete(data.note?.id); return s; });
+      queryClient.invalidateQueries({ queryKey: ["/api/generated-notes"] });
+      toast({
+        title: "Saved to Google Drive",
+        description: data.webViewLink
+          ? `File saved — open it at: ${data.webViewLink}`
+          : "File saved to Google Drive",
+      });
+    },
+    onError: (err: Error, noteId) => {
+      setExportingNoteIds((prev) => { const s = new Set(prev); s.delete(noteId); return s; });
+      toast({ title: "Drive export failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const exportAllMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/google/drive/export-all");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/generated-notes"] });
+      toast({ title: "Bulk export complete", description: `${data.exported} notes saved to Google Drive${data.failed > 0 ? `, ${data.failed} failed` : ""}` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Bulk export failed", description: err.message, variant: "destructive" });
+    },
+  });
 
   const { data: notes = [], isLoading } = useQuery<GeneratedNote[]>({
     queryKey: ["/api/generated-notes"],
@@ -194,12 +234,31 @@ export default function DocumentsPage() {
           </Link>
         </div>
 
-        <div className="flex items-center gap-3 mb-8">
-          <FileText className="w-7 h-7 text-teal-600" />
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">Clinical Notes</h1>
-            <p className="text-sm text-slate-500 mt-0.5">Auto-generated notes organized by clinic, date, and patient</p>
+        <div className="flex items-center justify-between gap-4 mb-8">
+          <div className="flex items-center gap-3">
+            <FileText className="w-7 h-7 text-teal-600" />
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">Clinical Notes</h1>
+              <p className="text-sm text-slate-500 mt-0.5">Auto-generated notes organized by clinic, date, and patient</p>
+            </div>
           </div>
+          {notes.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportAllMutation.mutate()}
+              disabled={exportAllMutation.isPending}
+              className="gap-1.5 text-blue-700 border-blue-200 hover:bg-blue-50 shrink-0"
+              data-testid="button-sync-all-drive"
+            >
+              {exportAllMutation.isPending ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <SiGoogledrive className="w-3.5 h-3.5" />
+              )}
+              Sync All to Drive
+            </Button>
+          )}
         </div>
 
         {isLoading ? (
@@ -302,6 +361,33 @@ export default function DocumentsPage() {
                                               >
                                                 <ClipboardList className="w-3 h-3" />
                                                 Screening Form
+                                              </button>
+                                            )}
+                                            {note.driveWebViewLink ? (
+                                              <a
+                                                href={note.driveWebViewLink}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-[10px] text-blue-600 hover:text-blue-800 px-2 py-0.5 rounded border border-blue-200 bg-blue-50 flex items-center gap-1 shrink-0"
+                                                onClick={(e) => e.stopPropagation()}
+                                                data-testid={`link-drive-${note.id}`}
+                                              >
+                                                <ExternalLink className="w-3 h-3" />
+                                                Drive
+                                              </a>
+                                            ) : (
+                                              <button
+                                                className="text-[10px] text-blue-600 hover:text-blue-800 px-2 py-0.5 rounded border border-blue-200 bg-blue-50 flex items-center gap-1 shrink-0"
+                                                onClick={(e) => { e.stopPropagation(); exportNoteMutation.mutate(note.id); }}
+                                                disabled={exportingNoteIds.has(note.id)}
+                                                data-testid={`button-save-drive-${note.id}`}
+                                              >
+                                                {exportingNoteIds.has(note.id) ? (
+                                                  <RefreshCw className="w-3 h-3 animate-spin" />
+                                                ) : (
+                                                  <SiGoogledrive className="w-3 h-3" />
+                                                )}
+                                                Save to Drive
                                               </button>
                                             )}
                                             <button
