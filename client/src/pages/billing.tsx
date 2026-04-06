@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+import type { LucideIcon } from "lucide-react";
 import {
   ArrowLeft,
   DollarSign,
@@ -19,6 +20,21 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronsUpDown,
+  Check,
+  Building2,
+  User,
+  Scan,
+  Brain,
+  Activity,
+  Shield,
+  ClipboardList,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Banknote,
+  CircleDot,
+  SlidersHorizontal,
 } from "lucide-react";
 import { SiGooglesheets, SiGoogledrive } from "react-icons/si";
 
@@ -176,6 +192,22 @@ function statusBadgeClass(value: string | null): string {
   if (v === "partial") return "bg-blue-100 text-blue-800 border-blue-200";
   if (v === "not billed") return "bg-slate-100 text-slate-600 border-slate-200";
   return "bg-slate-100 text-slate-600 border-slate-200";
+}
+
+// ─── Status helpers ──────────────────────────────────────────────────────────
+
+function statusDotColor(value: string | null): string {
+  const v = (value ?? "").toLowerCase();
+  if (v === "paid" || v === "accepted") return "bg-emerald-500";
+  if (v === "denied" || v === "rejected") return "bg-red-500";
+  if (v === "pending" || v === "submitted") return "bg-amber-400";
+  if (v === "partial") return "bg-blue-500";
+  if (v === "not billed") return "bg-slate-300";
+  return "bg-slate-300";
+}
+
+function StatusDot({ value }: { value: string | null }) {
+  return <span className={`w-2 h-2 rounded-full shrink-0 ${statusDotColor(value)}`} />;
 }
 
 // ─── Cell components ────────────────────────────────────────────────────────
@@ -348,26 +380,100 @@ function DropdownCell({ value, recordId, field, options, onSave, record, badgeSt
   }
 
   const display = value ?? "—";
+  const isStatus = badgeStyle !== false;
 
   return (
     <div ref={ref} className="relative" data-testid={`dropdown-billing-${String(field)}-${recordId}`}>
       <button
-        className={`text-[10px] px-2 py-0.5 rounded border font-medium whitespace-nowrap transition-colors hover:opacity-80 ${badgeStyle !== false ? statusBadgeClass(value) : "bg-slate-50 text-slate-600 border-slate-200"}`}
+        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium whitespace-nowrap transition-all hover:shadow-sm ${
+          isStatus && value
+            ? `${statusBadgeClass(value)} hover:opacity-90`
+            : "bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+        }`}
         onClick={() => setOpen((o) => !o)}
         data-testid={`button-dropdown-${String(field)}-${recordId}`}
       >
-        {display}
+        {isStatus && <StatusDot value={value} />}
+        <span>{display}</span>
+        <ChevronDown className="w-3 h-3 opacity-50 shrink-0" />
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-0.5 z-30 bg-white border border-slate-200 rounded-lg shadow-xl min-w-[160px] py-1 overflow-hidden">
+        <div className="absolute left-0 top-full mt-1.5 z-30 bg-white border border-slate-100 rounded-2xl shadow-2xl min-w-[180px] py-1.5 overflow-hidden" style={{ boxShadow: "0 8px 30px rgba(0,0,0,0.12)" }}>
           {options.map((opt) => (
             <button
               key={opt}
-              className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-slate-50 transition-colors ${opt === value ? "font-semibold bg-slate-50" : ""}`}
+              className={`w-full flex items-center gap-2.5 px-3.5 py-2 text-[12px] transition-colors hover:bg-slate-50 ${opt === value ? "bg-slate-50/80" : ""}`}
               onClick={() => select(opt)}
               data-testid={`option-${String(field)}-${opt.replace(/\s+/g, "-").toLowerCase()}-${recordId}`}
             >
-              {opt}
+              {isStatus && <StatusDot value={opt} />}
+              <span className={opt === value ? "font-semibold text-slate-900" : "text-slate-700"}>{opt}</span>
+              {opt === value && <Check className="w-3 h-3 text-primary ml-auto" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Filter Pill ─────────────────────────────────────────────────────────────
+
+function FilterPill({ icon: Icon, label, value, options, onChange, testId }: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+  testId?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  const isActive = !!value;
+
+  return (
+    <div ref={ref} className="relative" data-testid={testId}>
+      <button
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium transition-all hover:shadow-sm whitespace-nowrap ${
+          isActive
+            ? "bg-primary text-primary-foreground border-primary shadow-sm"
+            : "bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+        }`}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon className="w-3 h-3 shrink-0" />
+        <span>{value || label}</span>
+        <ChevronDown className={`w-3 h-3 opacity-60 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-1.5 z-30 bg-white border border-slate-100 rounded-2xl shadow-2xl min-w-[200px] py-1.5 overflow-hidden" style={{ boxShadow: "0 8px 30px rgba(0,0,0,0.12)" }}>
+          <button
+            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-[12px] text-slate-500 hover:bg-slate-50 transition-colors"
+            onClick={() => { onChange(""); setOpen(false); }}
+          >
+            <span className="italic">All {label}</span>
+            {!value && <Check className="w-3 h-3 text-primary ml-auto" />}
+          </button>
+          <div className="border-t border-slate-100 my-0.5" />
+          {options.map((opt) => (
+            <button
+              key={opt}
+              className={`w-full flex items-center gap-2.5 px-3.5 py-2 text-[12px] transition-colors hover:bg-slate-50 ${opt === value ? "bg-slate-50/80" : ""}`}
+              onClick={() => { onChange(opt); setOpen(false); }}
+            >
+              <StatusDot value={opt} />
+              <span className={opt === value ? "font-semibold text-slate-900" : "text-slate-700"}>{opt}</span>
+              {opt === value && <Check className="w-3 h-3 text-primary ml-auto" />}
             </button>
           ))}
         </div>
@@ -809,45 +915,26 @@ export default function BillingPage() {
 
         {/* Filter Bar */}
         <div className="flex items-center gap-2 mt-3 flex-wrap">
-          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Filter:</span>
-          <select className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-            value={filterFacility} onChange={(e) => setFilterFacility(e.target.value)} data-testid="select-filter-facility">
-            <option value="">All Facilities</option>
-            {FACILITY_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
-          </select>
-          <select className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-            value={filterProvider} onChange={(e) => setFilterProvider(e.target.value)} data-testid="select-filter-provider">
-            <option value="">All Providers</option>
-            {uniqueProviders.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <select className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-            value={filterService} onChange={(e) => setFilterService(e.target.value)} data-testid="select-filter-service">
-            <option value="">All Services</option>
-            {SERVICE_TYPE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-            value={filterClaimStatus} onChange={(e) => setFilterClaimStatus(e.target.value)} data-testid="select-filter-claim-status">
-            <option value="">All Claim Status</option>
-            {CLAIM_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-            value={filterPayerStatus} onChange={(e) => setFilterPayerStatus(e.target.value)} data-testid="select-filter-payer-status">
-            <option value="">All Payer Status</option>
-            {PAYER_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-            value={filterPaymentStatus} onChange={(e) => setFilterPaymentStatus(e.target.value)} data-testid="select-filter-payment-status">
-            <option value="">All Payment Status</option>
-            {PAYMENT_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <div className="flex items-center gap-1 text-slate-400">
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-semibold uppercase tracking-wider">Filter</span>
+          </div>
+          <FilterPill icon={Building2} label="Facility" value={filterFacility} options={FACILITY_OPTIONS} onChange={setFilterFacility} testId="select-filter-facility" />
+          <FilterPill icon={User} label="Provider" value={filterProvider} options={uniqueProviders} onChange={setFilterProvider} testId="select-filter-provider" />
+          <FilterPill icon={Scan} label="Service" value={filterService} options={SERVICE_TYPE_OPTIONS} onChange={setFilterService} testId="select-filter-service" />
+          <FilterPill icon={ClipboardList} label="Claim Status" value={filterClaimStatus} options={CLAIM_STATUS_OPTIONS} onChange={setFilterClaimStatus} testId="select-filter-claim-status" />
+          <FilterPill icon={AlertCircle} label="Payer Status" value={filterPayerStatus} options={PAYER_STATUS_OPTIONS} onChange={setFilterPayerStatus} testId="select-filter-payer-status" />
+          <FilterPill icon={Banknote} label="Payment" value={filterPaymentStatus} options={PAYMENT_STATUS_OPTIONS} onChange={setFilterPaymentStatus} testId="select-filter-payment-status" />
           {(filterFacility || filterProvider || filterService || filterClaimStatus || filterPayerStatus || filterPaymentStatus) && (
-            <button className="text-[10px] text-slate-500 hover:text-red-500 px-2 py-1 rounded border border-slate-200 hover:border-red-200 transition-colors"
+            <button
+              className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-600 px-2.5 py-1.5 rounded-full border border-red-200 hover:border-red-300 hover:bg-red-50 transition-colors"
               onClick={() => { setFilterFacility(""); setFilterProvider(""); setFilterService(""); setFilterClaimStatus(""); setFilterPayerStatus(""); setFilterPaymentStatus(""); }}
               data-testid="button-clear-filters">
-              Clear filters
+              <X className="w-3 h-3" />
+              Clear
             </button>
           )}
-          <span className="text-[10px] text-slate-400 ml-auto">{filtered.length} record{filtered.length !== 1 ? "s" : ""}</span>
+          <span className="text-[10px] text-slate-400 ml-auto font-medium">{filtered.length} record{filtered.length !== 1 ? "s" : ""}</span>
         </div>
       </div>
 
@@ -867,13 +954,13 @@ export default function BillingPage() {
           <div className="min-w-max">
             <table className="border-collapse text-xs" data-testid="billing-table">
               <thead>
-                <tr className="bg-slate-100 border-b border-slate-200 sticky top-0 z-10">
+                <tr className="bg-white border-b border-slate-100 sticky top-0 z-10" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                   {columns.map((col) => {
                     const sortable = isSortable(col.label);
                     const sf = getSortField(col.label);
                     return (
                       <th key={col.label}
-                        className={`px-2 py-2 text-left font-semibold text-slate-600 uppercase tracking-wide border-r border-slate-200 whitespace-nowrap last:border-r-0 text-[10px] ${sortable ? "cursor-pointer hover:bg-slate-200 select-none" : ""}`}
+                        className={`px-2 py-2.5 text-left font-semibold text-slate-400 uppercase tracking-widest border-r border-slate-100 whitespace-nowrap last:border-r-0 text-[9px] ${sortable ? "cursor-pointer hover:bg-slate-50 select-none" : ""}`}
                         style={{ minWidth: col.w }}
                         onClick={sortable && sf ? () => toggleSort(sf as SortableField) : undefined}
                         data-testid={`th-billing-${col.label.replace(/\s+/g, "-").toLowerCase()}`}
@@ -891,7 +978,7 @@ export default function BillingPage() {
                 {filtered.map((record, ri) => {
                   const days = calcDaysInAR(record.dateSubmitted);
                   const accent = rowAccentClass(record);
-                  const base = ri % 2 === 0 ? "bg-white" : "bg-slate-50/30";
+                  const base = "bg-white";
                   return (
                     <tr key={record.id}
                       className={`border-b border-slate-100 hover:brightness-95 transition-all ${accent || base}`}
@@ -925,16 +1012,16 @@ export default function BillingPage() {
                         <div className="flex items-center gap-1.5">
                           <DropdownCell value={record.documentationStatus} recordId={record.id} field="documentationStatus" options={DOC_STATUS_OPTIONS} onSave={handleSave} record={record} badgeStyle={false} />
                           <button
-                            className={`text-[10px] px-2 py-0.5 rounded border whitespace-nowrap transition-colors ${
+                            className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap transition-all hover:shadow-sm ${
                               hasNotes(record)
-                                ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
-                                : "bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100"
+                                ? "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 font-medium"
+                                : "bg-slate-50 text-slate-300 border-slate-200 hover:bg-slate-100"
                             }`}
                             onClick={() => openDocModal(record)}
                             title={hasNotes(record) ? "View generated documents" : "No documents yet"}
                             data-testid={`button-doc-${record.id}`}
                           >
-                            {hasNotes(record) ? "View" : "None"}
+                            {hasNotes(record) ? <><FileText className="w-2.5 h-2.5" />Docs</> : "—"}
                           </button>
                         </div>
                       </td>
