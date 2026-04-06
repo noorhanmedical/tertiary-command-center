@@ -198,7 +198,6 @@ const IMPORT_ACCESS_CODE = "1234";
 type TabItem = { type: "home" } | { type: "history" } | { type: "references" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
 
 export default function Home() {
-  const [, setLocation] = useLocation();
   const [tabs, setTabs] = useState<TabItem[]>([{ type: "home" }]);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
@@ -2865,6 +2864,7 @@ function ResultsView({
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
   const [shareButtonText, setShareButtonText] = useState("Share");
   const [pdfMode, setPdfMode] = useState<"clinician" | "plexus" | null>(null);
   const [generatingNotesFor, setGeneratingNotesFor] = useState<Set<number>>(new Set());

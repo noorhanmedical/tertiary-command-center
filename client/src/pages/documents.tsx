@@ -355,7 +355,7 @@ export default function DocumentsPage() {
         ) : grouped.length === 0 ? (
           <Card className="p-10 text-center rounded-2xl border-dashed border-slate-200">
             <FileText className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500 font-medium">No clinical notes yet</p>
+            <p className="text-slate-500 font-medium">No ancillary documents yet</p>
             <p className="text-sm text-slate-400 mt-1">Notes are automatically generated when a patient appointment is marked as Completed.</p>
           </Card>
         ) : (
