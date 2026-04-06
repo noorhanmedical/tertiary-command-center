@@ -1046,6 +1046,8 @@ export async function registerRoutes(
               dateOfService: batch.scheduleDate || null,
               patientName: patient.name,
               clinician: batch.clinicianName || null,
+              billingStatus: "Not Started",
+              paidStatus: "Unpaid",
             });
             billingAutoCreated++;
           }
