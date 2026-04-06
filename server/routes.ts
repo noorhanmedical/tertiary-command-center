@@ -996,11 +996,19 @@ export async function registerRoutes(
     "Stress Echocardiogram",
     "Lower Extremity Venous Duplex",
     "Upper Extremity Venous Duplex",
+    "Carotid Duplex",
+    "Renal Artery Duplex",
+    "Aorta/Iliac Duplex",
+    "Mesenteric Artery Duplex",
+    "Lower Extremity Arterial Duplex",
+    "ABI (Ankle-Brachial Index)",
+    "TBI (Toe-Brachial Index)",
   ];
 
   const updateBillingRecordSchema = z.object({
     dateOfService: z.string().nullable().optional(),
     patientName: z.string().min(1).optional(),
+    service: z.string().nullable().optional(),
     clinician: z.string().nullable().optional(),
     facility: z.string().nullable().optional(),
     insuranceInfo: z.string().nullable().optional(),
@@ -1011,7 +1019,11 @@ export async function registerRoutes(
     balanceRemaining: z.string().nullable().optional(),
     dateSubmitted: z.string().nullable().optional(),
     followUpDate: z.string().nullable().optional(),
-    datePaid: z.string().nullable().optional(),
+    paidAmount: z.string().nullable().optional(),
+    totalCharges: z.string().nullable().optional(),
+    allowedAmount: z.string().nullable().optional(),
+    patientResponsibility: z.string().nullable().optional(),
+    adjustmentAmount: z.string().nullable().optional(),
   });
 
   app.get("/api/billing-records", async (_req, res) => {
@@ -1030,23 +1042,18 @@ export async function registerRoutes(
       let billingAutoCreated = 0;
       for (const { patient, batch } of allScreenedPatients) {
         const tests: string[] = patient.qualifyingTests || [];
-        const services: string[] = [];
-        if (tests.includes("BrainWave")) services.push("BrainWave");
-        if (tests.includes("VitalWave")) services.push("VitalWave");
-        if (tests.some((t: string) => ULTRASOUND_TESTS.includes(t))) services.push("Ultrasound");
-
-        for (const service of services) {
-          const existing = await storage.getBillingRecordByPatientAndService(patient.id, service);
+        for (const test of tests) {
+          const existing = await storage.getBillingRecordByPatientAndService(patient.id, test);
           if (!existing) {
             await storage.createBillingRecord({
               patientId: patient.id,
               batchId: batch.id,
-              service,
+              service: test,
               facility: batch.facility || null,
               dateOfService: batch.scheduleDate || null,
               patientName: patient.name,
               clinician: batch.clinicianName || null,
-              billingStatus: "Not Started",
+              billingStatus: "Not Billed",
               paidStatus: "Unpaid",
             });
             billingAutoCreated++;
@@ -1073,13 +1080,14 @@ export async function registerRoutes(
     dateOfService: z.string().nullable().optional(),
     patientName: z.string().min(1),
     clinician: z.string().nullable().optional(),
+    insuranceInfo: z.string().nullable().optional(),
   });
 
   app.post("/api/billing-records", async (req, res) => {
     try {
       const parsed = createBillingRecordSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      const { patientId, batchId, service, facility, dateOfService, patientName, clinician } = parsed.data;
+      const { patientId, batchId, service, facility, dateOfService, patientName, clinician, insuranceInfo } = parsed.data;
       const record = await storage.createBillingRecord({
         patientId: patientId ?? null,
         batchId: batchId ?? null,
@@ -1088,6 +1096,7 @@ export async function registerRoutes(
         dateOfService: dateOfService ?? null,
         patientName,
         clinician: clinician ?? null,
+        insuranceInfo: insuranceInfo ?? null,
       });
       res.status(201).json(record);
       void backgroundSyncBilling();
@@ -1201,14 +1210,22 @@ export async function registerRoutes(
     const records = await storage.getAllBillingRecords();
     await upsertSheetData(
       spreadsheetId, "Billing Records",
-      ["ID", "Patient Name", "Service", "Facility", "Date of Service", "Clinician", "Insurance Info", "Documentation Status", "Billing Status", "Response", "Paid Status", "Balance Remaining", "Date Submitted", "Follow-Up Date", "Date Paid", "Created At"],
-      records.map((r) => [
-        r.id, r.patientName, r.service, r.facility ?? "", r.dateOfService ?? "",
-        r.clinician ?? "", r.insuranceInfo ?? "",
-        r.documentationStatus ?? "", r.billingStatus ?? "", r.response ?? "",
-        r.paidStatus ?? "", r.balanceRemaining ?? "", r.dateSubmitted ?? "",
-        r.followUpDate ?? "", r.datePaid ?? "", r.createdAt.toISOString()
-      ])
+      ["Date of Service", "Patient Name", "Facility", "Rendering Provider", "Service Type", "Primary Insurance", "Documentation Status", "Claim Status", "Payer Status", "Date Submitted", "Days in A/R", "Follow-Up Date", "Payment Status", "Paid Amount", "Total Charges", "Allowed Amount", "Patient Responsibility", "Adjustment Amount", "Balance Remaining"],
+      records.map((r) => {
+        const daysInAR = (() => {
+          if (!r.dateSubmitted) return "";
+          const start = new Date(r.dateSubmitted);
+          if (isNaN(start.getTime())) return "";
+          return Math.max(0, Math.round((Date.now() - start.getTime()) / 86400000)).toString();
+        })();
+        return [
+          r.dateOfService ?? "", r.patientName, r.facility ?? "", r.clinician ?? "",
+          r.service, r.insuranceInfo ?? "", r.documentationStatus ?? "", r.billingStatus ?? "",
+          r.response ?? "", r.dateSubmitted ?? "", daysInAR, r.followUpDate ?? "",
+          r.paidStatus ?? "", r.paidAmount ?? "", r.totalCharges ?? "", r.allowedAmount ?? "",
+          r.patientResponsibility ?? "", r.adjustmentAmount ?? "", r.balanceRemaining ?? ""
+        ];
+      })
     );
     const syncedAt = new Date().toISOString();
     billingSyncState.lastSyncedAt = syncedAt;
