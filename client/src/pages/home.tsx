@@ -3240,7 +3240,6 @@ function ResultsView({
                           service: n.service, kind: n.docKind, title: n.title, sections: n.sections,
                         })) as GeneratedDocument[];
                         const isGenerating = generatingNotesFor.has(patient.id);
-                        if (!isGenerating && docsToShow.length === 0) return null;
                         return (
                           <div className="mt-4 border-t border-slate-100 pt-4" data-testid={`section-clinical-notes-${patient.id}`}>
                             <div className="flex items-center justify-between mb-3">
@@ -3283,6 +3282,9 @@ function ResultsView({
                                 )}
                               </div>
                             </div>
+                            {!isGenerating && docsToShow.length === 0 && (
+                              <p className="text-xs text-slate-400 italic">No ancillary documents yet</p>
+                            )}
                             <div className="space-y-3">
                               {docsToShow.map((doc, di) => (
                                 <div key={di} className="rounded-xl border border-slate-100 bg-slate-50 p-3" data-testid={`note-doc-${patient.id}-${di}`}>
