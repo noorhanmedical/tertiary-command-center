@@ -266,7 +266,7 @@ export default function DocumentUploadPage() {
             <h1 className="text-2xl font-bold text-slate-900">Document Upload</h1>
           </div>
           <p className="text-sm text-slate-500 ml-10">
-            Upload patient reports and informed consent PDFs to Google Drive. Patient names are auto-extracted via AI.
+            Upload patient reports, informed consent forms, and screening forms to Google Drive. Patient names are auto-extracted via AI.
           </p>
         </div>
 
