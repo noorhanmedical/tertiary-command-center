@@ -367,6 +367,8 @@ function EditableCell({
     setEditing(false);
     const trimmed = draft.trim();
     if (trimmed !== (value ?? "")) {
+      // patientName must never be set to null/empty
+      if (field === "patientName" && !trimmed) return;
       onSave(recordId, field, trimmed || null);
     }
   }

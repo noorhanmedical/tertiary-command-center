@@ -992,7 +992,7 @@ export async function registerRoutes(
 
   const updateBillingRecordSchema = z.object({
     dateOfService: z.string().nullable().optional(),
-    patientName: z.string().nullable().optional(),
+    patientName: z.string().min(1).optional(),
     clinician: z.string().nullable().optional(),
     facility: z.string().nullable().optional(),
     report: z.string().nullable().optional(),
