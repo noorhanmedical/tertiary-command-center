@@ -990,7 +990,9 @@ export default function Home() {
             dirSearch={dirSearch}
             setDirSearch={setDirSearch}
             onImportFile={(file) => importHistoryFileMutation.mutate(file)}
-            onImportText={(text) => importHistoryMutation.mutate(text)}
+            onImportText={(text) => {
+              importHistoryMutation.mutate(text, { onSuccess: () => setDirPasteText("") });
+            }}
             onClearAll={() => { if (confirm("Clear all patient history records?")) clearHistoryMutation.mutate(); }}
             importFilePending={importHistoryFileMutation.isPending}
             importTextPending={importHistoryMutation.isPending}
