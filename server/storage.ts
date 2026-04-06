@@ -6,6 +6,7 @@ import {
   patientReferenceData,
   generatedNotes,
   billingRecords,
+  uploadedDocuments,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
@@ -18,6 +19,8 @@ import {
   type InsertGeneratedNote,
   type BillingRecord,
   type InsertBillingRecord,
+  type UploadedDocument,
+  type InsertUploadedDocument,
   users,
   type User,
   type InsertUser,
@@ -89,6 +92,9 @@ export interface IStorage {
   createBillingRecord(record: InsertBillingRecord): Promise<BillingRecord>;
   updateBillingRecord(id: number, updates: Partial<InsertBillingRecord>): Promise<BillingRecord | undefined>;
   deleteBillingRecord(id: number): Promise<void>;
+
+  saveUploadedDocument(record: InsertUploadedDocument): Promise<UploadedDocument>;
+  getAllUploadedDocuments(): Promise<UploadedDocument[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -297,6 +303,15 @@ export class DatabaseStorage implements IStorage {
 
   async deleteBillingRecord(id: number): Promise<void> {
     await db.delete(billingRecords).where(eq(billingRecords.id, id));
+  }
+
+  async saveUploadedDocument(record: InsertUploadedDocument): Promise<UploadedDocument> {
+    const [result] = await db.insert(uploadedDocuments).values(record).returning();
+    return result;
+  }
+
+  async getAllUploadedDocuments(): Promise<UploadedDocument[]> {
+    return db.select().from(uploadedDocuments).orderBy(desc(uploadedDocuments.uploadedAt));
   }
 }
 

@@ -220,3 +220,22 @@ export const insertBillingRecordSchema = createInsertSchema(billingRecords).omit
 
 export type BillingRecord = typeof billingRecords.$inferSelect;
 export type InsertBillingRecord = z.infer<typeof insertBillingRecordSchema>;
+
+export const uploadedDocuments = pgTable("uploaded_documents", {
+  id: serial("id").primaryKey(),
+  facility: text("facility").notNull(),
+  patientName: text("patient_name").notNull(),
+  ancillaryType: text("ancillary_type").notNull(),
+  docType: text("doc_type").notNull(),
+  driveFileId: text("drive_file_id"),
+  driveWebViewLink: text("drive_web_view_link"),
+  uploadedAt: timestamp("uploaded_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertUploadedDocumentSchema = createInsertSchema(uploadedDocuments).omit({
+  id: true,
+  uploadedAt: true,
+});
+
+export type UploadedDocument = typeof uploadedDocuments.$inferSelect;
+export type InsertUploadedDocument = z.infer<typeof insertUploadedDocumentSchema>;

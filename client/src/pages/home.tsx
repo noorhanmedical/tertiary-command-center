@@ -660,6 +660,14 @@ export default function Home() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
+                  <SidebarMenuButton asChild data-testid="sidebar-document-upload">
+                    <Link href="/document-upload" onClick={() => setSidebarOpen(false)}>
+                      <Upload className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium">Document Upload</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
                   <SidebarMenuButton asChild data-testid="sidebar-billing">
                     <Link href="/billing" onClick={() => setSidebarOpen(false)}>
                       <DollarSign className="w-4 h-4 shrink-0" />
@@ -1386,6 +1394,18 @@ export default function Home() {
                       <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
                         <FileText className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
                         <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
+                      </div>
+                    </Card>
+                  </Link>
+
+                  <Link href="/document-upload">
+                    <Card
+                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
+                      data-testid="tile-document-upload"
+                    >
+                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
+                        <Upload className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
+                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-document-upload">Document Upload</span>
                       </div>
                     </Card>
                   </Link>

@@ -1549,5 +1549,100 @@ export async function registerRoutes(
     }
   });
 
+  // --- Document Upload (dedicated page) ---
+
+  app.post("/api/documents/ocr-name", upload.single("file"), async (req, res) => {
+    try {
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: "PDF file is required" });
+
+      let extractedText = "";
+      try {
+        const pdfParseModule = await import("pdf-parse");
+        const pdfParseFn = (pdfParseModule as any).default || pdfParseModule;
+        const pdfData = await pdfParseFn(file.buffer);
+        extractedText = (pdfData.text || "").slice(0, 3000);
+      } catch {
+        extractedText = "";
+      }
+
+      const { openai, withRetry } = await import("./services/aiClient");
+      const prompt = extractedText.trim().length > 20
+        ? `Extract the patient's full name from the following medical document text. Return ONLY the patient name, nothing else. If no patient name is found, return "Unknown".\n\nDocument text:\n${extractedText}`
+        : `This appears to be a scanned or image-based PDF with no readable text. Return "Unknown" as the patient name.`;
+
+      const response = await withRetry(() =>
+        openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0,
+          max_tokens: 50,
+        }),
+        3,
+        "ocr-name"
+      );
+
+      const patientName = (response.choices[0]?.message?.content || "").trim().replace(/^["']|["']$/g, "") || "Unknown";
+      res.json({ patientName });
+    } catch (error: any) {
+      console.error("OCR name extraction error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
+    try {
+      const body = req.body as { facility?: string; patientName?: string; ancillaryType?: string; docType?: string };
+      const { facility, patientName, ancillaryType, docType } = body;
+      if (!facility || !isValidFacility(facility)) {
+        return res.status(400).json({ error: "Valid facility is required" });
+      }
+      if (!patientName || typeof patientName !== "string" || !patientName.trim()) {
+        return res.status(400).json({ error: "patientName is required" });
+      }
+      if (!ancillaryType || !isValidAncillaryType(ancillaryType)) {
+        return res.status(400).json({ error: "ancillaryType must be BrainWave, VitalWave, or Ultrasound" });
+      }
+      if (!docType || !["report", "informed_consent"].includes(docType)) {
+        return res.status(400).json({ error: "docType must be 'report' or 'informed_consent'" });
+      }
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: "PDF file is required" });
+      const isPdf = file.mimetype === "application/pdf" || (file.originalname?.toLowerCase().endsWith(".pdf") ?? false);
+      if (!isPdf) return res.status(400).json({ error: "Only PDF files are accepted" });
+
+      const { ensurePlexusFolderTree, uploadPdfToFolder } = await import("./googleDrive");
+      const tree = await ensurePlexusFolderTree(facility, patientName.trim(), ancillaryType);
+
+      const folderId = docType === "informed_consent" ? tree.informedConsentFolderId : tree.reportFolderId;
+      const typeLabel = docType === "informed_consent" ? "Informed Consent" : "Report";
+      const filename = file.originalname || `${patientName.trim()} - ${ancillaryType} ${typeLabel}.pdf`;
+      const { id: driveFileId, webViewLink } = await uploadPdfToFolder(filename, file.buffer, folderId);
+
+      const record = await storage.saveUploadedDocument({
+        facility,
+        patientName: patientName.trim(),
+        ancillaryType,
+        docType,
+        driveFileId,
+        driveWebViewLink: webViewLink || null,
+      });
+
+      res.json({ success: true, record, driveFileId, webViewLink });
+    } catch (error: any) {
+      console.error("Document upload error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/documents/uploaded", async (_req, res) => {
+    try {
+      const records = await storage.getAllUploadedDocuments();
+      res.json(records);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }

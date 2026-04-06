@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card } from "@/components/ui/card";
@@ -8,21 +8,6 @@ import { Link } from "wouter";
 import { ArrowLeft, FileText, Building2, Calendar, ChevronDown, ChevronRight, Copy, Printer, Trash2, RefreshCw, ClipboardList, ExternalLink, Upload } from "lucide-react";
 import { SiGoogledrive } from "react-icons/si";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
 type NoteSection = { heading: string; body: string };
 type GeneratedNote = {
   id: number;
@@ -117,9 +102,6 @@ const DOC_KIND_LABELS: Record<string, string> = {
   screening: "Screening",
 };
 
-const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
-const ANCILLARY_TYPES = ["BrainWave", "VitalWave", "Ultrasound"] as const;
-
 export default function DocumentsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -129,13 +111,6 @@ export default function DocumentsPage() {
   const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
   const [screeningFormNote, setScreeningFormNote] = useState<GeneratedNote | null>(null);
   const [exportingNoteIds, setExportingNoteIds] = useState<Set<number>>(new Set());
-
-  const [reportUploadOpen, setReportUploadOpen] = useState(false);
-  const [reportFacility, setReportFacility] = useState("");
-  const [reportPatient, setReportPatient] = useState("");
-  const [reportAncillaryType, setReportAncillaryType] = useState("");
-  const [reportFile, setReportFile] = useState<File | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const exportNoteMutation = useMutation({
     mutationFn: async (noteId: number) => {
@@ -173,43 +148,6 @@ export default function DocumentsPage() {
     },
   });
 
-  const uploadReportMutation = useMutation({
-    mutationFn: async ({ facility, patientName, ancillaryType, file }: { facility: string; patientName: string; ancillaryType: string; file: File }) => {
-      const formData = new FormData();
-      formData.append("facility", facility);
-      formData.append("patientName", patientName);
-      formData.append("ancillaryType", ancillaryType);
-      formData.append("file", file);
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const res = await fetch("/api/google/drive/upload-report", {
-        method: "POST",
-        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-        body: formData,
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Upload failed" }));
-        throw new Error(err.error || "Upload failed");
-      }
-      return res.json();
-    },
-    onSuccess: (data) => {
-      toast({
-        title: "Report uploaded to Drive",
-        description: data.webViewLink ? `View at: ${data.webViewLink}` : "Report saved to Google Drive",
-      });
-      setReportUploadOpen(false);
-      setReportFacility("");
-      setReportPatient("");
-      setReportAncillaryType("");
-      setReportFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    },
-    onError: (err: Error) => {
-      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
-    },
-  });
-
   const { data: notes = [], isLoading } = useQuery<GeneratedNote[]>({
     queryKey: ["/api/generated-notes"],
   });
@@ -217,20 +155,6 @@ export default function DocumentsPage() {
   const { data: batches = [] } = useQuery<BatchSummary[]>({
     queryKey: ["/api/screening-batches"],
     select: (data: any[]) => data.map((b) => ({ id: b.id, clinicianName: b.clinicianName ?? null })),
-  });
-
-  const { data: facilityPatients = [] } = useQuery<string[]>({
-    queryKey: ["/api/patients-by-facility", reportFacility],
-    enabled: !!reportFacility,
-    queryFn: async () => {
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const res = await fetch(`/api/patients-by-facility?facility=${encodeURIComponent(reportFacility)}`, {
-        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to load patients");
-      return res.json();
-    },
   });
 
   const deletePatientNotesMutation = useMutation({
@@ -318,16 +242,17 @@ export default function DocumentsPage() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setReportUploadOpen(true)}
-              className="gap-1.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
-              data-testid="button-upload-report"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              Upload Report
-            </Button>
+            <Link href="/document-upload">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                data-testid="button-upload-report"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                Upload Report
+              </Button>
+            </Link>
             {notes.length > 0 && (
               <Button
                 variant="outline"
@@ -550,129 +475,6 @@ export default function DocumentsPage() {
         />
       )}
 
-      <Dialog open={reportUploadOpen} onOpenChange={(open) => {
-        if (!open) {
-          setReportFacility("");
-          setReportPatient("");
-          setReportAncillaryType("");
-          setReportFile(null);
-          if (fileInputRef.current) fileInputRef.current.value = "";
-        }
-        setReportUploadOpen(open);
-      }}>
-        <DialogContent className="max-w-md" data-testid="dialog-upload-report">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Upload className="w-4 h-4 text-emerald-600" />
-              Upload Report PDF
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 pt-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="report-facility">Facility</Label>
-              <Select value={reportFacility} onValueChange={(v) => { setReportFacility(v); setReportPatient(""); }}>
-                <SelectTrigger id="report-facility" data-testid="select-report-facility">
-                  <SelectValue placeholder="Select facility" />
-                </SelectTrigger>
-                <SelectContent>
-                  {VALID_FACILITIES.map((f) => (
-                    <SelectItem key={f} value={f}>{f}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="report-patient">Patient</Label>
-              {facilityPatients.length > 0 ? (
-                <Select value={reportPatient} onValueChange={setReportPatient} disabled={!reportFacility}>
-                  <SelectTrigger id="report-patient" data-testid="select-report-patient">
-                    <SelectValue placeholder={reportFacility ? "Select patient" : "Select a facility first"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {facilityPatients.map((name, i) => (
-                      <SelectItem key={i} value={name}>{name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <input
-                  id="report-patient"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  placeholder={reportFacility ? "Enter patient name" : "Select a facility first"}
-                  value={reportPatient}
-                  onChange={(e) => setReportPatient(e.target.value)}
-                  disabled={!reportFacility}
-                  data-testid="input-report-patient"
-                />
-              )}
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="report-ancillary-type">Ancillary Type</Label>
-              <Select value={reportAncillaryType} onValueChange={setReportAncillaryType}>
-                <SelectTrigger id="report-ancillary-type" data-testid="select-report-ancillary-type">
-                  <SelectValue placeholder="Select ancillary type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {ANCILLARY_TYPES.map((t) => (
-                    <SelectItem key={t} value={t}>{t}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="report-file">PDF File</Label>
-              <input
-                ref={fileInputRef}
-                id="report-file"
-                type="file"
-                accept="application/pdf,.pdf"
-                className="flex w-full text-sm file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
-                onChange={(e) => setReportFile(e.target.files?.[0] ?? null)}
-                data-testid="input-report-file"
-              />
-              {reportFile && (
-                <p className="text-xs text-slate-500 mt-1" data-testid="text-report-filename">{reportFile.name}</p>
-              )}
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => setReportUploadOpen(false)}
-                data-testid="button-cancel-report-upload"
-              >
-                Cancel
-              </Button>
-              <Button
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                disabled={!reportFacility || !reportPatient || !reportAncillaryType || !reportFile || uploadReportMutation.isPending}
-                onClick={() => {
-                  if (reportFacility && reportPatient && reportAncillaryType && reportFile) {
-                    uploadReportMutation.mutate({
-                      facility: reportFacility,
-                      patientName: reportPatient,
-                      ancillaryType: reportAncillaryType,
-                      file: reportFile,
-                    });
-                  }
-                }}
-                data-testid="button-submit-report-upload"
-              >
-                {uploadReportMutation.isPending ? (
-                  <RefreshCw className="w-4 h-4 animate-spin mr-1.5" />
-                ) : (
-                  <Upload className="w-4 h-4 mr-1.5" />
-                )}
-                Upload to Drive
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </main>
   );
 }

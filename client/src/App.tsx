@@ -11,6 +11,7 @@ import ArchivePage from "@/pages/archive";
 import PlexusPage from "@/pages/plexus";
 import DocumentsPage from "@/pages/documents";
 import BillingPage from "@/pages/billing";
+import DocumentUploadPage from "@/pages/document-upload";
 
 function App() {
   const style = {
@@ -38,6 +39,7 @@ function App() {
                     <Route path="/plexus" component={PlexusPage} />
                     <Route path="/documents" component={DocumentsPage} />
                     <Route path="/billing" component={BillingPage} />
+          <Route path="/document-upload" component={DocumentUploadPage} />
                     <Route component={NotFound} />
                   </Switch>
                 </div>

@@ -213,6 +213,7 @@ export async function getOrCreateFolder(
 export interface FolderTree {
   clinicalDocsFolderId: string;
   reportFolderId: string;
+  informedConsentFolderId: string;
   facilityFolderId: string;
   patientFolderId: string;
   ancillaryTypeFolderId: string;
@@ -305,9 +306,17 @@ export async function ensurePlexusFolderTree(
     await setSetting(reportKey, reportFolderId);
   }
 
+  const informedConsentKey = `DRIVE_FOLDER_informed_consent_${facilitySafeKey}_${patientSafeKey}_${ancillarySafeKey}`;
+  let informedConsentFolderId = await getSetting(informedConsentKey);
+  if (!informedConsentFolderId) {
+    informedConsentFolderId = await getOrCreateFolder(drive, "Informed Consent", ancillaryTypeFolderId);
+    await setSetting(informedConsentKey, informedConsentFolderId);
+  }
+
   return {
     clinicalDocsFolderId,
     reportFolderId,
+    informedConsentFolderId,
     facilityFolderId,
     patientFolderId,
     ancillaryTypeFolderId,
