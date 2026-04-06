@@ -57,6 +57,7 @@ function extractMetaFromSections(sections: NoteSection[]): {
   cptCodes: string[];
   selection: string[];
   otherText: Record<string, string>;
+  conditions: Record<string, boolean> | null;
 } {
   const metaSection = sections.find((s) => s.heading === "__screening_meta__");
   if (metaSection) {
@@ -70,11 +71,14 @@ function extractMetaFromSections(sections: NoteSection[]): {
         otherText: (parsed.otherText && typeof parsed.otherText === "object" && !Array.isArray(parsed.otherText))
           ? parsed.otherText
           : {},
+        conditions: (parsed.conditions && typeof parsed.conditions === "object" && !Array.isArray(parsed.conditions))
+          ? parsed.conditions as Record<string, boolean>
+          : null,
       };
     } catch {
     }
   }
-  return { selectedConditions: [], icd10Codes: [], cptCodes: [], selection: [], otherText: {} };
+  return { selectedConditions: [], icd10Codes: [], cptCodes: [], selection: [], otherText: {}, conditions: null };
 }
 
 function buildInitialVwScreening(selectedConditions: string[]): VitalWaveScreeningData {
@@ -106,10 +110,14 @@ function buildInitialBwScreening(selectedConditions: string[]): BrainWaveScreeni
 function buildInitialUsScreening(
   selectedConditions: string[],
   selection: string[],
-  savedOtherText: Record<string, string>
+  savedOtherText: Record<string, string>,
+  savedConditions: Record<string, boolean> | null
 ): UltrasoundScreeningData {
-  const conditions: Record<string, boolean> = {};
   const otherText: Record<string, string> = { ...savedOtherText };
+  if (savedConditions !== null) {
+    return { selection, conditions: { ...savedConditions }, otherText };
+  }
+  const conditions: Record<string, boolean> = {};
   selection.forEach((type) => {
     const cfg = ULTRASOUND_CONFIG[type];
     if (!cfg) return;
@@ -156,7 +164,7 @@ export function EditableScreeningFormModal({
     buildInitialVwScreening(meta.selectedConditions)
   );
   const [usScreening, setUsScreening] = useState<UltrasoundScreeningData>(() =>
-    buildInitialUsScreening(meta.selectedConditions, meta.selection, meta.otherText)
+    buildInitialUsScreening(meta.selectedConditions, meta.selection, meta.otherText, meta.conditions)
   );
   const [bwScreening, setBwScreening] = useState<BrainWaveScreeningData>(() =>
     buildInitialBwScreening(meta.selectedConditions)
@@ -222,7 +230,7 @@ export function EditableScreeningFormModal({
     } else if (service === "Ultrasound") {
       const result = ultrasoundScreeningToResult({ config: ULTRASOUND_CONFIG, screening: usScreening });
       const generated = generateUltrasoundDocuments({ input, screeningResult: result, screening: usScreening, config: ULTRASOUND_CONFIG });
-      const metaBody = JSON.stringify({ selectedConditions: result.selectedConditions, icd10Codes: result.icd10Codes, cptCodes: result.cptCodes, selection: usScreening.selection, otherText: usScreening.otherText || {} });
+      const metaBody = JSON.stringify({ selectedConditions: result.selectedConditions, icd10Codes: result.icd10Codes, cptCodes: result.cptCodes, selection: usScreening.selection, otherText: usScreening.otherText || {}, conditions: usScreening.conditions });
       const metaSection = { heading: "__screening_meta__", body: metaBody };
       generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, metaSection];
       generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, metaSection];
