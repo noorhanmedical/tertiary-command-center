@@ -1353,14 +1353,33 @@ export default function Home() {
 
                   <Card
                     className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                    onClick={openReferencesTab}
-                    data-testid="tile-patient-directory"
+                    onClick={() => setLocation("/documents")}
+                    data-testid="tile-documents"
                   >
                     <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                      <Users className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
+                      <FileText className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
+                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
+                      <button
+                        className="mt-1 px-3 py-1 text-xs font-semibold bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg transition-colors"
+                        data-testid="button-generate-note"
+                        onClick={(e) => { e.stopPropagation(); setLocation("/plexus"); }}
+                      >
+                        Generate Note
+                      </button>
                     </div>
                   </Card>
+
+                  <Link href="/document-upload">
+                    <Card
+                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
+                      data-testid="tile-document-upload"
+                    >
+                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
+                        <Upload className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
+                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-document-upload">Document Upload</span>
+                      </div>
+                    </Card>
+                  </Link>
 
                   <Link href="/billing">
                     <Card
@@ -1374,41 +1393,16 @@ export default function Home() {
                     </Card>
                   </Link>
 
-                  <Link href="/plexus">
-                    <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                      data-testid="tile-plexus-documents"
-                    >
-                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                        <ClipboardList className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-plexus-documents">Generate Note</span>
-                      </div>
-                    </Card>
-                  </Link>
-
-                  <Link href="/documents">
-                    <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                      data-testid="tile-documents"
-                    >
-                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                        <FileText className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
-                      </div>
-                    </Card>
-                  </Link>
-
-                  <Link href="/document-upload">
-                    <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                      data-testid="tile-document-upload"
-                    >
-                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                        <Upload className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-document-upload">Document Upload</span>
-                      </div>
-                    </Card>
-                  </Link>
+                  <Card
+                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
+                    onClick={openReferencesTab}
+                    data-testid="tile-patient-directory"
+                  >
+                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
+                      <Users className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
+                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
+                    </div>
+                  </Card>
                 </div>
 
                 {batches.length > 0 && (
