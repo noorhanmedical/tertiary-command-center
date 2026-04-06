@@ -2026,10 +2026,17 @@ function autoGeneratePatientNotes(
   const hasVitalWave = tests.some((t) => t.toLowerCase().includes("vital"));
   const ultrasoundTests = tests.filter((t) => isImagingTest(t));
 
+  const getClinicianUnderstanding = (test: string): string => {
+    const r = reasoning[test];
+    if (r && typeof r === "object" && r.clinician_understanding) return r.clinician_understanding;
+    return "";
+  };
+
   if (hasBrainWave) {
     const bwTest = tests.find((t) => t.toLowerCase().includes("brain")) || "BrainWave";
     const icd10 = getIcd10(bwTest);
     const factors = getFactors(bwTest);
+    const clinicianUnderstanding = getClinicianUnderstanding(bwTest);
     const screening: BrainWaveScreeningData = { group1: {}, group2: {}, group3: {} };
     factors.forEach((f) => {
       if (BRAINWAVE_MAPPING[f]) {
@@ -2044,7 +2051,13 @@ function autoGeneratePatientNotes(
     const screeningResult = brainWaveScreeningToResult({ mapping: BRAINWAVE_MAPPING, screening });
     if (icd10.length > 0) screeningResult.icd10Codes = [...icd10, ...screeningResult.icd10Codes].filter((v, i, a) => a.indexOf(v) === i);
     if (factors.length > 0) screeningResult.selectedConditions = factors;
+    if (clinicianUnderstanding) screeningResult.notes = [...screeningResult.notes, clinicianUnderstanding];
     const generated = generateBrainWaveDocuments({ input, screeningResult });
+    const bwMeta = JSON.stringify({ selectedConditions: screeningResult.selectedConditions, icd10Codes: screeningResult.icd10Codes, cptCodes: screeningResult.cptCodes });
+    const bwMetaSection = { heading: "__screening_meta__", body: bwMeta };
+    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, bwMetaSection];
+    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, bwMetaSection];
+    generated.billing.sections = [...generated.billing.sections, bwMetaSection];
     docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
   }
 
@@ -2052,6 +2065,7 @@ function autoGeneratePatientNotes(
     const vwTest = tests.find((t) => t.toLowerCase().includes("vital")) || "VitalWave";
     const icd10 = getIcd10(vwTest);
     const factors = getFactors(vwTest);
+    const clinicianUnderstanding = getClinicianUnderstanding(vwTest);
     const screening: VitalWaveScreeningData = {};
     Object.entries(VITALWAVE_CONFIG).forEach(([groupKey, group]) => {
       group.conditions.forEach((cond) => {
@@ -2064,16 +2078,25 @@ function autoGeneratePatientNotes(
     const screeningResult = vitalWaveScreeningToResult({ config: VITALWAVE_CONFIG, screening });
     if (icd10.length > 0) screeningResult.icd10Codes = [...icd10, ...screeningResult.icd10Codes].filter((v, i, a) => a.indexOf(v) === i);
     if (factors.length > 0 && screeningResult.selectedConditions.length === 0) screeningResult.selectedConditions = factors;
+    if (clinicianUnderstanding) screeningResult.notes = [...screeningResult.notes, clinicianUnderstanding];
     const generated = generateVitalWaveDocuments({ input, screeningResult });
+    const vwMeta = JSON.stringify({ selectedConditions: screeningResult.selectedConditions, icd10Codes: screeningResult.icd10Codes, cptCodes: screeningResult.cptCodes });
+    const vwMetaSection = { heading: "__screening_meta__", body: vwMeta };
+    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, vwMetaSection];
+    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, vwMetaSection];
+    generated.billing.sections = [...generated.billing.sections, vwMetaSection];
     docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
   }
 
   if (ultrasoundTests.length > 0) {
     const icd10: string[] = [];
     const factors: string[] = [];
+    const clinicianUnderstandings: string[] = [];
     ultrasoundTests.forEach((t) => {
       icd10.push(...getIcd10(t));
       factors.push(...getFactors(t));
+      const cu = getClinicianUnderstanding(t);
+      if (cu) clinicianUnderstandings.push(cu);
     });
     const selection = ultrasoundTests
       .map((t) => TEST_TO_ULTRASOUND_KEY[t] || t.replace(/\s*\(\d{4,5}\)\s*$/, "").trim())
@@ -2090,7 +2113,13 @@ function autoGeneratePatientNotes(
     const screeningResult = ultrasoundScreeningToResult({ config: ULTRASOUND_CONFIG, screening: usScreening });
     if (icd10.length > 0) screeningResult.icd10Codes = [...icd10, ...screeningResult.icd10Codes].filter((v, i, a) => a.indexOf(v) === i);
     if (factors.length > 0 && screeningResult.selectedConditions.length === 0) screeningResult.selectedConditions = factors;
+    if (clinicianUnderstandings.length > 0) screeningResult.notes = [...screeningResult.notes, ...clinicianUnderstandings];
     const generated = generateUltrasoundDocuments({ input, screeningResult, screening: usScreening, config: ULTRASOUND_CONFIG });
+    const usMeta = JSON.stringify({ selectedConditions: screeningResult.selectedConditions, icd10Codes: screeningResult.icd10Codes, cptCodes: screeningResult.cptCodes, selection });
+    const usMetaSection = { heading: "__screening_meta__", body: usMeta };
+    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, usMetaSection];
+    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, usMetaSection];
+    generated.billing.sections = [...generated.billing.sections, usMetaSection];
     docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
   }
 
@@ -2505,7 +2534,7 @@ const NOTE_DOC_KIND_LABELS: Record<string, string> = {
 };
 
 function printNoteDocument(note: SavedNote) {
-  const content = note.sections.map((s) => `<p style="margin:0 0 6px"><strong>${s.heading}:</strong> ${s.body}</p>`).join("");
+  const content = note.sections.filter((s) => s.heading !== "__screening_meta__").map((s) => `<p style="margin:0 0 6px;white-space:pre-wrap"><strong>${s.heading}:</strong> ${s.body}</p>`).join("");
   const html = `<!DOCTYPE html><html><head><title>${note.title}</title><style>body{font-family:Arial,sans-serif;font-size:12px;margin:24px;}</style></head><body><h3>${note.title}</h3><hr>${content}</body></html>`;
   const w = window.open("", "_blank");
   if (w) { w.document.write(html); w.document.close(); w.print(); }
@@ -2842,6 +2871,7 @@ function DocumentsInlineView() {
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
   const [expandedPatients, setExpandedPatients] = useState<Set<number>>(new Set());
   const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
+  const [screeningFormNote, setScreeningFormNote] = useState<SavedNote | null>(null);
 
   const { data: notes = [], isLoading } = useQuery<SavedNote[]>({ queryKey: ["/api/generated-notes"] });
 
@@ -2856,9 +2886,26 @@ function DocumentsInlineView() {
   const togglePatient = (id: number) => setExpandedPatients((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
   const toggleNote = (id: number) => setExpandedNotes((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
 
+  const buildInlineScreeningData = (note: SavedNote) => {
+    const metaSection = note.sections.find((s) => s.heading === "__screening_meta__");
+    if (metaSection) {
+      try {
+        const parsed = JSON.parse(metaSection.body);
+        return {
+          conditions: Array.isArray(parsed.selectedConditions) ? parsed.selectedConditions as string[] : [],
+          icd10: Array.isArray(parsed.icd10Codes) ? parsed.icd10Codes as string[] : [],
+          cpt: Array.isArray(parsed.cptCodes) ? parsed.cptCodes as string[] : [],
+          selection: Array.isArray(parsed.selection) ? parsed.selection as string[] : [],
+        };
+      } catch { /* fall through */ }
+    }
+    return { conditions: [] as string[], icd10: [] as string[], cpt: [] as string[], selection: [] as string[] };
+  };
+
   const grouped = groupSavedNotes(notes);
 
   return (
+    <>
     <main className="flex-1 overflow-y-auto bg-[hsl(210,35%,96%)]">
       <div className="max-w-3xl mx-auto px-5 py-8">
         <div className="flex items-center gap-3 mb-8">
@@ -2918,7 +2965,13 @@ function DocumentsInlineView() {
                                           <div className="flex items-center gap-2 py-2 cursor-pointer hover:bg-slate-50/60 transition-colors -mx-4 px-4 rounded" onClick={() => toggleNote(note.id)}>
                                             <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${NOTE_SERVICE_COLORS[note.service] || "bg-slate-100 text-slate-600 border-slate-200"}`}>{note.service}</span>
                                             <span className="text-xs text-slate-600 flex-1">{NOTE_DOC_KIND_LABELS[note.docKind] || note.docKind}</span>
-                                            <button className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" onClick={(e) => { e.stopPropagation(); const text = note.sections.map((s) => `${s.heading}\n${s.body}`).join("\n\n"); navigator.clipboard.writeText(text); toast({ title: "Copied!" }); }} data-testid={`button-copy-note-inline-${note.id}`}>
+                                            {note.docKind !== "billing" && (
+                                              <button className="text-[10px] text-teal-600 hover:text-teal-800 px-2 py-0.5 rounded border border-teal-200 bg-teal-50 flex items-center gap-1 shrink-0" onClick={(e) => { e.stopPropagation(); setScreeningFormNote(note); }} data-testid={`button-screening-form-docs-inline-${note.id}`}>
+                                                <ClipboardList className="w-3 h-3" />
+                                                Screening Form
+                                              </button>
+                                            )}
+                                            <button className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" onClick={(e) => { e.stopPropagation(); const text = note.sections.filter((s) => s.heading !== "__screening_meta__").map((s) => `${s.heading}\n${s.body}`).join("\n\n"); navigator.clipboard.writeText(text); toast({ title: "Copied!" }); }} data-testid={`button-copy-note-inline-${note.id}`}>
                                               <Copy className="w-3 h-3" />
                                             </button>
                                             <button className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" onClick={(e) => { e.stopPropagation(); printNoteDocument(note); }} data-testid={`button-print-note-inline-${note.id}`}>
@@ -2928,10 +2981,10 @@ function DocumentsInlineView() {
                                           </div>
                                           {expandedNotes.has(note.id) && (
                                             <div className="pb-3 space-y-1.5">
-                                              {note.sections.map((s, si) => (
+                                              {note.sections.filter((s) => s.heading !== "__screening_meta__").map((s, si) => (
                                                 <div key={si} className="text-[11px] text-slate-700 leading-snug">
                                                   <span className="font-semibold">{s.heading}: </span>
-                                                  <span>{s.body}</span>
+                                                  <span className="whitespace-pre-wrap">{s.body}</span>
                                                 </div>
                                               ))}
                                             </div>
@@ -2955,6 +3008,80 @@ function DocumentsInlineView() {
         )}
       </div>
     </main>
+
+      {screeningFormNote && (() => {
+        const note = screeningFormNote;
+        const data = buildInlineScreeningData(note);
+        const colorClass = NOTE_SERVICE_COLORS[note.service] || "bg-slate-100 text-slate-600 border-slate-200";
+        return (
+          <Dialog open onOpenChange={(open) => { if (!open) setScreeningFormNote(null); }}>
+            <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto" data-testid="dialog-docs-inline-screening-form">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <ClipboardList className="w-4 h-4 text-teal-600" />
+                  Screening Form
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${colorClass}`}>{note.service}</span>
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 text-sm">
+                <p className="text-xs text-slate-500">{note.title}</p>
+                {note.service === "Ultrasound" && data.selection.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Procedures Ordered</div>
+                    <ul className="space-y-1">
+                      {data.selection.map((s, i) => (
+                        <li key={i} className="flex items-start gap-2 text-slate-700 text-xs">
+                          <span className="mt-0.5 w-3 h-3 rounded border-2 border-emerald-500 bg-emerald-50 shrink-0 flex items-center justify-center"><span className="w-1.5 h-1.5 rounded-sm bg-emerald-500" /></span>
+                          {s}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {data.conditions.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">
+                      {note.service === "PGx" ? "Trigger Medications" : note.service === "Ultrasound" ? "Conditions" : "Conditions Selected"}
+                    </div>
+                    <ul className="space-y-1">
+                      {data.conditions.map((c, i) => (
+                        <li key={i} className="flex items-start gap-2 text-slate-700 text-xs">
+                          <span className="mt-0.5 w-3 h-3 rounded border-2 border-teal-500 bg-teal-50 shrink-0 flex items-center justify-center"><span className="w-1.5 h-1.5 rounded-sm bg-teal-500" /></span>
+                          {c}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {data.icd10.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">ICD-10 Codes</div>
+                    <ul className="space-y-1">
+                      {data.icd10.map((code, i) => (
+                        <li key={i} className="text-xs text-slate-600 font-mono bg-slate-50 rounded px-2 py-1 border border-slate-100">{code}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {data.cpt.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">CPT Codes</div>
+                    <ul className="space-y-1">
+                      {data.cpt.map((code, i) => (
+                        <li key={i} className="text-xs text-slate-600 font-mono bg-slate-50 rounded px-2 py-1 border border-slate-100">{code}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {data.conditions.length === 0 && data.icd10.length === 0 && data.cpt.length === 0 && (
+                  <p className="text-slate-400 italic text-xs">No screening data available for this document.</p>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
+    </>
   );
 }
 
@@ -2991,6 +3118,7 @@ function ResultsView({
   const [pdfMode, setPdfMode] = useState<"clinician" | "plexus" | null>(null);
   const [generatingNotesFor, setGeneratingNotesFor] = useState<Set<number>>(new Set());
   const [patientNotes, setPatientNotes] = useState<Record<number, GeneratedDocument[]>>({});
+  const [inlineScreeningFormDoc, setInlineScreeningFormDoc] = useState<GeneratedDocument | null>(null);
 
   const { data: batchNotes = [] } = useQuery<Array<{ id: number; patientId: number; service: string; docKind: string; title: string; sections: Array<{ heading: string; body: string }> }>>({
     queryKey: ["/api/generated-notes/batch", batch?.id],
@@ -3400,11 +3528,24 @@ function ResultsView({
                                   <div className="flex items-center justify-between mb-2">
                                     <span className="text-xs font-semibold text-slate-700">{doc.title}</span>
                                     <div className="flex items-center gap-1">
+                                      {doc.kind !== "billing" && (
+                                        <button
+                                          className="text-[10px] text-teal-600 hover:text-teal-800 px-2 py-0.5 rounded border border-teal-200 bg-teal-50 flex items-center gap-1"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setInlineScreeningFormDoc(doc);
+                                          }}
+                                          data-testid={`button-screening-form-inline-${patient.id}-${di}`}
+                                        >
+                                          <ClipboardList className="w-3 h-3" />
+                                          Screening Form
+                                        </button>
+                                      )}
                                       <button
                                         className="text-[10px] text-slate-500 hover:text-slate-700 px-2 py-0.5 rounded border border-slate-200 bg-white flex items-center gap-1"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          const text = doc.sections.map((s) => `${s.heading}\n${s.body}`).join("\n\n");
+                                          const text = doc.sections.filter((s) => s.heading !== "__screening_meta__").map((s) => `${s.heading}\n${s.body}`).join("\n\n");
                                           navigator.clipboard.writeText(text);
                                           toast({ title: "Copied!", description: `${doc.title} copied to clipboard.` });
                                         }}
@@ -3417,7 +3558,7 @@ function ResultsView({
                                         className="text-[10px] text-slate-500 hover:text-slate-700 px-2 py-0.5 rounded border border-slate-200 bg-white flex items-center gap-1"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          const content = doc.sections.map((s) => `<p style="margin:0 0 6px"><strong>${s.heading}:</strong> ${s.body}</p>`).join("");
+                                          const content = doc.sections.filter((s) => s.heading !== "__screening_meta__").map((s) => `<p style="margin:0 0 6px;white-space:pre-wrap"><strong>${s.heading}:</strong> ${s.body}</p>`).join("");
                                           const html = `<!DOCTYPE html><html><head><title>${doc.title}</title><style>body{font-family:Arial,sans-serif;font-size:12px;margin:24px;}</style></head><body><h3>${doc.title}</h3><hr>${content}</body></html>`;
                                           const w = window.open("", "_blank");
                                           if (w) { w.document.write(html); w.document.close(); w.print(); }
@@ -3430,10 +3571,10 @@ function ResultsView({
                                     </div>
                                   </div>
                                   <div className="space-y-1.5">
-                                    {doc.sections.map((s, si) => (
+                                    {doc.sections.filter((s) => s.heading !== "__screening_meta__").map((s, si) => (
                                       <div key={si} className="text-[11px] text-slate-700 leading-snug">
                                         <span className="font-semibold">{s.heading}: </span>
-                                        <span>{s.body}</span>
+                                        <span className="whitespace-pre-wrap">{s.body}</span>
                                       </div>
                                     ))}
                                   </div>
@@ -3546,6 +3687,158 @@ function ResultsView({
         onClose={() => setPdfMode(null)}
         onGenerate={handlePdfGenerate}
       />
+
+      {inlineScreeningFormDoc && (() => {
+        const doc = inlineScreeningFormDoc;
+        let uniqueConditions: string[] = [];
+        let uniqueIcd10: string[] = [];
+        let uniqueCpt: string[] = [];
+        let uniqueSelection: string[] = [];
+        const metaSection = doc.sections.find((s) => s.heading === "__screening_meta__");
+        if (metaSection) {
+          try {
+            const parsed = JSON.parse(metaSection.body);
+            uniqueConditions = Array.isArray(parsed.selectedConditions) ? parsed.selectedConditions : [];
+            uniqueIcd10 = Array.isArray(parsed.icd10Codes) ? parsed.icd10Codes : [];
+            uniqueCpt = Array.isArray(parsed.cptCodes) ? parsed.cptCodes : [];
+            uniqueSelection = Array.isArray(parsed.selection) ? parsed.selection : [];
+          } catch {
+          }
+        }
+        if (uniqueConditions.length === 0 && uniqueIcd10.length === 0 && uniqueCpt.length === 0) {
+          const conditions: string[] = [];
+          const icd10: string[] = [];
+          const cpt: string[] = [];
+          for (const section of doc.sections) {
+            const h = section.heading.toLowerCase();
+            if (h === "diagnosis") {
+              section.body.split("\n").forEach((line) => {
+                const trimmed = line.replace(/^•\s*/, "").trim();
+                if (trimmed && trimmed !== "No conditions selected in screening form" && trimmed !== "Select conditions in the screening form.") {
+                  conditions.push(trimmed);
+                }
+              });
+            } else if (h === "icd-10 codes" || h === "icd-10 codes (arizona-supported)") {
+              section.body.split("\n").forEach((line) => {
+                const trimmed = line.replace(/^•\s*/, "").trim();
+                if (trimmed && trimmed !== "N/A" && trimmed !== "No conditions selected in screening form") {
+                  icd10.push(trimmed);
+                }
+              });
+            } else if (h === "cpt codes" || h === "cpt/hcpcs codes") {
+              section.body.split("\n").forEach((line) => {
+                const trimmed = line.replace(/^•\s*/, "").trim();
+                if (trimmed && trimmed !== "N/A" && trimmed !== "No procedures indicated based on selection") {
+                  cpt.push(trimmed);
+                }
+              });
+            } else if (h === "procedures ordered" || h === "procedure ordered") {
+              if (doc.service === "Ultrasound") {
+                section.body.split("\n").forEach((line) => {
+                  const trimmed = line.replace(/^•\s*/, "").trim();
+                  if (trimmed && trimmed !== "None selected" && trimmed !== "None") {
+                    conditions.push(trimmed);
+                  }
+                });
+              }
+            } else if (h === "trigger medications identified") {
+              section.body.split("\n").forEach((line) => {
+                const trimmed = line.replace(/^•\s*/, "").trim();
+                if (trimmed && trimmed !== "None identified from screening") {
+                  conditions.push(trimmed);
+                }
+              });
+            }
+          }
+          uniqueConditions = Array.from(new Set(conditions));
+          uniqueIcd10 = Array.from(new Set(icd10));
+          uniqueCpt = Array.from(new Set(cpt));
+        }
+        const serviceColors: Record<string, string> = {
+          BrainWave: "bg-purple-100 text-purple-700 border-purple-200",
+          VitalWave: "bg-red-100 text-red-700 border-red-200",
+          Ultrasound: "bg-emerald-100 text-emerald-700 border-emerald-200",
+          PGx: "bg-blue-100 text-blue-700 border-blue-200",
+        };
+        const colorClass = serviceColors[doc.service] || "bg-slate-100 text-slate-600 border-slate-200";
+        return (
+          <Dialog open onOpenChange={(open) => { if (!open) setInlineScreeningFormDoc(null); }}>
+            <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto" data-testid="dialog-inline-screening-form">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <ClipboardList className="w-4 h-4 text-teal-600" />
+                  Screening Form
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${colorClass}`}>
+                    {doc.service}
+                  </span>
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 text-sm">
+                <p className="text-xs text-slate-500">{doc.title}</p>
+                {doc.service === "Ultrasound" && uniqueSelection.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Procedures Ordered</div>
+                    <ul className="space-y-1">
+                      {uniqueSelection.map((s, i) => (
+                        <li key={i} className="flex items-start gap-2 text-slate-700 text-xs" data-testid={`inline-screening-procedure-${i}`}>
+                          <span className="mt-0.5 w-3 h-3 rounded border-2 border-emerald-500 bg-emerald-50 shrink-0 flex items-center justify-center">
+                            <span className="w-1.5 h-1.5 rounded-sm bg-emerald-500" />
+                          </span>
+                          {s}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {uniqueConditions.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">
+                      {doc.service === "PGx" ? "Trigger Medications" : doc.service === "Ultrasound" ? "Conditions" : "Conditions Selected"}
+                    </div>
+                    <ul className="space-y-1">
+                      {uniqueConditions.map((c, i) => (
+                        <li key={i} className="flex items-start gap-2 text-slate-700 text-xs" data-testid={`inline-screening-condition-${i}`}>
+                          <span className="mt-0.5 w-3 h-3 rounded border-2 border-teal-500 bg-teal-50 shrink-0 flex items-center justify-center">
+                            <span className="w-1.5 h-1.5 rounded-sm bg-teal-500" />
+                          </span>
+                          {c}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {uniqueIcd10.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">ICD-10 Codes</div>
+                    <ul className="space-y-1">
+                      {uniqueIcd10.map((code, i) => (
+                        <li key={i} className="text-xs text-slate-600 font-mono bg-slate-50 rounded px-2 py-1 border border-slate-100" data-testid={`inline-screening-icd10-${i}`}>
+                          {code}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {uniqueCpt.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">CPT Codes</div>
+                    <ul className="space-y-1">
+                      {uniqueCpt.map((code, i) => (
+                        <li key={i} className="text-xs text-slate-600 font-mono bg-slate-50 rounded px-2 py-1 border border-slate-100" data-testid={`inline-screening-cpt-${i}`}>
+                          {code}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {uniqueConditions.length === 0 && uniqueIcd10.length === 0 && uniqueCpt.length === 0 && (
+                  <p className="text-slate-400 italic text-xs">No screening data available for this document.</p>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
     </div>
   );
 }
