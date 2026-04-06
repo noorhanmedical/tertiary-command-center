@@ -68,6 +68,7 @@ import {
 import { Link, useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ScreeningBatch, PatientScreening, PatientTestHistory } from "@shared/schema";
+import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
 import {
   ULTRASOUND_CONFIG,
   VITALWAVE_CONFIG,
@@ -2886,22 +2887,6 @@ function DocumentsInlineView() {
   const togglePatient = (id: number) => setExpandedPatients((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
   const toggleNote = (id: number) => setExpandedNotes((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
 
-  const buildInlineScreeningData = (note: SavedNote) => {
-    const metaSection = note.sections.find((s) => s.heading === "__screening_meta__");
-    if (metaSection) {
-      try {
-        const parsed = JSON.parse(metaSection.body);
-        return {
-          conditions: Array.isArray(parsed.selectedConditions) ? parsed.selectedConditions as string[] : [],
-          icd10: Array.isArray(parsed.icd10Codes) ? parsed.icd10Codes as string[] : [],
-          cpt: Array.isArray(parsed.cptCodes) ? parsed.cptCodes as string[] : [],
-          selection: Array.isArray(parsed.selection) ? parsed.selection as string[] : [],
-        };
-      } catch { /* fall through */ }
-    }
-    return { conditions: [] as string[], icd10: [] as string[], cpt: [] as string[], selection: [] as string[] };
-  };
-
   const grouped = groupSavedNotes(notes);
 
   return (
@@ -3009,78 +2994,21 @@ function DocumentsInlineView() {
       </div>
     </main>
 
-      {screeningFormNote && (() => {
-        const note = screeningFormNote;
-        const data = buildInlineScreeningData(note);
-        const colorClass = NOTE_SERVICE_COLORS[note.service] || "bg-slate-100 text-slate-600 border-slate-200";
-        return (
-          <Dialog open onOpenChange={(open) => { if (!open) setScreeningFormNote(null); }}>
-            <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto" data-testid="dialog-docs-inline-screening-form">
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <ClipboardList className="w-4 h-4 text-teal-600" />
-                  Screening Form
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${colorClass}`}>{note.service}</span>
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 text-sm">
-                <p className="text-xs text-slate-500">{note.title}</p>
-                {note.service === "Ultrasound" && data.selection.length > 0 && (
-                  <div>
-                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Procedures Ordered</div>
-                    <ul className="space-y-1">
-                      {data.selection.map((s, i) => (
-                        <li key={i} className="flex items-start gap-2 text-slate-700 text-xs">
-                          <span className="mt-0.5 w-3 h-3 rounded border-2 border-emerald-500 bg-emerald-50 shrink-0 flex items-center justify-center"><span className="w-1.5 h-1.5 rounded-sm bg-emerald-500" /></span>
-                          {s}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {data.conditions.length > 0 && (
-                  <div>
-                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">
-                      {note.service === "PGx" ? "Trigger Medications" : note.service === "Ultrasound" ? "Conditions" : "Conditions Selected"}
-                    </div>
-                    <ul className="space-y-1">
-                      {data.conditions.map((c, i) => (
-                        <li key={i} className="flex items-start gap-2 text-slate-700 text-xs">
-                          <span className="mt-0.5 w-3 h-3 rounded border-2 border-teal-500 bg-teal-50 shrink-0 flex items-center justify-center"><span className="w-1.5 h-1.5 rounded-sm bg-teal-500" /></span>
-                          {c}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {data.icd10.length > 0 && (
-                  <div>
-                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">ICD-10 Codes</div>
-                    <ul className="space-y-1">
-                      {data.icd10.map((code, i) => (
-                        <li key={i} className="text-xs text-slate-600 font-mono bg-slate-50 rounded px-2 py-1 border border-slate-100">{code}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {data.cpt.length > 0 && (
-                  <div>
-                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">CPT Codes</div>
-                    <ul className="space-y-1">
-                      {data.cpt.map((code, i) => (
-                        <li key={i} className="text-xs text-slate-600 font-mono bg-slate-50 rounded px-2 py-1 border border-slate-100">{code}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {data.conditions.length === 0 && data.icd10.length === 0 && data.cpt.length === 0 && (
-                  <p className="text-slate-400 italic text-xs">No screening data available for this document.</p>
-                )}
-              </div>
-            </DialogContent>
-          </Dialog>
-        );
-      })()}
+      {screeningFormNote && (
+        <EditableScreeningFormModal
+          note={{
+            service: screeningFormNote.service,
+            title: screeningFormNote.title,
+            sections: screeningFormNote.sections,
+            patientId: screeningFormNote.patientId,
+            batchId: screeningFormNote.batchId,
+            facility: screeningFormNote.facility,
+            scheduleDate: screeningFormNote.scheduleDate,
+            patientName: screeningFormNote.patientName,
+          }}
+          onClose={() => setScreeningFormNote(null)}
+        />
+      )}
     </>
   );
 }
@@ -3118,7 +3046,7 @@ function ResultsView({
   const [pdfMode, setPdfMode] = useState<"clinician" | "plexus" | null>(null);
   const [generatingNotesFor, setGeneratingNotesFor] = useState<Set<number>>(new Set());
   const [patientNotes, setPatientNotes] = useState<Record<number, GeneratedDocument[]>>({});
-  const [inlineScreeningFormDoc, setInlineScreeningFormDoc] = useState<GeneratedDocument | null>(null);
+  const [inlineScreeningFormDoc, setInlineScreeningFormDoc] = useState<{ doc: GeneratedDocument; patient: PatientScreening } | null>(null);
 
   const { data: batchNotes = [] } = useQuery<Array<{ id: number; patientId: number; service: string; docKind: string; title: string; sections: Array<{ heading: string; body: string }> }>>({
     queryKey: ["/api/generated-notes/batch", batch?.id],
@@ -3533,7 +3461,7 @@ function ResultsView({
                                           className="text-[10px] text-teal-600 hover:text-teal-800 px-2 py-0.5 rounded border border-teal-200 bg-teal-50 flex items-center gap-1"
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            setInlineScreeningFormDoc(doc);
+                                            setInlineScreeningFormDoc({ doc, patient });
                                           }}
                                           data-testid={`button-screening-form-inline-${patient.id}-${di}`}
                                         >
@@ -3688,157 +3616,25 @@ function ResultsView({
         onGenerate={handlePdfGenerate}
       />
 
-      {inlineScreeningFormDoc && (() => {
-        const doc = inlineScreeningFormDoc;
-        let uniqueConditions: string[] = [];
-        let uniqueIcd10: string[] = [];
-        let uniqueCpt: string[] = [];
-        let uniqueSelection: string[] = [];
-        const metaSection = doc.sections.find((s) => s.heading === "__screening_meta__");
-        if (metaSection) {
-          try {
-            const parsed = JSON.parse(metaSection.body);
-            uniqueConditions = Array.isArray(parsed.selectedConditions) ? parsed.selectedConditions : [];
-            uniqueIcd10 = Array.isArray(parsed.icd10Codes) ? parsed.icd10Codes : [];
-            uniqueCpt = Array.isArray(parsed.cptCodes) ? parsed.cptCodes : [];
-            uniqueSelection = Array.isArray(parsed.selection) ? parsed.selection : [];
-          } catch {
-          }
-        }
-        if (uniqueConditions.length === 0 && uniqueIcd10.length === 0 && uniqueCpt.length === 0) {
-          const conditions: string[] = [];
-          const icd10: string[] = [];
-          const cpt: string[] = [];
-          for (const section of doc.sections) {
-            const h = section.heading.toLowerCase();
-            if (h === "diagnosis") {
-              section.body.split("\n").forEach((line) => {
-                const trimmed = line.replace(/^•\s*/, "").trim();
-                if (trimmed && trimmed !== "No conditions selected in screening form" && trimmed !== "Select conditions in the screening form.") {
-                  conditions.push(trimmed);
-                }
-              });
-            } else if (h === "icd-10 codes" || h === "icd-10 codes (arizona-supported)") {
-              section.body.split("\n").forEach((line) => {
-                const trimmed = line.replace(/^•\s*/, "").trim();
-                if (trimmed && trimmed !== "N/A" && trimmed !== "No conditions selected in screening form") {
-                  icd10.push(trimmed);
-                }
-              });
-            } else if (h === "cpt codes" || h === "cpt/hcpcs codes") {
-              section.body.split("\n").forEach((line) => {
-                const trimmed = line.replace(/^•\s*/, "").trim();
-                if (trimmed && trimmed !== "N/A" && trimmed !== "No procedures indicated based on selection") {
-                  cpt.push(trimmed);
-                }
-              });
-            } else if (h === "procedures ordered" || h === "procedure ordered") {
-              if (doc.service === "Ultrasound") {
-                section.body.split("\n").forEach((line) => {
-                  const trimmed = line.replace(/^•\s*/, "").trim();
-                  if (trimmed && trimmed !== "None selected" && trimmed !== "None") {
-                    conditions.push(trimmed);
-                  }
-                });
-              }
-            } else if (h === "trigger medications identified") {
-              section.body.split("\n").forEach((line) => {
-                const trimmed = line.replace(/^•\s*/, "").trim();
-                if (trimmed && trimmed !== "None identified from screening") {
-                  conditions.push(trimmed);
-                }
-              });
-            }
-          }
-          uniqueConditions = Array.from(new Set(conditions));
-          uniqueIcd10 = Array.from(new Set(icd10));
-          uniqueCpt = Array.from(new Set(cpt));
-        }
-        const serviceColors: Record<string, string> = {
-          BrainWave: "bg-purple-100 text-purple-700 border-purple-200",
-          VitalWave: "bg-red-100 text-red-700 border-red-200",
-          Ultrasound: "bg-emerald-100 text-emerald-700 border-emerald-200",
-          PGx: "bg-blue-100 text-blue-700 border-blue-200",
-        };
-        const colorClass = serviceColors[doc.service] || "bg-slate-100 text-slate-600 border-slate-200";
-        return (
-          <Dialog open onOpenChange={(open) => { if (!open) setInlineScreeningFormDoc(null); }}>
-            <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto" data-testid="dialog-inline-screening-form">
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <ClipboardList className="w-4 h-4 text-teal-600" />
-                  Screening Form
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${colorClass}`}>
-                    {doc.service}
-                  </span>
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 text-sm">
-                <p className="text-xs text-slate-500">{doc.title}</p>
-                {doc.service === "Ultrasound" && uniqueSelection.length > 0 && (
-                  <div>
-                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Procedures Ordered</div>
-                    <ul className="space-y-1">
-                      {uniqueSelection.map((s, i) => (
-                        <li key={i} className="flex items-start gap-2 text-slate-700 text-xs" data-testid={`inline-screening-procedure-${i}`}>
-                          <span className="mt-0.5 w-3 h-3 rounded border-2 border-emerald-500 bg-emerald-50 shrink-0 flex items-center justify-center">
-                            <span className="w-1.5 h-1.5 rounded-sm bg-emerald-500" />
-                          </span>
-                          {s}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {uniqueConditions.length > 0 && (
-                  <div>
-                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">
-                      {doc.service === "PGx" ? "Trigger Medications" : doc.service === "Ultrasound" ? "Conditions" : "Conditions Selected"}
-                    </div>
-                    <ul className="space-y-1">
-                      {uniqueConditions.map((c, i) => (
-                        <li key={i} className="flex items-start gap-2 text-slate-700 text-xs" data-testid={`inline-screening-condition-${i}`}>
-                          <span className="mt-0.5 w-3 h-3 rounded border-2 border-teal-500 bg-teal-50 shrink-0 flex items-center justify-center">
-                            <span className="w-1.5 h-1.5 rounded-sm bg-teal-500" />
-                          </span>
-                          {c}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {uniqueIcd10.length > 0 && (
-                  <div>
-                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">ICD-10 Codes</div>
-                    <ul className="space-y-1">
-                      {uniqueIcd10.map((code, i) => (
-                        <li key={i} className="text-xs text-slate-600 font-mono bg-slate-50 rounded px-2 py-1 border border-slate-100" data-testid={`inline-screening-icd10-${i}`}>
-                          {code}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {uniqueCpt.length > 0 && (
-                  <div>
-                    <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">CPT Codes</div>
-                    <ul className="space-y-1">
-                      {uniqueCpt.map((code, i) => (
-                        <li key={i} className="text-xs text-slate-600 font-mono bg-slate-50 rounded px-2 py-1 border border-slate-100" data-testid={`inline-screening-cpt-${i}`}>
-                          {code}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {uniqueConditions.length === 0 && uniqueIcd10.length === 0 && uniqueCpt.length === 0 && (
-                  <p className="text-slate-400 italic text-xs">No screening data available for this document.</p>
-                )}
-              </div>
-            </DialogContent>
-          </Dialog>
-        );
-      })()}
+      {inlineScreeningFormDoc && (
+        <EditableScreeningFormModal
+          note={{
+            service: inlineScreeningFormDoc.doc.service,
+            title: inlineScreeningFormDoc.doc.title,
+            sections: inlineScreeningFormDoc.doc.sections,
+            patientId: inlineScreeningFormDoc.patient.id,
+            batchId: batch?.id ?? 0,
+            facility: batch?.facility ?? null,
+            scheduleDate: batch?.scheduleDate ?? null,
+            patientName: inlineScreeningFormDoc.patient.name,
+            clinicianName: batch?.clinicianName ?? null,
+          }}
+          onClose={() => setInlineScreeningFormDoc(null)}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ["/api/generated-notes/batch", batch?.id] });
+          }}
+        />
+      )}
     </div>
   );
 }

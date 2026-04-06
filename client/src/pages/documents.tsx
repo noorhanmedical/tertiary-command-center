@@ -3,10 +3,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { ArrowLeft, FileText, Building2, Calendar, ChevronDown, ChevronRight, Copy, Printer, Trash2, RefreshCw, ClipboardList } from "lucide-react";
+import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
 
 type NoteSection = { heading: string; body: string };
 type GeneratedNote = {
@@ -22,6 +22,7 @@ type GeneratedNote = {
   sections: NoteSection[];
   generatedAt: string;
 };
+type BatchSummary = { id: number; clinicianName: string | null };
 
 type PatientGroup = {
   patientName: string;
@@ -99,158 +100,6 @@ const DOC_KIND_LABELS: Record<string, string> = {
   screening: "Screening",
 };
 
-function buildScreeningFormData(note: GeneratedNote): { conditions: string[]; icd10: string[]; cpt: string[]; selection?: string[] } {
-  const metaSection = note.sections.find((s) => s.heading === "__screening_meta__");
-  if (metaSection) {
-    try {
-      const parsed = JSON.parse(metaSection.body);
-      return {
-        conditions: Array.isArray(parsed.selectedConditions) ? parsed.selectedConditions : [],
-        icd10: Array.isArray(parsed.icd10Codes) ? parsed.icd10Codes : [],
-        cpt: Array.isArray(parsed.cptCodes) ? parsed.cptCodes : [],
-        selection: Array.isArray(parsed.selection) ? parsed.selection : undefined,
-      };
-    } catch {
-    }
-  }
-
-  const conditions: string[] = [];
-  const icd10: string[] = [];
-  const cpt: string[] = [];
-
-  for (const section of note.sections) {
-    const h = section.heading.toLowerCase();
-    if (h === "diagnosis") {
-      section.body.split("\n").forEach((line) => {
-        const trimmed = line.replace(/^•\s*/, "").trim();
-        if (trimmed && trimmed !== "No conditions selected in screening form" && trimmed !== "Select conditions in the screening form.") {
-          conditions.push(trimmed);
-        }
-      });
-    } else if (h === "icd-10 codes" || h === "icd-10 codes (arizona-supported)") {
-      section.body.split("\n").forEach((line) => {
-        const trimmed = line.replace(/^•\s*/, "").trim();
-        if (trimmed && trimmed !== "N/A" && trimmed !== "No conditions selected in screening form") {
-          icd10.push(trimmed);
-        }
-      });
-    } else if (h === "cpt codes" || h === "cpt/hcpcs codes") {
-      section.body.split("\n").forEach((line) => {
-        const trimmed = line.replace(/^•\s*/, "").trim();
-        if (trimmed && trimmed !== "N/A" && trimmed !== "No procedures indicated based on selection") {
-          cpt.push(trimmed);
-        }
-      });
-    } else if (h === "procedures ordered" || h === "procedure ordered") {
-      section.body.split("\n").forEach((line) => {
-        const trimmed = line.replace(/^•\s*/, "").trim();
-        if (trimmed && trimmed !== "None selected" && trimmed !== "None") {
-          if (note.service === "Ultrasound") conditions.push(trimmed);
-        }
-      });
-    } else if (h === "trigger medications identified") {
-      section.body.split("\n").forEach((line) => {
-        const trimmed = line.replace(/^•\s*/, "").trim();
-        if (trimmed && trimmed !== "None identified from screening") {
-          conditions.push(trimmed);
-        }
-      });
-    }
-  }
-
-  return { conditions: Array.from(new Set(conditions)), icd10: Array.from(new Set(icd10)), cpt: Array.from(new Set(cpt)) };
-}
-
-function ScreeningFormModal({ note, onClose }: { note: GeneratedNote; onClose: () => void }) {
-  const data = buildScreeningFormData(note);
-  const serviceLabel = note.service;
-  const colorClass = SERVICE_COLORS[note.service] || "bg-slate-100 text-slate-600 border-slate-200";
-
-  return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto" data-testid="dialog-screening-form">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ClipboardList className="w-4 h-4 text-teal-600" />
-            Screening Form
-            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${colorClass}`}>
-              {serviceLabel}
-            </span>
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4 text-sm">
-          <p className="text-xs text-slate-500">{note.title}</p>
-
-          {note.service === "Ultrasound" && data.selection && data.selection.length > 0 && (
-            <div>
-              <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Procedures Ordered</div>
-              <ul className="space-y-1">
-                {data.selection.map((s, i) => (
-                  <li key={i} className="flex items-start gap-2 text-slate-700 text-xs" data-testid={`screening-procedure-${i}`}>
-                    <span className="mt-0.5 w-3 h-3 rounded border-2 border-emerald-500 bg-emerald-50 shrink-0 flex items-center justify-center">
-                      <span className="w-1.5 h-1.5 rounded-sm bg-emerald-500" />
-                    </span>
-                    {s}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {data.conditions.length > 0 && (
-            <div>
-              <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">
-                {note.service === "PGx" ? "Trigger Medications" : note.service === "Ultrasound" ? "Conditions" : "Conditions Selected"}
-              </div>
-              <ul className="space-y-1">
-                {data.conditions.map((c, i) => (
-                  <li key={i} className="flex items-start gap-2 text-slate-700 text-xs" data-testid={`screening-condition-${i}`}>
-                    <span className="mt-0.5 w-3 h-3 rounded border-2 border-teal-500 bg-teal-50 shrink-0 flex items-center justify-center">
-                      <span className="w-1.5 h-1.5 rounded-sm bg-teal-500" />
-                    </span>
-                    {c}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {data.icd10.length > 0 && (
-            <div>
-              <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">ICD-10 Codes</div>
-              <ul className="space-y-1">
-                {data.icd10.map((code, i) => (
-                  <li key={i} className="text-xs text-slate-600 font-mono bg-slate-50 rounded px-2 py-1 border border-slate-100" data-testid={`screening-icd10-${i}`}>
-                    {code}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {data.cpt.length > 0 && (
-            <div>
-              <div className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">CPT Codes</div>
-              <ul className="space-y-1">
-                {data.cpt.map((code, i) => (
-                  <li key={i} className="text-xs text-slate-600 font-mono bg-slate-50 rounded px-2 py-1 border border-slate-100" data-testid={`screening-cpt-${i}`}>
-                    {code}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {data.conditions.length === 0 && data.icd10.length === 0 && data.cpt.length === 0 && (
-            <p className="text-slate-400 italic text-xs">No screening data available for this document.</p>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 export default function DocumentsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -262,6 +111,11 @@ export default function DocumentsPage() {
 
   const { data: notes = [], isLoading } = useQuery<GeneratedNote[]>({
     queryKey: ["/api/generated-notes"],
+  });
+
+  const { data: batches = [] } = useQuery<BatchSummary[]>({
+    queryKey: ["/api/screening-batches"],
+    select: (data: any[]) => data.map((b) => ({ id: b.id, clinicianName: b.clinicianName ?? null })),
   });
 
   const deletePatientNotesMutation = useMutation({
@@ -507,7 +361,20 @@ export default function DocumentsPage() {
       </div>
 
       {screeningFormNote && (
-        <ScreeningFormModal note={screeningFormNote} onClose={() => setScreeningFormNote(null)} />
+        <EditableScreeningFormModal
+          note={{
+            service: screeningFormNote.service,
+            title: screeningFormNote.title,
+            sections: screeningFormNote.sections,
+            patientId: screeningFormNote.patientId,
+            batchId: screeningFormNote.batchId,
+            facility: screeningFormNote.facility,
+            scheduleDate: screeningFormNote.scheduleDate,
+            patientName: screeningFormNote.patientName,
+            clinicianName: batches.find((b) => b.id === screeningFormNote.batchId)?.clinicianName ?? null,
+          }}
+          onClose={() => setScreeningFormNote(null)}
+        />
       )}
     </main>
   );

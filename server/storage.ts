@@ -73,6 +73,7 @@ export interface IStorage {
   deleteAllPatientReferences(): Promise<void>;
 
   saveGeneratedNotes(records: InsertGeneratedNote[]): Promise<GeneratedNote[]>;
+  deleteGeneratedNotesByPatientAndService(patientId: number, service: string): Promise<void>;
   getGeneratedNotesByBatch(batchId: number): Promise<GeneratedNote[]>;
   getAllGeneratedNotes(): Promise<GeneratedNote[]>;
   deleteGeneratedNotesByPatient(patientId: number): Promise<void>;
@@ -235,6 +236,12 @@ export class DatabaseStorage implements IStorage {
 
   async deleteGeneratedNotesByPatient(patientId: number): Promise<void> {
     await db.delete(generatedNotes).where(eq(generatedNotes.patientId, patientId));
+  }
+
+  async deleteGeneratedNotesByPatientAndService(patientId: number, service: string): Promise<void> {
+    await db.delete(generatedNotes).where(
+      and(eq(generatedNotes.patientId, patientId), eq(generatedNotes.service, service))
+    );
   }
 }
 

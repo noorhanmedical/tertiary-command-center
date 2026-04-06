@@ -1772,6 +1772,22 @@ Skip rows that are headers, empty, or don't contain valid patient data.`
     }
   });
 
+  app.post("/api/generated-notes/service", async (req, res) => {
+    try {
+      const body = req.body;
+      if (!Array.isArray(body)) return res.status(400).json({ error: "Expected array of note records" });
+      const records = body.map((r: any) => saveGeneratedNoteSchema.parse(r));
+      if (records.length === 0) return res.json([]);
+      const patientId = records[0].patientId;
+      const service = records[0].service;
+      await storage.deleteGeneratedNotesByPatientAndService(patientId, service);
+      const saved = await storage.saveGeneratedNotes(records);
+      res.status(201).json(saved);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   app.delete("/api/generated-notes/patient/:patientId", async (req, res) => {
     try {
       const patientId = parseInt(req.params.patientId);
