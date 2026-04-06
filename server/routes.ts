@@ -416,7 +416,7 @@ export async function registerRoutes(
 
       const qualTests = match?.qualifyingTests || [];
 
-      let cooldownData: any = null;
+      let cooldownData: any[] = [];
       if (qualTests.length > 0) {
         try {
           const batch = await storage.getScreeningBatch(patient.batchId);
@@ -597,14 +597,18 @@ export async function registerRoutes(
         }
       }
 
+      for (const patient of patients) {
+        await storage.updatePatientScreening(patient.id, { cooldownTests: [] });
+      }
+
       if (patientsForCooldown.length > 0) {
         try {
           const visitDate = batch?.scheduleDate || undefined;
           const cooldownResults = await checkCooldownsForPatients(patientsForCooldown, visitDate);
           for (const patient of patients) {
-            const cooldowns = cooldownResults[patient.name];
-            if (cooldowns && cooldowns.length > 0) {
-              await storage.updatePatientScreening(patient.id, { cooldownTests: cooldowns });
+            const violations = cooldownResults[patient.name];
+            if (violations && violations.length > 0) {
+              await storage.updatePatientScreening(patient.id, { cooldownTests: violations });
             }
           }
         } catch (e) {

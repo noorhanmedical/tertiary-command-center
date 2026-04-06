@@ -186,6 +186,8 @@ COOLDOWN RULES:
 - The insurance_type field in records is already normalized: "medicare" = straight Medicare (12 mo), "ppo" = everything else including Medicare Advantage (6 mo)
 - Today's date is: ${cutoffDate}
 
+IMPORTANT: Every record in the history I am giving you has a date_of_service strictly BEFORE ${cutoffDate}. Never flag a test whose lastDate equals ${cutoffDate} or is later than ${cutoffDate}. Only use the records explicitly provided — do not invent or assume any other records.
+
 TEST NAME MATCHING:
 - "BrainWave" in history matches "BrainWave" in qualifying tests
 - "VitalWave" or "VitalScan" in history matches "VitalWave" in qualifying tests
@@ -219,7 +221,13 @@ Only include patients who have cooldown violations. If no violations found, retu
   );
 
   try {
-    return JSON.parse(response.choices[0]?.message?.content || "{}");
+    const parsed: Record<string, { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[]> =
+      JSON.parse(response.choices[0]?.message?.content || "{}");
+    for (const patientName of Object.keys(parsed)) {
+      parsed[patientName] = parsed[patientName].filter((v) => v.lastDate < cutoffDate);
+      if (parsed[patientName].length === 0) delete parsed[patientName];
+    }
+    return parsed;
   } catch {
     console.error("Failed to parse cooldown check response");
     return {};
