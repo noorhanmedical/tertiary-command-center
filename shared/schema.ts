@@ -73,6 +73,7 @@ export type InsertPatientScreening = z.infer<typeof insertPatientScreeningSchema
 export const patientTestHistory = pgTable("patient_test_history", {
   id: serial("id").primaryKey(),
   patientName: text("patient_name").notNull(),
+  dob: text("dob"),
   testName: text("test_name").notNull(),
   dateOfService: text("date_of_service").notNull(),
   insuranceType: text("insurance_type").notNull().default("ppo"),

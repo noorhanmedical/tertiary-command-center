@@ -67,7 +67,7 @@ import {
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { ScreeningBatch, PatientScreening, PatientTestHistory, PatientReference } from "@shared/schema";
+import type { ScreeningBatch, PatientScreening, PatientTestHistory } from "@shared/schema";
 import {
   ULTRASOUND_CONFIG,
   VITALWAVE_CONFIG,
@@ -206,8 +206,8 @@ export default function Home() {
   const [analyzingPatients, setAnalyzingPatients] = useState<Set<number>>(new Set());
   const [historyPasteText, setHistoryPasteText] = useState("");
   const [historySearch, setHistorySearch] = useState("");
-  const [refPasteText, setRefPasteText] = useState("");
-  const [refSearch, setRefSearch] = useState("");
+  const [dirPasteText, setDirPasteText] = useState("");
+  const [dirSearch, setDirSearch] = useState("");
   const [selectedBatchIds, setSelectedBatchIds] = useState<Set<number>>(new Set());
 
   const activeTab = tabs[activeTabIndex] || tabs[0] || { type: "home" };
@@ -237,7 +237,7 @@ export default function Home() {
 
   const { data: testHistory = [], isLoading: historyLoading } = useQuery<PatientTestHistory[]>({
     queryKey: ["/api/test-history"],
-    enabled: view === "history" || tabs.some((t) => t.type === "history"),
+    enabled: view === "history" || view === "references" || tabs.some((t) => t.type === "history" || t.type === "references"),
   });
 
   const importHistoryMutation = useMutation({
@@ -291,61 +291,6 @@ export default function Home() {
     },
   });
 
-  const { data: patientReferences = [], isLoading: refsLoading } = useQuery<PatientReference[]>({
-    queryKey: ["/api/patient-references"],
-    enabled: view === "references" || tabs.some((t) => t.type === "references"),
-  });
-
-  const importRefFileMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/patient-references/import", { method: "POST", body: formData });
-      if (!res.ok) throw new Error((await res.json()).error || "Import failed");
-      return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/patient-references"] });
-      toast({ title: `Imported ${data.imported} records` });
-    },
-    onError: (e: any) => {
-      toast({ title: "Import failed", description: e.message, variant: "destructive" });
-    },
-  });
-
-  const importRefTextMutation = useMutation({
-    mutationFn: async (text: string) => {
-      const res = await apiRequest("POST", "/api/patient-references/import", { text });
-      return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/patient-references"] });
-      toast({ title: `Imported ${data.imported} records` });
-      setRefPasteText("");
-    },
-    onError: (e: any) => {
-      toast({ title: "Import failed", description: e.message, variant: "destructive" });
-    },
-  });
-
-  const deleteRefMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/patient-references/${id}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/patient-references"] });
-    },
-  });
-
-  const clearRefsMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("DELETE", "/api/patient-references");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/patient-references"] });
-      toast({ title: "All reference data cleared" });
-    },
-  });
 
   const openScheduleTab = useCallback((batchId: number, label: string, status?: string) => {
     const existingIdx = tabs.findIndex((t) => t.type === "schedule" && t.batchId === batchId);
@@ -699,10 +644,10 @@ export default function Home() {
                       setSidebarOpen(false);
                     }}
                     isActive={view === "references"}
-                    data-testid="sidebar-patient-references"
+                    data-testid="sidebar-patient-directory"
                   >
-                    <FileText className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Patient References</span>
+                    <Users className="w-4 h-4 shrink-0" />
+                    <span className="text-sm font-medium">Patient Directory</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
@@ -845,7 +790,7 @@ export default function Home() {
         <div className="bg-[#1e3a5f]/95 backdrop-blur-sm flex items-center gap-0 px-2 shrink-0 overflow-x-auto" data-testid="tab-bar">
           {tabs.map((tab, i) => {
             const isActive = i === activeTabIndex;
-            const label = tab.type === "home" ? "Home" : tab.type === "history" ? "Patient History" : tab.type === "references" ? "Patient References" : tab.type === "documents" ? "Clinical Notes" : tab.label;
+            const label = tab.type === "home" ? "Home" : tab.type === "history" ? "Patient History" : tab.type === "references" ? "Patient Directory" : tab.type === "documents" ? "Clinical Notes" : tab.label;
             const canClose = tabs.length > 1;
             return (
               <div
@@ -1037,159 +982,19 @@ export default function Home() {
             </div>
           </div>
         ) : view === "references" ? (
-          <div className="flex flex-col h-full relative z-10">
-            <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
-              <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
-                <div className="flex items-center gap-2">
-                  <SidebarTrigger data-testid="button-sidebar-toggle-refs" />
-                  <div>
-                    <h1 className="text-base font-bold tracking-tight flex items-center gap-2">
-                      <FileText className="w-4 h-4" />
-                      Patient References
-                    </h1>
-                    <p className="text-xs text-muted-foreground">{patientReferences.length} records — auto-fills Dx/Hx/Rx when patients are added</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {patientReferences.length > 0 && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        if (confirm("Clear all patient reference records?")) clearRefsMutation.mutate();
-                      }}
-                      className="gap-1.5 text-red-600"
-                      data-testid="button-clear-refs"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Clear All
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </header>
-            <div className="flex-1 overflow-auto p-4">
-              <div className="max-w-5xl mx-auto space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Card className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Upload className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-sm font-semibold">Upload File</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-2">Import from Excel or CSV with columns: Name, Dx, Hx, Rx, Age, Gender, Insurance</p>
-                    <input
-                      type="file"
-                      accept=".xlsx,.xls,.csv"
-                      className="text-xs"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) importRefFileMutation.mutate(file);
-                        e.target.value = "";
-                      }}
-                      data-testid="input-ref-file"
-                    />
-                    {importRefFileMutation.isPending && (
-                      <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
-                        <Loader2 className="w-3 h-3 animate-spin" /> Importing...
-                      </div>
-                    )}
-                  </Card>
-                  <Card className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <FileText className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-sm font-semibold">Paste Data</span>
-                    </div>
-                    <Textarea
-                      placeholder="Paste patient reference data (Name, Dx, Hx, Rx)..."
-                      value={refPasteText}
-                      onChange={(e) => setRefPasteText(e.target.value)}
-                      className="text-xs min-h-[80px] mb-2"
-                      data-testid="input-ref-paste"
-                    />
-                    <Button
-                      size="sm"
-                      disabled={!refPasteText.trim() || importRefTextMutation.isPending}
-                      onClick={() => importRefTextMutation.mutate(refPasteText)}
-                      className="gap-1.5"
-                      data-testid="button-import-refs"
-                    >
-                      {importRefTextMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                      Import
-                    </Button>
-                  </Card>
-                </div>
-
-                {patientReferences.length > 0 && (
-                  <Card className="p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Search className="w-4 h-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search by patient name..."
-                        value={refSearch}
-                        onChange={(e) => setRefSearch(e.target.value)}
-                        className="text-xs h-8 max-w-xs"
-                        data-testid="input-ref-search"
-                      />
-                    </div>
-                    <div className="overflow-auto max-h-[60vh]">
-                      <table className="w-full border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-slate-100 dark:bg-muted">
-                            <th className="border px-3 py-2 text-left font-semibold">Name</th>
-                            <th className="border px-3 py-2 text-left font-semibold">Dx</th>
-                            <th className="border px-3 py-2 text-left font-semibold">Hx</th>
-                            <th className="border px-3 py-2 text-left font-semibold">Rx</th>
-                            <th className="border px-3 py-2 text-left font-semibold">Insurance</th>
-                            <th className="border px-3 py-2 text-left font-semibold w-10"></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {patientReferences
-                            .filter((r) => !refSearch || r.patientName.toLowerCase().includes(refSearch.toLowerCase()))
-                            .map((record) => (
-                              <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-muted/30" data-testid={`row-ref-${record.id}`}>
-                                <td className="border px-3 py-1.5 font-medium">{record.patientName}</td>
-                                <td className="border px-3 py-1.5 max-w-[200px] truncate">{record.diagnoses || "—"}</td>
-                                <td className="border px-3 py-1.5 max-w-[200px] truncate">{record.history || "—"}</td>
-                                <td className="border px-3 py-1.5 max-w-[200px] truncate">{record.medications || "—"}</td>
-                                <td className="border px-3 py-1.5">
-                                  {record.insurance ? (
-                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                      record.insurance.toLowerCase().includes("medicare")
-                                        ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                                        : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
-                                    }`}>
-                                      {record.insurance.toUpperCase()}
-                                    </span>
-                                  ) : "—"}
-                                </td>
-                                <td className="border px-3 py-1.5">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    onClick={() => deleteRefMutation.mutate(record.id)}
-                                    data-testid={`button-delete-ref-${record.id}`}
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </Button>
-                                </td>
-                              </tr>
-                            ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </Card>
-                )}
-
-                {refsLoading && (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          <PatientDirectoryView
+            testHistory={testHistory}
+            historyLoading={historyLoading}
+            dirPasteText={dirPasteText}
+            setDirPasteText={setDirPasteText}
+            dirSearch={dirSearch}
+            setDirSearch={setDirSearch}
+            onImportFile={(file) => importHistoryFileMutation.mutate(file)}
+            onImportText={(text) => importHistoryMutation.mutate(text)}
+            onClearAll={() => { if (confirm("Clear all patient history records?")) clearHistoryMutation.mutate(); }}
+            importFilePending={importHistoryFileMutation.isPending}
+            importTextPending={importHistoryMutation.isPending}
+          />
         ) : view === "documents" ? (
           <DocumentsInlineView />
         ) : view === "schedule" && selectedBatchId && (scheduleViewMode === "results" || (selectedBatch?.status === "completed" && scheduleViewMode !== "build")) ? (
@@ -1554,15 +1359,15 @@ export default function Home() {
                   <Card
                     className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
                     onClick={openReferencesTab}
-                    data-testid="tile-patient-references"
+                    data-testid="tile-patient-directory"
                   >
                     <div className="flex items-start gap-4 p-6">
                       <div className="shrink-0 mt-0.5">
-                        <FileText className="w-7 h-7 text-teal-600" />
+                        <Users className="w-7 h-7 text-teal-600" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-patient-references">Patient References</h3>
-                        <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Upload clinical data for auto-fill</p>
+                        <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-patient-directory">Patient Directory</h3>
+                        <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">View completed tests &amp; next eligible dates</p>
                       </div>
                     </div>
                   </Card>
@@ -2702,6 +2507,210 @@ function printNoteDocument(note: SavedNote) {
   const html = `<!DOCTYPE html><html><head><title>${note.title}</title><style>body{font-family:Arial,sans-serif;font-size:12px;margin:24px;}</style></head><body><h3>${note.title}</h3><hr>${content}</body></html>`;
   const w = window.open("", "_blank");
   if (w) { w.document.write(html); w.document.close(); w.print(); }
+}
+
+function computeNextEligible(dos: string, insuranceType: string): { date: Date; eligible: boolean } | null {
+  if (!dos) return null;
+  const dosDate = new Date(dos.includes("T") ? dos : dos + "T00:00:00");
+  if (isNaN(dosDate.getTime())) return null;
+  const months = insuranceType === "medicare" ? 12 : 6;
+  const next = new Date(dosDate);
+  next.setMonth(next.getMonth() + months);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return { date: next, eligible: today >= next };
+}
+
+function formatDisplayDate(d: Date): string {
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+interface PatientDirectoryViewProps {
+  testHistory: PatientTestHistory[];
+  historyLoading: boolean;
+  dirPasteText: string;
+  setDirPasteText: (v: string) => void;
+  dirSearch: string;
+  setDirSearch: (v: string) => void;
+  onImportFile: (file: File) => void;
+  onImportText: (text: string) => void;
+  onClearAll: () => void;
+  importFilePending: boolean;
+  importTextPending: boolean;
+}
+
+function PatientDirectoryView({ testHistory, historyLoading, dirPasteText, setDirPasteText, dirSearch, setDirSearch, onImportFile, onImportText, onClearAll, importFilePending, importTextPending }: PatientDirectoryViewProps) {
+  const patientMap = new Map<string, { displayName: string; dob?: string; records: PatientTestHistory[] }>();
+  for (const record of testHistory) {
+    const key = record.patientName.trim().toLowerCase();
+    const existing = patientMap.get(key);
+    if (existing) {
+      existing.records.push(record);
+      if (!existing.dob && record.dob) existing.dob = record.dob;
+    } else {
+      patientMap.set(key, { displayName: record.patientName, dob: record.dob || undefined, records: [record] });
+    }
+  }
+
+  const patients = Array.from(patientMap.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const filtered = dirSearch ? patients.filter(p => p.displayName.toLowerCase().includes(dirSearch.toLowerCase())) : patients;
+
+  return (
+    <div className="flex flex-col h-full relative z-10">
+      <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
+          <div className="flex items-center gap-2">
+            <SidebarTrigger data-testid="button-sidebar-toggle-dir" />
+            <div>
+              <h1 className="text-base font-bold tracking-tight flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                Patient Directory
+              </h1>
+              <p className="text-xs text-muted-foreground">{patients.length} patients · {testHistory.length} completed tests</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {testHistory.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onClearAll}
+                className="gap-1.5 text-red-600"
+                data-testid="button-clear-directory"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear All
+              </Button>
+            )}
+          </div>
+        </div>
+      </header>
+      <div className="flex-1 overflow-auto p-4">
+        <div className="max-w-5xl mx-auto space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card className="p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Upload className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-semibold">Upload File</span>
+              </div>
+              <p className="text-xs text-muted-foreground mb-2">Import from Excel or CSV: Name, DOB, Test, DOS, Insurance</p>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv,.txt"
+                className="text-xs"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onImportFile(file);
+                  e.target.value = "";
+                }}
+                data-testid="input-dir-file"
+              />
+              {importFilePending && (
+                <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Importing...
+                </div>
+              )}
+            </Card>
+            <Card className="p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <FileText className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-semibold">Paste Data</span>
+              </div>
+              <Textarea
+                placeholder="Paste test history data (Name, DOB, Test, Date of Service, Insurance)..."
+                value={dirPasteText}
+                onChange={(e) => setDirPasteText(e.target.value)}
+                className="text-xs min-h-[80px] mb-2"
+                data-testid="input-dir-paste"
+              />
+              <Button
+                size="sm"
+                disabled={!dirPasteText.trim() || importTextPending}
+                onClick={() => onImportText(dirPasteText)}
+                className="gap-1.5"
+                data-testid="button-import-dir"
+              >
+                {importTextPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                Import
+              </Button>
+            </Card>
+          </div>
+
+          {testHistory.length > 0 && (
+            <div className="flex items-center gap-2">
+              <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+              <Input
+                placeholder="Search patients..."
+                value={dirSearch}
+                onChange={(e) => setDirSearch(e.target.value)}
+                className="text-xs h-8 max-w-xs"
+                data-testid="input-dir-search"
+              />
+            </div>
+          )}
+
+          {historyLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : filtered.length === 0 && testHistory.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Users className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">No patient records yet. Import test history to get started.</p>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground text-sm">No patients match your search.</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filtered.map((patient) => {
+                const sortedRecords = [...patient.records].sort((a, b) => b.dateOfService.localeCompare(a.dateOfService));
+                return (
+                  <Card key={patient.displayName} className="p-4 space-y-3" data-testid={`card-patient-dir-${patient.displayName.replace(/\s+/g, "-").toLowerCase()}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-sm text-slate-900 dark:text-foreground">{patient.displayName}</p>
+                        {patient.dob && (
+                          <p className="text-xs text-muted-foreground mt-0.5">DOB: {patient.dob}</p>
+                        )}
+                      </div>
+                      <span className="text-xs text-muted-foreground shrink-0 mt-0.5">{patient.records.length} test{patient.records.length !== 1 ? "s" : ""}</span>
+                    </div>
+                    <div className="space-y-2">
+                      {sortedRecords.map((record) => {
+                        const eligible = computeNextEligible(record.dateOfService, record.insuranceType);
+                        return (
+                          <div key={record.id} className="bg-slate-50 dark:bg-muted/40 rounded-lg px-3 py-2 space-y-1" data-testid={`row-dir-test-${record.id}`}>
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="text-xs font-medium text-slate-800 dark:text-foreground">{record.testName}</span>
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                record.insuranceType === "medicare"
+                                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                                  : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+                              }`}>
+                                {record.insuranceType === "medicare" ? "Medicare" : "PPO"}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-2 text-[11px] flex-wrap">
+                              <span className="text-muted-foreground">DOS: {record.dateOfService}</span>
+                              {eligible ? (
+                                <span className={`font-medium ${eligible.eligible ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}`}>
+                                  {eligible.eligible ? "Eligible now" : `Eligible ${formatDisplayDate(eligible.date)}`}
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function DocumentsInlineView() {

@@ -34,6 +34,7 @@ const createBatchSchema = z.object({
 
 const addTestHistorySchema = z.object({
   patientName: z.string(),
+  dob: z.string().optional(),
   testName: z.string(),
   dateOfService: z.string(),
   insuranceType: z.string().default("ppo"),
@@ -703,9 +704,15 @@ const CSV_COLUMN_ALIASES: Record<string, string> = {
   insurance: "insuranceType",
   "insurance type": "insuranceType",
   payer: "insuranceType",
+  dob: "dob",
+  "date of birth": "dob",
+  dateofbirth: "dob",
+  birthdate: "dob",
+  birthday: "dob",
+  "birth date": "dob",
 };
 
-function parseHistoryCsv(text: string): { patientName: string; testName: string; dateOfService: string; insuranceType: string }[] | null {
+function parseHistoryCsv(text: string): { patientName: string; dob?: string; testName: string; dateOfService: string; insuranceType: string }[] | null {
   try {
     const rows = parse(text, { skip_empty_lines: true, relax_column_count: true }) as string[][];
     if (rows.length < 2) return null;
@@ -722,7 +729,7 @@ function parseHistoryCsv(text: string): { patientName: string; testName: string;
     const required = ["patientName", "testName", "dateOfService"];
     if (!required.every(k => k in colMap)) return null;
 
-    const results: { patientName: string; testName: string; dateOfService: string; insuranceType: string }[] = [];
+    const results: { patientName: string; dob?: string; testName: string; dateOfService: string; insuranceType: string }[] = [];
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r];
       const patientName = (row[colMap.patientName] || "").trim();
@@ -731,7 +738,8 @@ function parseHistoryCsv(text: string): { patientName: string; testName: string;
       if (!patientName || !testName || !dateOfService) continue;
       const rawInsurance = colMap.insuranceType !== undefined ? (row[colMap.insuranceType] || "") : "";
       const insuranceType = normalizeInsuranceType(rawInsurance);
-      results.push({ patientName, testName, dateOfService, insuranceType });
+      const dob = colMap.dob !== undefined ? ((row[colMap.dob] || "").trim() || undefined) : undefined;
+      results.push({ patientName, dob, testName, dateOfService, insuranceType });
     }
     return results.length > 0 ? results : null;
   } catch {
@@ -739,7 +747,7 @@ function parseHistoryCsv(text: string): { patientName: string; testName: string;
   }
 }
 
-async function parseHistoryImport(text: string): Promise<{ patientName: string; testName: string; dateOfService: string; insuranceType: string }[]> {
+async function parseHistoryImport(text: string): Promise<{ patientName: string; dob?: string; testName: string; dateOfService: string; insuranceType: string }[]> {
   const response = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
@@ -747,13 +755,14 @@ async function parseHistoryImport(text: string): Promise<{ patientName: string; 
         role: "system",
         content: `You are a clinical data parser. You will receive raw text data from a patient test history spreadsheet/database. Extract patient records with:
 - patientName: The patient's full name (Last, First format)
+- dob: Date of birth in MM/DD/YYYY or YYYY-MM-DD format if available, otherwise null
 - testName: The type of test performed. Look at the section header or context to determine the test type. Common tests: BrainWave, VitalWave, Bilateral Carotid Duplex, Echocardiogram TTE, Renal Artery Doppler, Lower Extremity Arterial Doppler, Upper Extremity Arterial Doppler, Abdominal Aortic Aneurysm Duplex, Stress Echocardiogram, Lower Extremity Venous Duplex, Upper Extremity Venous Duplex
 - dateOfService: The date in YYYY-MM-DD format
 - insuranceType: "medicare" or "ppo". Use "medicare" ONLY for straight/traditional/original Medicare. Medicare Advantage, HMO Medicare, MA plan, MAPD → use "ppo". Default to "ppo" when unclear.
 
-The data is tab-separated and may have multiple columns. Focus on extracting the Date of Service (first column usually), Patient name (second column), and any insurance information available.
+The data is tab-separated and may have multiple columns. Focus on extracting the Date of Service (first column usually), Patient name (second column), DOB if present, and any insurance information available.
 
-Return JSON: { "records": [ { "patientName": "...", "testName": "...", "dateOfService": "...", "insuranceType": "..." } ] }
+Return JSON: { "records": [ { "patientName": "...", "dob": "...", "testName": "...", "dateOfService": "...", "insuranceType": "..." } ] }
 
 Skip rows that are headers, empty, or don't contain valid patient data (no date or no name).`
       },
@@ -892,15 +901,6 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
-      if (name.trim()) {
-        await enrichFromReferenceDb([patient]);
-        const updated = await storage.getPatientScreening(patient.id);
-        if (updated) {
-          res.json(updated);
-          return;
-        }
-      }
-
       res.json(patient);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1012,7 +1012,6 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
-      await enrichFromReferenceDb(created);
       const refreshed = await storage.getPatientScreeningsByBatch(batchId);
       const createdIds = new Set(created.map(p => p.id));
       const enrichedPatients = refreshed.filter(p => createdIds.has(p.id));
@@ -1064,7 +1063,6 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
-      await enrichFromReferenceDb(created);
       const refreshed2 = await storage.getPatientScreeningsByBatch(batchId);
       const createdIds2 = new Set(created.map(p => p.id));
       const enrichedPatients2 = refreshed2.filter(p => createdIds2.has(p.id));
@@ -1100,15 +1098,6 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
 
       const patient = await storage.updatePatientScreening(id, updates);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
-
-      if (data.name && data.name.trim() && !patient.diagnoses && !patient.history && !patient.medications) {
-        await enrichFromReferenceDb([patient]);
-        const enriched = await storage.getPatientScreening(id);
-        if (enriched) {
-          res.json(enriched);
-          return;
-        }
-      }
 
       res.json(patient);
     } catch (error: any) {
@@ -1567,7 +1556,7 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
       if (!text.trim()) return res.status(400).json({ error: "Empty data" });
 
       const isCsvFile = req.file && req.file.originalname.toLowerCase().endsWith(".csv");
-      let records: { patientName: string; testName: string; dateOfService: string; insuranceType: string }[] | null = null;
+      let records: { patientName: string; dob?: string; testName: string; dateOfService: string; insuranceType: string }[] | null = null;
       if (isCsvFile) {
         records = parseHistoryCsv(text);
       }
@@ -1580,6 +1569,7 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
         .filter(r => r.patientName && r.testName && r.dateOfService)
         .map(r => ({
           patientName: r.patientName,
+          dob: r.dob || undefined,
           testName: r.testName,
           dateOfService: r.dateOfService,
           insuranceType: r.insuranceType || "ppo",
