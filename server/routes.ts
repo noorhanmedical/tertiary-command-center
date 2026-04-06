@@ -1003,22 +1003,15 @@ export async function registerRoutes(
     patientName: z.string().min(1).optional(),
     clinician: z.string().nullable().optional(),
     facility: z.string().nullable().optional(),
-    report: z.string().nullable().optional(),
     insuranceInfo: z.string().nullable().optional(),
-    historicalProblemList: z.string().nullable().optional(),
-    comments: z.string().nullable().optional(),
-    billing: z.string().nullable().optional(),
-    nextAncillaries: z.string().nullable().optional(),
-    billingComments: z.string().nullable().optional(),
-    paid: z.boolean().nullable().optional(),
-    ptResponsibility: z.string().nullable().optional(),
-    billingComments2: z.string().nullable().optional(),
-    nextgenAppt: z.string().nullable().optional(),
-    billed: z.boolean().nullable().optional(),
-    drImranComments: z.string().nullable().optional(),
+    documentationStatus: z.string().nullable().optional(),
+    billingStatus: z.string().nullable().optional(),
     response: z.string().nullable().optional(),
-    nwpgInvoiceSent: z.boolean().nullable().optional(),
-    paidFinal: z.boolean().nullable().optional(),
+    paidStatus: z.string().nullable().optional(),
+    balanceRemaining: z.string().nullable().optional(),
+    dateSubmitted: z.string().nullable().optional(),
+    followUpDate: z.string().nullable().optional(),
+    datePaid: z.string().nullable().optional(),
   });
 
   app.get("/api/billing-records", async (_req, res) => {
@@ -1206,13 +1199,13 @@ export async function registerRoutes(
     const records = await storage.getAllBillingRecords();
     await upsertSheetData(
       spreadsheetId, "Billing Records",
-      ["ID", "Patient Name", "Service", "Facility", "Date of Service", "Clinician", "Insurance", "Billing", "Paid", "Billed", "NWPG Invoice Sent", "Paid Final", "Comments", "Created At"],
+      ["ID", "Patient Name", "Service", "Facility", "Date of Service", "Clinician", "Insurance Info", "Documentation Status", "Billing Status", "Response", "Paid Status", "Balance Remaining", "Date Submitted", "Follow-Up Date", "Date Paid", "Created At"],
       records.map((r) => [
         r.id, r.patientName, r.service, r.facility ?? "", r.dateOfService ?? "",
-        r.clinician ?? "", r.insuranceInfo ?? "", r.billing ?? "",
-        r.paid ? "Yes" : "No", r.billed ? "Yes" : "No",
-        r.nwpgInvoiceSent ? "Yes" : "No", r.paidFinal ? "Yes" : "No",
-        r.comments ?? "", r.createdAt.toISOString()
+        r.clinician ?? "", r.insuranceInfo ?? "",
+        r.documentationStatus ?? "", r.billingStatus ?? "", r.response ?? "",
+        r.paidStatus ?? "", r.balanceRemaining ?? "", r.dateSubmitted ?? "",
+        r.followUpDate ?? "", r.datePaid ?? "", r.createdAt.toISOString()
       ])
     );
     const syncedAt = new Date().toISOString();

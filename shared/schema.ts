@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, serial, text, varchar, integer, timestamp, jsonb, index, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, varchar, integer, timestamp, jsonb, index, boolean, numeric } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -192,22 +192,15 @@ export const billingRecords = pgTable("billing_records", {
   dateOfService: text("date_of_service"),
   patientName: text("patient_name").notNull(),
   clinician: text("clinician"),
-  report: text("report"),
   insuranceInfo: text("insurance_info"),
-  historicalProblemList: text("historical_problem_list"),
-  comments: text("comments"),
-  billing: text("billing"),
-  nextAncillaries: text("next_ancillaries"),
-  billingComments: text("billing_comments"),
-  paid: boolean("paid").default(false),
-  ptResponsibility: text("pt_responsibility"),
-  billingComments2: text("billing_comments_2"),
-  nextgenAppt: text("nextgen_appt"),
-  billed: boolean("billed").default(false),
-  drImranComments: text("dr_imran_comments"),
-  response: text("response"),
-  nwpgInvoiceSent: boolean("nwpg_invoice_sent").default(false),
-  paidFinal: boolean("paid_final").default(false),
+  documentationStatus: text("documentation_status"),
+  billingStatus: text("billing_status").default("Not Started"),
+  response: text("response").default("Pending"),
+  paidStatus: text("paid_status").default("Unpaid"),
+  balanceRemaining: numeric("balance_remaining", { precision: 10, scale: 2 }),
+  dateSubmitted: text("date_submitted"),
+  followUpDate: text("follow_up_date"),
+  datePaid: text("date_paid"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_billing_records_patient_id").on(table.patientId),
