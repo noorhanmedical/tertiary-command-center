@@ -205,7 +205,7 @@ export default function PlexusPage() {
     let docs: GeneratedDocument[] = [];
     if (service === "VitalWave") {
       const result = vitalWaveScreeningToResult({ config: VITALWAVE_CONFIG, screening: vwScreening });
-      const generated = generateVitalWaveDocuments({ input, screeningResult: result });
+      const generated = generateVitalWaveDocuments({ input, screeningResult: result, vitalWaveConfig: VITALWAVE_CONFIG, vitalWaveScreening: vwScreening });
       docs = [generated.preProcedureOrder, generated.postProcedureNote, generated.billing];
     } else if (service === "Ultrasound") {
       const result = ultrasoundScreeningToResult({ config: ULTRASOUND_CONFIG, screening: usScreening });

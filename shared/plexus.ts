@@ -472,16 +472,36 @@ export function pgxScreeningToResult(args: { screening: PgxScreeningData }): Scr
   };
 }
 
+function buildVitalWaveNotesBody(
+  config: VitalWaveConfig,
+  screening: Record<string, Record<string, boolean>>
+): string {
+  const paragraphs: string[] = [];
+  for (const [groupKey, groupCfg] of Object.entries(config)) {
+    const selectedGroup = screening[groupKey] || {};
+    const conditionNames = groupCfg.conditions
+      .filter((c) => selectedGroup[c.name])
+      .map((c) => c.name.toLowerCase());
+    if (conditionNames.length === 0) continue;
+    paragraphs.push(`${groupCfg.title} (CPT ${groupCfg.cpt}): Indicated for ${joinNatural(conditionNames)}.`);
+  }
+  return paragraphs.length > 0 ? paragraphs.join('\n\n') : 'Select conditions in the screening form.';
+}
+
 export function generateVitalWaveDocuments(args: {
   input: GenerateInput;
   screeningResult: ScreeningResult;
+  vitalWaveConfig?: VitalWaveConfig;
+  vitalWaveScreening?: Record<string, Record<string, boolean>>;
 }): Record<'preProcedureOrder' | 'postProcedureNote' | 'billing', GeneratedDocument> {
   const generatedAtISO = isoNow(args.input.nowISO);
   const plexusId = ensurePlexusId(args.input.plexusId);
   const patient = args.input.patient;
   const clinician = args.input.clinician;
   const dxList = args.screeningResult.selectedConditions;
-  const notes = args.screeningResult.notes.join(' ');
+  const notes = args.vitalWaveConfig && args.vitalWaveScreening
+    ? buildVitalWaveNotesBody(args.vitalWaveConfig, args.vitalWaveScreening)
+    : args.screeningResult.notes.join(' ');
 
   const pre: GeneratedDocument = {
     service: 'VitalWave',
@@ -596,6 +616,42 @@ export function generateVitalWaveDocuments(args: {
   return { preProcedureOrder: pre, postProcedureNote: post, billing: bill };
 }
 
+function joinNatural(items: string[]): string {
+  if (items.length === 0) return '';
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+}
+
+function buildUltrasoundNotesBody(
+  selection: string[],
+  conditions: Record<string, boolean>,
+  config: UltrasoundConfig,
+  otherText?: Record<string, string>
+): string {
+  if (!selection || selection.length === 0) return 'Select conditions in the screening form.';
+  const paragraphs: string[] = [];
+  for (const type of selection) {
+    const cfg = config[type];
+    if (!cfg) continue;
+    const conditionNames: string[] = [];
+    for (const cond of cfg.conditions) {
+      const key = cond.name === 'Other' ? `${type}-Other` : cond.name;
+      if (!conditions[key]) continue;
+      if (cond.name === 'Other') {
+        const text = (otherText || {})[type];
+        if (text) conditionNames.push(text);
+      } else {
+        conditionNames.push(cond.name.toLowerCase());
+      }
+    }
+    if (conditionNames.length === 0) continue;
+    const cptLabel = cfg.cpt ? ` (CPT ${cfg.cpt})` : '';
+    paragraphs.push(`${type}${cptLabel}: Indicated for ${joinNatural(conditionNames)}.`);
+  }
+  return paragraphs.length > 0 ? paragraphs.join('\n\n') : 'Select conditions in the screening form.';
+}
+
 export function generateUltrasoundDocuments(args: {
   input: GenerateInput;
   screeningResult: ScreeningResult;
@@ -631,7 +687,7 @@ export function generateUltrasoundDocuments(args: {
       },
       { heading: 'Procedures Ordered', body: selection.length ? selection.map((t) => `\u2022 ${t}`).join('\n') : 'None selected' },
       { heading: 'Diagnosis', body: selectedConditions.length ? selectedConditions.map((d) => `\u2022 ${d}`).join('\n') : 'Select conditions in the screening form.' },
-      { heading: 'Notes', body: procedureNotes.length ? procedureNotes.join(' ') : 'Select conditions in the screening form.' }
+      { heading: 'Notes', body: buildUltrasoundNotesBody(selection, args.screening.conditions || {}, args.config, args.screening.otherText) }
     ]
   };
 
@@ -672,7 +728,7 @@ export function generateUltrasoundDocuments(args: {
           selectedConditions.length ? selectedConditions.map((d) => `\u2022 ${d}`).join('\n') : 'N/A',
           '',
           'Notes',
-          procedureNotes.length ? procedureNotes.map((n) => `\u2022 ${n}`).join('\n') : 'N/A'
+          buildUltrasoundNotesBody(selection, args.screening.conditions || {}, args.config, args.screening.otherText)
         ].join('\n')
       }
     ]
@@ -920,7 +976,7 @@ export function generateAllDocuments(args: {
 
   if (args.bundle.vitalWave) {
     const screeningResult = vitalWaveScreeningToResult(args.bundle.vitalWave);
-    docs.push(...Object.values(generateVitalWaveDocuments({ input, screeningResult })));
+    docs.push(...Object.values(generateVitalWaveDocuments({ input, screeningResult, vitalWaveConfig: args.bundle.vitalWave.config, vitalWaveScreening: args.bundle.vitalWave.screening })));
   }
   if (args.bundle.ultrasound) {
     const screeningResult = ultrasoundScreeningToResult(args.bundle.ultrasound);

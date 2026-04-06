@@ -212,7 +212,7 @@ export function EditableScreeningFormModal({
 
     if (service === "VitalWave") {
       const result = vitalWaveScreeningToResult({ config: VITALWAVE_CONFIG, screening: vwScreening });
-      const generated = generateVitalWaveDocuments({ input, screeningResult: result });
+      const generated = generateVitalWaveDocuments({ input, screeningResult: result, vitalWaveConfig: VITALWAVE_CONFIG, vitalWaveScreening: vwScreening });
       const meta = JSON.stringify({ selectedConditions: result.selectedConditions, icd10Codes: result.icd10Codes, cptCodes: result.cptCodes });
       const metaSection = { heading: "__screening_meta__", body: meta };
       generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, metaSection];
