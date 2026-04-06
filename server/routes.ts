@@ -1139,6 +1139,7 @@ export async function registerRoutes(
   const billingSyncState = { lastSyncedAt: null as string | null };
   const patientsSyncLock = { running: false, pending: false };
   const billingSyncLock = { running: false, pending: false };
+  const exportNotesLock = { running: false, pending: false };
 
   interface PatientsSyncResult {
     spreadsheetId: string;
@@ -1301,6 +1302,78 @@ export async function registerRoutes(
     void runBillingSyncWithLock(false);
   }
 
+  interface ExportNotesResult {
+    exported: number;
+    failed: number;
+    remaining: number;
+    results: { noteId: number; driveFileId: string; webViewLink: string }[];
+    errors: { noteId: number; error: string }[];
+  }
+
+  async function executeExportNotes(): Promise<ExportNotesResult> {
+    const { uploadTextAsGoogleDoc, ensurePlexusFolderTree } = await import("./googleDrive");
+    const BATCH_LIMIT = 50;
+    const allNotes = await storage.getAllGeneratedNotes();
+    const unsynced = allNotes.filter((n) => !n.driveFileId).slice(0, BATCH_LIMIT);
+    const DRIVE_ANCILLARY_TYPES_ALL: readonly string[] = ["BrainWave", "VitalWave", "Ultrasound"];
+    const results: { noteId: number; driveFileId: string; webViewLink: string }[] = [];
+    const errors: { noteId: number; error: string }[] = [];
+
+    for (const note of unsynced) {
+      try {
+        const sections = (note.sections as { heading: string; body: string }[]) || [];
+        const content = sections
+          .filter((s) => s.heading !== "__screening_meta__")
+          .map((s) => `${s.heading}\n${s.body}`)
+          .join("\n\n");
+        const filename = `${note.patientName} - ${note.title} (${note.scheduleDate || note.generatedAt.toISOString().split("T")[0]})`;
+        let clinicalDocsFolderId: string | undefined;
+        if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES_ALL.includes(note.service)) {
+          try {
+            const tree = await ensurePlexusFolderTree(note.facility, note.patientName, note.service);
+            clinicalDocsFolderId = tree.clinicalDocsFolderId;
+          } catch (e) {
+            console.warn(`Could not resolve Drive folder for note ${note.id}, uploading to root:`, (e as Error).message);
+          }
+        }
+        const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content, clinicalDocsFolderId);
+        await storage.updateGeneratedNoteDriveInfo(note.id, driveFileId, webViewLink);
+        results.push({ noteId: note.id, driveFileId, webViewLink });
+      } catch (e: any) {
+        errors.push({ noteId: note.id, error: e.message });
+      }
+    }
+
+    const totalUnsynced = allNotes.filter((n) => !n.driveFileId).length;
+    const remaining = Math.max(0, totalUnsynced - results.length - errors.length);
+    return { exported: results.length, failed: errors.length, remaining, results, errors };
+  }
+
+  async function runExportNotesWithLock(throwOnError: boolean): Promise<ExportNotesResult | null> {
+    if (exportNotesLock.running) {
+      exportNotesLock.pending = true;
+      return null;
+    }
+    exportNotesLock.running = true;
+    try {
+      return await executeExportNotes();
+    } catch (err) {
+      if (throwOnError) throw err;
+      console.warn("Background notes export skipped:", (err as Error).message);
+      return null;
+    } finally {
+      exportNotesLock.running = false;
+      if (exportNotesLock.pending) {
+        exportNotesLock.pending = false;
+        void runExportNotesWithLock(false);
+      }
+    }
+  }
+
+  function backgroundExportNotes(): void {
+    void runExportNotesWithLock(false);
+  }
+
   app.get("/api/google/status", async (_req, res) => {
     try {
       const { isGoogleSheetsConnected } = await import("./googleSheets");
@@ -1421,57 +1494,14 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/google/drive/export-all", async (req, res) => {
+  app.post("/api/google/drive/export-all", async (_req, res) => {
     try {
-      const { uploadTextAsGoogleDoc, ensurePlexusFolderTree } = await import("./googleDrive");
-      const BATCH_LIMIT = 50;
-
-      const allNotes = await storage.getAllGeneratedNotes();
-      const unsynced = allNotes.filter((n) => !n.driveFileId).slice(0, BATCH_LIMIT);
-
-      const results: { noteId: number; driveFileId: string; webViewLink: string }[] = [];
-      const errors: { noteId: number; error: string }[] = [];
-
-      for (const note of unsynced) {
-        try {
-          const sections = (note.sections as { heading: string; body: string }[]) || [];
-          const content = sections
-            .filter((s) => s.heading !== "__screening_meta__")
-            .map((s) => `${s.heading}\n${s.body}`)
-            .join("\n\n");
-
-          const filename = `${note.patientName} - ${note.title} (${note.scheduleDate || note.generatedAt.toISOString().split("T")[0]})`;
-
-          const DRIVE_ANCILLARY_TYPES_ALL: readonly string[] = ["BrainWave", "VitalWave", "Ultrasound"];
-          let clinicalDocsFolderId: string | undefined;
-          if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES_ALL.includes(note.service)) {
-            try {
-              const tree = await ensurePlexusFolderTree(note.facility, note.patientName, note.service);
-              clinicalDocsFolderId = tree.clinicalDocsFolderId;
-            } catch (e) {
-              console.warn(`Could not resolve Drive folder for note ${note.id}, uploading to root:`, (e as Error).message);
-            }
-          }
-
-          const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content, clinicalDocsFolderId);
-          await storage.updateGeneratedNoteDriveInfo(note.id, driveFileId, webViewLink);
-          results.push({ noteId: note.id, driveFileId, webViewLink });
-        } catch (e: any) {
-          errors.push({ noteId: note.id, error: e.message });
-        }
+      const result = await runExportNotesWithLock(true);
+      if (!result) {
+        res.json({ success: true, message: "Export already in progress, queued" });
+        return;
       }
-
-      const totalUnsynced = allNotes.filter((n) => !n.driveFileId).length;
-      const remaining = Math.max(0, totalUnsynced - results.length - errors.length);
-
-      res.json({
-        success: true,
-        exported: results.length,
-        failed: errors.length,
-        remaining,
-        results,
-        errors,
-      });
+      res.json({ success: true, ...result });
     } catch (error: any) {
       console.error("Drive export-all error:", error);
       res.status(500).json({ error: error.message });
@@ -1633,6 +1663,10 @@ export async function registerRoutes(
         driveFileId,
         driveWebViewLink: webViewLink || null,
       });
+
+      backgroundSyncPatients();
+      backgroundSyncBilling();
+      void backgroundExportNotes();
 
       res.json({ success: true, record, driveFileId, webViewLink });
     } catch (error: any) {
