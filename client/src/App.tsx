@@ -25,26 +25,30 @@ function App() {
         <Switch>
           <Route path="/schedule/:id" component={SharedSchedule} />
           <Route>
-            <SidebarProvider defaultOpen={false} style={style as React.CSSProperties}>
-              <div className="flex flex-col h-screen w-full">
-                <div className="bg-[#1a365d] backdrop-blur-md px-5 py-3 z-[100] shrink-0" data-testid="banner-top">
-                  <h1 className="text-lg font-bold tracking-tight text-white" data-testid="text-app-title-banner">Plexus Ancillary Screening</h1>
-                  <p className="text-sm text-blue-200/70 leading-tight">AI-powered patient qualification</p>
-                </div>
-                <div className="flex flex-1 min-h-0 w-full">
-                  <Toaster />
-                  <Switch>
-                    <Route path="/" component={Home} />
-                    <Route path="/archive" component={ArchivePage} />
-                    <Route path="/plexus" component={PlexusPage} />
-                    <Route path="/documents" component={DocumentsPage} />
-                    <Route path="/billing" component={BillingPage} />
-          <Route path="/document-upload" component={DocumentUploadPage} />
-                    <Route component={NotFound} />
-                  </Switch>
-                </div>
+            <div className="flex flex-col h-screen w-full">
+              <div className="bg-[#1a365d] backdrop-blur-md px-5 py-3 z-[100] shrink-0" data-testid="banner-top">
+                <h1 className="text-lg font-bold tracking-tight text-white" data-testid="text-app-title-banner">Plexus Ancillary Screening</h1>
+                <p className="text-sm text-blue-200/70 leading-tight">AI-powered patient qualification</p>
               </div>
-            </SidebarProvider>
+              <div className="flex flex-1 min-h-0 w-full">
+                <Toaster />
+                <Switch>
+                  <Route path="/archive" component={ArchivePage} />
+                  <Route path="/plexus" component={PlexusPage} />
+                  <Route path="/documents" component={DocumentsPage} />
+                  <Route path="/billing" component={BillingPage} />
+                  <Route path="/document-upload" component={DocumentUploadPage} />
+                  <Route>
+                    <SidebarProvider defaultOpen={false} style={style as React.CSSProperties}>
+                      <Switch>
+                        <Route path="/" component={Home} />
+                        <Route component={NotFound} />
+                      </Switch>
+                    </SidebarProvider>
+                  </Route>
+                </Switch>
+              </div>
+            </div>
           </Route>
         </Switch>
       </TooltipProvider>
