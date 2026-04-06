@@ -198,6 +198,7 @@ const IMPORT_ACCESS_CODE = "1234";
 type TabItem = { type: "home" } | { type: "history" } | { type: "references" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
 
 export default function Home() {
+  const [, setLocation] = useLocation();
   const [tabs, setTabs] = useState<TabItem[]>([{ type: "home" }]);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
@@ -655,7 +656,7 @@ export default function Home() {
                   <SidebarMenuButton asChild data-testid="sidebar-documents">
                     <Link href="/documents" onClick={() => setSidebarOpen(false)}>
                       <FileText className="w-4 h-4 shrink-0" />
-                      <span className="text-sm font-medium">Clinical Notes</span>
+                      <span className="text-sm font-medium">Ancillary Documents</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -1373,7 +1374,7 @@ export default function Home() {
                     >
                       <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
                         <ClipboardList className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-plexus-documents">Plexus Documents</span>
+                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-plexus-documents">Generate Note</span>
                       </div>
                     </Card>
                   </Link>
@@ -1385,7 +1386,7 @@ export default function Home() {
                     >
                       <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
                         <FileText className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Clinical Notes</span>
+                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
                       </div>
                     </Card>
                   </Link>
@@ -3245,32 +3246,42 @@ function ResultsView({
                             <div className="flex items-center justify-between mb-3">
                               <div className="flex items-center gap-2">
                                 <FileText className="w-4 h-4 text-teal-600" />
-                                <span className="font-semibold text-sm text-slate-800">Clinical Notes</span>
+                                <span className="font-semibold text-sm text-slate-800">Ancillary Documents</span>
                                 {isGenerating && <span className="text-xs text-slate-400 animate-pulse">Generating…</span>}
                               </div>
-                              {(patient.appointmentStatus || "").toLowerCase() === "completed" && allTests.length > 0 && (
+                              <div className="flex items-center gap-2">
                                 <button
-                                  className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const docs = autoGeneratePatientNotes(patient, batch?.scheduleDate, batch?.facility, batch?.clinicianName);
-                                    if (docs.length > 0) {
-                                      setPatientNotes((prev) => ({ ...prev, [patient.id]: docs }));
-                                      const payload = docs.map((doc) => ({
-                                        patientId: patient.id, batchId: batch!.id,
-                                        facility: batch?.facility ?? null, scheduleDate: batch?.scheduleDate ?? null,
-                                        patientName: patient.name, service: doc.service, docKind: doc.kind,
-                                        title: doc.title, sections: doc.sections,
-                                      }));
-                                      saveNotesMutation.mutate(payload);
-                                    }
-                                  }}
-                                  data-testid={`button-regenerate-notes-${patient.id}`}
+                                  className="text-xs text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1 border border-indigo-200 rounded-lg px-2 py-0.5 hover:bg-indigo-50"
+                                  onClick={(e) => { e.stopPropagation(); setLocation("/plexus"); }}
+                                  data-testid={`button-generate-note-${patient.id}`}
                                 >
-                                  <RefreshCw className="w-3 h-3" />
-                                  Regenerate
+                                  <ClipboardList className="w-3 h-3" />
+                                  Generate Note
                                 </button>
-                              )}
+                                {(patient.appointmentStatus || "").toLowerCase() === "completed" && allTests.length > 0 && (
+                                  <button
+                                    className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const docs = autoGeneratePatientNotes(patient, batch?.scheduleDate, batch?.facility, batch?.clinicianName);
+                                      if (docs.length > 0) {
+                                        setPatientNotes((prev) => ({ ...prev, [patient.id]: docs }));
+                                        const payload = docs.map((doc) => ({
+                                          patientId: patient.id, batchId: batch!.id,
+                                          facility: batch?.facility ?? null, scheduleDate: batch?.scheduleDate ?? null,
+                                          patientName: patient.name, service: doc.service, docKind: doc.kind,
+                                          title: doc.title, sections: doc.sections,
+                                        }));
+                                        saveNotesMutation.mutate(payload);
+                                      }
+                                    }}
+                                    data-testid={`button-regenerate-notes-${patient.id}`}
+                                  >
+                                    <RefreshCw className="w-3 h-3" />
+                                    Regenerate
+                                  </button>
+                                )}
+                              </div>
                             </div>
                             <div className="space-y-3">
                               {docsToShow.map((doc, di) => (

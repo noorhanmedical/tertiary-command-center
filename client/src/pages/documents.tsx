@@ -313,7 +313,7 @@ export default function DocumentsPage() {
           <div className="flex items-center gap-3">
             <FileText className="w-7 h-7 text-teal-600" />
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Clinical Notes</h1>
+              <h1 className="text-2xl font-bold text-slate-900">Ancillary Documents</h1>
               <p className="text-sm text-slate-500 mt-0.5">Auto-generated notes organized by clinic, date, and patient</p>
             </div>
           </div>
