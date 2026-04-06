@@ -99,6 +99,9 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      import("./googleDrive").then(({ initializeDriveFolderTree }) => {
+        initializeDriveFolderTree();
+      }).catch(() => {});
     },
   );
 

@@ -68,6 +68,73 @@ export async function isGoogleDriveConnected(): Promise<boolean> {
   }
 }
 
+export async function getDriveUserEmail(): Promise<string | null> {
+  try {
+    const drive = await getUncachableGoogleDriveClient();
+    const resp = await drive.about.get({ fields: "user" });
+    return resp.data.user?.emailAddress ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
+
+export async function initializeDriveFolderTree(): Promise<void> {
+  try {
+    const { getSetting, setSetting } = await import("./dbSettings");
+    const drive = await getUncachableGoogleDriveClient();
+
+    const rootKey = "DRIVE_FOLDER_plexus_ancillary_platform";
+    let rootId = await getSetting(rootKey);
+    if (!rootId) {
+      rootId = await getOrCreateFolder(drive, "Plexus Ancillary Platform");
+      await setSetting(rootKey, rootId);
+      console.log("[Drive] Created root folder: Plexus Ancillary Platform");
+    }
+
+    for (const facility of VALID_FACILITIES) {
+      const facilitySafeKey = facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "");
+      const facilityKey = `DRIVE_FOLDER_facility_${facilitySafeKey}`;
+      let facilityFolderId = await getSetting(facilityKey);
+      if (!facilityFolderId) {
+        facilityFolderId = await getOrCreateFolder(drive, facility, rootId);
+        await setSetting(facilityKey, facilityFolderId);
+        console.log(`[Drive] Created facility folder: ${facility}`);
+      }
+
+      for (const ancType of ALL_ANCILLARY_TYPES) {
+        const ancSafeKey = ancType.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "");
+        const ancKey = `DRIVE_FOLDER_facility_ancillary_${facilitySafeKey}_${ancSafeKey}`;
+        let ancFolderId = await getSetting(ancKey);
+        if (!ancFolderId) {
+          ancFolderId = await getOrCreateFolder(drive, ancType, facilityFolderId);
+          await setSetting(ancKey, ancFolderId);
+          console.log(`[Drive] Created ancillary folder: ${facility} / ${ancType}`);
+        }
+
+        const clinDocsKey = `DRIVE_FOLDER_facility_clinical_docs_${facilitySafeKey}_${ancSafeKey}`;
+        let clinDocsFolderId = await getSetting(clinDocsKey);
+        if (!clinDocsFolderId) {
+          clinDocsFolderId = await getOrCreateFolder(drive, "Clinical Documents", ancFolderId);
+          await setSetting(clinDocsKey, clinDocsFolderId);
+        }
+
+        const reportKey = `DRIVE_FOLDER_facility_report_${facilitySafeKey}_${ancSafeKey}`;
+        let reportFolderId = await getSetting(reportKey);
+        if (!reportFolderId) {
+          reportFolderId = await getOrCreateFolder(drive, "Report", ancFolderId);
+          await setSetting(reportKey, reportFolderId);
+        }
+      }
+    }
+
+    console.log("[Drive] Folder tree initialization complete.");
+  } catch (err: any) {
+    console.warn("[Drive] Folder tree init skipped (Drive not connected or error):", err.message);
+  }
+}
+
 function driveQueryEscape(value: string): string {
   return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
