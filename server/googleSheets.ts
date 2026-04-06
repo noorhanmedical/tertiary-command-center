@@ -97,6 +97,68 @@ export async function getOrCreateSpreadsheet(
   return id;
 }
 
+export async function getOrCreateSpreadsheetInFolder(
+  settingKey: string,
+  title: string,
+  folderId: string
+): Promise<string> {
+  const { getSetting, setSetting } = await import("./dbSettings");
+  const { getUncachableGoogleDriveClient } = await import("./googleDrive");
+  const drive = await getUncachableGoogleDriveClient();
+
+  const dbId = await getSetting(settingKey);
+  if (dbId) {
+    try {
+      const fileResp = await drive.files.get({
+        fileId: dbId,
+        fields: "parents",
+      });
+      const parents: string[] = fileResp.data.parents ?? [];
+      if (!parents.includes(folderId)) {
+        const currentParents = parents.join(",");
+        await drive.files.update({
+          fileId: dbId,
+          addParents: folderId,
+          removeParents: currentParents || undefined,
+          fields: "id,parents",
+        });
+      }
+    } catch (e) {
+      console.warn(`Could not verify/move spreadsheet ${dbId} to folder ${folderId}:`, (e as Error).message);
+    }
+    return dbId;
+  }
+
+  const sheets = await getUncachableGoogleSheetClient();
+  const resp = await sheets.spreadsheets.create({
+    requestBody: {
+      properties: { title },
+      sheets: [],
+    },
+  });
+
+  const spreadsheetId = resp.data.spreadsheetId!;
+
+  try {
+    const fileResp = await drive.files.get({
+      fileId: spreadsheetId,
+      fields: "parents",
+    });
+    const currentParents = fileResp.data.parents?.join(",") ?? "";
+    await drive.files.update({
+      fileId: spreadsheetId,
+      addParents: folderId,
+      removeParents: currentParents || undefined,
+      fields: "id,parents",
+    });
+  } catch (e) {
+    console.warn(`Could not move new spreadsheet ${spreadsheetId} to folder ${folderId}:`, (e as Error).message);
+  }
+
+  await setSetting(settingKey, spreadsheetId);
+  return spreadsheetId;
+}
+
 export async function upsertSheetData(
   spreadsheetId: string,
   sheetTitle: string,

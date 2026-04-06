@@ -1204,34 +1204,76 @@ export async function registerRoutes(
   }
 
   async function executeSyncBilling(): Promise<BillingSyncResult> {
-    const { getOrCreateSpreadsheet, upsertSheetData } = await import("./googleSheets");
+    const { getOrCreateSpreadsheetInFolder, upsertSheetData } = await import("./googleSheets");
+    const { getFacilityFolderId } = await import("./googleDrive");
     const { setSetting } = await import("./dbSettings");
-    const spreadsheetId = await getOrCreateSpreadsheet("GOOGLE_SHEETS_BILLING_ID", "Plexus Billing Tracker");
     const records = await storage.getAllBillingRecords();
-    await upsertSheetData(
-      spreadsheetId, "Billing Records",
-      ["Date of Service", "Patient Name", "Facility", "Rendering Provider", "Service Type", "Primary Insurance", "Documentation Status", "Claim Status", "Payer Status", "Date Submitted", "Days in A/R", "Follow-Up Date", "Payment Status", "Paid Amount", "Total Charges", "Allowed Amount", "Patient Responsibility", "Adjustment Amount", "Balance Remaining"],
-      records.map((r) => {
-        const daysInAR = (() => {
-          if (!r.dateSubmitted) return "";
-          const start = new Date(r.dateSubmitted);
-          if (isNaN(start.getTime())) return "";
-          return Math.max(0, Math.round((Date.now() - start.getTime()) / 86400000)).toString();
-        })();
-        return [
-          r.dateOfService ?? "", r.patientName, r.facility ?? "", r.clinician ?? "",
-          r.service, r.insuranceInfo ?? "", r.documentationStatus ?? "", r.billingStatus ?? "",
-          r.response ?? "", r.dateSubmitted ?? "", daysInAR, r.followUpDate ?? "",
-          r.paidStatus ?? "", r.paidAmount ?? "", r.totalCharges ?? "", r.allowedAmount ?? "",
-          r.patientResponsibility ?? "", r.adjustmentAmount ?? "", r.balanceRemaining ?? ""
-        ];
-      })
-    );
+
+    const BILLING_HEADERS = ["Date of Service", "Patient Name", "Facility", "Rendering Provider", "Service Type", "Primary Insurance", "Documentation Status", "Claim Status", "Payer Status", "Date Submitted", "Days in A/R", "Follow-Up Date", "Payment Status", "Paid Amount", "Total Charges", "Allowed Amount", "Patient Responsibility", "Adjustment Amount", "Balance Remaining"];
+
+    const facilityGroups = new Map<string, typeof records>();
+    for (const r of records) {
+      const fac = r.facility || "Unknown Facility";
+      if (!facilityGroups.has(fac)) facilityGroups.set(fac, []);
+      facilityGroups.get(fac)!.push(r);
+    }
+
+    let totalSynced = 0;
+    let lastSpreadsheetId = "";
+
+    for (const [facility, facRecords] of Array.from(facilityGroups.entries())) {
+      let folderId: string | null = null;
+      try {
+        folderId = await getFacilityFolderId(facility);
+      } catch (e) {
+        console.warn(`Could not get Drive folder for facility ${facility}, skipping folder placement:`, (e as Error).message);
+      }
+
+      const billingSettingKey = `GOOGLE_SHEETS_BILLING_ID_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`;
+      let spreadsheetId: string;
+      if (folderId) {
+        spreadsheetId = await getOrCreateSpreadsheetInFolder(
+          billingSettingKey,
+          `Plexus Billing Tracker — ${facility}`,
+          folderId
+        );
+      } else {
+        const { getOrCreateSpreadsheet } = await import("./googleSheets");
+        spreadsheetId = await getOrCreateSpreadsheet(billingSettingKey, `Plexus Billing Tracker — ${facility}`);
+      }
+
+      await upsertSheetData(
+        spreadsheetId, "Billing Records",
+        BILLING_HEADERS,
+        facRecords.map((r) => {
+          const daysInAR = (() => {
+            if (!r.dateSubmitted) return "";
+            const start = new Date(r.dateSubmitted);
+            if (isNaN(start.getTime())) return "";
+            return Math.max(0, Math.round((Date.now() - start.getTime()) / 86400000)).toString();
+          })();
+          return [
+            r.dateOfService ?? "", r.patientName, r.facility ?? "", r.clinician ?? "",
+            r.service, r.insuranceInfo ?? "", r.documentationStatus ?? "", r.billingStatus ?? "",
+            r.response ?? "", r.dateSubmitted ?? "", daysInAR, r.followUpDate ?? "",
+            r.paidStatus ?? "", r.paidAmount ?? "", r.totalCharges ?? "", r.allowedAmount ?? "",
+            r.patientResponsibility ?? "", r.adjustmentAmount ?? "", r.balanceRemaining ?? ""
+          ];
+        })
+      );
+
+      totalSynced += facRecords.length;
+      lastSpreadsheetId = spreadsheetId;
+      await setSetting(`BILLING_SPREADSHEET_ID_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`, spreadsheetId);
+    }
+
     const syncedAt = new Date().toISOString();
     billingSyncState.lastSyncedAt = syncedAt;
     await setSetting("BILLING_LAST_SYNCED_AT", syncedAt);
-    await setSetting("BILLING_SPREADSHEET_ID", spreadsheetId);
-    return { spreadsheetId, recordCount: records.length, syncedAt };
+    if (lastSpreadsheetId) {
+      await setSetting("BILLING_SPREADSHEET_ID", lastSpreadsheetId);
+    }
+    return { spreadsheetId: lastSpreadsheetId || "", recordCount: totalSynced, syncedAt };
   }
 
   async function runBillingSyncWithLock(throwOnError: boolean): Promise<BillingSyncResult | null> {
@@ -1342,7 +1384,7 @@ export async function registerRoutes(
       const note = await storage.getGeneratedNote(noteId);
       if (!note) return res.status(404).json({ error: "Note not found" });
 
-      const { uploadTextAsGoogleDoc } = await import("./googleDrive");
+      const { uploadTextAsGoogleDoc, ensurePlexusFolderTree } = await import("./googleDrive");
 
       const sections = (note.sections as { heading: string; body: string }[]) || [];
       const content = sections
@@ -1352,7 +1394,18 @@ export async function registerRoutes(
 
       const filename = `${note.patientName} - ${note.title} (${note.scheduleDate || note.generatedAt.toISOString().split("T")[0]})`;
 
-      const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content);
+      const DRIVE_ANCILLARY_TYPES: readonly string[] = ["BrainWave", "VitalWave", "Ultrasound"];
+      let clinicalDocsFolderId: string | undefined;
+      if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES.includes(note.service)) {
+        try {
+          const tree = await ensurePlexusFolderTree(note.facility, note.patientName, note.service);
+          clinicalDocsFolderId = tree.clinicalDocsFolderId;
+        } catch (e) {
+          console.warn("Could not resolve Drive folder for note export, uploading to root:", (e as Error).message);
+        }
+      }
+
+      const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content, clinicalDocsFolderId);
 
       const updated = await storage.updateGeneratedNoteDriveInfo(noteId, driveFileId, webViewLink);
 
@@ -1370,7 +1423,7 @@ export async function registerRoutes(
 
   app.post("/api/google/drive/export-all", async (req, res) => {
     try {
-      const { uploadTextAsGoogleDoc } = await import("./googleDrive");
+      const { uploadTextAsGoogleDoc, ensurePlexusFolderTree } = await import("./googleDrive");
       const BATCH_LIMIT = 50;
 
       const allNotes = await storage.getAllGeneratedNotes();
@@ -1389,7 +1442,18 @@ export async function registerRoutes(
 
           const filename = `${note.patientName} - ${note.title} (${note.scheduleDate || note.generatedAt.toISOString().split("T")[0]})`;
 
-          const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content);
+          const DRIVE_ANCILLARY_TYPES_ALL: readonly string[] = ["BrainWave", "VitalWave", "Ultrasound"];
+          let clinicalDocsFolderId: string | undefined;
+          if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES_ALL.includes(note.service)) {
+            try {
+              const tree = await ensurePlexusFolderTree(note.facility, note.patientName, note.service);
+              clinicalDocsFolderId = tree.clinicalDocsFolderId;
+            } catch (e) {
+              console.warn(`Could not resolve Drive folder for note ${note.id}, uploading to root:`, (e as Error).message);
+            }
+          }
+
+          const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content, clinicalDocsFolderId);
           await storage.updateGeneratedNoteDriveInfo(note.id, driveFileId, webViewLink);
           results.push({ noteId: note.id, driveFileId, webViewLink });
         } catch (e: any) {
@@ -1410,6 +1474,77 @@ export async function registerRoutes(
       });
     } catch (error: any) {
       console.error("Drive export-all error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  type ValidAncillaryType = "BrainWave" | "VitalWave" | "Ultrasound";
+  const VALID_ANCILLARY_TYPES: readonly ValidAncillaryType[] = ["BrainWave", "VitalWave", "Ultrasound"];
+
+  function isValidFacility(f: string): f is typeof VALID_FACILITIES[number] {
+    return (VALID_FACILITIES as readonly string[]).includes(f);
+  }
+
+  function isValidAncillaryType(a: string): a is ValidAncillaryType {
+    return (VALID_ANCILLARY_TYPES as readonly string[]).includes(a);
+  }
+
+  app.get("/api/patients-by-facility", async (req, res) => {
+    try {
+      const facilityParam = req.query.facility;
+      const facility = typeof facilityParam === "string" ? facilityParam : "";
+      if (!isValidFacility(facility)) {
+        return res.status(400).json({ error: "Valid facility is required" });
+      }
+      const batches = await storage.getAllScreeningBatches();
+      const facilityBatches = batches.filter((b) => b.facility === facility);
+      const nameSet = new Set<string>();
+      for (const batch of facilityBatches) {
+        const patients = await storage.getPatientScreeningsByBatch(batch.id);
+        for (const p of patients) {
+          if (p.name && p.name.trim()) nameSet.add(p.name.trim());
+        }
+      }
+      const sorted = Array.from(nameSet).sort();
+      res.json(sorted);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/google/drive/upload-report", upload.single("file"), async (req, res) => {
+    try {
+      const body = req.body as { facility?: string; patientName?: string; ancillaryType?: string };
+      const { facility, patientName, ancillaryType } = body;
+      if (!facility || !isValidFacility(facility)) {
+        return res.status(400).json({ error: "Valid facility is required" });
+      }
+      if (!patientName || typeof patientName !== "string" || !patientName.trim()) {
+        return res.status(400).json({ error: "patientName is required" });
+      }
+      if (!ancillaryType || !isValidAncillaryType(ancillaryType)) {
+        return res.status(400).json({ error: "ancillaryType must be BrainWave, VitalWave, or Ultrasound" });
+      }
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ error: "PDF file is required" });
+      }
+      const isPdf =
+        file.mimetype === "application/pdf" ||
+        (file.originalname?.toLowerCase().endsWith(".pdf") ?? false);
+      if (!isPdf) {
+        return res.status(400).json({ error: "Only PDF files are accepted" });
+      }
+
+      const { ensurePlexusFolderTree, uploadPdfToFolder } = await import("./googleDrive");
+      const tree = await ensurePlexusFolderTree(facility, patientName.trim(), ancillaryType);
+
+      const filename = file.originalname || `${patientName.trim()} - ${ancillaryType} Report.pdf`;
+      const { id: driveFileId, webViewLink } = await uploadPdfToFolder(filename, file.buffer, tree.reportFolderId);
+
+      res.json({ success: true, driveFileId, webViewLink });
+    } catch (error: any) {
+      console.error("Report upload error:", error);
       res.status(500).json({ error: error.message });
     }
   });
