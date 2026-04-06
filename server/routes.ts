@@ -22,6 +22,7 @@ import {
   extractPdfPatients,
   extractImagePatients,
 } from "./services/screening";
+import type { InsertBillingRecord } from "../shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -990,6 +991,10 @@ export async function registerRoutes(
   ];
 
   const updateBillingRecordSchema = z.object({
+    dateOfService: z.string().nullable().optional(),
+    patientName: z.string().nullable().optional(),
+    clinician: z.string().nullable().optional(),
+    facility: z.string().nullable().optional(),
     report: z.string().nullable().optional(),
     insuranceInfo: z.string().nullable().optional(),
     historicalProblemList: z.string().nullable().optional(),
@@ -1051,20 +1056,29 @@ export async function registerRoutes(
     }
   });
 
+  const createBillingRecordSchema = z.object({
+    patientId: z.number().int().nullable().optional(),
+    batchId: z.number().int().nullable().optional(),
+    service: z.string().min(1),
+    facility: z.string().nullable().optional(),
+    dateOfService: z.string().nullable().optional(),
+    patientName: z.string().min(1),
+    clinician: z.string().nullable().optional(),
+  });
+
   app.post("/api/billing-records", async (req, res) => {
     try {
-      const body = req.body;
-      if (!body.patientId || !body.service || !body.patientName) {
-        return res.status(400).json({ error: "patientId, service, patientName are required" });
-      }
+      const parsed = createBillingRecordSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      const { patientId, batchId, service, facility, dateOfService, patientName, clinician } = parsed.data;
       const record = await storage.createBillingRecord({
-        patientId: body.patientId,
-        batchId: body.batchId || 0,
-        service: body.service,
-        facility: body.facility || null,
-        dateOfService: body.dateOfService || null,
-        patientName: body.patientName,
-        clinician: body.clinician || null,
+        patientId: patientId ?? null,
+        batchId: batchId ?? null,
+        service,
+        facility: facility ?? null,
+        dateOfService: dateOfService ?? null,
+        patientName,
+        clinician: clinician ?? null,
       });
       res.status(201).json(record);
     } catch (error: any) {
@@ -1077,10 +1091,9 @@ export async function registerRoutes(
       const id = parseInt(req.params.id);
       const parsed = updateBillingRecordSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      const updates: any = {};
-      for (const [k, v] of Object.entries(parsed.data)) {
-        if (v !== undefined) updates[k] = v;
-      }
+      const updates: Partial<InsertBillingRecord> = Object.fromEntries(
+        Object.entries(parsed.data).filter(([, v]) => v !== undefined)
+      ) as Partial<InsertBillingRecord>;
       const record = await storage.updateBillingRecord(id, updates);
       if (!record) return res.status(404).json({ error: "Billing record not found" });
       res.json(record);

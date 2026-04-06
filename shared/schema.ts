@@ -178,8 +178,8 @@ export type PatientScreeningResult = z.infer<typeof patientScreeningResultSchema
 
 export const billingRecords = pgTable("billing_records", {
   id: serial("id").primaryKey(),
-  patientId: integer("patient_id").notNull().references(() => patientScreenings.id, { onDelete: "cascade" }),
-  batchId: integer("batch_id").notNull().references(() => screeningBatches.id, { onDelete: "cascade" }),
+  patientId: integer("patient_id").references(() => patientScreenings.id, { onDelete: "cascade" }),
+  batchId: integer("batch_id").references(() => screeningBatches.id, { onDelete: "cascade" }),
   service: text("service").notNull(),
   facility: text("facility"),
   dateOfService: text("date_of_service"),
