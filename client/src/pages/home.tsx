@@ -221,6 +221,7 @@ export default function Home() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { setOpen: setSidebarOpen } = useSidebar();
+  const [, setLocation] = useLocation();
   const [newScheduleDialogOpen, setNewScheduleDialogOpen] = useState(false);
   const [newScheduleDate, setNewScheduleDate] = useState<Date | undefined>(new Date());
   const [newScheduleFacility, setNewScheduleFacility] = useState<string>("");
