@@ -214,6 +214,7 @@ export interface FolderTree {
   clinicalDocsFolderId: string;
   reportFolderId: string;
   informedConsentFolderId: string;
+  screeningFormFolderId: string;
   facilityFolderId: string;
   patientFolderId: string;
   ancillaryTypeFolderId: string;
@@ -313,10 +314,18 @@ export async function ensurePlexusFolderTree(
     await setSetting(informedConsentKey, informedConsentFolderId);
   }
 
+  const screeningFormKey = `DRIVE_FOLDER_screening_form_${facilitySafeKey}_${patientSafeKey}_${ancillarySafeKey}`;
+  let screeningFormFolderId = await getSetting(screeningFormKey);
+  if (!screeningFormFolderId) {
+    screeningFormFolderId = await getOrCreateFolder(drive, "Screening Form", ancillaryTypeFolderId);
+    await setSetting(screeningFormKey, screeningFormFolderId);
+  }
+
   return {
     clinicalDocsFolderId,
     reportFolderId,
     informedConsentFolderId,
+    screeningFormFolderId,
     facilityFolderId,
     patientFolderId,
     ancillaryTypeFolderId,

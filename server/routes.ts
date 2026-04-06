@@ -1603,8 +1603,8 @@ export async function registerRoutes(
       if (!ancillaryType || !isValidAncillaryType(ancillaryType)) {
         return res.status(400).json({ error: "ancillaryType must be BrainWave, VitalWave, or Ultrasound" });
       }
-      if (!docType || !["report", "informed_consent"].includes(docType)) {
-        return res.status(400).json({ error: "docType must be 'report' or 'informed_consent'" });
+      if (!docType || !["report", "informed_consent", "screening_form"].includes(docType)) {
+        return res.status(400).json({ error: "docType must be 'report', 'informed_consent', or 'screening_form'" });
       }
       const file = req.file;
       if (!file) return res.status(400).json({ error: "PDF file is required" });
@@ -1614,8 +1614,14 @@ export async function registerRoutes(
       const { ensurePlexusFolderTree, uploadPdfToFolder } = await import("./googleDrive");
       const tree = await ensurePlexusFolderTree(facility, patientName.trim(), ancillaryType);
 
-      const folderId = docType === "informed_consent" ? tree.informedConsentFolderId : tree.reportFolderId;
-      const typeLabel = docType === "informed_consent" ? "Informed Consent" : "Report";
+      const folderId =
+        docType === "informed_consent" ? tree.informedConsentFolderId :
+        docType === "screening_form" ? tree.screeningFormFolderId :
+        tree.reportFolderId;
+      const typeLabel =
+        docType === "informed_consent" ? "Informed Consent" :
+        docType === "screening_form" ? "Screening Form" :
+        "Report";
       const filename = file.originalname || `${patientName.trim()} - ${ancillaryType} ${typeLabel}.pdf`;
       const { id: driveFileId, webViewLink } = await uploadPdfToFolder(filename, file.buffer, folderId);
 

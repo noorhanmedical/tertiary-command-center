@@ -1,18 +1,16 @@
 import { useState, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Upload, FileText, CheckCircle, ExternalLink, Loader2, ScanText } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { Upload, FileText, CheckCircle, ExternalLink, Loader2, ScanText, ClipboardList } from "lucide-react";
 
 const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
 const ANCILLARY_TYPES = ["BrainWave", "VitalWave", "Ultrasound"] as const;
 
-type DocType = "report" | "informed_consent";
+type DocType = "report" | "informed_consent" | "screening_form";
 
 interface UploadResult {
   facility: string;
@@ -261,7 +259,7 @@ function UploadCard({ docType, title, description, color, icon }: UploadCardProp
 export default function DocumentUploadPage() {
   return (
     <div className="flex-1 overflow-y-auto p-6 bg-[hsl(210,35%,96%)]">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-1">
             <Upload className="w-7 h-7 text-indigo-600" />
@@ -272,7 +270,7 @@ export default function DocumentUploadPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           <UploadCard
             docType="report"
             title="Upload Report"
@@ -286,6 +284,13 @@ export default function DocumentUploadPage() {
             description="Upload a signed patient informed consent form"
             color="border-emerald-200 bg-emerald-50/30"
             icon={<CheckCircle className="w-6 h-6 text-emerald-600 shrink-0" />}
+          />
+          <UploadCard
+            docType="screening_form"
+            title="Upload Screening Form"
+            description="Upload a completed patient screening form PDF"
+            color="border-violet-200 bg-violet-50/30"
+            icon={<ClipboardList className="w-6 h-6 text-violet-600 shrink-0" />}
           />
         </div>
       </div>
