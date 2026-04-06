@@ -2357,7 +2357,7 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[], sche
 
   buildPrintWindow(
     `Plexus Team Script — ${batchName}`,
-    `<div class="cover page"><h1>${esc(batchName)}</h1><h2>Plexus Team Script</h2><div class="meta">${esc(date)} · ${patients.length} patient${patients.length !== 1 ? "s" : ""}</div></div>${pages.join("")}`,
+    pages.join(""),
   );
 }
 
