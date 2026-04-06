@@ -795,6 +795,32 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  const PLEXUS_API_KEY = process.env.PLEXUS_API_KEY;
+  if (!PLEXUS_API_KEY) {
+    console.error("[auth] FATAL: PLEXUS_API_KEY is not set — all /api routes will return 401");
+  }
+
+  app.use("/api", (req, res, next) => {
+    const EXEMPT_GET_PATHS = [
+      /^\/schedule\/[^/]+$/,
+      /^\/schedule\/[^/]+\/patients$/,
+    ];
+    if (req.method === "GET" && EXEMPT_GET_PATHS.some((re) => re.test(req.path))) {
+      return next();
+    }
+
+    if (!PLEXUS_API_KEY) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const authHeader = req.headers["authorization"];
+    if (!authHeader || authHeader !== `Bearer ${PLEXUS_API_KEY}`) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    return next();
+  });
+
   async function enrichFromReferenceDb(patients: any[]): Promise<void> {
     const allRefs = await storage.getAllPatientReferences();
     if (allRefs.length === 0 || patients.length === 0) return;
