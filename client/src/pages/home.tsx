@@ -3408,7 +3408,7 @@ function ResultsView({
                     const talking = reason ? (typeof reason === "string" ? null : reason.patient_talking_points) : null;
                     const confidence = reason && typeof reason !== "string" ? reason.confidence : null;
                     const qualifyingFactors = reason && typeof reason !== "string" ? reason.qualifying_factors : null;
-                    const approvalRequired = reason && typeof reason !== "string" ? reason.approvalRequired : false;
+                    const approvalRequired = reason && typeof reason !== "string" && category === "ultrasound" ? reason.approvalRequired : false;
 
                     return (
                       <div key={test} className={`rounded-xl border ${style.border} ${style.bg} p-4`} data-testid={`sheet-test-${test}`}>
