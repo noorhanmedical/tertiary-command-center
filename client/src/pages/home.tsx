@@ -2035,7 +2035,7 @@ function autoGeneratePatientNotes(
     if (icd10.length > 0) screeningResult.icd10Codes = [...icd10, ...screeningResult.icd10Codes].filter((v, i, a) => a.indexOf(v) === i);
     if (factors.length > 0 && screeningResult.selectedConditions.length === 0) screeningResult.selectedConditions = factors;
     if (clinicianUnderstanding) screeningResult.notes = [...screeningResult.notes, clinicianUnderstanding];
-    const generated = generateVitalWaveDocuments({ input, screeningResult });
+    const generated = generateVitalWaveDocuments({ input, screeningResult, vitalWaveConfig: VITALWAVE_CONFIG, vitalWaveScreening: screening });
     const vwMeta = JSON.stringify({ selectedConditions: screeningResult.selectedConditions, icd10Codes: screeningResult.icd10Codes, cptCodes: screeningResult.cptCodes });
     const vwMetaSection = { heading: "__screening_meta__", body: vwMeta };
     generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, vwMetaSection];
@@ -2058,12 +2058,25 @@ function autoGeneratePatientNotes(
       .map((t) => TEST_TO_ULTRASOUND_KEY[t] || t.replace(/\s*\(\d{4,5}\)\s*$/, "").trim())
       .filter((k) => ULTRASOUND_CONFIG[k]);
     const conditions: Record<string, boolean> = {};
+    const fuzzyMatch = (factor: string, condName: string): boolean => {
+      const f = factor.toLowerCase();
+      const c = condName.toLowerCase();
+      return f.includes(c) || c.includes(f);
+    };
     selection.forEach((key) => {
       const cfg = ULTRASOUND_CONFIG[key];
       if (!cfg) return;
-      cfg.conditions.forEach((cond) => {
-        if (cond.name !== "Other") conditions[cond.name] = true;
+      const nonOtherConds = cfg.conditions.filter((cond) => cond.name !== "Other");
+      let matched = false;
+      nonOtherConds.forEach((cond) => {
+        if (factors.some((f) => fuzzyMatch(f, cond.name))) {
+          conditions[cond.name] = true;
+          matched = true;
+        }
       });
+      if (!matched && nonOtherConds.length > 0) {
+        conditions[nonOtherConds[0].name] = true;
+      }
     });
     const usScreening: UltrasoundScreeningData = { selection, conditions };
     const screeningResult = ultrasoundScreeningToResult({ config: ULTRASOUND_CONFIG, screening: usScreening });
@@ -2071,7 +2084,7 @@ function autoGeneratePatientNotes(
     if (factors.length > 0 && screeningResult.selectedConditions.length === 0) screeningResult.selectedConditions = factors;
     if (clinicianUnderstandings.length > 0) screeningResult.notes = [...screeningResult.notes, ...clinicianUnderstandings];
     const generated = generateUltrasoundDocuments({ input, screeningResult, screening: usScreening, config: ULTRASOUND_CONFIG });
-    const usMeta = JSON.stringify({ selectedConditions: screeningResult.selectedConditions, icd10Codes: screeningResult.icd10Codes, cptCodes: screeningResult.cptCodes, selection });
+    const usMeta = JSON.stringify({ selectedConditions: screeningResult.selectedConditions, icd10Codes: screeningResult.icd10Codes, cptCodes: screeningResult.cptCodes, selection, conditions });
     const usMetaSection = { heading: "__screening_meta__", body: usMeta };
     generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, usMetaSection];
     generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, usMetaSection];

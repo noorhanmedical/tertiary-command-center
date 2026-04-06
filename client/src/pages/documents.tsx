@@ -5,10 +5,26 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
-import { ArrowLeft, FileText, Building2, Calendar, ChevronDown, ChevronRight, Copy, Printer, Trash2, RefreshCw, ClipboardList, ExternalLink, Upload } from "lucide-react";
+import { ArrowLeft, FileText, Building2, Calendar, ChevronDown, ChevronRight, Copy, Printer, Trash2, RefreshCw, ClipboardList, ExternalLink, Upload, AlertTriangle } from "lucide-react";
 import { SiGoogledrive } from "react-icons/si";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
 type NoteSection = { heading: string; body: string };
+
+function noteNeedsDx(sections: NoteSection[], docKind: string): boolean {
+  if (docKind === "billing") return false;
+  const meta = sections.find((s) => s.heading === "__screening_meta__");
+  if (!meta) return false;
+  try {
+    const parsed = JSON.parse(meta.body);
+    const conditions = Array.isArray(parsed.selectedConditions) ? parsed.selectedConditions : [];
+    if (conditions.length === 0) return true;
+  } catch {
+    return false;
+  }
+  const notesSection = sections.find((s) => s.heading === "Notes");
+  if (notesSection && notesSection.body.trim() === "Select conditions in the screening form.") return true;
+  return false;
+}
 type GeneratedNote = {
   id: number;
   patientId: number;
@@ -376,6 +392,17 @@ export default function DocumentsPage() {
                                               {note.service}
                                             </span>
                                             <span className="text-xs text-slate-600 flex-1">{DOC_KIND_LABELS[note.docKind] || note.docKind}</span>
+                                            {noteNeedsDx(note.sections, note.docKind) && (
+                                              <button
+                                                className="text-[10px] text-amber-700 hover:text-amber-900 px-2 py-0.5 rounded border border-amber-300 bg-amber-50 flex items-center gap-1 shrink-0 font-medium"
+                                                onClick={(e) => showScreeningForm(note, e)}
+                                                data-testid={`button-dx-needed-${note.id}`}
+                                                title="No diagnoses selected — click to fill in the Screening Form"
+                                              >
+                                                <AlertTriangle className="w-3 h-3" />
+                                                Dx needed
+                                              </button>
+                                            )}
                                             {note.docKind !== "billing" && (
                                               <button
                                                 className="text-[10px] text-teal-600 hover:text-teal-800 px-2 py-0.5 rounded border border-teal-200 bg-teal-50 flex items-center gap-1 shrink-0"
