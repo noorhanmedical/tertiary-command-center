@@ -10,6 +10,7 @@ import SharedSchedule from "@/pages/shared-schedule";
 import ArchivePage from "@/pages/archive";
 import PlexusPage from "@/pages/plexus";
 import DocumentsPage from "@/pages/documents";
+import BillingPage from "@/pages/billing";
 
 function App() {
   const style = {
@@ -36,6 +37,7 @@ function App() {
                     <Route path="/archive" component={ArchivePage} />
                     <Route path="/plexus" component={PlexusPage} />
                     <Route path="/documents" component={DocumentsPage} />
+                    <Route path="/billing" component={BillingPage} />
                     <Route component={NotFound} />
                   </Switch>
                 </div>

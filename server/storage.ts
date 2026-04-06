@@ -5,6 +5,7 @@ import {
   patientTestHistory,
   patientReferenceData,
   generatedNotes,
+  billingRecords,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
@@ -15,6 +16,8 @@ import {
   type InsertPatientReference,
   type GeneratedNote,
   type InsertGeneratedNote,
+  type BillingRecord,
+  type InsertBillingRecord,
   users,
   type User,
   type InsertUser,
@@ -77,6 +80,13 @@ export interface IStorage {
   getGeneratedNotesByBatch(batchId: number): Promise<GeneratedNote[]>;
   getAllGeneratedNotes(): Promise<GeneratedNote[]>;
   deleteGeneratedNotesByPatient(patientId: number): Promise<void>;
+  getGeneratedNotesByPatient(patientId: number): Promise<GeneratedNote[]>;
+
+  getAllBillingRecords(): Promise<BillingRecord[]>;
+  getBillingRecordByPatientAndService(patientId: number, service: string): Promise<BillingRecord | undefined>;
+  createBillingRecord(record: InsertBillingRecord): Promise<BillingRecord>;
+  updateBillingRecord(id: number, updates: Partial<InsertBillingRecord>): Promise<BillingRecord | undefined>;
+  deleteBillingRecord(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -242,6 +252,36 @@ export class DatabaseStorage implements IStorage {
     await db.delete(generatedNotes).where(
       and(eq(generatedNotes.patientId, patientId), eq(generatedNotes.service, service))
     );
+  }
+
+  async getGeneratedNotesByPatient(patientId: number): Promise<GeneratedNote[]> {
+    return db.select().from(generatedNotes)
+      .where(eq(generatedNotes.patientId, patientId))
+      .orderBy(generatedNotes.generatedAt);
+  }
+
+  async getAllBillingRecords(): Promise<BillingRecord[]> {
+    return db.select().from(billingRecords).orderBy(desc(billingRecords.createdAt));
+  }
+
+  async getBillingRecordByPatientAndService(patientId: number, service: string): Promise<BillingRecord | undefined> {
+    const [result] = await db.select().from(billingRecords)
+      .where(and(eq(billingRecords.patientId, patientId), eq(billingRecords.service, service)));
+    return result;
+  }
+
+  async createBillingRecord(record: InsertBillingRecord): Promise<BillingRecord> {
+    const [result] = await db.insert(billingRecords).values(record).returning();
+    return result;
+  }
+
+  async updateBillingRecord(id: number, updates: Partial<InsertBillingRecord>): Promise<BillingRecord | undefined> {
+    const [result] = await db.update(billingRecords).set(updates).where(eq(billingRecords.id, id)).returning();
+    return result;
+  }
+
+  async deleteBillingRecord(id: number): Promise<void> {
+    await db.delete(billingRecords).where(eq(billingRecords.id, id));
   }
 }
 

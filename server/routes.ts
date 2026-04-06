@@ -965,5 +965,139 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/generated-notes/patient/:patientId", async (req, res) => {
+    try {
+      const patientId = parseInt(req.params.patientId);
+      if (isNaN(patientId)) return res.status(400).json({ error: "Invalid patientId" });
+      const notes = await storage.getGeneratedNotesByPatient(patientId);
+      res.json(notes);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ─── Billing Records ───────────────────────────────────────────────────────
+  const ULTRASOUND_TESTS = [
+    "Bilateral Carotid Duplex",
+    "Echocardiogram TTE",
+    "Renal Artery Doppler",
+    "Lower Extremity Arterial Doppler",
+    "Upper Extremity Arterial Doppler",
+    "Abdominal Aortic Aneurysm Duplex",
+    "Stress Echocardiogram",
+    "Lower Extremity Venous Duplex",
+    "Upper Extremity Venous Duplex",
+  ];
+
+  const updateBillingRecordSchema = z.object({
+    report: z.string().nullable().optional(),
+    insuranceInfo: z.string().nullable().optional(),
+    historicalProblemList: z.string().nullable().optional(),
+    comments: z.string().nullable().optional(),
+    billing: z.string().nullable().optional(),
+    nextAncillaries: z.string().nullable().optional(),
+    billingComments: z.string().nullable().optional(),
+    paid: z.boolean().nullable().optional(),
+    ptResponsibility: z.string().nullable().optional(),
+    billingComments2: z.string().nullable().optional(),
+    nextgenAppt: z.string().nullable().optional(),
+    billed: z.boolean().nullable().optional(),
+    drImranComments: z.string().nullable().optional(),
+    response: z.string().nullable().optional(),
+    nwpgInvoiceSent: z.boolean().nullable().optional(),
+    paidFinal: z.boolean().nullable().optional(),
+  });
+
+  app.get("/api/billing-records", async (_req, res) => {
+    try {
+      const batches = await storage.getAllScreeningBatches();
+      const allScreenedPatients: any[] = [];
+      for (const batch of batches) {
+        const patients = await storage.getPatientScreeningsByBatch(batch.id);
+        for (const p of patients) {
+          if (p.status === "completed" && p.qualifyingTests && p.qualifyingTests.length > 0) {
+            allScreenedPatients.push({ patient: p, batch });
+          }
+        }
+      }
+
+      for (const { patient, batch } of allScreenedPatients) {
+        const tests: string[] = patient.qualifyingTests || [];
+        const services: string[] = [];
+        if (tests.includes("BrainWave")) services.push("BrainWave");
+        if (tests.includes("VitalWave")) services.push("VitalWave");
+        if (tests.some((t: string) => ULTRASOUND_TESTS.includes(t))) services.push("Ultrasound");
+
+        for (const service of services) {
+          const existing = await storage.getBillingRecordByPatientAndService(patient.id, service);
+          if (!existing) {
+            await storage.createBillingRecord({
+              patientId: patient.id,
+              batchId: batch.id,
+              service,
+              facility: batch.facility || null,
+              dateOfService: batch.scheduleDate || null,
+              patientName: patient.name,
+              clinician: batch.clinicianName || null,
+            });
+          }
+        }
+      }
+
+      const records = await storage.getAllBillingRecords();
+      res.json(records);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/billing-records", async (req, res) => {
+    try {
+      const body = req.body;
+      if (!body.patientId || !body.service || !body.patientName) {
+        return res.status(400).json({ error: "patientId, service, patientName are required" });
+      }
+      const record = await storage.createBillingRecord({
+        patientId: body.patientId,
+        batchId: body.batchId || 0,
+        service: body.service,
+        facility: body.facility || null,
+        dateOfService: body.dateOfService || null,
+        patientName: body.patientName,
+        clinician: body.clinician || null,
+      });
+      res.status(201).json(record);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/billing-records/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const parsed = updateBillingRecordSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      const updates: any = {};
+      for (const [k, v] of Object.entries(parsed.data)) {
+        if (v !== undefined) updates[k] = v;
+      }
+      const record = await storage.updateBillingRecord(id, updates);
+      if (!record) return res.status(404).json({ error: "Billing record not found" });
+      res.json(record);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/billing-records/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteBillingRecord(id);
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }

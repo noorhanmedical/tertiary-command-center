@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, serial, text, varchar, integer, timestamp, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, varchar, integer, timestamp, jsonb, index, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -175,3 +175,44 @@ export const patientScreeningResultSchema = z.object({
 
 export type TestReasoning = z.infer<typeof testReasoningSchema>;
 export type PatientScreeningResult = z.infer<typeof patientScreeningResultSchema>;
+
+export const billingRecords = pgTable("billing_records", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull().references(() => patientScreenings.id, { onDelete: "cascade" }),
+  batchId: integer("batch_id").notNull().references(() => screeningBatches.id, { onDelete: "cascade" }),
+  service: text("service").notNull(),
+  facility: text("facility"),
+  dateOfService: text("date_of_service"),
+  patientName: text("patient_name").notNull(),
+  clinician: text("clinician"),
+  report: text("report"),
+  insuranceInfo: text("insurance_info"),
+  historicalProblemList: text("historical_problem_list"),
+  comments: text("comments"),
+  billing: text("billing"),
+  nextAncillaries: text("next_ancillaries"),
+  billingComments: text("billing_comments"),
+  paid: boolean("paid").default(false),
+  ptResponsibility: text("pt_responsibility"),
+  billingComments2: text("billing_comments_2"),
+  nextgenAppt: text("nextgen_appt"),
+  billed: boolean("billed").default(false),
+  drImranComments: text("dr_imran_comments"),
+  response: text("response"),
+  nwpgInvoiceSent: boolean("nwpg_invoice_sent").default(false),
+  paidFinal: boolean("paid_final").default(false),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_billing_records_patient_id").on(table.patientId),
+  index("idx_billing_records_batch_id").on(table.batchId),
+  index("idx_billing_records_service").on(table.service),
+  index("idx_billing_records_facility").on(table.facility),
+]);
+
+export const insertBillingRecordSchema = createInsertSchema(billingRecords).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type BillingRecord = typeof billingRecords.$inferSelect;
+export type InsertBillingRecord = z.infer<typeof insertBillingRecordSchema>;

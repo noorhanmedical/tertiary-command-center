@@ -657,6 +657,14 @@ export default function Home() {
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild data-testid="sidebar-billing">
+                    <Link href="/billing" onClick={() => setSidebarOpen(false)}>
+                      <DollarSign className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium">Billing</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
@@ -1347,42 +1355,22 @@ export default function Home() {
                     </div>
                   </Card>
 
-                  <Card
-                    className="rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm"
-                    data-testid="tile-billing"
-                  >
-                    <div className="p-6">
-                      <div className="flex items-start gap-4 mb-5">
+                  <Link href="/billing">
+                    <Card
+                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
+                      data-testid="tile-billing"
+                    >
+                      <div className="flex items-start gap-4 p-6">
                         <div className="shrink-0 mt-0.5">
                           <DollarSign className="w-7 h-7 text-emerald-600" />
                         </div>
                         <div>
                           <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-billing">Billing</h3>
-                          <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1">Select a practice</p>
+                          <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Track billing status across BrainWave, VitalWave, and Ultrasound services</p>
                         </div>
                       </div>
-                      <div className="space-y-2 pl-11">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="w-full justify-start gap-2 h-9 text-sm font-normal rounded-lg"
-                          data-testid="button-billing-nwpg"
-                        >
-                          <Building2 className="w-4 h-4 flex-shrink-0" />
-                          NWPG
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="w-full justify-start gap-2 h-9 text-sm font-normal rounded-lg"
-                          data-testid="button-billing-taylor"
-                        >
-                          <Building2 className="w-4 h-4 flex-shrink-0" />
-                          Taylor Family Practice
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
+                    </Card>
+                  </Link>
 
                   <Link href="/plexus">
                     <Card
