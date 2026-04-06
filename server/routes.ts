@@ -619,12 +619,17 @@ async function screenSinglePatientWithAI(patient: { name: string; time?: string 
 }
 
 async function checkCooldownsForPatients(
-  patients: { name: string; qualifyingTests: string[] }[]
+  patients: { name: string; qualifyingTests: string[] }[],
+  visitDate?: string
 ): Promise<Record<string, { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[]>> {
   const allHistory = await storage.getAllTestHistory();
   if (allHistory.length === 0) return {};
 
-  const historyText = allHistory.map(h =>
+  const cutoffDate = visitDate || new Date().toISOString().split('T')[0];
+  const filteredHistory = allHistory.filter(h => h.dateOfService < cutoffDate);
+  if (filteredHistory.length === 0) return {};
+
+  const historyText = filteredHistory.map(h =>
     `${h.patientName} | ${h.testName} | ${h.dateOfService} | ${h.insuranceType}`
   ).join("\n");
 
@@ -648,7 +653,7 @@ COOLDOWN RULES:
 - Straight/Traditional/Original Medicare: 12 month cooldown from date of service
 - Medicare Advantage (HMO Medicare, MA plan, MAPD): treat as PPO, 6 month cooldown
 - The insurance_type field in records is already normalized: "medicare" = straight Medicare (12 mo), "ppo" = everything else including Medicare Advantage (6 mo)
-- Today's date is: ${new Date().toISOString().split('T')[0]}
+- Today's date is: ${cutoffDate}
 
 TEST NAME MATCHING:
 - "BrainWave" in history matches "BrainWave" in qualifying tests
@@ -1145,7 +1150,9 @@ If no match, omit that patient. Respond with ONLY a valid JSON array.`
       let cooldownData: any = null;
       if (qualTests.length > 0) {
         try {
-          const cooldowns = await checkCooldownsForPatients([{ name: patient.name, qualifyingTests: qualTests }]);
+          const batch = await storage.getScreeningBatch(patient.batchId);
+          const visitDate = batch?.scheduleDate || undefined;
+          const cooldowns = await checkCooldownsForPatients([{ name: patient.name, qualifyingTests: qualTests }], visitDate);
           const patientCooldowns = cooldowns[patient.name];
           if (patientCooldowns && patientCooldowns.length > 0) {
             cooldownData = patientCooldowns;
@@ -1368,7 +1375,8 @@ pearls: Array of 2-3 punchy one-liners outreach staff can read aloud to the pati
 
       if (patientsForCooldown.length > 0) {
         try {
-          const cooldownResults = await checkCooldownsForPatients(patientsForCooldown);
+          const visitDate = batch?.scheduleDate || undefined;
+          const cooldownResults = await checkCooldownsForPatients(patientsForCooldown, visitDate);
           for (const patient of patients) {
             const cooldowns = cooldownResults[patient.name];
             if (cooldowns && cooldowns.length > 0) {
