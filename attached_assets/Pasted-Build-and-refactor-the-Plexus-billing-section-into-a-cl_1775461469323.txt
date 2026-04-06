@@ -1,0 +1,118 @@
+Build and refactor the Plexus billing section into a clean, production-grade billing table. Keep the UI minimal, fast, and easy to scan. Do not add extra columns, extra sections, or unnecessary complexity.
+
+Use these exact column titles and this exact order:
+
+Date of Service
+Patient Name
+Facility
+Rendering Provider
+Service Type
+Primary Insurance
+Documentation Status
+Claim Status
+Payer Status
+Date Submitted
+Days in A/R
+Follow-Up Date
+Payment Status
+Total Charges
+Allowed Amount
+Paid Amount
+Patient Responsibility
+Adjustment Amount
+Balance Remaining
+
+Requirements:
+
+1. Documentation Status must be a dropdown with exactly these options:
+- Missing Both
+- Pre-Procedure Order Note Only
+- Billing Document Only
+- Complete
+
+2. Claim Status must be a dropdown with exactly these options:
+- Not Billed
+- Ready to Bill
+- Submitted
+- Accepted
+- Rejected
+- Pending
+- Denied
+- Paid
+- Partially Paid
+
+3. Payer Status must be a dropdown with exactly these options:
+- Pending
+- Accepted
+- Rejected
+- Denied
+- Paid
+
+4. Payment Status must be a dropdown with exactly these options:
+- Unpaid
+- Partial
+- Paid
+
+5. Service Type must be a dropdown with exactly these options:
+- BrainWave
+- VitalWave
+- Echocardiogram
+- Carotid Ultrasound
+- Renal Artery Ultrasound
+- AAA Ultrasound
+- Lower Extremity Arterial
+- Lower Extremity Venous
+
+6. Facility must be a dropdown and support configurable facility values.
+
+7. Primary Insurance must be a dropdown with these default options:
+- Medicare
+- Medicare Advantage
+- PPO
+- HMO
+- Medicaid
+- Self Pay
+
+8. Date of Service, Date Submitted, and Follow-Up Date must use date pickers.
+
+9. Total Charges, Allowed Amount, Paid Amount, Patient Responsibility, Adjustment Amount, and Balance Remaining must be numeric currency fields.
+
+10. Days in A/R must be auto-calculated:
+- if Payment Status is Paid, calculate from Date of Service to Date Submitted or date paid logic if available
+- otherwise calculate from Date of Service to today
+- display as an integer number of days
+
+11. Add smart status logic:
+- if Claim Status = Denied, default Payer Status to Denied
+- if Claim Status = Rejected, default Payer Status to Rejected
+- if Paid Amount > 0 and Balance Remaining > 0, set Payment Status to Partial
+- if Balance Remaining = 0 and Paid Amount > 0, set Payment Status to Paid
+
+12. UI requirements:
+- clean premium table styling
+- compact rows
+- clear spacing
+- easy scanning
+- no comments columns
+- no screening form fields
+- no next ancillaries fields
+- no post procedure note fields
+- only include the exact fields listed above
+
+13. Add color-coded badges:
+- red for Denied / Rejected / high A/R
+- yellow for Pending
+- green for Paid / Complete
+- neutral gray for Not Billed / Unpaid / Missing Both
+
+14. Make the table support sorting and filtering by:
+- Facility
+- Rendering Provider
+- Service Type
+- Claim Status
+- Payer Status
+- Payment Status
+
+15. Keep architecture-safe and modular. Do not break existing routing or shared shell. This should be implemented as a clean billing table inside the existing Plexus platform, not as a separate app or disconnected mockup.
+
+Follow exactly. Do not rename fields. Do not add extra workflow concepts.
