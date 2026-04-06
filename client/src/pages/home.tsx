@@ -193,7 +193,7 @@ type AppointmentStatus = typeof APPOINTMENT_STATUSES[number];
 
 const IMPORT_ACCESS_CODE = "1234";
 
-type TabItem = { type: "home" } | { type: "history" } | { type: "references" } | { type: "documents" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
+type TabItem = { type: "home" } | { type: "history" } | { type: "references" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
 
 export default function Home() {
   const [tabs, setTabs] = useState<TabItem[]>([{ type: "home" }]);
@@ -214,7 +214,7 @@ export default function Home() {
   const activeTab = tabs[activeTabIndex] || tabs[0] || { type: "home" };
   const selectedBatchId = activeTab.type === "schedule" ? activeTab.batchId : null;
   const scheduleViewMode = activeTab.type === "schedule" ? (activeTab.viewMode || "build") : null;
-  const view = activeTab.type === "history" ? "history" : activeTab.type === "references" ? "references" : activeTab.type === "documents" ? "documents" : activeTab.type === "schedule" ? "schedule" : "home";
+  const view = activeTab.type === "history" ? "history" : activeTab.type === "references" ? "references" : activeTab.type === "schedule" ? "schedule" : "home";
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -607,16 +607,6 @@ export default function Home() {
     }
   }, [tabs]);
 
-  const openDocumentsTab = useCallback(() => {
-    const existingIdx = tabs.findIndex((t) => t.type === "documents");
-    if (existingIdx >= 0) {
-      setActiveTabIndex(existingIdx);
-    } else {
-      setTabs((prev) => [...prev, { type: "documents" }]);
-      setActiveTabIndex(tabs.length);
-    }
-  }, [tabs]);
-
   return (
     <>
       <Sidebar collapsible="offcanvas" data-testid="sidebar-history">
@@ -660,12 +650,11 @@ export default function Home() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton
-                    onClick={() => { setSidebarOpen(false); openDocumentsTab(); }}
-                    data-testid="sidebar-documents"
-                  >
-                    <FileText className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Clinical Notes</span>
+                  <SidebarMenuButton asChild data-testid="sidebar-documents">
+                    <Link href="/documents" onClick={() => setSidebarOpen(false)}>
+                      <FileText className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium">Clinical Notes</span>
+                    </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
@@ -791,7 +780,7 @@ export default function Home() {
         <div className="bg-[#1e3a5f]/95 backdrop-blur-sm flex items-center gap-0 px-2 shrink-0 overflow-x-auto" data-testid="tab-bar">
           {tabs.map((tab, i) => {
             const isActive = i === activeTabIndex;
-            const label = tab.type === "home" ? "Home" : tab.type === "history" ? "Patient History" : tab.type === "references" ? "Patient Directory" : tab.type === "documents" ? "Clinical Notes" : tab.label;
+            const label = tab.type === "home" ? "Home" : tab.type === "history" ? "Patient History" : tab.type === "references" ? "Patient Directory" : tab.label;
             const canClose = tabs.length > 1;
             return (
               <div
@@ -998,8 +987,6 @@ export default function Home() {
             importFilePending={importHistoryFileMutation.isPending}
             importTextPending={importHistoryMutation.isPending}
           />
-        ) : view === "documents" ? (
-          <DocumentsInlineView />
         ) : view === "schedule" && selectedBatchId && (scheduleViewMode === "results" || (selectedBatch?.status === "completed" && scheduleViewMode !== "build")) ? (
           <ResultsView
             batch={selectedBatch}
@@ -1429,7 +1416,7 @@ export default function Home() {
                     </Card>
                   </Link>
 
-                  <div onClick={openDocumentsTab} className="cursor-pointer">
+                  <Link href="/documents">
                     <Card
                       className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
                       data-testid="tile-documents"
@@ -1444,7 +1431,7 @@ export default function Home() {
                         </div>
                       </div>
                     </Card>
-                  </div>
+                  </Link>
                 </div>
 
                 {batches.length > 0 && (
@@ -2487,60 +2474,6 @@ function PdfPatientSelectDialog({
   );
 }
 
-type SavedNote = { id: number; patientId: number; batchId: number; facility: string | null; scheduleDate: string | null; patientName: string; service: string; docKind: string; title: string; sections: Array<{ heading: string; body: string }>; generatedAt: string };
-type NotesFacilityGroup = { facility: string; dates: Array<{ scheduleDate: string | null; patients: Array<{ patientId: number; patientName: string; notes: SavedNote[] }> }> };
-
-function groupSavedNotes(notes: SavedNote[]): NotesFacilityGroup[] {
-  const fMap = new Map<string, Map<string, Map<number, { name: string; notes: SavedNote[] }>>>();
-  for (const n of notes) {
-    const f = n.facility || "Unknown Facility";
-    const d = n.scheduleDate || "Unknown Date";
-    if (!fMap.has(f)) fMap.set(f, new Map());
-    const dMap = fMap.get(f)!;
-    if (!dMap.has(d)) dMap.set(d, new Map());
-    const pMap = dMap.get(d)!;
-    if (!pMap.has(n.patientId)) pMap.set(n.patientId, { name: n.patientName, notes: [] });
-    pMap.get(n.patientId)!.notes.push(n);
-  }
-  const result: NotesFacilityGroup[] = [];
-  for (const [facility, dMap] of Array.from(fMap.entries())) {
-    const dates: NotesFacilityGroup["dates"] = [];
-    for (const [scheduleDate, pMap] of Array.from(dMap.entries())) {
-      const patients = Array.from(pMap.entries()).map(([patientId, { name, notes }]) => ({ patientId, patientName: name, notes }));
-      patients.sort((a, b) => a.patientName.localeCompare(b.patientName));
-      dates.push({ scheduleDate, patients });
-    }
-    dates.sort((a, b) => {
-      if (!a.scheduleDate) return 1;
-      if (!b.scheduleDate) return -1;
-      return b.scheduleDate.localeCompare(a.scheduleDate);
-    });
-    result.push({ facility, dates });
-  }
-  return result.sort((a, b) => a.facility.localeCompare(b.facility));
-}
-
-const NOTE_SERVICE_COLORS: Record<string, string> = {
-  BrainWave: "bg-purple-100 text-purple-700 border-purple-200",
-  VitalWave: "bg-red-100 text-red-700 border-red-200",
-  Ultrasound: "bg-emerald-100 text-emerald-700 border-emerald-200",
-  PGx: "bg-blue-100 text-blue-700 border-blue-200",
-};
-
-const NOTE_DOC_KIND_LABELS: Record<string, string> = {
-  preProcedureOrder: "Pre-Procedure Order",
-  postProcedureNote: "Post-Procedure Note",
-  billing: "Billing Document",
-  screening: "Screening",
-};
-
-function printNoteDocument(note: SavedNote) {
-  const content = note.sections.filter((s) => s.heading !== "__screening_meta__").map((s) => `<p style="margin:0 0 6px;white-space:pre-wrap"><strong>${s.heading}:</strong> ${s.body}</p>`).join("");
-  const html = `<!DOCTYPE html><html><head><title>${note.title}</title><style>body{font-family:Arial,sans-serif;font-size:12px;margin:24px;}</style></head><body><h3>${note.title}</h3><hr>${content}</body></html>`;
-  const w = window.open("", "_blank");
-  if (w) { w.document.write(html); w.document.close(); w.print(); }
-}
-
 function computeNextEligible(dos: string, insuranceType: string): { date: Date; eligible: boolean } | null {
   if (!dos) return null;
   const dosDate = new Date(dos.includes("T") ? dos : dos + "T00:00:00");
@@ -2862,154 +2795,6 @@ function PatientDirectoryView({ testHistory, historyLoading, dirPasteText, setDi
         </div>
       </div>
     </div>
-  );
-}
-
-function DocumentsInlineView() {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const [expandedFacilities, setExpandedFacilities] = useState<Set<string>>(new Set());
-  const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
-  const [expandedPatients, setExpandedPatients] = useState<Set<number>>(new Set());
-  const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
-  const [screeningFormNote, setScreeningFormNote] = useState<SavedNote | null>(null);
-
-  const { data: notes = [], isLoading } = useQuery<SavedNote[]>({ queryKey: ["/api/generated-notes"] });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (patientId: number) => { await apiRequest("DELETE", `/api/generated-notes/patient/${patientId}`); },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/generated-notes"] }); toast({ title: "Notes deleted" }); },
-    onError: (e: any) => { toast({ title: "Failed to delete", description: e.message, variant: "destructive" }); },
-  });
-
-  const toggleFacility = (f: string) => setExpandedFacilities((prev) => { const s = new Set(prev); s.has(f) ? s.delete(f) : s.add(f); return s; });
-  const toggleDate = (k: string) => setExpandedDates((prev) => { const s = new Set(prev); s.has(k) ? s.delete(k) : s.add(k); return s; });
-  const togglePatient = (id: number) => setExpandedPatients((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
-  const toggleNote = (id: number) => setExpandedNotes((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
-
-  const grouped = groupSavedNotes(notes);
-
-  return (
-    <>
-    <main className="flex-1 overflow-y-auto bg-[hsl(210,35%,96%)]">
-      <div className="max-w-3xl mx-auto px-5 py-8">
-        <div className="flex items-center gap-3 mb-8">
-          <FileText className="w-7 h-7 text-teal-600" />
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">Clinical Notes</h1>
-            <p className="text-sm text-slate-500 mt-0.5">Auto-generated notes organized by clinic, date, and patient</p>
-          </div>
-        </div>
-        {isLoading ? (
-          <div className="flex items-center justify-center py-16"><RefreshCw className="w-5 h-5 text-slate-400 animate-spin" /></div>
-        ) : grouped.length === 0 ? (
-          <Card className="p-10 text-center rounded-2xl border-dashed border-slate-200">
-            <FileText className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500 font-medium">No clinical notes yet</p>
-            <p className="text-sm text-slate-400 mt-1">Notes are automatically generated when a patient appointment is marked as Completed.</p>
-          </Card>
-        ) : (
-          <div className="space-y-4">
-            {grouped.map((fg) => (
-              <Card key={fg.facility} className="rounded-2xl border-slate-200 shadow-sm overflow-hidden">
-                <button className="w-full flex items-center gap-3 px-5 py-4 hover:bg-slate-50 transition-colors text-left" onClick={() => toggleFacility(fg.facility)}>
-                  <Building2 className="w-4 h-4 text-slate-500 shrink-0" />
-                  <span className="font-semibold text-slate-800 flex-1">{fg.facility}</span>
-                  <span className="text-xs text-slate-400 mr-2">{fg.dates.reduce((n, d) => n + d.patients.length, 0)} patients</span>
-                  {expandedFacilities.has(fg.facility) ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
-                </button>
-                {expandedFacilities.has(fg.facility) && (
-                  <div className="border-t border-slate-100">
-                    {fg.dates.map((dg) => {
-                      const dk = `${fg.facility}::${dg.scheduleDate}`;
-                      const dateLabel = dg.scheduleDate && dg.scheduleDate !== "Unknown Date" ? (() => { const [y, m, d] = dg.scheduleDate!.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }); })() : "Unknown Date";
-                      return (
-                        <div key={dk} className="border-b border-slate-100 last:border-b-0">
-                          <button className="w-full flex items-center gap-3 px-6 py-3 hover:bg-slate-50/80 transition-colors text-left" onClick={() => toggleDate(dk)}>
-                            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span className="text-sm font-medium text-slate-700 flex-1">{dateLabel}</span>
-                            <span className="text-xs text-slate-400 mr-2">{dg.patients.length} patients</span>
-                            {expandedDates.has(dk) ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
-                          </button>
-                          {expandedDates.has(dk) && (
-                            <div className="px-4 pb-3 space-y-2">
-                              {dg.patients.map((pg) => (
-                                <div key={pg.patientId} className="rounded-xl border border-slate-100 bg-white overflow-hidden">
-                                  <div className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => togglePatient(pg.patientId)}>
-                                    <span className="font-medium text-sm text-slate-800 flex-1">{pg.patientName}</span>
-                                    <span className="text-xs text-slate-400 mr-2">{pg.notes.length} docs</span>
-                                    <button className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors" onClick={(e) => { e.stopPropagation(); if (confirm(`Delete all notes for ${pg.patientName}?`)) deleteMutation.mutate(pg.patientId); }} data-testid={`button-delete-notes-${pg.patientId}`}>
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                    {expandedPatients.has(pg.patientId) ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
-                                  </div>
-                                  {expandedPatients.has(pg.patientId) && (
-                                    <div className="border-t border-slate-100 divide-y divide-slate-50">
-                                      {pg.notes.map((note) => (
-                                        <div key={note.id} className="px-4">
-                                          <div className="flex items-center gap-2 py-2 cursor-pointer hover:bg-slate-50/60 transition-colors -mx-4 px-4 rounded" onClick={() => toggleNote(note.id)}>
-                                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${NOTE_SERVICE_COLORS[note.service] || "bg-slate-100 text-slate-600 border-slate-200"}`}>{note.service}</span>
-                                            <span className="text-xs text-slate-600 flex-1">{NOTE_DOC_KIND_LABELS[note.docKind] || note.docKind}</span>
-                                            {note.docKind !== "billing" && (
-                                              <button className="text-[10px] text-teal-600 hover:text-teal-800 px-2 py-0.5 rounded border border-teal-200 bg-teal-50 flex items-center gap-1 shrink-0" onClick={(e) => { e.stopPropagation(); setScreeningFormNote(note); }} data-testid={`button-screening-form-docs-inline-${note.id}`}>
-                                                <ClipboardList className="w-3 h-3" />
-                                                Screening Form
-                                              </button>
-                                            )}
-                                            <button className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" onClick={(e) => { e.stopPropagation(); const text = note.sections.filter((s) => s.heading !== "__screening_meta__").map((s) => `${s.heading}\n${s.body}`).join("\n\n"); navigator.clipboard.writeText(text); toast({ title: "Copied!" }); }} data-testid={`button-copy-note-inline-${note.id}`}>
-                                              <Copy className="w-3 h-3" />
-                                            </button>
-                                            <button className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" onClick={(e) => { e.stopPropagation(); printNoteDocument(note); }} data-testid={`button-print-note-inline-${note.id}`}>
-                                              <Printer className="w-3 h-3" />
-                                            </button>
-                                            {expandedNotes.has(note.id) ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />}
-                                          </div>
-                                          {expandedNotes.has(note.id) && (
-                                            <div className="pb-3 space-y-1.5">
-                                              {note.sections.filter((s) => s.heading !== "__screening_meta__").map((s, si) => (
-                                                <div key={si} className="text-[11px] text-slate-700 leading-snug">
-                                                  <span className="font-semibold">{s.heading}: </span>
-                                                  <span className="whitespace-pre-wrap">{s.body}</span>
-                                                </div>
-                                              ))}
-                                            </div>
-                                          )}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </Card>
-            ))}
-          </div>
-        )}
-      </div>
-    </main>
-
-      {screeningFormNote && (
-        <EditableScreeningFormModal
-          note={{
-            service: screeningFormNote.service,
-            title: screeningFormNote.title,
-            sections: screeningFormNote.sections,
-            patientId: screeningFormNote.patientId,
-            batchId: screeningFormNote.batchId,
-            facility: screeningFormNote.facility,
-            scheduleDate: screeningFormNote.scheduleDate,
-            patientName: screeningFormNote.patientName,
-          }}
-          onClose={() => setScreeningFormNote(null)}
-        />
-      )}
-    </>
   );
 }
 
