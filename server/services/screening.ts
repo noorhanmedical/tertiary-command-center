@@ -224,6 +224,10 @@ Only include patients who have cooldown violations. If no violations found, retu
     const parsed: Record<string, { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[]> =
       JSON.parse(response.choices[0]?.message?.content || "{}");
     for (const patientName of Object.keys(parsed)) {
+      if (!Array.isArray(parsed[patientName])) {
+        delete parsed[patientName];
+        continue;
+      }
       parsed[patientName] = parsed[patientName].filter((v) => v.lastDate < cutoffDate);
       if (parsed[patientName].length === 0) delete parsed[patientName];
     }
