@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, serial, text, varchar, integer, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, varchar, integer, timestamp, jsonb, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -28,7 +28,10 @@ export const screeningBatches = pgTable("screening_batches", {
   facility: text("facility"),
   scheduleDate: text("schedule_date"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+}, (table) => [
+  index("idx_screening_batches_status").on(table.status),
+  index("idx_screening_batches_schedule_date").on(table.scheduleDate),
+]);
 
 export const insertScreeningBatchSchema = createInsertSchema(screeningBatches).omit({
   id: true,
@@ -60,7 +63,11 @@ export const patientScreenings = pgTable("patient_screenings", {
   appointmentStatus: text("appointment_status").notNull().default("pending"),
   patientType: text("patient_type").notNull().default("visit"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+}, (table) => [
+  index("idx_patient_screenings_batch_id").on(table.batchId),
+  index("idx_patient_screenings_status").on(table.status),
+  index("idx_patient_screenings_appointment_status").on(table.appointmentStatus),
+]);
 
 export const insertPatientScreeningSchema = createInsertSchema(patientScreenings).omit({
   id: true,
@@ -80,7 +87,10 @@ export const patientTestHistory = pgTable("patient_test_history", {
   clinic: text("clinic").notNull().default("NWPG"),
   notes: text("notes"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+}, (table) => [
+  index("idx_patient_test_history_patient_name").on(table.patientName),
+  index("idx_patient_test_history_date_of_service").on(table.dateOfService),
+]);
 
 export const insertTestHistorySchema = createInsertSchema(patientTestHistory).omit({
   id: true,
@@ -101,7 +111,9 @@ export const patientReferenceData = pgTable("patient_reference_data", {
   insurance: text("insurance"),
   notes: text("notes"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+}, (table) => [
+  index("idx_patient_reference_data_patient_name").on(table.patientName),
+]);
 
 export const insertPatientReferenceSchema = createInsertSchema(patientReferenceData).omit({
   id: true,
@@ -123,7 +135,10 @@ export const generatedNotes = pgTable("generated_notes", {
   title: text("title").notNull(),
   sections: jsonb("sections").notNull(),
   generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+}, (table) => [
+  index("idx_generated_notes_patient_id").on(table.patientId),
+  index("idx_generated_notes_batch_id").on(table.batchId),
+]);
 
 export const insertGeneratedNoteSchema = createInsertSchema(generatedNotes).omit({
   id: true,

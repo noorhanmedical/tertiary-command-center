@@ -4,6 +4,7 @@
 AI-powered patient screening application that analyzes clinical data (schedules, past medical history, medications, notes) to qualify patients for diagnostic tests: BrainWave (EEG), VitalWave (ABI), Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Upper Extremity Arterial Doppler (93930), Abdominal Aortic Aneurysm Duplex (93978), Stress Echocardiogram (93350), Lower Extremity Venous Duplex (93971), and Upper Extremity Venous Duplex (93970). The system uses OpenAI GPT-5.2 for aggressive qualification - it qualifies patients for every test with any reasonable clinical justification.
 
 ## Recent Changes
+- 2026-04-06: Task #60 - Architecture hardening: extracted service layer (server/services/aiClient.ts, ingest.ts, screening.ts); routes.ts reduced from 1804→~450 lines; AI calls now have 60s timeout + 3-attempt exponential backoff; failed AI calls set patient status to "error" instead of hanging; 10 DB indexes added (batchId, status, appointmentStatus, patientName, dateOfService); startup DDL removed from server/index.ts; migration 0001_add_indexes.sql created; GET /healthz endpoint returns DB connectivity status; SIGTERM handler drains HTTP then closes DB pool gracefully
 - 2026-04-06: Task #53 - Patient Directory: repurposed "Patient References" tile/tab/sidebar as "Patient Directory"; new card-based view grouped by patient showing completed tests, DOS, insurance type, and "Next Eligible" date (PPO +6mo, Medicare +12mo) with green/amber eligibility status; DOB field added to patientTestHistory schema (db:push applied); DOB extracted in AI and CSV history imports; import controls (file/paste) remain in directory view for adding test history; removed Dx/Hx/Rx auto-populate behavior from patient add/import routes
 - 2026-04-05: Task #51 - Auto-generate clinical notes on Completed status + Documents page: generatedNotes DB table/storage/routes; ULTRASOUND_CONFIG expanded with Echo TTE, Stress Echo, UE Arterial, UE Venous; autoGeneratePatientNotes() helper maps qualifying tests → plexus generate functions; appointment status change to "Completed" auto-generates and saves notes to DB; inline Clinical Notes section in expanded patient card with Copy + Regenerate buttons; new /documents route (DocumentsPage) with facility→date→patient folder hierarchy; Clinical Notes tile on home + sidebar link
 - 2026-04-05: Task #52 - PDF date-of-service uses schedule date not today
@@ -41,10 +42,12 @@ AI-powered patient screening application that analyzes clinical data (schedules,
 ## Architecture
 - **Frontend**: React + Vite + Tailwind CSS + Shadcn UI (including Sidebar component)
 - **Backend**: Express.js with file parsing (xlsx, csv-parse) and OpenAI integration
-- **Database**: PostgreSQL with Drizzle ORM
-- **AI**: OpenAI GPT-5.2 via Replit AI Integrations (no API key needed)
+- **Database**: PostgreSQL with Drizzle ORM; explicit indexes on batchId, status, appointmentStatus, patient name, and date columns
+- **AI**: OpenAI GPT-5.2 via Replit AI Integrations (no API key needed); 60s timeout + 3-attempt exponential-backoff retry wrapper on every call
 - **File Parsing**: xlsx for Excel, csv-parse for CSV, line-by-line for .txt files
 - **Validation**: Zod schemas on all API routes
+- **Service Layer**: `server/services/aiClient.ts` (OpenAI instance + retry helper), `server/services/ingest.ts` (file parsing, AI parse), `server/services/screening.ts` (AI qualification, cooldown, reference enrichment)
+- **Operational**: `GET /healthz` → `{status, db}`; SIGTERM drains HTTP connections then closes DB pool; startup DDL removed (schema managed via Drizzle migrations in `migrations/`)
 
 ## API Routes
 - `POST /api/batches` - Create a new draft schedule

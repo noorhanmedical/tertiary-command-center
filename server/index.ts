@@ -2,8 +2,6 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { db } from "./db";
-import { sql } from "drizzle-orm";
 
 const app = express();
 const httpServer = createServer(app);
@@ -39,69 +37,30 @@ export function log(message: string, source = "express") {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
+  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+
+  const originalResJson = res.json;
+  res.json = function (bodyJson, ...args) {
+    capturedJsonResponse = bodyJson;
+    return originalResJson.apply(res, [bodyJson, ...args]);
+  };
 
   res.on("finish", () => {
     const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      log(`${req.method} ${path} ${res.statusCode} in ${duration}ms`);
+    if (path.startsWith("/api") || path === "/healthz") {
+      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      if (capturedJsonResponse) {
+        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      }
+
+      log(logLine);
     }
   });
 
   next();
 });
 
-async function runStartupMigrations() {
-  try {
-    await db.execute(sql`
-      ALTER TABLE screening_batches ADD COLUMN IF NOT EXISTS clinician_name TEXT
-    `);
-    await db.execute(sql`
-      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS insurance TEXT
-    `);
-    await db.execute(sql`
-      ALTER TABLE screening_batches ADD COLUMN IF NOT EXISTS facility TEXT
-    `);
-    await db.execute(sql`
-      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS dob TEXT
-    `);
-    await db.execute(sql`
-      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS phone_number TEXT
-    `);
-    await db.execute(sql`
-      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS appointment_status TEXT DEFAULT 'pending'
-    `);
-    await db.execute(sql`
-      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS patient_type TEXT DEFAULT 'visit'
-    `);
-    await db.execute(sql`
-      ALTER TABLE patient_screenings ADD COLUMN IF NOT EXISTS facility TEXT
-    `);
-    await db.execute(sql`
-      ALTER TABLE screening_batches ADD COLUMN IF NOT EXISTS schedule_date TEXT
-    `);
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS generated_notes (
-        id SERIAL PRIMARY KEY,
-        patient_id INTEGER NOT NULL REFERENCES patient_screenings(id) ON DELETE CASCADE,
-        batch_id INTEGER NOT NULL REFERENCES screening_batches(id) ON DELETE CASCADE,
-        facility TEXT,
-        schedule_date TEXT,
-        patient_name TEXT NOT NULL,
-        service TEXT NOT NULL,
-        doc_kind TEXT NOT NULL,
-        title TEXT NOT NULL,
-        sections JSONB NOT NULL,
-        generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-      )
-    `);
-    console.log("[migration] schema up to date");
-  } catch (err: any) {
-    console.warn("[migration] warning:", err.message);
-  }
-}
-
 (async () => {
-  await runStartupMigrations();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
@@ -142,4 +101,26 @@ async function runStartupMigrations() {
       log(`serving on port ${port}`);
     },
   );
+
+  // ─── Graceful shutdown on SIGTERM ─────────────────────────────────────────
+  process.on("SIGTERM", () => {
+    log("SIGTERM received. Draining in-flight requests...", "shutdown");
+    httpServer.close(async () => {
+      log("HTTP server closed. Shutting down DB pool...", "shutdown");
+      try {
+        const { pool } = await import("./db");
+        await pool.end();
+        log("DB pool drained. Exiting.", "shutdown");
+      } catch (err: any) {
+        console.error("Error draining DB pool:", err.message);
+      }
+      process.exit(0);
+    });
+
+    // Force exit after 30 s if drain hasn't completed
+    setTimeout(() => {
+      console.error("Graceful shutdown timed out. Force exiting.");
+      process.exit(1);
+    }, 30_000).unref();
+  });
 })();
