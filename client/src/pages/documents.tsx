@@ -242,6 +242,17 @@ export default function DocumentsPage() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <Link href="/plexus">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-indigo-700 border-indigo-200 hover:bg-indigo-50"
+                data-testid="button-generate-note"
+              >
+                <ClipboardList className="w-3.5 h-3.5" />
+                Generate Note
+              </Button>
+            </Link>
             <Link href="/document-upload">
               <Button
                 variant="outline"

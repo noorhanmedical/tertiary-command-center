@@ -1360,13 +1360,6 @@ export default function Home() {
                     <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
                       <FileText className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
                       <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
-                      <button
-                        className="mt-1 px-3 py-1 text-xs font-semibold bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg transition-colors"
-                        data-testid="button-generate-note"
-                        onClick={(e) => { e.stopPropagation(); setLocation("/plexus"); }}
-                      >
-                        Generate Note
-                      </button>
                     </div>
                   </Card>
 
