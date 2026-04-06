@@ -1,61 +1,45 @@
 import { google, drive_v3 } from "googleapis";
 
-interface ConnectorSettings {
-  access_token?: string;
-  oauth?: {
-    credentials?: {
-      access_token?: string;
-    };
-  };
-  expires_at?: string;
-}
+let _authClient: InstanceType<typeof google.auth.GoogleAuth> | null = null;
 
-interface ConnectorConnection {
-  settings: ConnectorSettings;
-}
+function getAuthClient(): InstanceType<typeof google.auth.GoogleAuth> {
+  if (_authClient) return _authClient;
 
-async function getDriveAccessToken(): Promise<string> {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY
-    ? "repl " + process.env.REPL_IDENTITY
-    : process.env.WEB_REPL_RENEWAL
-    ? "depl " + process.env.WEB_REPL_RENEWAL
-    : null;
-
-  if (!xReplitToken) {
-    throw new Error("X-Replit-Token not found for repl/depl");
+  const json = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (!json) {
+    const msg =
+      "[GoogleDrive] GOOGLE_SERVICE_ACCOUNT_JSON environment secret is not set. " +
+      "Please add a Google service account JSON key as this secret.";
+    console.error(msg);
+    throw new Error(msg);
   }
 
-  const response = await fetch(
-    "https://" +
-      hostname +
-      "/api/v2/connection?include_secrets=true&connector_names=google-drive",
-    {
-      headers: {
-        Accept: "application/json",
-        "X-Replit-Token": xReplitToken,
-      },
-    }
-  );
-
-  const data = (await response.json()) as { items?: ConnectorConnection[] };
-  const connection = data.items?.[0];
-
-  const accessToken =
-    connection?.settings?.access_token ||
-    connection?.settings?.oauth?.credentials?.access_token;
-
-  if (!connection || !accessToken) {
-    throw new Error("Google Drive not connected");
+  let credentials: object;
+  try {
+    credentials = JSON.parse(json);
+  } catch {
+    const msg =
+      "[GoogleDrive] GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON. " +
+      "Please set it to the full service account key JSON.";
+    console.error(msg);
+    throw new Error(msg);
   }
-  return accessToken;
+
+  _authClient = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  });
+
+  return _authClient;
+}
+
+export function validateDriveCredentials(): void {
+  getAuthClient();
 }
 
 export async function getUncachableGoogleDriveClient() {
-  const accessToken = await getDriveAccessToken();
-  const oauth2Client = new google.auth.OAuth2();
-  oauth2Client.setCredentials({ access_token: accessToken });
-  return google.drive({ version: "v3", auth: oauth2Client });
+  const auth = getAuthClient();
+  return google.drive({ version: "v3", auth });
 }
 
 export async function getDriveStatus(): Promise<{ connected: boolean; email: string | null }> {
