@@ -117,9 +117,9 @@ function rowAccentClass(record: BillingRecord): string {
   const ps = record.paidStatus ?? "";
   const days = calcDaysInAR(record.dateSubmitted, record.datePaid, record.paidStatus);
   if (bs === "Denied" || bs === "Rejected") return "bg-red-50/60";
+  if (days !== null && days >= 90) return "bg-red-50/40";
   if (ps === "Paid" || bs === "Paid") return "bg-emerald-50/50";
   if (bs === "Pending" || record.response === "Pending") return "bg-amber-50/40";
-  if (days !== null && days >= 90) return "bg-red-50/40";
   return "";
 }
 
@@ -752,16 +752,16 @@ export default function BillingPage() {
                         <div className="flex items-center gap-1.5">
                           <DropdownCell value={record.documentationStatus} recordId={record.id} field="documentationStatus" options={DOC_STATUS_OPTIONS} onSave={handleSave} />
                           <button
-                            className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap transition-colors ${
+                            className={`text-[10px] px-2 py-0.5 rounded border whitespace-nowrap transition-colors ${
                               hasNotes(record)
-                                ? "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100"
-                                : "bg-slate-50 text-slate-300 border-slate-200 hover:bg-slate-100"
+                                ? "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
+                                : "bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100"
                             }`}
                             onClick={() => openDocModal(record)}
                             title={hasNotes(record) ? "View generated documents" : "No documents yet"}
                             data-testid={`button-doc-${record.id}`}
                           >
-                            <FileText className="w-3 h-3" />
+                            {hasNotes(record) ? "View" : "None"}
                           </button>
                         </div>
                       </td>
