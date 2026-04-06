@@ -986,6 +986,7 @@ export default function Home() {
             onClearAll={() => { if (confirm("Clear all patient history records?")) clearHistoryMutation.mutate(); }}
             importFilePending={importHistoryFileMutation.isPending}
             importTextPending={importHistoryMutation.isPending}
+            onOpenHistory={openHistoryTab}
           />
         ) : view === "schedule" && selectedBatchId && (scheduleViewMode === "results" || (selectedBatch?.status === "completed" && scheduleViewMode !== "build")) ? (
           <ResultsView
@@ -1326,22 +1327,6 @@ export default function Home() {
                       <div>
                         <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-new-schedule">New Schedule</h3>
                         <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">Create a new patient screening schedule</p>
-                      </div>
-                    </div>
-                  </Card>
-
-                  <Card
-                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card backdrop-blur-xl border border-slate-200/60 dark:border-border shadow-sm hover:shadow-md transition-shadow duration-200"
-                    onClick={openHistoryTab}
-                    data-testid="tile-patient-database"
-                  >
-                    <div className="flex items-start gap-4 p-6">
-                      <div className="shrink-0 mt-0.5">
-                        <Users className="w-7 h-7 text-blue-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-base text-slate-900 dark:text-foreground" data-testid="text-tile-patient-database">Patient Database</h3>
-                        <p className="text-sm text-slate-600 dark:text-muted-foreground mt-1 leading-relaxed">View and manage patient test history</p>
                       </div>
                     </div>
                   </Card>
@@ -2502,9 +2487,10 @@ interface PatientDirectoryViewProps {
   onClearAll: () => void;
   importFilePending: boolean;
   importTextPending: boolean;
+  onOpenHistory: () => void;
 }
 
-function PatientDirectoryView({ testHistory, historyLoading, dirPasteText, setDirPasteText, dirSearch, setDirSearch, onImportFile, onImportText, onClearAll, importFilePending, importTextPending }: PatientDirectoryViewProps) {
+function PatientDirectoryView({ testHistory, historyLoading, dirPasteText, setDirPasteText, dirSearch, setDirSearch, onImportFile, onImportText, onClearAll, importFilePending, importTextPending, onOpenHistory }: PatientDirectoryViewProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [addRecordOpen, setAddRecordOpen] = useState(false);
@@ -2645,6 +2631,16 @@ function PatientDirectoryView({ testHistory, historyLoading, dirPasteText, setDi
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onOpenHistory}
+              className="gap-1.5"
+              data-testid="button-ancillary-test-history"
+            >
+              <ClipboardList className="w-3.5 h-3.5" />
+              Ancillary Test History
+            </Button>
             <Button
               size="sm"
               variant="outline"
