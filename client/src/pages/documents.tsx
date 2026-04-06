@@ -12,6 +12,8 @@ type NoteSection = { heading: string; body: string };
 
 function noteNeedsDx(sections: NoteSection[], docKind: string): boolean {
   if (docKind === "billing") return false;
+  const notesSection = sections.find((s) => s.heading === "Notes");
+  if (notesSection && notesSection.body.trim() === "Select conditions in the screening form.") return true;
   const meta = sections.find((s) => s.heading === "__screening_meta__");
   if (!meta) return false;
   try {
@@ -21,8 +23,6 @@ function noteNeedsDx(sections: NoteSection[], docKind: string): boolean {
   } catch {
     return false;
   }
-  const notesSection = sections.find((s) => s.heading === "Notes");
-  if (notesSection && notesSection.body.trim() === "Select conditions in the screening form.") return true;
   return false;
 }
 type GeneratedNote = {
