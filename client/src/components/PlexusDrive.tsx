@@ -131,23 +131,25 @@ export function PlexusDrive() {
     ? `/api/plexus-drive/folder?folderId=${encodeURIComponent(currentFolderId)}`
     : "/api/plexus-drive/folder";
 
+  const driveConnected = googleStatus?.drive?.connected === true;
+
   const { data: folderData, isLoading: folderLoading } = useQuery<{ folderId: string; files: DriveItem[] }>({
     queryKey: [folderUrl],
     queryFn: getQueryFn({ on401: "throw" }),
-    enabled: !debouncedSearch,
+    enabled: driveConnected && !debouncedSearch,
   });
 
   const searchUrl = `/api/plexus-drive/search?q=${encodeURIComponent(debouncedSearch)}`;
   const { data: searchData, isLoading: searchLoading } = useQuery<{ results: SearchResult[] }>({
     queryKey: [searchUrl],
     queryFn: getQueryFn({ on401: "throw" }),
-    enabled: debouncedSearch.length > 0,
+    enabled: driveConnected && debouncedSearch.length > 0,
   });
 
   const { data: folderTree, isLoading: treeLoading } = useQuery<FolderTreeNode>({
     queryKey: ["/api/plexus-drive/folder-tree"],
     queryFn: getQueryFn({ on401: "throw" }),
-    enabled: moveTarget !== null,
+    enabled: driveConnected && moveTarget !== null,
   });
 
   const moveMutation = useMutation({
@@ -255,13 +257,23 @@ export function PlexusDrive() {
         </div>
 
         <div className="min-h-[200px]">
-          {isLoading && (
+          {!driveConnected && googleStatus !== undefined && (
+            <div className="flex flex-col items-center justify-center py-16 gap-3" data-testid="drive-not-connected-message">
+              <Folder className="w-10 h-10 text-amber-400" />
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Google Drive is not connected</p>
+              <p className="text-xs text-muted-foreground text-center max-w-xs">
+                Configure the Google service account credentials to enable Drive access.
+              </p>
+            </div>
+          )}
+
+          {driveConnected && isLoading && (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
             </div>
           )}
 
-          {!isLoading && isSearching && (
+          {driveConnected && !isLoading && isSearching && (
             <div className="p-4">
               {searchResults.length === 0 ? (
                 <div className="py-10 text-center text-sm text-muted-foreground">No results found for "{debouncedSearch}"</div>
@@ -297,7 +309,7 @@ export function PlexusDrive() {
             </div>
           )}
 
-          {!isLoading && !isSearching && (
+          {driveConnected && !isLoading && !isSearching && (
             <div className="p-4">
               {files.length === 0 ? (
                 <div className="py-10 text-center text-sm text-muted-foreground">This folder is empty.</div>

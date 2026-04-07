@@ -95,6 +95,32 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  // ─── Reset any batches stuck in "processing" from a previous server run ────
+  // Analysis jobs are in-process async tasks that do not survive a server restart.
+  // Any batch still marked "processing" at startup must have been interrupted;
+  // reset to "draft" so users can re-run analysis.
+  try {
+    const allBatches = await storage.getAllScreeningBatches();
+    let resetCount = 0;
+    for (const batch of allBatches) {
+      if (batch.status === "processing") {
+        await storage.updateScreeningBatch(batch.id, { status: "draft" });
+        const patients = await storage.getPatientScreeningsByBatch(batch.id);
+        const processingPatients = patients.filter((patient) => patient.status === "processing");
+        for (const p of processingPatients) {
+          await storage.updatePatientScreening(p.id, { status: "pending", qualifyingTests: [] });
+        }
+        console.log(`[startup] Reset interrupted batch #${batch.id} → draft (${processingPatients.length} patients reset)`);
+        resetCount++;
+      }
+    }
+    if (resetCount > 0) {
+      console.log(`[startup] Reset ${resetCount} interrupted batch(es) to draft status`);
+    }
+  } catch (startupErr: any) {
+    console.error("[startup] Failed to reset stuck batches:", startupErr.message);
+  }
+
   // ─── API Key auth middleware ───────────────────────────────────────────────
   const PLEXUS_API_KEY = process.env.PLEXUS_API_KEY;
   if (!PLEXUS_API_KEY) {
@@ -1723,8 +1749,19 @@ export async function registerRoutes(
     return false;
   }
 
+  async function requireDriveConnected(res: any): Promise<boolean> {
+    const { isGoogleDriveConnected } = await import("./googleDrive");
+    const connected = await isGoogleDriveConnected();
+    if (!connected) {
+      res.status(503).json({ error: "Google Drive is not connected", connected: false });
+      return false;
+    }
+    return true;
+  }
+
   app.get("/api/plexus-drive/folder", async (req, res) => {
     try {
+      if (!await requireDriveConnected(res)) return;
       const { getUncachableGoogleDriveClient } = await import("./googleDrive");
 
       const rootId = await getPlexusRootId();
@@ -1768,6 +1805,7 @@ export async function registerRoutes(
 
   app.get("/api/plexus-drive/search", async (req, res) => {
     try {
+      if (!await requireDriveConnected(res)) return;
       const query = req.query.q as string;
       if (!query || query.trim().length < 1) {
         return res.status(400).json({ error: "Search query is required" });
@@ -1835,6 +1873,7 @@ export async function registerRoutes(
 
   app.post("/api/plexus-drive/move", async (req, res) => {
     try {
+      if (!await requireDriveConnected(res)) return;
       const { fileId, destinationFolderId } = req.body;
       if (!fileId || !destinationFolderId) {
         return res.status(400).json({ error: "fileId and destinationFolderId are required" });
@@ -1875,6 +1914,7 @@ export async function registerRoutes(
 
   app.get("/api/plexus-drive/folder-tree", async (req, res) => {
     try {
+      if (!await requireDriveConnected(res)) return;
       const { getUncachableGoogleDriveClient } = await import("./googleDrive");
       const rootId = await getPlexusRootId();
       const drive = await getUncachableGoogleDriveClient();

@@ -264,7 +264,10 @@ export default function Home() {
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch("/api/test-history/import", { method: "POST", body: formData });
+      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
+      const headers: Record<string, string> = {};
+      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+      const res = await fetch("/api/test-history/import", { method: "POST", headers, body: formData });
       if (!res.ok) throw new Error((await res.json()).error || "Import failed");
       return res.json();
     },
@@ -358,7 +361,10 @@ export default function Home() {
 
   const importFileMutation = useMutation({
     mutationFn: async ({ batchId, formData }: { batchId: number; formData: FormData }) => {
-      const res = await fetch(`/api/batches/${batchId}/import-file`, { method: "POST", body: formData });
+      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
+      const headers: Record<string, string> = {};
+      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+      const res = await fetch(`/api/batches/${batchId}/import-file`, { method: "POST", headers, body: formData });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
@@ -445,7 +451,10 @@ export default function Home() {
           throw new Error("Analysis is taking longer than expected. Click Generate All to resume.");
         }
 
-        const batchRes = await fetch(`/api/screening-batches/${batchId}`);
+        const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
+        const pollHeaders: Record<string, string> = {};
+        if (apiKey) pollHeaders["Authorization"] = `Bearer ${apiKey}`;
+        const batchRes = await fetch(`/api/screening-batches/${batchId}`, { headers: pollHeaders });
         if (!batchRes.ok) throw new Error("Lost connection during analysis. Click Generate All to resume.");
         const batchData = await batchRes.json();
 
@@ -533,7 +542,10 @@ export default function Home() {
 
   const handleExport = useCallback(async () => {
     if (!selectedBatchId) return;
-    const res = await fetch(`/api/screening-batches/${selectedBatchId}/export`);
+    const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
+    const exportHeaders: Record<string, string> = {};
+    if (apiKey) exportHeaders["Authorization"] = `Bearer ${apiKey}`;
+    const res = await fetch(`/api/screening-batches/${selectedBatchId}/export`, { headers: exportHeaders });
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
