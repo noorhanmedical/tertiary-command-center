@@ -1,7 +1,7 @@
 # Ancillary Patient Screening System
 
 ## Overview
-AI-powered patient screening application that analyzes clinical data (schedules, past medical history, medications, notes) to qualify patients for diagnostic tests: BrainWave (EEG), VitalWave (ABI), Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Upper Extremity Arterial Doppler (93930), Abdominal Aortic Aneurysm Duplex (93978), Stress Echocardiogram (93350), Lower Extremity Venous Duplex (93971), and Upper Extremity Venous Duplex (93970). The system uses OpenAI GPT-5.2 for aggressive qualification - it qualifies patients for every test with any reasonable clinical justification.
+AI-powered patient screening application that analyzes clinical data (schedules, past medical history, medications, notes) to qualify patients for diagnostic tests: BrainWave (EEG), VitalWave (ABI), Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Abdominal Aortic Aneurysm Duplex (93978), and Lower Extremity Venous Duplex (93971). Stress Echocardiogram (93350), Upper Extremity Arterial Doppler (93930), and Upper Extremity Venous Duplex (93970) are available but must be added manually. The system uses OpenAI GPT-5.2 for aggressive qualification - it qualifies patients for every auto-qualify test with any reasonable clinical justification.
 
 ## Recent Changes
 - 2026-04-06: Task #71 - Document Upload page: `uploaded_documents` DB table added; `POST /api/documents/ocr-name` extracts patient name from PDF via pdf-parse + GPT-4o; `POST /api/documents/upload` uploads PDF to correct Drive subfolder (Report or Informed Consent) and saves record to DB; `GET /api/documents/uploaded` lists all uploads; `/document-upload` page with two cards (Upload Report / Upload Informed Consent), OCR auto-fill of patient name; Drive folder tree extended with `informedConsentFolderId`; home tile + sidebar link added; old upload-report dialog removed from Ancillary Documents page (replaced by link to /document-upload)
@@ -92,7 +92,8 @@ AI-powered patient screening application that analyzes clinical data (schedules,
 - Cooldown enforcement: 6 months for PPO, 12 months for Medicare insurance
 - Patient test history: importable from files/paste, managed via sidebar "Patient History" section
 - Color-coded ancillary cards: BrainWave=purple, VitalWave=red, Ultrasounds=green
-- 11 qualifying tests: BrainWave, VitalWave, Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Upper Extremity Arterial Doppler (93930), Abdominal Aortic Aneurysm Duplex (93978), Stress Echocardiogram (93350), Lower Extremity Venous Duplex (93971), Upper Extremity Venous Duplex (93970)
+- 8 AI-qualifying tests: BrainWave, VitalWave, Bilateral Carotid Duplex (93880), Echocardiogram TTE (93306), Renal Artery Doppler (93975), Lower Extremity Arterial Doppler (93925), Abdominal Aortic Aneurysm Duplex (93978), Lower Extremity Venous Duplex (93971)
+- 3 manual-only tests (not AI-qualified): Stress Echocardiogram (93350), Upper Extremity Arterial Doppler (93930), Upper Extremity Venous Duplex (93970)
 - No FibroScan, no Thyroid US
 - All ultrasounds grouped under one card in expanded view
 - Split reasoning: Clinician Understanding + Patient Talking Points (prominent headers)
