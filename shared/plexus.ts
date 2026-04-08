@@ -14,6 +14,7 @@ export type PatientDemographics = {
   dateOfService?: string;
   sex?: string;
   mrn?: string;
+  previousTests?: string;
 };
 
 export type ClinicianInfo = {
@@ -529,7 +530,8 @@ export function generateVitalWaveDocuments(args: {
       { heading: 'Procedure Ordered', body: 'VitalWave - Comprehensive Autonomic & Vascular Assessment' },
       { heading: 'Diagnosis', body: dxList.length ? dxList.map((d) => `\u2022 ${d}`).join('\n') : 'No conditions selected in screening form' },
       { heading: 'Notes', body: notes || 'Select conditions in the screening form.' },
-      { heading: 'Procedures', body: 'Comprehensive autonomic nervous system testing including parasympathetic and sympathetic function evaluation with tilt table testing. Arterial physiologic studies of upper and lower extremities. Rhythm electrocardiography with interpretation and report.' }
+      { heading: 'Procedures', body: 'Comprehensive autonomic nervous system testing including parasympathetic and sympathetic function evaluation with tilt table testing. Arterial physiologic studies of upper and lower extremities. Rhythm electrocardiography with interpretation and report.' },
+      ...(patient.previousTests ? [{ heading: 'Prior Testing', body: patient.previousTests }] : [])
     ],
     meta: {}
   };
@@ -687,7 +689,8 @@ export function generateUltrasoundDocuments(args: {
       },
       { heading: 'Procedures Ordered', body: selection.length ? selection.map((t) => `\u2022 ${t}`).join('\n') : 'None selected' },
       { heading: 'Diagnosis', body: selectedConditions.length ? selectedConditions.map((d) => `\u2022 ${d}`).join('\n') : 'Select conditions in the screening form.' },
-      { heading: 'Notes', body: buildUltrasoundNotesBody(selection, args.screening.conditions || {}, args.config, args.screening.otherText) }
+      { heading: 'Notes', body: buildUltrasoundNotesBody(selection, args.screening.conditions || {}, args.config, args.screening.otherText) },
+      ...(patient.previousTests ? [{ heading: 'Prior Testing', body: patient.previousTests }] : [])
     ]
   };
 
@@ -810,7 +813,8 @@ export function generateBrainWaveDocuments(args: {
       },
       { heading: 'Procedure Ordered', body: 'BrainWave - Comprehensive Assessment' },
       { heading: 'Diagnosis', body: args.screeningResult.selectedConditions.length ? args.screeningResult.selectedConditions.map((d) => `\u2022 ${d}`).join('\n') : 'Select conditions in the screening form.' },
-      { heading: 'Notes', body: args.screeningResult.notes.length ? args.screeningResult.notes.join(' ') : 'Select conditions in the screening form.' }
+      { heading: 'Notes', body: args.screeningResult.notes.length ? args.screeningResult.notes.join(' ') : 'Select conditions in the screening form.' },
+      ...(patient.previousTests ? [{ heading: 'Prior Testing', body: patient.previousTests }] : [])
     ]
   };
 
@@ -888,7 +892,8 @@ export function generatePgxDocuments(args: {
         ].join('\n')
       },
       { heading: 'Clinical Indication', body: 'History of adverse or failed medication trials; optimization of therapy and avoidance of drug\u2013gene interactions.' },
-      { heading: 'Trigger Medications Identified', body: args.screeningResult.selectedConditions.length ? args.screeningResult.selectedConditions.map((t) => `\u2022 ${t}`).join('\n') : 'None identified from screening' }
+      { heading: 'Trigger Medications Identified', body: args.screeningResult.selectedConditions.length ? args.screeningResult.selectedConditions.map((t) => `\u2022 ${t}`).join('\n') : 'None identified from screening' },
+      ...(patient.previousTests ? [{ heading: 'Prior Testing', body: patient.previousTests }] : [])
     ]
   };
 

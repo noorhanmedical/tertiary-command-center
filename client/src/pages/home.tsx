@@ -1542,6 +1542,7 @@ function PatientCard({
   const [localDx, setLocalDx] = useState(patient.diagnoses || "");
   const [localHx, setLocalHx] = useState(patient.history || "");
   const [localRx, setLocalRx] = useState(patient.medications || "");
+  const [localPrevTests, setLocalPrevTests] = useState(patient.previousTests || "");
 
   useEffect(() => { setLocalName(patient.name || ""); }, [patient.name]);
   useEffect(() => { setLocalTime(patient.time || ""); }, [patient.time]);
@@ -1551,6 +1552,7 @@ function PatientCard({
   useEffect(() => { setLocalDx(patient.diagnoses || ""); }, [patient.diagnoses]);
   useEffect(() => { setLocalHx(patient.history || ""); }, [patient.history]);
   useEffect(() => { setLocalRx(patient.medications || ""); }, [patient.medications]);
+  useEffect(() => { setLocalPrevTests(patient.previousTests || ""); }, [patient.previousTests]);
 
   return (
     <Card className={`overflow-visible ${isCompleted ? "ring-1 ring-emerald-200 dark:ring-emerald-800" : ""}`} data-testid={`card-patient-${patient.id}`}>
@@ -1633,7 +1635,7 @@ function PatientCard({
         </div>
       </div>
 
-      <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         <div>
           <label className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5">
             <Stethoscope className="w-3.5 h-3.5" /> Dx (Diagnoses)
@@ -1671,6 +1673,19 @@ function PatientCard({
             onChange={(e) => setLocalRx(e.target.value)}
             onBlur={() => { if (localRx !== (patient.medications || "")) onUpdate("medications", localRx); }}
             data-testid={`input-rx-${patient.id}`}
+          />
+        </div>
+        <div>
+          <label className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5">
+            <ClipboardList className="w-3.5 h-3.5" /> Previous Tests
+          </label>
+          <Textarea
+            placeholder="Echo TTE 01/2024, ABI 06/2023..."
+            className="min-h-[70px] resize-none text-sm"
+            value={localPrevTests}
+            onChange={(e) => setLocalPrevTests(e.target.value)}
+            onBlur={() => { if (localPrevTests !== (patient.previousTests || "")) onUpdate("previousTests", localPrevTests); }}
+            data-testid={`input-prev-tests-${patient.id}`}
           />
         </div>
       </div>
@@ -2159,12 +2174,13 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[], s
 
     const ancillaryColor: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#dc2626" };
 
-    const chartReview = (p.diagnoses || p.history || p.medications) ? `
+    const chartReview = (p.diagnoses || p.history || p.medications || p.previousTests) ? `
       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 12px;margin-bottom:10px;">
         <div style="font-size:8.5px;font-weight:700;color:#1a365d;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:6px;">${esc(p.name)} Chart Review</div>
         ${p.diagnoses ? `<div style="display:flex;gap:6px;margin-bottom:3px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Dx</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.diagnoses)}</span></div>` : ""}
         ${p.history ? `<div style="display:flex;gap:6px;margin-bottom:3px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Hx</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.history)}</span></div>` : ""}
-        ${p.medications ? `<div style="display:flex;gap:6px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Rx</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.medications)}</span></div>` : ""}
+        ${p.medications ? `<div style="display:flex;gap:6px;margin-bottom:3px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Rx</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.medications)}</span></div>` : ""}
+        ${p.previousTests ? `<div style="display:flex;gap:6px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:24px;padding-top:1px;">Prev</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.previousTests)}</span></div>` : ""}
       </div>` : "";
 
     const leftHtml = ancillaryTests.length === 0
@@ -2252,6 +2268,7 @@ function generatePlexusPDF(batchName: string, patients: PatientScreening[], sche
       p.diagnoses ? { label: "Dx", val: trunc(p.diagnoses) } : null,
       p.history   ? { label: "Hx", val: trunc(p.history) }   : null,
       p.medications ? { label: "Rx", val: trunc(p.medications) } : null,
+      p.previousTests ? { label: "Prev Tests", val: trunc(p.previousTests) } : null,
     ].filter(Boolean) as { label: string; val: string }[];
     const clinRow = clinFields.length ? `
       <div style="display:grid;grid-template-columns:repeat(${clinFields.length},1fr);gap:8px;margin-top:5px;padding:5px 8px;background:#f8fafc;border-radius:4px;border:1px solid #e2e8f0;">
@@ -3098,7 +3115,7 @@ function ResultsView({
                               </span>
                             )}
                           </div>
-                          {(patient.diagnoses || patient.history || patient.medications) && (
+                          {(patient.diagnoses || patient.history || patient.medications || patient.previousTests) && (
                             <div
                               className="flex items-center gap-3 text-xs text-slate-900 cursor-pointer hover:text-slate-700 group mt-0.5 rounded-lg px-1 -ml-1 py-0.5 hover:bg-slate-100/70 transition-colors"
                               onClick={(e) => { e.stopPropagation(); setExpandedClinical(expandedClinical === patient.id ? null : patient.id); }}
@@ -3119,6 +3136,11 @@ function ResultsView({
                                   <span className="font-semibold">Rx:</span> {patient.medications}
                                 </span>
                               )}
+                              {patient.previousTests && (
+                                <span className="truncate max-w-[160px]">
+                                  <span className="font-semibold">Prev:</span> {patient.previousTests}
+                                </span>
+                              )}
                               {expandedClinical === patient.id
                                 ? <ChevronDown className="w-3 h-3 text-slate-400 shrink-0 ml-auto" />
                                 : <ChevronRight className="w-3 h-3 text-slate-400 shrink-0 ml-auto" />
@@ -3127,7 +3149,7 @@ function ResultsView({
                           )}
                           {expandedClinical === patient.id && (
                             <div
-                              className="mt-2 rounded-xl bg-slate-50/80 border border-slate-200/70 px-4 py-3 grid grid-cols-1 sm:grid-cols-3 gap-3"
+                              className="mt-2 rounded-xl bg-slate-50/80 border border-slate-200/70 px-4 py-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3"
                               onClick={(e) => e.stopPropagation()}
                               data-testid={`panel-clinical-${patient.id}`}
                             >
@@ -3147,6 +3169,12 @@ function ResultsView({
                                 <div>
                                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Medications</p>
                                   <p className="text-xs text-slate-900 leading-relaxed">{patient.medications}</p>
+                                </div>
+                              )}
+                              {patient.previousTests && (
+                                <div>
+                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Previous Tests</p>
+                                  <p className="text-xs text-slate-900 leading-relaxed">{patient.previousTests}</p>
                                 </div>
                               )}
                             </div>

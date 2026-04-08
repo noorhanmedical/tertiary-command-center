@@ -52,6 +52,7 @@ interface PatientInfo {
   dateOfService: string;
   clinicianName: string;
   clinicianNpi: string;
+  previousTests: string;
 }
 
 const SERVICE_OPTIONS: { value: PlexusService; label: string; desc: string; icon: typeof FileText }[] = [
@@ -171,6 +172,7 @@ export default function PlexusPage() {
     dateOfService: "",
     clinicianName: "",
     clinicianNpi: "",
+    previousTests: "",
   });
   const [service, setService] = useState<PlexusService | null>(null);
 
@@ -194,6 +196,7 @@ export default function PlexusPage() {
       dateOfService: patient.dateOfService || undefined,
       sex: patient.sex || undefined,
       mrn: patient.mrn || undefined,
+      previousTests: patient.previousTests || undefined,
     };
     const clinicianInfo = patient.clinicianName
       ? { name: patient.clinicianName, npi: patient.clinicianNpi || undefined }
@@ -369,6 +372,18 @@ export default function PlexusPage() {
                     onChange={(e) => setPatient((p) => ({ ...p, clinicianNpi: e.target.value }))}
                     placeholder="10-digit NPI"
                     data-testid="input-clinician-npi"
+                  />
+                </div>
+                <div className="md:col-span-2 space-y-1.5">
+                  <Label htmlFor="previousTests" className="text-sm">Previous Tests</Label>
+                  <textarea
+                    id="previousTests"
+                    value={patient.previousTests}
+                    onChange={(e) => setPatient((p) => ({ ...p, previousTests: e.target.value }))}
+                    placeholder="e.g. Echo TTE 01/2024, ABI 06/2023, Carotid Duplex 03/2023"
+                    rows={2}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-none"
+                    data-testid="input-previous-tests"
                   />
                 </div>
               </div>
@@ -706,7 +721,7 @@ export default function PlexusPage() {
                   variant="outline"
                   onClick={() => {
                     setStep("patient");
-                    setPatient({ patientName: "", dateOfBirth: "", sex: "", mrn: "", dateOfService: "", clinicianName: "", clinicianNpi: "" });
+                    setPatient({ patientName: "", dateOfBirth: "", sex: "", mrn: "", dateOfService: "", clinicianName: "", clinicianNpi: "", previousTests: "" });
                     setService(null);
                     setVwScreening({});
                     setUsScreening({ selection: [], conditions: {}, otherText: {} });

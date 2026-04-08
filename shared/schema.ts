@@ -60,6 +60,7 @@ export const patientScreenings = pgTable("patient_screenings", {
   diagnoses: text("diagnoses"),
   history: text("history"),
   medications: text("medications"),
+  previousTests: text("previous_tests"),
   notes: text("notes"),
   qualifyingTests: text("qualifying_tests").array(),
   reasoning: jsonb("reasoning"),
