@@ -559,6 +559,7 @@ export function generateVitalWaveDocuments(args: {
       { heading: 'Subjective', body: "Patient presents today for VitalWave autonomic and vascular testing. Patient's clinical history was reviewed and appropriateness of studies confirmed. Testing indications include autonomic dysfunction assessment and vascular perfusion evaluation." },
       { heading: 'Objective', body: 'Physical exam not required for this visit' },
       { heading: 'Assessment & Plan', body: 'The patient tolerated all procedures well. Autonomic nervous system testing was performed including assessment of parasympathetic and sympathetic function with tilt table evaluation. Blood pressure and heart rate responses were monitored throughout position changes. Arterial physiologic studies of extremities were completed using segmental pressure measurements and waveform analysis at multiple levels. Rhythm electrocardiography was performed with continuous monitoring and interpretation. All testing equipment functioned properly and adequate signal quality was maintained throughout. Patient remained stable during all procedures with no adverse events. Results will be interpreted by the reviewing physician and communicated to the ordering clinician. The VitalWave testing was completed successfully and the patient was discharged in stable condition.' },
+      ...(patient.previousTests ? [{ heading: 'Prior Testing', body: patient.previousTests }] : []),
       {
         heading: 'Order',
         body: [
@@ -714,6 +715,7 @@ export function generateUltrasoundDocuments(args: {
       },
       { heading: 'Facility', body: formatClinicAddress(args.input.clinic || DEFAULT_CLINIC, true) },
       { heading: 'Procedure', body: "Chief Complaint: Ultrasound Procedure\n\nSubjective\nPatient presents today for an ultrasound procedure. Intake has been completed. The patient's clinical history and indication for today's imaging study were reviewed and confirmed.\n\nObjective\nPhysical exam not required for this visit.\n\nAssessment & Plan\nThe room was prepared for diagnostic ultrasound imaging. The patient was positioned comfortably on the examination table, with pillows or supports placed as needed to optimize access to the area being studied. The skin over the targeted region was exposed, and ultrasound gel was applied to ensure proper transducer contact. A diagnostic ultrasound system was used to obtain sonographic images. The appropriate transducer was selected, and the exam proceeded according to standard scanning protocols for the anatomy of interest. Image acquisition may include grayscale imaging, Doppler flow assessment, compressibility testing, structural evaluation, or vascular characterization, depending on the type of study being performed. The sonographer adjusted gain, depth, Doppler angle, and other technical settings as needed to optimize visualization. After the study was completed, excess gel was removed, and the patient was assisted to a comfortable position. The patient tolerated the procedure well. The imaging study was successfully completed, and the finalized interpretation will be reviewed with the patient at a subsequent visit." },
+      ...(patient.previousTests ? [{ heading: 'Prior Testing', body: patient.previousTests }] : []),
       {
         heading: 'Order',
         body: [
@@ -829,7 +831,8 @@ export function generateBrainWaveDocuments(args: {
     sections: [
       { heading: 'Demographics', body: `${patient.patientName}\nDOB: ${patient.dateOfBirth || 'Not specified'}\nSex: ${patient.sex || 'Not specified'}\nMRN: ${patient.mrn || 'Not specified'}` },
       { heading: 'Facility', body: formatClinicAddress(args.input.clinic || DEFAULT_CLINIC) },
-      { heading: 'Procedure', body: 'Procedure: BrainWave Comprehensive Assessment\nDetails: Neuropsychological testing, EEG/ECG, VEP, and AEP studies completed successfully. No complications.' }
+      { heading: 'Procedure', body: 'Procedure: BrainWave Comprehensive Assessment\nDetails: Neuropsychological testing, EEG/ECG, VEP, and AEP studies completed successfully. No complications.' },
+      ...(patient.previousTests ? [{ heading: 'Prior Testing', body: patient.previousTests }] : [])
     ]
   };
 
@@ -912,6 +915,7 @@ export function generatePgxDocuments(args: {
       { heading: 'Subjective', body: "Patient presents today for pharmacogenomic testing sample collection visit. Patient consent has been obtained and appropriateness of testing confirmed based on current medication regimen. Patient's clinical history and medication list were reviewed." },
       { heading: 'Objective', body: 'Physical exam not required for this visit' },
       { heading: 'Assessment & Plan', body: "The patient tolerated the sample collection procedure well. Patient was provided with verbal instructions for the buccal swab collection process. The collection area was prepared and a sterile buccal swab kit was opened. Patient was instructed to rinse mouth with water and wait 5 minutes before collection. The buccal swab was firmly rubbed against the inside of the patient's cheek for 30 seconds with rotation to ensure adequate cell collection from the buccal mucosa. This process was repeated on the opposite cheek with a second swab. Both swabs were immediately placed in the provided collection tube with preservation buffer and sealed according to manufacturer specifications. The collection tube was labeled with patient identifiers including name, date of birth, collection date, and MRN. The sample was logged and prepared for shipment to the reference laboratory. Patient was informed that results will be available within 7-10 business days and that the provider will schedule a follow-up appointment to review results and medication recommendations. The pharmacogenomic test collection was completed successfully." },
+      ...(patient.previousTests ? [{ heading: 'Prior Testing', body: patient.previousTests }] : []),
       {
         heading: 'Order',
         body: [
