@@ -1719,7 +1719,22 @@ function PatientCard({
             className="min-h-[70px] resize-none text-sm"
             value={localPrevTests}
             onChange={(e) => setLocalPrevTests(e.target.value)}
-            onBlur={() => { if (localPrevTests !== (patient.previousTests || "")) onUpdate("previousTests", localPrevTests); }}
+            onBlur={() => {
+              if (localPrevTests !== (patient.previousTests || "")) {
+                onUpdate("previousTests", localPrevTests);
+                const extracted = extractMostRecentDate(localPrevTests);
+                if (extracted) {
+                  const yr = extracted.getFullYear();
+                  const mo = String(extracted.getMonth() + 1).padStart(2, "0");
+                  const dy = String(extracted.getDate()).padStart(2, "0");
+                  const dateStr = `${yr}-${mo}-${dy}`;
+                  if (dateStr !== localPrevTestsDate) {
+                    setLocalPrevTestsDate(dateStr);
+                    onUpdate("previousTestsDate", dateStr);
+                  }
+                }
+              }
+            }}
             data-testid={`input-prev-tests-${patient.id}`}
           />
         </div>
@@ -2217,6 +2232,16 @@ function extractMostRecentDate(text: string | null | undefined): Date | null {
   while ((m = p4.exec(text)) !== null) {
     const d = new Date(parseInt(m[3]), monthMap[m[2].toLowerCase()], parseInt(m[1]));
     if (!isNaN(d.getTime())) dates.push(d);
+  }
+  // MM/YYYY (month/year only — day defaults to 1)
+  const p5 = /\b(\d{1,2})\/(\d{4})\b/g;
+  while ((m = p5.exec(text)) !== null) {
+    const mo = parseInt(m[1]);
+    const yr = parseInt(m[2]);
+    if (mo >= 1 && mo <= 12) {
+      const d = new Date(yr, mo-1, 1);
+      if (!isNaN(d.getTime())) dates.push(d);
+    }
   }
   if (dates.length === 0) return null;
   return dates.reduce((a, b) => b > a ? b : a);

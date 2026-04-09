@@ -28,6 +28,64 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 
 
 const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
 
+const MONTH_MAP: Record<string, number> = {
+  january:0,february:1,march:2,april:3,may:4,june:5,
+  july:6,august:7,september:8,october:9,november:10,december:11,
+};
+
+function extractDateFromPrevTests(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const dates: Date[] = [];
+  let m: RegExpExecArray | null;
+  // MM/DD/YYYY
+  const p0 = /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g;
+  while ((m = p0.exec(text)) !== null) {
+    const d = new Date(parseInt(m[3]), parseInt(m[1])-1, parseInt(m[2]));
+    if (!isNaN(d.getTime())) dates.push(d);
+  }
+  // MM/DD/YY
+  const p1 = /\b(\d{1,2})\/(\d{1,2})\/(\d{2})\b/g;
+  while ((m = p1.exec(text)) !== null) {
+    const yr = parseInt(m[3]);
+    const fullYr = yr >= 0 && yr <= 30 ? 2000 + yr : 1900 + yr;
+    const d = new Date(fullYr, parseInt(m[1])-1, parseInt(m[2]));
+    if (!isNaN(d.getTime())) dates.push(d);
+  }
+  // YYYY-MM-DD
+  const p2 = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
+  while ((m = p2.exec(text)) !== null) {
+    const d = new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+    if (!isNaN(d.getTime())) dates.push(d);
+  }
+  // Month DD, YYYY
+  const p3 = /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})\b/gi;
+  while ((m = p3.exec(text)) !== null) {
+    const d = new Date(parseInt(m[3]), MONTH_MAP[m[1].toLowerCase()], parseInt(m[2]));
+    if (!isNaN(d.getTime())) dates.push(d);
+  }
+  // DD Month YYYY
+  const p4 = /\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/gi;
+  while ((m = p4.exec(text)) !== null) {
+    const d = new Date(parseInt(m[3]), MONTH_MAP[m[2].toLowerCase()], parseInt(m[1]));
+    if (!isNaN(d.getTime())) dates.push(d);
+  }
+  // MM/YYYY (month/year only — day defaults to 1)
+  const p5 = /\b(\d{1,2})\/(\d{4})\b/g;
+  while ((m = p5.exec(text)) !== null) {
+    const mo = parseInt(m[1]);
+    const yr = parseInt(m[2]);
+    if (mo >= 1 && mo <= 12) {
+      const d = new Date(yr, mo-1, 1);
+      if (!isNaN(d.getTime())) dates.push(d);
+    }
+  }
+  if (dates.length === 0) return null;
+  const latest = dates.reduce((a, b) => b > a ? b : a);
+  const mm = String(latest.getMonth() + 1).padStart(2, "0");
+  const dd = String(latest.getDate()).padStart(2, "0");
+  return `${latest.getFullYear()}-${mm}-${dd}`;
+}
+
 function facilityToSettingKey(facility: string): string {
   return `QUALIFICATION_MODE_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`;
 }
@@ -280,6 +338,7 @@ export async function registerRoutes(
           history: p.history || null,
           medications: p.medications || null,
           previousTests: p.previousTests || null,
+          previousTestsDate: extractDateFromPrevTests(p.previousTests) || null,
           notes: p.notes || null,
           qualifyingTests: [],
           reasoning: {},
@@ -330,6 +389,7 @@ export async function registerRoutes(
           history: p.history || null,
           medications: p.medications || null,
           previousTests: p.previousTests || null,
+          previousTestsDate: extractDateFromPrevTests(p.previousTests) || null,
           notes: null,
           qualifyingTests: [],
           reasoning: {},
@@ -376,7 +436,11 @@ export async function registerRoutes(
       if (data.history !== undefined) updates.history = data.history || null;
       if (data.medications !== undefined) updates.medications = data.medications || null;
       if (data.previousTests !== undefined) updates.previousTests = data.previousTests || null;
-      if (data.previousTestsDate !== undefined) updates.previousTestsDate = data.previousTestsDate || null;
+      if (data.previousTestsDate !== undefined) {
+        updates.previousTestsDate = data.previousTestsDate || null;
+      } else if (data.previousTests !== undefined) {
+        updates.previousTestsDate = extractDateFromPrevTests(data.previousTests) || null;
+      }
       if (data.notes !== undefined) updates.notes = data.notes || null;
       if (data.qualifyingTests !== undefined) updates.qualifyingTests = data.qualifyingTests;
       if (data.appointmentStatus !== undefined) updates.appointmentStatus = data.appointmentStatus || "pending";
