@@ -106,6 +106,13 @@ function extractAiJustificationFromSections(sections: NoteSection[]): string | u
   return undefined;
 }
 
+const ULTRASOUND_TEST_KEYWORDS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
+
+function isUltrasoundTestKey(testName: string): boolean {
+  const lower = testName.toLowerCase();
+  return ULTRASOUND_TEST_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
 function buildAiJustificationFromReasoning(
   reasoning: PatientScreeningRecord["reasoning"],
   service: string,
@@ -127,8 +134,10 @@ function buildAiJustificationFromReasoning(
   }
 
   if (service === "Ultrasound") {
-    const tests = qualifyingTests || Object.keys(reasoning);
-    tests.forEach((t) => {
+    const allKeys = qualifyingTests || Object.keys(reasoning);
+    const ultrasoundKeys = allKeys.filter((t) => isUltrasoundTestKey(t));
+    const keysToUse = ultrasoundKeys.length > 0 ? ultrasoundKeys : allKeys.filter((t) => !t.toLowerCase().includes("brain") && !t.toLowerCase().includes("vital") && !t.toLowerCase().includes("pgx"));
+    keysToUse.forEach((t) => {
       const r = reasoning[t];
       if (r && typeof r === "object" && r.clinician_understanding) texts.push(r.clinician_understanding);
     });
