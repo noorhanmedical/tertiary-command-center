@@ -2234,7 +2234,8 @@ function extractMostRecentDate(text: string | null | undefined): Date | null {
     if (!isNaN(d.getTime())) dates.push(d);
   }
   // MM/YYYY (month/year only — day defaults to 1)
-  const p5 = /\b(\d{1,2})\/(\d{4})\b/g;
+  // Negative lookbehind (?<!\/) prevents matching DD portion of MM/DD/YYYY
+  const p5 = /(?<!\/)\b(\d{1,2})\/(\d{4})\b/g;
   while ((m = p5.exec(text)) !== null) {
     const mo = parseInt(m[1]);
     const yr = parseInt(m[2]);
