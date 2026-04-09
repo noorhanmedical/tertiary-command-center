@@ -159,10 +159,12 @@ export async function checkCooldownsForPatients(
   const filteredHistory = allHistory.filter((h) => h.dateOfService < cutoffDate);
   if (filteredHistory.length === 0) return {};
 
-  const historyText = filteredHistory.map((h) => `${h.patientName} | ${h.testName} | ${h.dateOfService} | ${h.insuranceType}`).join("\n");
+  const historyText = filteredHistory.map((h, i) => `[${i}] ${h.patientName} | ${h.testName} | ${h.dateOfService} | ${h.insuranceType}`).join("\n");
 
   const patientsText = patients.map((p) => `${p.name}: [${p.qualifyingTests.join(", ")}]`).join("\n");
 
+  // Phase 1: AI is used ONLY for fuzzy name matching and test name matching.
+  // It returns which history record indices belong to each patient — no cooldown math.
   const response = await withRetry(
     () =>
       openai.chat.completions.create({
@@ -170,20 +172,15 @@ export async function checkCooldownsForPatients(
         messages: [
           {
             role: "system",
-            content: `You are a patient name matching and cooldown checking assistant. You will be given:
-1. A database of historical patient test records (name | test | date | insurance_type)
+            content: `You are a patient name matching assistant. You will be given:
+1. A numbered list of historical patient test records: [index] name | test | date | insurance_type
 2. A list of patients with their currently qualifying tests
 
-Your job is to match patients by name (fuzzy matching - handle "Last, First" vs "First Last", nicknames, minor spelling differences) and determine which qualifying tests have been done within the cooldown period.
+Your ONLY job is to:
+- Match patients by name using fuzzy matching (handle "Last, First" vs "First Last", nicknames, minor spelling differences)
+- For each matched history record, determine which qualifying test(s) it corresponds to
 
-COOLDOWN RULES:
-- PPO insurance: 6 month cooldown from date of service
-- Straight/Traditional/Original Medicare: 12 month cooldown from date of service
-- Medicare Advantage (HMO Medicare, MA plan, MAPD): treat as PPO, 6 month cooldown
-- The insurance_type field in records is already normalized: "medicare" = straight Medicare (12 mo), "ppo" = everything else including Medicare Advantage (6 mo)
-- Today's date is: ${cutoffDate}
-
-IMPORTANT: Every record in the history I am giving you has a date_of_service strictly BEFORE ${cutoffDate}. Never flag a test whose lastDate equals ${cutoffDate} or is later than ${cutoffDate}. Only use the records explicitly provided — do not invent or assume any other records.
+Do NOT make any cooldown calculations, date comparisons, or decisions about whether a test is within a cooldown window. That will be done separately.
 
 TEST NAME MATCHING:
 - "BrainWave" in history matches "BrainWave" in qualifying tests
@@ -191,19 +188,17 @@ TEST NAME MATCHING:
 - Any ultrasound test name should be matched to the specific qualifying test (e.g., "Bilateral Carotid Duplex", "Echocardiogram", "Renal Artery Doppler", etc.)
 - "Ultrasound" in history could match any ultrasound qualifying test - list all that apply
 
-Return a JSON object where keys are the EXACT patient names from the qualifying tests list, and values are arrays of cooldown violations:
+Return a JSON object where keys are the EXACT patient names from the qualifying tests list, and values are arrays of matched history records:
 {
   "Patient Name": [
     {
-      "test": "exact test name from qualifying tests",
-      "lastDate": "YYYY-MM-DD",
-      "insuranceType": "ppo or medicare",
-      "cooldownMonths": 6 or 12
+      "historyIndex": 0,
+      "matchedQualifyingTest": "exact test name from qualifying tests"
     }
   ]
 }
 
-Only include patients who have cooldown violations. If no violations found, return empty object {}.`,
+Only include patients who have at least one matched history record. If no matches found, return empty object {}.`,
           },
           {
             role: "user",
@@ -218,17 +213,56 @@ Only include patients who have cooldown violations. If no violations found, retu
   );
 
   try {
-    const parsed: Record<string, { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[]> =
+    const nameMatches: Record<string, { historyIndex: number; matchedQualifyingTest: string }[]> =
       JSON.parse(response.choices[0]?.message?.content || "{}");
-    for (const patientName of Object.keys(parsed)) {
-      if (!Array.isArray(parsed[patientName])) {
-        delete parsed[patientName];
-        continue;
+
+    // Phase 2: Deterministic TypeScript date math for cooldown calculation.
+    const result: Record<string, { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[]> = {};
+
+    const cutoff = new Date(cutoffDate);
+
+    for (const patientName of Object.keys(nameMatches)) {
+      const matches = nameMatches[patientName];
+      if (!Array.isArray(matches)) continue;
+
+      const violations: { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[] = [];
+
+      for (const match of matches) {
+        const idx = match.historyIndex;
+        if (typeof idx !== "number" || idx < 0 || idx >= filteredHistory.length) continue;
+
+        const record = filteredHistory[idx];
+        if (!record) continue;
+
+        const lastDate = new Date(record.dateOfService);
+        if (isNaN(lastDate.getTime())) continue;
+
+        // Ensure the history record is strictly before the cutoff
+        if (record.dateOfService >= cutoffDate) continue;
+
+        const insuranceType = record.insuranceType === "medicare" ? "medicare" : "ppo";
+        const cooldownMonths = insuranceType === "medicare" ? 12 : 6;
+
+        // Deterministic date math: add cooldownMonths to lastDate and compare to cutoff
+        const expiryDate = new Date(lastDate);
+        expiryDate.setMonth(expiryDate.getMonth() + cooldownMonths);
+
+        if (expiryDate > cutoff) {
+          violations.push({
+            test: match.matchedQualifyingTest,
+            lastDate: record.dateOfService,
+            insuranceType,
+            cooldownMonths,
+          });
+        }
       }
-      parsed[patientName] = parsed[patientName].filter((v) => v.lastDate < cutoffDate);
-      if (parsed[patientName].length === 0) delete parsed[patientName];
+
+      if (violations.length > 0) {
+        result[patientName] = violations;
+      }
     }
-    return parsed;
+
+    return result;
   } catch {
     console.error("Failed to parse cooldown check response");
     return {};
