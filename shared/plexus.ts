@@ -15,6 +15,9 @@ export type PatientDemographics = {
   sex?: string;
   mrn?: string;
   previousTests?: string;
+  diagnoses?: string;
+  history?: string;
+  medications?: string;
 };
 
 export type ClinicianInfo = {
@@ -488,6 +491,14 @@ export function pgxScreeningToResult(args: { screening: PgxScreeningData }): Scr
   };
 }
 
+function buildClinicalBackground(patient: PatientDemographics): string | null {
+  const parts: string[] = [];
+  if (patient.diagnoses) parts.push(`Diagnoses: ${patient.diagnoses}`);
+  if (patient.history) parts.push(`History/PMH: ${patient.history}`);
+  if (patient.medications) parts.push(`Medications: ${patient.medications}`);
+  return parts.length > 0 ? parts.join('\n\n') : null;
+}
+
 function buildVitalWaveNotesBody(
   config: VitalWaveConfig,
   screening: Record<string, Record<string, boolean>>
@@ -545,6 +556,7 @@ export function generateVitalWaveDocuments(args: {
       },
       { heading: 'Procedure Ordered', body: 'VitalWave - Comprehensive Autonomic & Vascular Assessment' },
       { heading: 'Diagnosis', body: dxList.length ? dxList.map((d) => `\u2022 ${d}`).join('\n') : 'No conditions selected in screening form' },
+      ...(buildClinicalBackground(patient) ? [{ heading: 'Clinical Background', body: buildClinicalBackground(patient)! }] : []),
       ...(args.aiJustification ? [{ heading: 'Clinical Justification', body: args.aiJustification }] : []),
       { heading: 'Notes', body: notes || 'Select conditions in the screening form.' },
       { heading: 'Procedures', body: 'Comprehensive autonomic nervous system testing including parasympathetic and sympathetic function evaluation with tilt table testing. Arterial physiologic studies of upper and lower extremities. Rhythm electrocardiography with interpretation and report.' },
@@ -708,6 +720,7 @@ export function generateUltrasoundDocuments(args: {
       },
       { heading: 'Procedures Ordered', body: selection.length ? selection.map((t) => `\u2022 ${t}`).join('\n') : 'None selected' },
       { heading: 'Diagnosis', body: selectedConditions.length ? selectedConditions.map((d) => `\u2022 ${d}`).join('\n') : 'Select conditions in the screening form.' },
+      ...(buildClinicalBackground(patient) ? [{ heading: 'Clinical Background', body: buildClinicalBackground(patient)! }] : []),
       ...(args.aiJustification ? [{ heading: 'Clinical Justification', body: args.aiJustification }] : []),
       { heading: 'Notes', body: buildUltrasoundNotesBody(selection, args.screening.conditions || {}, args.config, args.screening.otherText) },
 
@@ -835,6 +848,7 @@ export function generateBrainWaveDocuments(args: {
       },
       { heading: 'Procedure Ordered', body: 'BrainWave - Comprehensive Assessment' },
       { heading: 'Diagnosis', body: args.screeningResult.selectedConditions.length ? args.screeningResult.selectedConditions.map((d) => `\u2022 ${d}`).join('\n') : 'Select conditions in the screening form.' },
+      ...(buildClinicalBackground(patient) ? [{ heading: 'Clinical Background', body: buildClinicalBackground(patient)! }] : []),
       ...(args.aiJustification ? [{ heading: 'Clinical Justification', body: args.aiJustification }] : []),
       { heading: 'Notes', body: args.screeningResult.notes.length ? args.screeningResult.notes.join(' ') : 'Select conditions in the screening form.' },
 

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { autoGeneratePatientNotes } from "@/lib/noteGeneration";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -2014,7 +2015,9 @@ const TEST_TO_ULTRASOUND_KEY: Record<string, string> = {
   "Upper Extremity Venous Duplex": "Upper Extremity Venous",
 };
 
-function autoGeneratePatientNotes(
+// autoGeneratePatientNotes is imported from @/lib/noteGeneration — see below
+
+function _legacyAutoGeneratePatientNotesUnused(
   patient: PatientScreening,
   scheduleDate: string | null | undefined,
   facility: string | null | undefined,
@@ -3087,12 +3090,12 @@ function ResultsView({
     },
   });
 
-  const handleStatusChange = (patient: PatientScreening, newStatus: string) => {
+  const handleStatusChange = async (patient: PatientScreening, newStatus: string) => {
     onUpdatePatient(patient.id, { appointmentStatus: newStatus });
     if (newStatus.toLowerCase() === "completed" && (patient.qualifyingTests || []).length > 0) {
       setGeneratingNotesFor((prev) => new Set(Array.from(prev).concat(patient.id)));
       try {
-        const docs = autoGeneratePatientNotes(patient, batch?.scheduleDate, batch?.facility, batch?.clinicianName);
+        const docs = await autoGeneratePatientNotes(patient, batch?.scheduleDate, batch?.facility, batch?.clinicianName);
         if (docs.length > 0) {
           setPatientNotes((prev) => ({ ...prev, [patient.id]: docs }));
           const payload = docs.map((doc) => ({

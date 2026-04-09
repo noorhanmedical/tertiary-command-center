@@ -32,7 +32,7 @@ export function DocumentSection({ doc, index }: { doc: DocumentSectionDoc; index
   const kindLabel = KIND_LABELS[doc.kind] || doc.kind;
   const kindColor = KIND_COLORS[doc.kind] || "bg-slate-100 text-slate-800";
 
-  const visibleSections = doc.sections.filter((s) => s.heading !== "__screening_meta__");
+  const visibleSections = doc.sections.filter((s) => !s.heading.startsWith("__"));
 
   const fullText = visibleSections
     .map((s) => `${s.heading}\n${"─".repeat(s.heading.length)}\n${s.body}`)

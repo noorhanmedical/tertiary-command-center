@@ -497,11 +497,11 @@ function NotesModal({
   onExportToDrive?: (noteId: number) => void;
   exportingNoteIds?: Set<number>;
 }) {
-  const visible = notes.filter((n) => !n.sections.every((s) => s.heading === "__screening_meta__"));
+  const visible = notes.filter((n) => !n.sections.every((s) => s.heading.startsWith("__")));
 
   function handleCopy(note: GeneratedNote) {
     const text = note.sections
-      .filter((s) => s.heading !== "__screening_meta__")
+      .filter((s) => !s.heading.startsWith("__"))
       .map((s) => `${s.heading}\n${"─".repeat(s.heading.length)}\n${s.body}`)
       .join("\n\n");
     navigator.clipboard.writeText(`${note.title}\n\n${text}`);
@@ -519,7 +519,7 @@ function NotesModal({
       `p{white-space:pre-wrap;margin:0 0 8px 0;font-size:11pt}` +
       `</style></head><body>` +
       `<h1>${esc(note.title)}</h1>` +
-      note.sections.filter((s) => s.heading !== "__screening_meta__")
+      note.sections.filter((s) => !s.heading.startsWith("__"))
         .map((s) => `<h2>${esc(s.heading)}</h2><p>${esc(s.body)}</p>`)
         .join("") +
       `</body></html>`
@@ -583,7 +583,7 @@ function NotesModal({
                   </div>
                 </div>
                 <div className="p-4 space-y-3">
-                  {note.sections.filter((s) => s.heading !== "__screening_meta__").map((section, si) => (
+                  {note.sections.filter((s) => !s.heading.startsWith("__")).map((section, si) => (
                     <div key={si}>
                       <h4 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{section.heading}</h4>
                       <p className="text-xs text-slate-800 whitespace-pre-wrap leading-relaxed">{section.body}</p>

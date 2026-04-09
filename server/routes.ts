@@ -1452,7 +1452,7 @@ export async function registerRoutes(
       try {
         const sections = (note.sections as { heading: string; body: string }[]) || [];
         const content = sections
-          .filter((s) => s.heading !== "__screening_meta__")
+          .filter((s) => !s.heading.startsWith("__"))
           .map((s) => `${s.heading}\n${s.body}`)
           .join("\n\n");
         const filename = `${note.patientName} - ${note.title} (${note.scheduleDate || note.generatedAt.toISOString().split("T")[0]})`;
@@ -1590,7 +1590,7 @@ export async function registerRoutes(
 
       const sections = (note.sections as { heading: string; body: string }[]) || [];
       const content = sections
-        .filter((s) => s.heading !== "__screening_meta__")
+        .filter((s) => !s.heading.startsWith("__"))
         .map((s) => `${s.heading}\n${s.body}`)
         .join("\n\n");
 
@@ -2076,6 +2076,47 @@ export async function registerRoutes(
       await setSetting(key, mode);
       res.json({ facility, mode });
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/patients/:patientId/refresh-notes", async (req, res) => {
+    try {
+      const patientId = parseInt(req.params.patientId, 10);
+      if (isNaN(patientId)) return res.status(400).json({ error: "Invalid patientId" });
+
+      const patient = await storage.getPatientScreening(patientId);
+      if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      const batch = await storage.getScreeningBatch(patient.batchId);
+      if (!batch) return res.status(404).json({ error: "Batch not found" });
+
+      const { autoGeneratePatientNotesServer } = await import("./services/noteGenerationServer");
+
+      const docs = await autoGeneratePatientNotesServer(patient, batch.scheduleDate, batch.facility, batch.clinicianName);
+
+      if (docs.length === 0) {
+        return res.json({ notes: [] });
+      }
+
+      await storage.deleteGeneratedNotesByPatient(patientId);
+
+      const payload = docs.map((doc) => ({
+        patientId: patient.id,
+        batchId: batch.id,
+        facility: batch.facility ?? null,
+        scheduleDate: batch.scheduleDate ?? null,
+        patientName: patient.name,
+        service: doc.service,
+        docKind: doc.kind,
+        title: doc.title,
+        sections: doc.sections as any,
+      }));
+
+      const saved = await storage.saveGeneratedNotes(payload);
+      res.json({ notes: saved });
+    } catch (error: any) {
+      console.error("[refresh-notes] Error:", error.message);
       res.status(500).json({ error: error.message });
     }
   });

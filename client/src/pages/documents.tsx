@@ -129,6 +129,8 @@ export default function DocumentsPage() {
   const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
   const [screeningFormNote, setScreeningFormNote] = useState<GeneratedNote | null>(null);
   const [exportingNoteIds, setExportingNoteIds] = useState<Set<number>>(new Set());
+  const [refreshingPatientIds, setRefreshingPatientIds] = useState<Set<number>>(new Set());
+  const [refreshAllPending, setRefreshAllPending] = useState(false);
 
   const exportNoteMutation = useMutation({
     mutationFn: async (noteId: number) => {
@@ -174,6 +176,49 @@ export default function DocumentsPage() {
     queryKey: ["/api/screening-batches"],
     select: (data: any[]) => data.map((b) => ({ id: b.id, clinicianName: b.clinicianName ?? null })),
   });
+
+  const refreshPatientNotesMutation = useMutation({
+    mutationFn: async (patientId: number) => {
+      const res = await apiRequest("POST", `/api/patients/${patientId}/refresh-notes`);
+      return res.json();
+    },
+    onSuccess: (_, patientId) => {
+      setRefreshingPatientIds((prev) => { const s = new Set(prev); s.delete(patientId); return s; });
+      queryClient.invalidateQueries({ queryKey: ["/api/generated-notes"] });
+      toast({ title: "Notes refreshed", description: "Clinical justification has been updated." });
+    },
+    onError: (err: Error, patientId) => {
+      setRefreshingPatientIds((prev) => { const s = new Set(prev); s.delete(patientId); return s; });
+      toast({ title: "Refresh failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleRefreshAllNotes = async () => {
+    const uniquePatientIds = Array.from(new Set(notes.map((n) => n.patientId)));
+    if (uniquePatientIds.length === 0) return;
+    setRefreshAllPending(true);
+    toast({ title: "Refreshing all notes…", description: `Regenerating AI justifications for ${uniquePatientIds.length} patients.` });
+    let successCount = 0;
+    let failCount = 0;
+    for (const pid of uniquePatientIds) {
+      try {
+        setRefreshingPatientIds((prev) => new Set(prev).add(pid));
+        const res = await apiRequest("POST", `/api/patients/${pid}/refresh-notes`);
+        await res.json();
+        setRefreshingPatientIds((prev) => { const s = new Set(prev); s.delete(pid); return s; });
+        successCount++;
+      } catch {
+        setRefreshingPatientIds((prev) => { const s = new Set(prev); s.delete(pid); return s; });
+        failCount++;
+      }
+    }
+    await queryClient.invalidateQueries({ queryKey: ["/api/generated-notes"] });
+    setRefreshAllPending(false);
+    toast({
+      title: "Refresh complete",
+      description: `${successCount} patient${successCount !== 1 ? "s" : ""} refreshed${failCount > 0 ? `, ${failCount} failed` : ""}.`,
+    });
+  };
 
   const deletePatientNotesMutation = useMutation({
     mutationFn: async (patientId: number) => {
@@ -236,7 +281,7 @@ export default function DocumentsPage() {
   };
 
   const copyNote = (note: GeneratedNote) => {
-    const text = note.sections.filter((s) => s.heading !== "__screening_meta__").map((s) => `${s.heading}\n${s.body}`).join("\n\n");
+    const text = note.sections.filter((s) => !s.heading.startsWith("__")).map((s) => `${s.heading}\n${s.body}`).join("\n\n");
     navigator.clipboard.writeText(text).then(() => {
       toast({ title: "Copied!", description: `${note.title} copied to clipboard.` });
     });
@@ -293,6 +338,23 @@ export default function DocumentsPage() {
                 Upload Report
               </Button>
             </Link>
+            {notes.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefreshAllNotes}
+                disabled={refreshAllPending}
+                className="gap-1.5 text-amber-700 border-amber-200 hover:bg-amber-50"
+                data-testid="button-refresh-all-notes"
+              >
+                {refreshAllPending ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3.5 h-3.5" />
+                )}
+                Refresh All Notes
+              </Button>
+            )}
             {notes.length > 0 && (
               <Button
                 variant="outline"
@@ -374,6 +436,19 @@ export default function DocumentsPage() {
                                   >
                                     <span className="font-medium text-sm text-slate-800 flex-1">{pg.patientName}</span>
                                     <span className="text-xs text-slate-400 mr-2">{pg.notes.length} docs</span>
+                                    <button
+                                      className="p-1 rounded hover:bg-amber-50 text-slate-400 hover:text-amber-600 transition-colors"
+                                      title="Refresh notes with updated AI justification"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setRefreshingPatientIds((prev) => new Set(prev).add(pg.patientId));
+                                        refreshPatientNotesMutation.mutate(pg.patientId);
+                                      }}
+                                      disabled={refreshingPatientIds.has(pg.patientId)}
+                                      data-testid={`button-refresh-notes-${pg.patientId}`}
+                                    >
+                                      <RefreshCw className={`w-3.5 h-3.5 ${refreshingPatientIds.has(pg.patientId) ? "animate-spin" : ""}`} />
+                                    </button>
                                     <button
                                       className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors"
                                       onClick={(e) => {
@@ -498,7 +573,7 @@ export default function DocumentsPage() {
                                                           className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
                                                           onClick={(e) => {
                                                             e.stopPropagation();
-                                                            const content = note.sections.filter((s) => s.heading !== "__screening_meta__").map((s) => `<p style="margin:0 0 6px;white-space:pre-wrap"><strong>${s.heading}:</strong> ${s.body}</p>`).join("");
+                                                            const content = note.sections.filter((s) => !s.heading.startsWith("__")).map((s) => `<p style="margin:0 0 6px;white-space:pre-wrap"><strong>${s.heading}:</strong> ${s.body}</p>`).join("");
                                                             const html = `<!DOCTYPE html><html><head><title>${note.title}</title><style>body{font-family:Arial,sans-serif;font-size:12px;margin:24px;}</style></head><body><h3>${note.title}</h3><hr>${content}</body></html>`;
                                                             const w = window.open("", "_blank");
                                                             if (w) { w.document.write(html); w.document.close(); w.print(); }
