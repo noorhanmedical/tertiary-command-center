@@ -481,6 +481,17 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/patients/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const patient = await storage.getPatientScreening(id);
+      if (!patient) return res.status(404).json({ error: "Patient not found" });
+      res.json(patient);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.delete("/api/patients/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -51,6 +51,14 @@ export type EditableScreeningNoteContext = {
   clinicianName?: string | null;
 };
 
+type PatientScreeningRecord = {
+  id: number;
+  diagnoses: string | null;
+  history: string | null;
+  medications: string | null;
+  qualifyingTests: string[] | null;
+};
+
 function extractMetaFromSections(sections: NoteSection[]): {
   selectedConditions: string[];
   icd10Codes: string[];
@@ -58,13 +66,16 @@ function extractMetaFromSections(sections: NoteSection[]): {
   selection: string[];
   otherText: Record<string, string>;
   conditions: Record<string, boolean> | null;
+  hasData: boolean;
 } {
   const metaSection = sections.find((s) => s.heading === "__screening_meta__");
   if (metaSection) {
     try {
       const parsed = JSON.parse(metaSection.body);
+      const selectedConditions = Array.isArray(parsed.selectedConditions) ? parsed.selectedConditions : [];
+      const hasData = selectedConditions.length > 0;
       return {
-        selectedConditions: Array.isArray(parsed.selectedConditions) ? parsed.selectedConditions : [],
+        selectedConditions,
         icd10Codes: Array.isArray(parsed.icd10Codes) ? parsed.icd10Codes : [],
         cptCodes: Array.isArray(parsed.cptCodes) ? parsed.cptCodes : [],
         selection: Array.isArray(parsed.selection) ? parsed.selection : [],
@@ -74,11 +85,148 @@ function extractMetaFromSections(sections: NoteSection[]): {
         conditions: (parsed.conditions && typeof parsed.conditions === "object" && !Array.isArray(parsed.conditions))
           ? parsed.conditions as Record<string, boolean>
           : null,
+        hasData,
       };
     } catch {
     }
   }
-  return { selectedConditions: [], icd10Codes: [], cptCodes: [], selection: [], otherText: {}, conditions: null };
+  return { selectedConditions: [], icd10Codes: [], cptCodes: [], selection: [], otherText: {}, conditions: null, hasData: false };
+}
+
+function clinicalTextMatchesCondition(condName: string, clinicalText: string): boolean {
+  const lower = clinicalText.toLowerCase();
+  const cond = condName.toLowerCase();
+
+  if (lower.includes(cond)) return true;
+
+  const ALIASES: Record<string, string[]> = {
+    "essential hypertension": ["htn", "hypertension", "high blood pressure"],
+    "type 2 diabetes mellitus": ["dm2", "t2dm", "diabetes mellitus type 2", "type ii diabetes", "diabetes"],
+    "mixed hyperlipidemia": ["hyperlipidemia", "hld", "dyslipidemia", "high cholesterol"],
+    "atrial fibrillation": ["afib", "a-fib", "a fib"],
+    "peripheral neuropathy": ["neuropathy", "peripheral neuropathy"],
+    "orthostatic hypotension": ["orthostatic hypotension"],
+    "syncope and collapse": ["syncope", "collapse", "fainting"],
+    "dizziness and giddiness": ["dizziness", "giddiness", "vertigo"],
+    "cardiac arrhythmia": ["arrhythmia", "dysrhythmia"],
+    "chest pain": ["chest pain", "angina"],
+    "bradycardia": ["bradycardia", "slow heart"],
+    "palpitations": ["palpitations", "palpitation"],
+    "major depressive disorder": ["depression", "mdd", "depressive disorder"],
+    "generalized anxiety disorder": ["anxiety", "gad"],
+    "adhd, predominantly inattentive": ["adhd", "add", "attention deficit"],
+    "mild cognitive impairment": ["mci", "cognitive impairment", "memory loss"],
+    "seizure disorder": ["seizure", "epilepsy"],
+    "hypothyroidism": ["hypothyroid", "low thyroid"],
+    "obesity": ["obesity", "obese"],
+    "prediabetes": ["prediabetes", "pre-diabetes", "borderline diabetes"],
+    "vitamin d deficiency": ["vitamin d deficiency", "vit d deficiency"],
+    "chronic pain": ["chronic pain"],
+    "memory loss": ["memory loss", "forgetfulness", "cognitive decline"],
+    "peripheral arterial disease": ["pad", "peripheral arterial disease", "peripheral vascular disease"],
+    "carotid artery disease": ["carotid", "carotid stenosis"],
+    "stroke/tia history": ["stroke", "tia", "transient ischemic"],
+    "abdominal aortic aneurysm": ["aaa", "abdominal aortic aneurysm"],
+    "deep vein thrombosis": ["dvt", "deep vein thrombosis"],
+    "heart failure": ["heart failure", "chf", "congestive heart failure"],
+    "cardiomyopathy": ["cardiomyopathy"],
+    "valvular heart disease": ["valve", "valvular"],
+    "coronary artery disease": ["cad", "coronary artery disease"],
+    "renal artery stenosis": ["renal artery stenosis", "renovascular"],
+    "renovascular hypertension": ["renovascular hypertension", "renal hypertension"],
+    "chronic kidney disease": ["ckd", "chronic kidney disease", "renal failure"],
+    "atherosclerosis of aorta": ["atherosclerosis"],
+    "autonomic neuropathy": ["autonomic neuropathy", "autonomic dysfunction"],
+  };
+
+  const aliasSet = ALIASES[cond] || [];
+  return aliasSet.some((alias) => lower.includes(alias));
+}
+
+function buildConditionsFromPatientRecord(
+  patient: PatientScreeningRecord,
+  service: string
+): string[] {
+  const clinicalText = [patient.diagnoses, patient.history, patient.medications]
+    .filter(Boolean)
+    .join(" ");
+  const qualifyingTests = patient.qualifyingTests || [];
+
+  if (service === "VitalWave") {
+    const matched: string[] = [];
+    Object.values(VITALWAVE_CONFIG).forEach((group) => {
+      group.conditions.forEach((cond) => {
+        if (clinicalText && clinicalTextMatchesCondition(cond.name, clinicalText)) {
+          matched.push(cond.name);
+        }
+      });
+    });
+    return matched;
+  }
+
+  if (service === "BrainWave") {
+    if (!qualifyingTests.includes("BrainWave") && !qualifyingTests.some((t) => t.toLowerCase().includes("brainwave"))) {
+      return [];
+    }
+    const matched: string[] = [];
+    Object.keys(BRAINWAVE_MAPPING).forEach((condName) => {
+      if (clinicalText && clinicalTextMatchesCondition(condName, clinicalText)) {
+        matched.push(condName);
+      }
+    });
+    return matched;
+  }
+
+  if (service === "Ultrasound") {
+    const matched: string[] = [];
+    Object.values(ULTRASOUND_CONFIG).forEach((cfg) => {
+      cfg.conditions.forEach((cond) => {
+        if (cond.name !== "Other" && clinicalText && clinicalTextMatchesCondition(cond.name, clinicalText)) {
+          matched.push(cond.name);
+        }
+      });
+    });
+    return matched;
+  }
+
+  if (service === "PGx") {
+    if (!patient.medications) return [];
+    return PGX_TRIGGER_MEDICATIONS.filter((med) =>
+      patient.medications!.toLowerCase().includes(med.toLowerCase().split(" ")[0])
+    );
+  }
+
+  return [];
+}
+
+function buildUltrasoundSelectionFromPatient(
+  patient: PatientScreeningRecord
+): string[] {
+  const qualifyingTests = patient.qualifyingTests || [];
+  const TEST_TO_US_TYPE: Record<string, string> = {
+    "Bilateral Carotid Duplex": "Carotid Duplex",
+    "Echocardiogram TTE": "Echocardiogram TTE",
+    "Renal Artery Doppler": "Renal Artery Duplex",
+    "Lower Extremity Arterial Doppler": "Lower Extremity Arterial",
+    "Lower Extremity Venous Duplex": "Lower Extremity Venous",
+    "Stress Echocardiogram": "Stress Echocardiogram",
+    "Abdominal Aorta": "Abdominal Aorta",
+    "Upper Extremity Arterial": "Upper Extremity Arterial",
+    "Upper Extremity Venous": "Upper Extremity Venous",
+  };
+  const usTypes = new Set<string>();
+  qualifyingTests.forEach((test) => {
+    const mapped = TEST_TO_US_TYPE[test];
+    if (mapped && ULTRASOUND_CONFIG[mapped]) {
+      usTypes.add(mapped);
+    }
+    Object.keys(ULTRASOUND_CONFIG).forEach((type) => {
+      if (test.toLowerCase().includes(type.toLowerCase()) || type.toLowerCase().includes(test.toLowerCase())) {
+        usTypes.add(type);
+      }
+    });
+  });
+  return Array.from(usTypes);
 }
 
 function buildInitialVwScreening(selectedConditions: string[]): VitalWaveScreeningData {
@@ -160,6 +308,15 @@ export function EditableScreeningFormModal({
 
   const meta = extractMetaFromSections(note.sections);
 
+  const needsFallback = !meta.hasData;
+
+  const { data: patientRecord, isError: patientFetchError } = useQuery<PatientScreeningRecord>({
+    queryKey: ["/api/patients", note.patientId],
+    enabled: needsFallback,
+  });
+
+  const [initialized, setInitialized] = useState(!needsFallback);
+
   const [vwScreening, setVwScreening] = useState<VitalWaveScreeningData>(() =>
     buildInitialVwScreening(meta.selectedConditions)
   );
@@ -172,6 +329,30 @@ export function EditableScreeningFormModal({
   const [pgxScreening, setPgxScreening] = useState<PgxScreeningData>(() =>
     buildInitialPgxScreening(meta.selectedConditions)
   );
+
+  useEffect(() => {
+    if (!needsFallback || initialized) return;
+    if (patientFetchError) {
+      setInitialized(true);
+      return;
+    }
+    if (!patientRecord) return;
+
+    const conditions = buildConditionsFromPatientRecord(patientRecord, service);
+
+    if (service === "VitalWave") {
+      setVwScreening(buildInitialVwScreening(conditions));
+    } else if (service === "BrainWave") {
+      setBwScreening(buildInitialBwScreening(conditions));
+    } else if (service === "Ultrasound") {
+      const selection = buildUltrasoundSelectionFromPatient(patientRecord);
+      setUsScreening(buildInitialUsScreening(conditions, selection, {}, null));
+    } else if (service === "PGx") {
+      setPgxScreening(buildInitialPgxScreening(conditions));
+    }
+
+    setInitialized(true);
+  }, [needsFallback, initialized, patientRecord, patientFetchError, service]);
 
   const regenerateMutation = useMutation({
     mutationFn: async (payload: Array<{
@@ -285,6 +466,13 @@ export function EditableScreeningFormModal({
         </DialogHeader>
 
         <p className="text-xs text-slate-500 -mt-1">{note.title}</p>
+
+        {needsFallback && !initialized && (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            Loading patient data…
+          </div>
+        )}
 
         <div className="space-y-4">
           {service === "VitalWave" && (
