@@ -57,6 +57,7 @@ type PatientScreeningRecord = {
   history: string | null;
   medications: string | null;
   qualifyingTests: string[] | null;
+  reasoning: Record<string, { clinician_understanding?: string; qualifying_factors?: string[]; icd10_codes?: string[] } | string> | null;
 };
 
 function extractMetaFromSections(sections: NoteSection[]): {
@@ -91,6 +92,50 @@ function extractMetaFromSections(sections: NoteSection[]): {
     }
   }
   return { selectedConditions: [], icd10Codes: [], cptCodes: [], selection: [], otherText: {}, conditions: null, hasData: false };
+}
+
+function extractAiJustificationFromSections(sections: NoteSection[]): string | undefined {
+  const justSection = sections.find((s) => s.heading === "__ai_justification__");
+  if (justSection) {
+    try {
+      const parsed = JSON.parse(justSection.body);
+      if (typeof parsed.text === "string" && parsed.text.trim()) return parsed.text;
+    } catch {
+    }
+  }
+  return undefined;
+}
+
+function buildAiJustificationFromReasoning(
+  reasoning: PatientScreeningRecord["reasoning"],
+  service: string,
+  qualifyingTests: string[] | null
+): string | undefined {
+  if (!reasoning) return undefined;
+  const texts: string[] = [];
+
+  if (service === "BrainWave") {
+    const bwKey = Object.keys(reasoning).find((k) => k.toLowerCase().includes("brain"));
+    const r = bwKey ? reasoning[bwKey] : reasoning["BrainWave"];
+    if (r && typeof r === "object" && r.clinician_understanding) return r.clinician_understanding;
+  }
+
+  if (service === "VitalWave") {
+    const vwKey = Object.keys(reasoning).find((k) => k.toLowerCase().includes("vital"));
+    const r = vwKey ? reasoning[vwKey] : reasoning["VitalWave"];
+    if (r && typeof r === "object" && r.clinician_understanding) return r.clinician_understanding;
+  }
+
+  if (service === "Ultrasound") {
+    const tests = qualifyingTests || Object.keys(reasoning);
+    tests.forEach((t) => {
+      const r = reasoning[t];
+      if (r && typeof r === "object" && r.clinician_understanding) texts.push(r.clinician_understanding);
+    });
+    return texts.length > 0 ? texts.join("\n\n") : undefined;
+  }
+
+  return undefined;
 }
 
 function clinicalTextMatchesCondition(condName: string, clinicalText: string): boolean {
@@ -312,7 +357,7 @@ export function EditableScreeningFormModal({
 
   const { data: patientRecord, isError: patientFetchError } = useQuery<PatientScreeningRecord>({
     queryKey: ["/api/patients", note.patientId],
-    enabled: needsFallback,
+    enabled: true,
   });
 
   const [initialized, setInitialized] = useState(!needsFallback);
@@ -390,6 +435,12 @@ export function EditableScreeningFormModal({
     const clinic = clinicianName ? resolveClinicForClinician(clinicianName) : DEFAULT_CLINIC;
     const input = { patient: patientDemographics, clinician, clinic };
 
+    const savedJustification = extractAiJustificationFromSections(note.sections);
+    const reasoningJustification = savedJustification
+      ? undefined
+      : buildAiJustificationFromReasoning(patientRecord?.reasoning ?? null, service, patientRecord?.qualifyingTests ?? null);
+    const aiJustification = savedJustification ?? reasoningJustification;
+
     type DocOutput = {
       service: string;
       kind: string;
@@ -399,41 +450,47 @@ export function EditableScreeningFormModal({
 
     let docs: DocOutput[] = [];
 
+    const justSection = aiJustification ? { heading: "__ai_justification__", body: JSON.stringify({ text: aiJustification }) } : null;
+
     if (service === "VitalWave") {
       const result = vitalWaveScreeningToResult({ config: VITALWAVE_CONFIG, screening: vwScreening });
-      const generated = generateVitalWaveDocuments({ input, screeningResult: result, vitalWaveConfig: VITALWAVE_CONFIG, vitalWaveScreening: vwScreening });
+      const generated = generateVitalWaveDocuments({ input, screeningResult: result, vitalWaveConfig: VITALWAVE_CONFIG, vitalWaveScreening: vwScreening, aiJustification });
       const meta = JSON.stringify({ selectedConditions: result.selectedConditions, icd10Codes: result.icd10Codes, cptCodes: result.cptCodes });
       const metaSection = { heading: "__screening_meta__", body: meta };
-      generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, metaSection];
-      generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, metaSection];
-      generated.billing.sections = [...generated.billing.sections, metaSection];
+      const extraSections = [metaSection, ...(justSection ? [justSection] : [])];
+      generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...extraSections];
+      generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...extraSections];
+      generated.billing.sections = [...generated.billing.sections, ...extraSections];
       docs = [generated.preProcedureOrder, generated.postProcedureNote, generated.billing];
     } else if (service === "Ultrasound") {
       const result = ultrasoundScreeningToResult({ config: ULTRASOUND_CONFIG, screening: usScreening });
-      const generated = generateUltrasoundDocuments({ input, screeningResult: result, screening: usScreening, config: ULTRASOUND_CONFIG });
+      const generated = generateUltrasoundDocuments({ input, screeningResult: result, screening: usScreening, config: ULTRASOUND_CONFIG, aiJustification });
       const metaBody = JSON.stringify({ selectedConditions: result.selectedConditions, icd10Codes: result.icd10Codes, cptCodes: result.cptCodes, selection: usScreening.selection, otherText: usScreening.otherText || {}, conditions: usScreening.conditions });
       const metaSection = { heading: "__screening_meta__", body: metaBody };
-      generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, metaSection];
-      generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, metaSection];
-      generated.billing.sections = [...generated.billing.sections, metaSection];
+      const extraSections = [metaSection, ...(justSection ? [justSection] : [])];
+      generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...extraSections];
+      generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...extraSections];
+      generated.billing.sections = [...generated.billing.sections, ...extraSections];
       docs = [generated.preProcedureOrder, generated.postProcedureNote, generated.billing];
     } else if (service === "BrainWave") {
       const result = brainWaveScreeningToResult({ mapping: BRAINWAVE_MAPPING, screening: bwScreening });
-      const generated = generateBrainWaveDocuments({ input, screeningResult: result });
+      const generated = generateBrainWaveDocuments({ input, screeningResult: result, aiJustification });
       const metaBody = JSON.stringify({ selectedConditions: result.selectedConditions, icd10Codes: result.icd10Codes, cptCodes: result.cptCodes });
       const metaSection = { heading: "__screening_meta__", body: metaBody };
-      generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, metaSection];
-      generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, metaSection];
-      generated.billing.sections = [...generated.billing.sections, metaSection];
+      const extraSections = [metaSection, ...(justSection ? [justSection] : [])];
+      generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...extraSections];
+      generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...extraSections];
+      generated.billing.sections = [...generated.billing.sections, ...extraSections];
       docs = [generated.preProcedureOrder, generated.postProcedureNote, generated.billing];
     } else if (service === "PGx") {
       const result = pgxScreeningToResult({ screening: pgxScreening });
-      const generated = generatePgxDocuments({ input, screeningResult: result });
+      const generated = generatePgxDocuments({ input, screeningResult: result, aiJustification });
       const metaBody = JSON.stringify({ selectedConditions: result.selectedConditions, icd10Codes: result.icd10Codes, cptCodes: result.cptCodes });
       const metaSection = { heading: "__screening_meta__", body: metaBody };
-      generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, metaSection];
-      generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, metaSection];
-      generated.billing.sections = [...generated.billing.sections, metaSection];
+      const extraSections = [metaSection, ...(justSection ? [justSection] : [])];
+      generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...extraSections];
+      generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...extraSections];
+      generated.billing.sections = [...generated.billing.sections, ...extraSections];
       docs = [generated.preProcedureOrder, generated.postProcedureNote, generated.billing];
     }
 

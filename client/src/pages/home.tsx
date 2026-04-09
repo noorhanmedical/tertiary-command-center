@@ -2085,13 +2085,14 @@ function autoGeneratePatientNotes(
     const screeningResult = brainWaveScreeningToResult({ mapping: BRAINWAVE_MAPPING, screening });
     if (icd10.length > 0) screeningResult.icd10Codes = [...icd10, ...screeningResult.icd10Codes].filter((v, i, a) => a.indexOf(v) === i);
     if (factors.length > 0) screeningResult.selectedConditions = factors;
-    if (clinicianUnderstanding) screeningResult.notes = [...screeningResult.notes, clinicianUnderstanding];
-    const generated = generateBrainWaveDocuments({ input, screeningResult });
+    const generated = generateBrainWaveDocuments({ input, screeningResult, aiJustification: clinicianUnderstanding || undefined });
     const bwMeta = JSON.stringify({ selectedConditions: screeningResult.selectedConditions, icd10Codes: screeningResult.icd10Codes, cptCodes: screeningResult.cptCodes });
     const bwMetaSection = { heading: "__screening_meta__", body: bwMeta };
-    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, bwMetaSection];
-    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, bwMetaSection];
-    generated.billing.sections = [...generated.billing.sections, bwMetaSection];
+    const bwJustSection = clinicianUnderstanding ? { heading: "__ai_justification__", body: JSON.stringify({ text: clinicianUnderstanding }) } : null;
+    const bwExtraSections = [bwMetaSection, ...(bwJustSection ? [bwJustSection] : [])];
+    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...bwExtraSections];
+    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...bwExtraSections];
+    generated.billing.sections = [...generated.billing.sections, ...bwExtraSections];
     docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
   }
 
@@ -2112,13 +2113,14 @@ function autoGeneratePatientNotes(
     const screeningResult = vitalWaveScreeningToResult({ config: VITALWAVE_CONFIG, screening });
     if (icd10.length > 0) screeningResult.icd10Codes = [...icd10, ...screeningResult.icd10Codes].filter((v, i, a) => a.indexOf(v) === i);
     if (factors.length > 0 && screeningResult.selectedConditions.length === 0) screeningResult.selectedConditions = factors;
-    if (clinicianUnderstanding) screeningResult.notes = [...screeningResult.notes, clinicianUnderstanding];
-    const generated = generateVitalWaveDocuments({ input, screeningResult, vitalWaveConfig: VITALWAVE_CONFIG, vitalWaveScreening: screening });
+    const generated = generateVitalWaveDocuments({ input, screeningResult, vitalWaveConfig: VITALWAVE_CONFIG, vitalWaveScreening: screening, aiJustification: clinicianUnderstanding || undefined });
     const vwMeta = JSON.stringify({ selectedConditions: screeningResult.selectedConditions, icd10Codes: screeningResult.icd10Codes, cptCodes: screeningResult.cptCodes });
     const vwMetaSection = { heading: "__screening_meta__", body: vwMeta };
-    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, vwMetaSection];
-    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, vwMetaSection];
-    generated.billing.sections = [...generated.billing.sections, vwMetaSection];
+    const vwJustSection = clinicianUnderstanding ? { heading: "__ai_justification__", body: JSON.stringify({ text: clinicianUnderstanding }) } : null;
+    const vwExtraSections = [vwMetaSection, ...(vwJustSection ? [vwJustSection] : [])];
+    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...vwExtraSections];
+    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...vwExtraSections];
+    generated.billing.sections = [...generated.billing.sections, ...vwExtraSections];
     docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
   }
 
@@ -2160,13 +2162,15 @@ function autoGeneratePatientNotes(
     const screeningResult = ultrasoundScreeningToResult({ config: ULTRASOUND_CONFIG, screening: usScreening });
     if (icd10.length > 0) screeningResult.icd10Codes = [...icd10, ...screeningResult.icd10Codes].filter((v, i, a) => a.indexOf(v) === i);
     if (factors.length > 0 && screeningResult.selectedConditions.length === 0) screeningResult.selectedConditions = factors;
-    if (clinicianUnderstandings.length > 0) screeningResult.notes = [...screeningResult.notes, ...clinicianUnderstandings];
-    const generated = generateUltrasoundDocuments({ input, screeningResult, screening: usScreening, config: ULTRASOUND_CONFIG });
+    const usAiJustification = clinicianUnderstandings.length > 0 ? clinicianUnderstandings.join("\n\n") : undefined;
+    const generated = generateUltrasoundDocuments({ input, screeningResult, screening: usScreening, config: ULTRASOUND_CONFIG, aiJustification: usAiJustification });
     const usMeta = JSON.stringify({ selectedConditions: screeningResult.selectedConditions, icd10Codes: screeningResult.icd10Codes, cptCodes: screeningResult.cptCodes, selection, conditions });
     const usMetaSection = { heading: "__screening_meta__", body: usMeta };
-    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, usMetaSection];
-    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, usMetaSection];
-    generated.billing.sections = [...generated.billing.sections, usMetaSection];
+    const usJustSection = usAiJustification ? { heading: "__ai_justification__", body: JSON.stringify({ text: usAiJustification }) } : null;
+    const usExtraSections = [usMetaSection, ...(usJustSection ? [usJustSection] : [])];
+    generated.preProcedureOrder.sections = [...generated.preProcedureOrder.sections, ...usExtraSections];
+    generated.postProcedureNote.sections = [...generated.postProcedureNote.sections, ...usExtraSections];
+    generated.billing.sections = [...generated.billing.sections, ...usExtraSections];
     docs.push(generated.preProcedureOrder, generated.postProcedureNote, generated.billing);
   }
 
