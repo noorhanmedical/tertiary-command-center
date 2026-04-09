@@ -480,7 +480,7 @@ async function parseTsvBatch(batch: { name: string; block: string; insurance?: s
 }
 
 async function parseTsvBlocks(segments: { name: string; block: string; insurance?: string }[]): Promise<ParsedPatient[]> {
-  const MAX_BATCH_CHARS = 160000;
+  const MAX_BATCH_CHARS = 15000;
   const batches: { name: string; block: string; insurance?: string }[][] = [];
   let currentBatch: { name: string; block: string; insurance?: string }[] = [];
   let currentLen = 0;
@@ -699,12 +699,16 @@ function detectAndParseTsvSegments(text: string): { name: string; block: string;
         continue;
       }
 
+      // Truncate long columns to keep payload size manageable
+      const MAX_COL_CHARS = kind === "history" ? 800 : 2000;
+      const truncated = val.length > MAX_COL_CHARS ? val.substring(0, MAX_COL_CHARS) + "…" : val;
+
       // Deduplicate: if we already have a field of this kind, pick the longer/richer one
       const existing = labeledFields.find((f) => f.label === kind);
       if (existing) {
-        if (val.length > existing.val.length) existing.val = val;
+        if (truncated.length > existing.val.length) existing.val = truncated;
       } else {
-        labeledFields.push({ label: kind, val });
+        labeledFields.push({ label: kind, val: truncated });
       }
     }
 
