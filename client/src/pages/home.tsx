@@ -1865,7 +1865,7 @@ function getTestDescHTML(test: string): string {
 const PDF_BASE_STYLES = `
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 0; color: #1e293b; }
-  @page { size: letter portrait; margin: 0.75in; }
+  @page { size: letter portrait; margin: 0.5in; }
   @media print {
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .page { page-break-after: always; break-after: page; }
@@ -2157,6 +2157,73 @@ function formatScheduleDate(scheduleDate: string | null | undefined, createdAt: 
   return new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 }
 
+function classifyInsuranceForCooldown(insurance: string | null | undefined): "medicare" | "ppo" | "none" {
+  if (!insurance || !insurance.trim()) return "none";
+  const s = insurance.toLowerCase().trim();
+  const isMedicareAdvantage =
+    s.includes("advantage") ||
+    s.includes("mapd") ||
+    s.includes("ma-pd") ||
+    s.includes("hmo medicare") ||
+    s.includes("ma plan");
+  if (isMedicareAdvantage) return "ppo";
+  if (s.includes("medicare")) return "medicare";
+  return "ppo";
+}
+
+function extractMostRecentDate(text: string | null | undefined): Date | null {
+  if (!text) return null;
+  const monthMap: Record<string, number> = {
+    january:0,february:1,march:2,april:3,may:4,june:5,
+    july:6,august:7,september:8,october:9,november:10,december:11
+  };
+  const dates: Date[] = [];
+  let m: RegExpExecArray | null;
+  const p0 = /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g;
+  while ((m = p0.exec(text)) !== null) {
+    const d = new Date(parseInt(m[3]), parseInt(m[1])-1, parseInt(m[2]));
+    if (!isNaN(d.getTime())) dates.push(d);
+  }
+  const p1 = /\b(\d{1,2})\/(\d{1,2})\/(\d{2})\b/g;
+  while ((m = p1.exec(text)) !== null) {
+    const yr = parseInt(m[3]);
+    const fullYr = yr >= 0 && yr <= 30 ? 2000 + yr : 1900 + yr;
+    const d = new Date(fullYr, parseInt(m[1])-1, parseInt(m[2]));
+    if (!isNaN(d.getTime())) dates.push(d);
+  }
+  const p2 = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
+  while ((m = p2.exec(text)) !== null) {
+    const d = new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+    if (!isNaN(d.getTime())) dates.push(d);
+  }
+  const p3 = /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})\b/gi;
+  while ((m = p3.exec(text)) !== null) {
+    const d = new Date(parseInt(m[3]), monthMap[m[1].toLowerCase()], parseInt(m[2]));
+    if (!isNaN(d.getTime())) dates.push(d);
+  }
+  const p4 = /\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/gi;
+  while ((m = p4.exec(text)) !== null) {
+    const d = new Date(parseInt(m[3]), monthMap[m[2].toLowerCase()], parseInt(m[1]));
+    if (!isNaN(d.getTime())) dates.push(d);
+  }
+  if (dates.length === 0) return null;
+  return dates.reduce((a, b) => b > a ? b : a);
+}
+
+function getPrevTestsSign(insurance: string | null | undefined, previousTests: string | null | undefined, scheduleDate: string): string {
+  const insType = classifyInsuranceForCooldown(insurance);
+  if (insType === "none") return "";
+  const testDate = extractMostRecentDate(previousTests);
+  if (!testDate) return "";
+  const parts = scheduleDate.split("-").map(Number);
+  const refDate = parts.length === 3 ? new Date(parts[0], parts[1]-1, parts[2]) : new Date(scheduleDate);
+  if (isNaN(refDate.getTime())) return "";
+  const cooldownMonths = insType === "medicare" ? 12 : 6;
+  const cutoff = new Date(testDate);
+  cutoff.setMonth(cutoff.getMonth() + cooldownMonths);
+  return refDate <= cutoff ? "🛑 " : "🟢 ";
+}
+
 function generateClinicianPDF(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): void {
   const date = formatScheduleDate(scheduleDate, createdAt);
 
@@ -2197,13 +2264,14 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[], s
 
     const ancillaryColor: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#dc2626" };
 
+    const prevSign = getPrevTestsSign(p.insurance, p.previousTests, scheduleDate || new Date().toISOString().slice(0,10));
     const chartReview = (p.diagnoses || p.history || p.medications || p.previousTests) ? `
-      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 12px;margin-bottom:10px;">
-        <div style="font-size:8.5px;font-weight:700;color:#1a365d;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:6px;">${esc(p.name)} Chart Review</div>
-        ${p.diagnoses ? `<div style="display:flex;gap:6px;margin-bottom:3px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Dx</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.diagnoses)}</span></div>` : ""}
-        ${p.history ? `<div style="display:flex;gap:6px;margin-bottom:3px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Hx</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.history)}</span></div>` : ""}
-        ${p.medications ? `<div style="display:flex;gap:6px;margin-bottom:3px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Rx</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.medications)}</span></div>` : ""}
-        ${p.previousTests ? `<div style="display:flex;gap:6px;"><span style="font-size:8px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:24px;padding-top:1px;">Prev</span><span style="font-size:9px;color:#334155;line-height:1.45;">${esc(p.previousTests)}</span></div>` : ""}
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;margin-bottom:8px;">
+        <div style="font-size:8px;font-weight:700;color:#1a365d;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:5px;">${esc(p.name)} Chart Review</div>
+        ${p.diagnoses ? `<div style="display:flex;gap:6px;margin-bottom:2px;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Dx</span><span style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.diagnoses)}</span></div>` : ""}
+        ${p.history ? `<div style="display:flex;gap:6px;margin-bottom:2px;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Hx</span><span style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.history)}</span></div>` : ""}
+        ${p.medications ? `<div style="display:flex;gap:6px;margin-bottom:2px;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Rx</span><span style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.medications)}</span></div>` : ""}
+        ${p.previousTests ? `<div style="display:flex;gap:6px;background:#fef9c3;border-radius:4px;padding:3px 5px;margin-top:2px;"><span style="font-size:7.5px;font-weight:700;color:#78350f;letter-spacing:0.05em;min-width:70px;padding-top:1px;white-space:nowrap;">${prevSign}Previous Tests</span><span style="font-size:8.5px;font-weight:700;color:#334155;line-height:1.4;">${esc(p.previousTests)}</span></div>` : ""}
       </div>` : "";
 
     const leftHtml = ancillaryTests.length === 0
@@ -2216,13 +2284,13 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[], s
           const isLast = i === ancillaryTests.length - 1;
           const ancExplain = oneSentence(clinician) || (ancFactors && ancFactors.length > 0 ? oneSentence(ancFactors[0]) : "") || oneSentence(getOneSentenceDesc(test));
           return `
-            <div style="margin-bottom:${isLast ? "0" : "14px"};padding-bottom:${isLast ? "0" : "14px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}">
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">
-                <span style="font-size:20px;color:${color};line-height:1;">&#9744;</span>
-                <span style="font-size:16px;font-weight:800;color:${color};">${esc(test)}</span>
+            <div style="margin-bottom:${isLast ? "0" : "10px"};padding-bottom:${isLast ? "0" : "10px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}">
+              <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;">
+                <span style="font-size:17px;color:${color};line-height:1;">&#9744;</span>
+                <span style="font-size:14px;font-weight:800;color:${color};">${esc(test)}</span>
               </div>
-              ${ancFactors && ancFactors.length > 0 ? `<div style="margin-bottom:4px;line-height:1.6;">${renderFactors(ancFactors)}</div>` : ""}
-              ${ancExplain ? `<p style="font-size:9.5px;line-height:1.5;color:#475569;margin:0;font-style:italic;">${esc(ancExplain)}</p>` : ""}
+              ${ancFactors && ancFactors.length > 0 ? `<div style="margin-bottom:3px;line-height:1.5;">${renderFactors(ancFactors)}</div>` : ""}
+              ${ancExplain ? `<p style="font-size:8.5px;line-height:1.4;color:#475569;margin:0;font-style:italic;">${esc(ancExplain)}</p>` : ""}
             </div>`;
         }).join("");
 
@@ -2236,31 +2304,31 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[], s
           const isLast = i === ultrasoundTests.length - 1;
           const oneliner = oneSentence(clinician) || (factors && factors.length > 0 ? oneSentence(factors[0]) : "") || oneSentence(getOneSentenceDesc(test));
           return `
-            <div style="padding:${i === 0 ? "0 0 8px" : "7px 0 8px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}">
-              <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;">
-                <span style="font-size:20px;color:#16a34a;line-height:1;">&#9744;</span>
+            <div style="padding:${i === 0 ? "0 0 6px" : "5px 0 6px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}">
+              <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;">
+                <span style="font-size:17px;color:#16a34a;line-height:1;">&#9744;</span>
                 ${icon}
-                <span style="font-size:16px;font-weight:700;color:#16a34a;">${esc(normalizeUltrasoundName(test))}</span>
+                <span style="font-size:14px;font-weight:700;color:#16a34a;">${esc(normalizeUltrasoundName(test))}</span>
               </div>
-              ${factors && factors.length > 0 ? `<div style="margin-bottom:3px;padding-left:24px;line-height:1.6;">${renderFactors(factors)}</div>` : ""}
-              ${oneliner ? `<div style="font-size:9px;line-height:1.45;color:#475569;padding-left:24px;font-style:italic;">${esc(oneliner)}</div>` : ""}
+              ${factors && factors.length > 0 ? `<div style="margin-bottom:2px;padding-left:22px;line-height:1.5;">${renderFactors(factors)}</div>` : ""}
+              ${oneliner ? `<div style="font-size:8.5px;line-height:1.4;color:#475569;padding-left:22px;font-style:italic;">${esc(oneliner)}</div>` : ""}
             </div>`;
         }).join("");
 
     return `
-      <div class="page" style="padding:22px 28px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;margin-bottom:10px;border-bottom:1px solid #cbd5e1;">
-          <span style="font-size:10px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
-          <span style="font-size:9px;color:#94a3b8;">Clinician Summary — ${esc(date)}</span>
+      <div class="page" style="padding:14px 20px;overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:4px;margin-bottom:6px;border-bottom:1px solid #cbd5e1;">
+          <span style="font-size:9.5px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
+          <span style="font-size:8.5px;color:#94a3b8;">Clinician Summary — ${esc(date)}</span>
         </div>
-        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px;">
-          <span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.09em;">Plexus Qualifying Ancillaries</span>
-          <span style="font-size:20px;font-weight:800;color:#1a365d;">${esc(p.name)}</span>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:1px;">
+          <span style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.09em;">Plexus Qualifying Ancillaries</span>
+          <span style="font-size:18px;font-weight:800;color:#1a365d;">${esc(p.name)}</span>
         </div>
-        <div style="font-size:9.5px;color:#94a3b8;text-align:right;margin-bottom:10px;">${demoLine}</div>
+        <div style="font-size:8.5px;color:#94a3b8;text-align:right;margin-bottom:7px;">${demoLine}</div>
         ${chartReview}
-        <div style="font-size:20px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;text-align:center;margin-top:10px;margin-bottom:16px;">Qualified Ancillary Tests for ${esc(firstName)}</div>
-        <div style="display:grid;grid-template-columns:38% 1fr;gap:14px;border-top:2px solid #e2e8f0;padding-top:14px;">
+        <div style="font-size:17px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;text-align:center;margin-top:6px;margin-bottom:10px;">Qualified Ancillary Tests for ${esc(firstName)}</div>
+        <div style="display:grid;grid-template-columns:38% 1fr;gap:10px;border-top:2px solid #e2e8f0;padding-top:10px;">
           <div>
             ${leftHtml}
           </div>
