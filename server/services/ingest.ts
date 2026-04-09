@@ -620,9 +620,23 @@ function parseTsvWithQuotedFields(text: string): string[][] | null {
 
 type TsvColKind = "diagnoses" | "history" | "medications" | "insurance" | "scalar" | "skip";
 
+type TsvSegment = {
+  name: string;
+  time?: string;
+  age?: number;
+  gender?: string;
+  insurance?: string;
+  diagnoses?: string;
+  history?: string;
+  medications?: string;
+};
+
 function classifyTsvColumn(val: string): TsvColKind {
   const trimmed = val.trim();
   if (!trimmed) return "skip";
+
+  // Skip trivially short non-alphanumeric junk (e.g. single backslash, punctuation)
+  if (trimmed.length < 2 && !/[A-Za-z0-9]/.test(trimmed)) return "skip";
 
   // Short scalar: gender, age, MRN — no newlines, short
   if (!trimmed.includes("\n") && trimmed.length < 40) {
@@ -660,7 +674,7 @@ function classifyTsvColumn(val: string): TsvColKind {
   return "history"; // default large text blocks to history/notes
 }
 
-function detectAndParseTsvSegments(text: string): { name: string; block: string; insurance?: string }[] | null {
+function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
   const rows = parseTsvWithQuotedFields(text);
   if (!rows || rows.length < 2) return null;
 
@@ -670,20 +684,18 @@ function detectAndParseTsvSegments(text: string): { name: string; block: string;
   const totalRows = rows.filter((r) => r.some((c) => c.trim())).length;
   if (patientRows.length < Math.max(1, totalRows * 0.3)) return null;
 
-  const segments: { name: string; block: string; insurance?: string }[] = [];
+  const segments: TsvSegment[] = [];
 
   for (const row of patientRows) {
     const time = row[0]?.trim() ?? "";
     const name = row[1]?.trim() ?? "";
     if (!name) continue;
 
-    const parts: string[] = [];
-    if (time) parts.push(`Time: ${time}`);
-    parts.push(`Patient: ${name}`);
-
-    // Classify each remaining column and label it explicitly
-    const labeledFields: { label: string; val: string }[] = [];
+    let gender: string | undefined;
+    let age: number | undefined;
     let detectedInsurance: string | undefined;
+    // Per-kind accumulator: store the longest/richest value seen for each kind
+    const kindValues: Partial<Record<"diagnoses" | "history" | "medications", string>> = {};
 
     for (const col of row.slice(2)) {
       const val = col?.trim() ?? "";
@@ -691,44 +703,21 @@ function detectAndParseTsvSegments(text: string): { name: string; block: string;
 
       const kind = classifyTsvColumn(val);
       if (kind === "skip") continue;
+
       if (kind === "insurance") { detectedInsurance = val; continue; }
+
       if (kind === "scalar") {
-        // Gender or age — append inline rather than as a labeled block
-        if (/^(m|f|male|female)$/i.test(val)) labeledFields.push({ label: "Gender", val });
-        else if (/^\d{1,3}$/.test(val)) labeledFields.push({ label: "Age", val });
+        if (/^(m|f|male|female)$/i.test(val)) gender = val;
+        else if (/^\d{1,3}$/.test(val)) age = parseInt(val, 10);
         continue;
       }
 
-      // Truncate long columns to keep payload size manageable
-      const MAX_COL_CHARS = kind === "history" ? 800 : 2000;
-      const truncated = val.length > MAX_COL_CHARS ? val.substring(0, MAX_COL_CHARS) + "…" : val;
-
-      // Deduplicate: if we already have a field of this kind, pick the longer/richer one
-      const existing = labeledFields.find((f) => f.label === kind);
-      if (existing) {
-        if (truncated.length > existing.val.length) existing.val = truncated;
-      } else {
-        labeledFields.push({ label: kind, val: truncated });
+      // Keep the longest version (richest content) for each kind
+      const k = kind as "diagnoses" | "history" | "medications";
+      if (!kindValues[k] || val.length > kindValues[k]!.length) {
+        kindValues[k] = val;
       }
     }
-
-    // Build the labeled block
-    const scalarLine = labeledFields
-      .filter((f) => f.label === "Gender" || f.label === "Age")
-      .map((f) => `${f.label}: ${f.val}`)
-      .join(" | ");
-    if (scalarLine) parts.push(scalarLine);
-
-    for (const { label, val } of labeledFields) {
-      if (label === "Gender" || label === "Age") continue;
-      const displayLabel =
-        label === "diagnoses" ? "Diagnoses" :
-        label === "history"   ? "History/HPI" :
-        label === "medications" ? "Medications" : label;
-      parts.push(`${displayLabel}:\n${val}`);
-    }
-
-    const block = parts.join("\n\n");
 
     // Insurance: prefer column-detected, fall back to last-col heuristic
     const lastCol = row[row.length - 1]?.trim();
@@ -741,10 +730,34 @@ function detectAndParseTsvSegments(text: string): { name: string; block: string;
       /medicare|medicaid|blue\s*cross|blue\s*shield|aetna|cigna|humana|united|anthem|molina|kaiser|tricare|bcbs|bcbsm|ppo|hmo|self[\s-]?pay|private|commercial|uninsured/i.test(lastCol);
     const insurance = detectedInsurance || (lastColIsInsurance ? lastCol : undefined);
 
-    segments.push({ name, block, insurance });
+    segments.push({
+      name,
+      time: time || undefined,
+      age,
+      gender,
+      insurance,
+      diagnoses: kindValues["diagnoses"] || undefined,
+      history: kindValues["history"] || undefined,
+      medications: kindValues["medications"] || undefined,
+    });
   }
 
   return segments.length > 0 ? segments : null;
+}
+
+/** Convert TSV segments directly to ParsedPatient[] without any AI call.
+ *  Since each column is already classified by content, no inference is needed. */
+function parseTsvSegmentsDirect(segments: TsvSegment[]): ParsedPatient[] {
+  return segments.map((seg) => ({
+    name: seg.name,
+    time: seg.time,
+    age: seg.age,
+    gender: seg.gender,
+    insurance: seg.insurance,
+    diagnoses: seg.diagnoses,
+    history: seg.history,
+    medications: seg.medications,
+  }));
 }
 
 export async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
@@ -760,7 +773,7 @@ export async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
     if (endSegments) {
       allPatients = await parseEndDelimitedBlocks(endSegments);
     } else if (tsvSegments) {
-      allPatients = await parseTsvBlocks(tsvSegments);
+      allPatients = parseTsvSegmentsDirect(tsvSegments);
     } else {
       const chunks = splitIntoChunks(trimmed, 12000);
       const results = await Promise.all(chunks.map(parseSingleChunk));
