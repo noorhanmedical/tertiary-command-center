@@ -628,7 +628,7 @@ function parseTsvWithQuotedFields(text: string): string[][] | null {
   }
 }
 
-type TsvColKind = "diagnoses" | "history" | "medications" | "insurance" | "scalar" | "skip";
+type TsvColKind = "diagnoses" | "history" | "medications" | "insurance" | "scalar" | "skip" | "previousTests";
 
 type TsvSegment = {
   name: string;
@@ -639,6 +639,7 @@ type TsvSegment = {
   diagnoses?: string;
   history?: string;
   medications?: string;
+  previousTests?: string;
 };
 
 function classifyTsvColumn(val: string): TsvColKind {
@@ -684,6 +685,8 @@ function classifyTsvColumn(val: string): TsvColKind {
   return "history"; // default large text blocks to history/notes
 }
 
+const PREV_TESTS_HEADER_RE = /hga\s*records?|previous\s*tests?|prior\s*imaging|previous\s*imaging|past\s*studies|ancillary\s*history/i;
+
 function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
   const rows = parseTsvWithQuotedFields(text);
   if (!rows || rows.length < 2) return null;
@@ -693,6 +696,15 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
 
   const totalRows = rows.filter((r) => r.some((c) => c.trim())).length;
   if (patientRows.length < Math.max(1, totalRows * 0.3)) return null;
+
+  // Detect column indices that correspond to "HGA RECORDS" or similar previous-tests headers
+  const headerRow = rows.find(isEhrTsvHeader);
+  const prevTestsColIndices = new Set<number>();
+  if (headerRow) {
+    headerRow.forEach((cell, i) => {
+      if (PREV_TESTS_HEADER_RE.test(cell.trim())) prevTestsColIndices.add(i);
+    });
+  }
 
   const segments: TsvSegment[] = [];
 
@@ -705,11 +717,19 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
     let age: number | undefined;
     let detectedInsurance: string | undefined;
     // Per-kind accumulator: store the longest/richest value seen for each kind
-    const kindValues: Partial<Record<"diagnoses" | "history" | "medications", string>> = {};
+    const kindValues: Partial<Record<"diagnoses" | "history" | "medications" | "previousTests", string>> = {};
 
-    for (const col of row.slice(2)) {
-      const val = col?.trim() ?? "";
+    for (let colIdx = 2; colIdx < row.length; colIdx++) {
+      const val = row[colIdx]?.trim() ?? "";
       if (!val) continue;
+
+      // Header-declared previousTests column — route directly, skip content classifier
+      if (prevTestsColIndices.has(colIdx)) {
+        if (!kindValues["previousTests"] || val.length > kindValues["previousTests"].length) {
+          kindValues["previousTests"] = val;
+        }
+        continue;
+      }
 
       const kind = classifyTsvColumn(val);
       if (kind === "skip") continue;
@@ -749,6 +769,7 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
       diagnoses: kindValues["diagnoses"] || undefined,
       history: kindValues["history"] || undefined,
       medications: kindValues["medications"] || undefined,
+      previousTests: kindValues["previousTests"] || undefined,
     });
   }
 
@@ -767,6 +788,7 @@ function parseTsvSegmentsDirect(segments: TsvSegment[]): ParsedPatient[] {
     diagnoses: seg.diagnoses,
     history: seg.history,
     medications: seg.medications,
+    previousTests: seg.previousTests,
   }));
 }
 
