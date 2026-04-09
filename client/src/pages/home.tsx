@@ -88,6 +88,7 @@ import {
   brainWaveScreeningToResult,
   DEFAULT_CLINIC,
   resolveClinicForClinician,
+  resolveClinicianNpi,
 } from "@shared/plexus";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
@@ -2035,7 +2036,7 @@ function autoGeneratePatientNotes(
   };
 
   const clinician = clinicianName
-    ? { name: clinicianName }
+    ? { name: clinicianName, npi: resolveClinicianNpi(clinicianName) }
     : { name: "Ordering Clinician" };
 
   const clinic = clinicianName ? resolveClinicForClinician(clinicianName) : DEFAULT_CLINIC;

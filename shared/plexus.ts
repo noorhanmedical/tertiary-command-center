@@ -95,13 +95,28 @@ export const CLINIC_HUMBLE: ClinicProfile = {
   fax: '(281) 359-4208'
 };
 
-const HUMBLE_CLINICIANS = new Set([
-  'Taylor, Jill, DO',
-  'Hund, Donald, NP',
+interface ClinicianRegistryEntry {
+  npi: string;
+  clinic: ClinicProfile;
+}
+
+const CLINICIAN_REGISTRY: Map<string, ClinicianRegistryEntry> = new Map([
+  ['Anaya, Maribel, PA-C', { npi: '1093144560', clinic: DEFAULT_CLINIC }],
+  ['Carder, Timothy Doyle, MD', { npi: '1306290598', clinic: DEFAULT_CLINIC }],
+  ['McGuire, Amanda H, FNP-BC', { npi: '1407444029', clinic: DEFAULT_CLINIC }],
+  ['Montano, Maribel, FNP-C', { npi: '1821500497', clinic: DEFAULT_CLINIC }],
+  ['Sun-Wright, Amie, MD', { npi: '1427250349', clinic: DEFAULT_CLINIC }],
+  ['Truong, Tam, MD', { npi: '1104083039', clinic: DEFAULT_CLINIC }],
+  ['Taylor, Jill, DO', { npi: '1912012832', clinic: CLINIC_HUMBLE }],
+  ['Hund, Donald, NP', { npi: '1104851757', clinic: CLINIC_HUMBLE }],
 ]);
 
+export function resolveClinicianNpi(clinicianName: string): string | undefined {
+  return CLINICIAN_REGISTRY.get(clinicianName)?.npi;
+}
+
 export function resolveClinicForClinician(clinicianName: string): ClinicProfile {
-  return HUMBLE_CLINICIANS.has(clinicianName) ? CLINIC_HUMBLE : DEFAULT_CLINIC;
+  return CLINICIAN_REGISTRY.get(clinicianName)?.clinic ?? DEFAULT_CLINIC;
 }
 
 export function formatClinicAddress(clinic: ClinicProfile, short = false): string {

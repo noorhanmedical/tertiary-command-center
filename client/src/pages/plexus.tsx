@@ -41,6 +41,7 @@ import {
   generateBrainWaveDocuments,
   generatePgxDocuments,
   resolveClinicForClinician,
+  resolveClinicianNpi,
 } from "@shared/plexus";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -413,7 +414,15 @@ export default function PlexusPage() {
                   <Input
                     id="clinicianName"
                     value={patient.clinicianName}
-                    onChange={(e) => setPatient((p) => ({ ...p, clinicianName: e.target.value }))}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      const npi = resolveClinicianNpi(name);
+                      setPatient((p) => ({
+                        ...p,
+                        clinicianName: name,
+                        clinicianNpi: npi !== undefined ? npi : p.clinicianNpi,
+                      }));
+                    }}
                     placeholder="Last, First, Credential"
                     data-testid="input-clinician-name"
                   />
