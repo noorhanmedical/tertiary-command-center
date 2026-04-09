@@ -162,12 +162,12 @@ For each record extract:
 - "age": age as a number if present, or null
 - "gender": gender if present (M/F/Male/Female), or null
 - "insurance": insurance carrier/plan name if present (e.g. "Blue Cross Blue Shield", "Medicare", "Cigna", "Aetna", "United Healthcare"), or null
-- "diagnoses": all diagnoses/conditions/Dx combined into one string, or null
-- "history": past medical history/Hx/PMH combined into one string, or null
-- "medications": all medications/Rx/prescriptions combined into one string, or null
+- "diagnoses": all diagnoses/conditions/Dx copied verbatim from the source, joined into one string if multiple sections, or null
+- "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
+- "medications": all medications/Rx/prescriptions copied verbatim from the source, joined into one string if multiple sections, or null
 
 Rules:
-- Expand abbreviations: HTN=hypertension, DM=diabetes mellitus, HLD=hyperlipidemia, CAD, CHF, COPD, CKD, OA=osteoarthritis, GERD, A-fib, etc.
+- CRITICAL: Copy diagnoses, history, and medications EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
 - For medications: only include actual drug/prescription names and dosages. If the only value looks like a visit reason, test name, or scheduling code (e.g. "BrainWave", "FU HGA", "med refills", "follow up", "physical"), set medications to null.
 - Return exactly one result object per record, in the same order as the input.
 - Do NOT include a name field — names are managed externally.
@@ -182,12 +182,12 @@ For each record extract:
 - "age": age as a number if present, or null
 - "gender": gender if present (M/F/Male/Female), or null
 - "insurance": insurance carrier/plan name if present (e.g. "Blue Cross Blue Shield", "Medicare", "Cigna", "Aetna", "United Healthcare"), or null
-- "diagnoses": all diagnoses/conditions/Dx combined into one string, or null
-- "history": past medical history/Hx/PMH combined into one string, or null
-- "medications": all medications/Rx/prescriptions combined into one string, or null
+- "diagnoses": all diagnoses/conditions/Dx copied verbatim from the source, joined into one string if multiple sections, or null
+- "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
+- "medications": all medications/Rx/prescriptions copied verbatim from the source, joined into one string if multiple sections, or null
 
 Rules:
-- Expand abbreviations: HTN=hypertension, DM=diabetes mellitus, HLD=hyperlipidemia, CAD, CHF, COPD, CKD, OA=osteoarthritis, GERD, A-fib, etc.
+- CRITICAL: Copy diagnoses, history, and medications EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
 - For medications: only include actual drug/prescription names and dosages. If the only value looks like a visit reason, test name, or scheduling code (e.g. "BrainWave", "FU HGA", "med refills", "follow up", "physical"), set medications to null.
 - Return exactly one result object per record. Include the "name" field in every result.
 
@@ -201,13 +201,13 @@ For each patient return:
 - "age": age as a number if present, or null
 - "gender": gender if present (M/F/Male/Female), or null
 - "insurance": insurance carrier/plan name if present (e.g. "Blue Cross", "Medicare", "Cigna"), or null
-- "diagnoses": all diagnoses/conditions/Dx combined into one string, or null
-- "history": past medical history/Hx/PMH combined into one string, or null
-- "medications": all medications/Rx combined into one string, or null
+- "diagnoses": all diagnoses/conditions/Dx copied verbatim from the source, joined into one string if multiple sections, or null
+- "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
+- "medications": all medications/Rx copied verbatim from the source, joined into one string if multiple sections, or null
 
 Rules:
+- CRITICAL: Copy diagnoses, history, and medications EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
 - Extract ALL patients in the input — even if there are 20 or more.
-- Expand common abbreviations: HTN=hypertension, DM=diabetes mellitus, HLD=hyperlipidemia, CAD, CHF, COPD, CKD, OA=osteoarthritis, GERD, A-fib, etc.
 - The input may be tab-separated spreadsheet data, a simple name list, or mixed clinical notes — handle all formats.
 - If a row is clearly a header, summary, or empty — skip it.
 - If there is no clinical data for a patient, still include them with null clinical fields.
