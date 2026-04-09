@@ -1,9 +1,10 @@
 import { openai, withRetry } from "./aiClient";
 import { storage } from "../storage";
 
-const SCREENING_SYSTEM_PROMPT = `You are a clinical ancillary qualification specialist. Your job is to analyze patient clinical data and determine which ancillary diagnostic tests each patient qualifies for.
+export type QualificationMode = "permissive" | "standard" | "conservative";
 
-IMPORTANT RULES:
+const QUALIFICATION_THRESHOLD_INSTRUCTIONS: Record<QualificationMode, string> = {
+  permissive: `QUALIFICATION THRESHOLD (PERMISSIVE MODE):
 1. Be EXTREMELY LENIENT in qualifying patients. If there is ANY possible connection between the patient's conditions/symptoms/medications and a test, qualify them.
 2. Err heavily on the side of qualifying. Even tangential or indirect connections count.
 3. Common conditions like hypertension, diabetes, obesity, hyperlipidemia, anxiety, depression, pain, or being on multiple medications should qualify for MOST tests.
@@ -13,8 +14,33 @@ IMPORTANT RULES:
 7. Leg pain, swelling, or edema qualifies for lower extremity ultrasounds (both arterial and venous).
 8. Medications often reveal diagnoses not listed (e.g., metformin = diabetes, amlodipine = hypertension, statins = hyperlipidemia, gabapentin = neuropathy).
 9. Multiple risk factors compound qualification. Even minor risk factors together justify screening.
-10. When in doubt, QUALIFY. Only exclude if the test is clearly inappropriate.
-11. UNDER-40 ULTRASOUND RULE: For patients whose age is known and is under 40, each of the 6 ultrasound/Doppler studies (all qualifying tests EXCEPT BrainWave and VitalWave) requires a stricter dual-criteria check. If the patient has BOTH (a) documented risk factors or diagnoses in Dx/Hx AND (b) medications that treat those conditions, set approvalRequired: false — they are fully qualified. If the patient is under 40 and does NOT meet both criteria simultaneously, still include the ultrasound test in qualifyingTests but set approvalRequired: true, meaning physician approval from Dr. Ali Imran or Dr. Ayman Alhadheri is required before scheduling. BrainWave and VitalWave are never subject to this under-40 rule (always approvalRequired: false). Patients 40 and older always have approvalRequired: false for all tests.
+10. When in doubt, QUALIFY. Only exclude if the test is clearly inappropriate.`,
+
+  standard: `QUALIFICATION THRESHOLD (STANDARD MODE):
+1. Qualify patients when there is a DIRECT clinical connection between their documented conditions/symptoms/medications and the test indication. Indirect or speculative connections are NOT sufficient.
+2. A diagnosis or symptom must be explicitly documented (or clearly implied by a medication) and must directly correspond to a recognized clinical indication for the test.
+3. Do NOT qualify based on general risk factors alone (e.g., age + obesity alone is not enough without a specific indication). There must be a documented condition that the test is designed to evaluate.
+4. Medications are acceptable evidence of a diagnosis only when the medication has a well-established primary indication (e.g., metformin → diabetes, amlodipine → hypertension, warfarin → AFib or DVT).
+5. Multiple weak indicators do not substitute for one direct clinical connection.
+6. When in doubt, DO NOT qualify — set confidence to "low" and omit the test from qualifyingTests.`,
+
+  conservative: `QUALIFICATION THRESHOLD (CONSERVATIVE MODE):
+1. Qualify patients ONLY when there is strong multi-factor evidence: the patient must have (a) a documented diagnosis or symptom that is a primary indication for the test, AND (b) at least one corroborating factor such as a relevant medication, a supporting comorbidity, or a relevant history finding.
+2. Single-factor qualification is not sufficient — a lone diagnosis without supporting evidence does not qualify.
+3. For cardiovascular tests (carotid, echo, renal, ABI), require at least two of: documented cardiovascular diagnosis, relevant medication (antihypertensive, statin, antiplatelet, anticoagulant), and a corroborating comorbidity (DM, CKD, PAD, CAD, stroke history).
+4. For neurological tests (BrainWave), require documented neurological or psychiatric diagnosis PLUS supporting symptoms (e.g., headaches, memory complaints, mood disorder) or relevant medications (anticonvulsants, antidepressants, anxiolytics).
+5. For lower extremity studies, require documented vascular or neuropathic indication PLUS at least one corroborating factor (medication, lab/exam finding, or comorbidity).
+6. Set approvalRequired: true whenever the evidence is present but not unambiguous — err on the side of requiring physician sign-off for borderline cases.
+7. When evidence is insufficient, exclude the test from qualifyingTests entirely. Do NOT add borderline cases just to be safe.`,
+};
+
+function buildScreeningSystemPrompt(mode: QualificationMode = "permissive"): string {
+  const thresholdInstructions = QUALIFICATION_THRESHOLD_INSTRUCTIONS[mode];
+  return `You are a clinical ancillary qualification specialist. Your job is to analyze patient clinical data and determine which ancillary diagnostic tests each patient qualifies for.
+
+${thresholdInstructions}
+
+UNDER-40 ULTRASOUND RULE (applies in all modes): For patients whose age is known and is under 40, each of the 6 ultrasound/Doppler studies (all qualifying tests EXCEPT BrainWave and VitalWave) requires a stricter dual-criteria check. If the patient has BOTH (a) documented risk factors or diagnoses in Dx/Hx AND (b) medications that treat those conditions, set approvalRequired: false — they are fully qualified. If the patient is under 40 and does NOT meet both criteria simultaneously, still include the ultrasound test in qualifyingTests but set approvalRequired: true, meaning physician approval from Dr. Ali Imran or Dr. Ayman Alhadheri is required before scheduling. BrainWave and VitalWave are never subject to this under-40 rule (always approvalRequired: false). Patients 40 and older always have approvalRequired: false for all tests (unless the conservative mode overrides above).
 
 Available ancillary tests (ONLY qualify for these 7 tests - no others):
 - BrainWave: EEG/neurocognitive testing for cognitive, neurological, mood disorders, headaches, migraines, dizziness, vertigo, syncope, seizures, memory issues, neuropathy, TBI, anxiety, depression, insomnia, brain fog, fatigue, numbness/tingling, stroke/TIA history, tremors, balance issues, tinnitus, chronic pain
@@ -61,6 +87,7 @@ For each patient, respond with a JSON object:
 }
 
 Return ALL qualifying tests in qualifyingTests array, ordered by confidence (high first). Include reasoning for EVERY qualifying test.`;
+}
 
 export interface ScreeningPatientInput {
   name: string;
@@ -73,7 +100,13 @@ export interface ScreeningPatientInput {
   notes?: string | null;
 }
 
-export async function screenSinglePatientWithAI(patient: ScreeningPatientInput): Promise<any | null> {
+const USER_PROMPT_SUFFIX: Record<QualificationMode, string> = {
+  permissive: "Analyze the following patient and qualify them for ancillary tests. Be VERY LENIENT - try to qualify for as many tests as possible.",
+  standard: "Analyze the following patient and qualify them for ancillary tests. Apply the STANDARD threshold: only qualify when there is a direct clinical connection between documented conditions and the test indication.",
+  conservative: "Analyze the following patient and qualify them for ancillary tests. Apply the CONSERVATIVE threshold: only qualify when there is strong multi-factor evidence. Require physician approval (approvalRequired: true) for any borderline case.",
+};
+
+export async function screenSinglePatientWithAI(patient: ScreeningPatientInput, mode: QualificationMode = "permissive"): Promise<any | null> {
   const parts = [`Patient:`];
   if (patient.name) parts.push(`Name: ${patient.name}`);
   if (patient.time) parts.push(`Time: ${patient.time}`);
@@ -85,15 +118,18 @@ export async function screenSinglePatientWithAI(patient: ScreeningPatientInput):
   if (patient.notes) parts.push(`Notes: ${patient.notes}`);
   const description = parts.join("\n");
 
+  const systemPrompt = buildScreeningSystemPrompt(mode);
+  const userPromptSuffix = USER_PROMPT_SUFFIX[mode];
+
   const response = await withRetry(
     () =>
       openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
-          { role: "system", content: SCREENING_SYSTEM_PROMPT },
+          { role: "system", content: systemPrompt },
           {
             role: "user",
-            content: `Analyze the following patient and qualify them for ancillary tests. Be VERY LENIENT - try to qualify for as many tests as possible.\n\n${description}`,
+            content: `${userPromptSuffix}\n\n${description}`,
           },
         ],
         temperature: 0.2,

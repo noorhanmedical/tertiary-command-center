@@ -28,6 +28,18 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 
 
 const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
 
+function facilityToSettingKey(facility: string): string {
+  return `QUALIFICATION_MODE_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`;
+}
+
+async function getQualificationMode(facility: string | null): Promise<import("./services/screening").QualificationMode> {
+  if (!facility) return "permissive";
+  const { getSetting } = await import("./dbSettings");
+  const val = await getSetting(facilityToSettingKey(facility));
+  if (val === "standard" || val === "conservative") return val;
+  return "permissive";
+}
+
 const createBatchSchema = z.object({
   name: z.string().optional(),
   facility: z.enum(VALID_FACILITIES),
@@ -426,6 +438,8 @@ export async function registerRoutes(
       const patient = await storage.getPatientScreening(id);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
 
+      const patientQualMode = await getQualificationMode(patient.facility ?? null);
+
       let match: any = null;
       try {
         match = await screenSinglePatientWithAI({
@@ -437,7 +451,7 @@ export async function registerRoutes(
           history: patient.history,
           medications: patient.medications,
           notes: patient.notes,
-        });
+        }, patientQualMode);
       } catch (aiErr: any) {
         console.error(`AI screening failed for patient ${patient.name}:`, aiErr.message);
         await storage.updatePatientScreening(id, { status: "error" });
@@ -561,6 +575,9 @@ export async function registerRoutes(
 
       res.json({ success: true, patientCount: patients.length, async: true });
 
+      const facilityQualMode = await getQualificationMode(batch.facility ?? null);
+      console.log(`[batch:${batchId}] Qualification mode: ${facilityQualMode} (facility: ${batch.facility ?? "none"})`);
+
       const aiResults: Map<number, any> = new Map();
 
       await batchProcess(
@@ -576,7 +593,7 @@ export async function registerRoutes(
               history: patient.history,
               medications: patient.medications,
               notes: patient.notes,
-            });
+            }, facilityQualMode);
 
             if (result) {
               const match = result?.patients?.[0] || result;
@@ -1945,6 +1962,42 @@ export async function registerRoutes(
       res.json({ id: rootId, name: "Plexus Ancillary Platform", children });
     } catch (error: any) {
       console.error("Plexus Drive folder-tree error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ─── Qualification Mode Settings ───────────────────────────────────────────
+  const VALID_QUAL_MODES = ["permissive", "standard", "conservative"] as const;
+  const qualModeSchema = z.object({
+    facility: z.enum(VALID_FACILITIES),
+    mode: z.enum(VALID_QUAL_MODES),
+  });
+
+  app.get("/api/settings/qualification-modes", async (_req, res) => {
+    try {
+      const { getSetting } = await import("./dbSettings");
+      const results: Record<string, string> = {};
+      for (const facility of VALID_FACILITIES) {
+        const key = facilityToSettingKey(facility);
+        const val = await getSetting(key);
+        results[facility] = val ?? "permissive";
+      }
+      res.json(results);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/settings/qualification-modes", async (req, res) => {
+    try {
+      const parsed = qualModeSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      const { facility, mode } = parsed.data;
+      const { setSetting } = await import("./dbSettings");
+      const key = facilityToSettingKey(facility);
+      await setSetting(key, mode);
+      res.json({ facility, mode });
+    } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
