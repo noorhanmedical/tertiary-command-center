@@ -380,8 +380,20 @@ export default function Home() {
       const res = await apiRequest("PATCH", `/api/patients/${id}`, updates);
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
+    onSuccess: (updatedPatient: PatientScreening, { id }) => {
+      const batchId = updatedPatient.batchId ?? selectedBatchId;
+      queryClient.setQueryData<ScreeningBatchWithPatients>(
+        ["/api/screening-batches", batchId],
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            patients: (old.patients || []).map((p) =>
+              p.id === id ? { ...p, ...updatedPatient } : p
+            ),
+          };
+        }
+      );
     },
     onError: (err: unknown) => {
       const msg = err instanceof Error ? err.message : "Something went wrong";
@@ -1509,9 +1521,20 @@ function PatientCard({
     setGeneratingTests(prev => new Set([...prev, test]));
     apiRequest("POST", `/api/patients/${patient.id}/analyze-test`, { testName: test })
       .then(r => r.json())
-      .then((data) => {
-        if (data?.reasoning) {
-          cardQueryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+      .then((data: PatientScreening) => {
+        if (data) {
+          cardQueryClient.setQueryData<ScreeningBatchWithPatients>(
+            ["/api/screening-batches", patient.batchId],
+            (old) => {
+              if (!old) return old;
+              return {
+                ...old,
+                patients: (old.patients || []).map((p) =>
+                  p.id === patient.id ? { ...p, ...data } : p
+                ),
+              };
+            }
+          );
         }
       })
       .catch(() => {
