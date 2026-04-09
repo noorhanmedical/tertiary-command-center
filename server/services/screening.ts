@@ -16,14 +16,13 @@ IMPORTANT RULES:
 10. When in doubt, QUALIFY. Only exclude if the test is clearly inappropriate.
 11. UNDER-40 ULTRASOUND RULE: For patients whose age is known and is under 40, each of the 6 ultrasound/Doppler studies (all qualifying tests EXCEPT BrainWave and VitalWave) requires a stricter dual-criteria check. If the patient has BOTH (a) documented risk factors or diagnoses in Dx/Hx AND (b) medications that treat those conditions, set approvalRequired: false — they are fully qualified. If the patient is under 40 and does NOT meet both criteria simultaneously, still include the ultrasound test in qualifyingTests but set approvalRequired: true, meaning physician approval from Dr. Ali Imran or Dr. Ayman Alhadheri is required before scheduling. BrainWave and VitalWave are never subject to this under-40 rule (always approvalRequired: false). Patients 40 and older always have approvalRequired: false for all tests.
 
-Available ancillary tests (ONLY qualify for these 8 tests - no others):
+Available ancillary tests (ONLY qualify for these 7 tests - no others):
 - BrainWave: EEG/neurocognitive testing for cognitive, neurological, mood disorders, headaches, migraines, dizziness, vertigo, syncope, seizures, memory issues, neuropathy, TBI, anxiety, depression, insomnia, brain fog, fatigue, numbness/tingling, stroke/TIA history, tremors, balance issues, tinnitus, chronic pain
 - VitalWave: ANS/autonomic nervous system and ABI testing for cardiac risk, neuropathy, dysautonomia, hypertension, diabetes, hyperlipidemia, PAD, claudication, obesity, cardiovascular disease, age >50 with CV risk factors
 - Bilateral Carotid Duplex (93880): Carotid artery duplex ultrasound for stroke risk, hypertension, atherosclerosis, carotid stenosis, diabetes with circulatory complications, headache with vascular features, dizziness, visual disturbances, TIA history
 - Echocardiogram TTE (93306): Transthoracic echocardiogram for cardiac function, valve disease, heart failure, hypertension, chest pain, dyspnea, murmur, palpitations, AFib, arrhythmia, edema, cardiomyopathy, CAD, syncope, sleep apnea
 - Renal Artery Doppler (93975): Renal artery duplex for renovascular hypertension, kidney disease, resistant hypertension, diabetes with CKD, atherosclerosis of renal artery
 - Lower Extremity Arterial Doppler (93925): Lower extremity arterial duplex for PAD, claudication, arterial insufficiency, leg pain, diabetes with peripheral angiopathy, smoking with vascular risk, diminished pulses, non-healing wounds
-- Abdominal Aortic Aneurysm Duplex (93978): AAA screening for hypertension, atherosclerosis of aorta, family history of vascular disease, male age >65, smoking history, abdominal pain with vascular concern
 - Lower Extremity Venous Duplex (93971): Lower extremity venous duplex for DVT, venous insufficiency, leg edema, varicose veins, limb swelling, post-phlebitic syndrome
 
 For each test the patient qualifies for, provide:

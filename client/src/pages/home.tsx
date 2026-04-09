@@ -1566,6 +1566,7 @@ function PatientCard({
   const [localHx, setLocalHx] = useState(patient.history || "");
   const [localRx, setLocalRx] = useState(patient.medications || "");
   const [localPrevTests, setLocalPrevTests] = useState(patient.previousTests || "");
+  const [localPrevTestsDate, setLocalPrevTestsDate] = useState(patient.previousTestsDate || "");
 
   useEffect(() => { setLocalName(patient.name || ""); }, [patient.name]);
   useEffect(() => { setLocalTime(patient.time || ""); }, [patient.time]);
@@ -1576,6 +1577,7 @@ function PatientCard({
   useEffect(() => { setLocalHx(patient.history || ""); }, [patient.history]);
   useEffect(() => { setLocalRx(patient.medications || ""); }, [patient.medications]);
   useEffect(() => { setLocalPrevTests(patient.previousTests || ""); }, [patient.previousTests]);
+  useEffect(() => { setLocalPrevTestsDate(patient.previousTestsDate || ""); }, [patient.previousTestsDate]);
 
   return (
     <Card className={`overflow-visible ${isCompleted ? "ring-1 ring-emerald-200 dark:ring-emerald-800" : ""}`} data-testid={`card-patient-${patient.id}`}>
@@ -1624,6 +1626,14 @@ function PatientCard({
                 onBlur={() => { if (localInsurance !== (patient.insurance || "")) onUpdate("insurance", localInsurance); }}
                 className="h-6 text-xs px-2"
                 data-testid={`input-patient-insurance-${patient.id}`}
+              />
+              <Input
+                placeholder="Prev Tests Date"
+                value={localPrevTestsDate}
+                onChange={(e) => setLocalPrevTestsDate(e.target.value)}
+                onBlur={() => { if (localPrevTestsDate !== (patient.previousTestsDate || "")) onUpdate("previousTestsDate", localPrevTestsDate); }}
+                className="h-6 text-xs px-2"
+                data-testid={`input-prev-tests-date-${patient.id}`}
               />
             </div>
           </div>
@@ -2265,13 +2275,13 @@ function generateClinicianPDF(batchName: string, patients: PatientScreening[], s
     const ancillaryColor: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#dc2626" };
 
     const prevSign = getPrevTestsSign(p.insurance, p.previousTests, scheduleDate || new Date().toISOString().slice(0,10));
-    const chartReview = (p.diagnoses || p.history || p.medications || p.previousTests) ? `
+    const chartReview = (p.diagnoses || p.history || p.medications || p.previousTests || p.previousTestsDate) ? `
       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;margin-bottom:8px;">
         <div style="font-size:8px;font-weight:700;color:#1a365d;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:5px;">${esc(p.name)} Chart Review</div>
         ${p.diagnoses ? `<div style="display:flex;gap:6px;margin-bottom:2px;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Dx</span><span style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.diagnoses)}</span></div>` : ""}
         ${p.history ? `<div style="display:flex;gap:6px;margin-bottom:2px;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Hx</span><span style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.history)}</span></div>` : ""}
         ${p.medications ? `<div style="display:flex;gap:6px;margin-bottom:2px;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Rx</span><span style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.medications)}</span></div>` : ""}
-        ${p.previousTests ? `<div style="display:flex;gap:6px;background:#fef9c3;border-radius:4px;padding:3px 5px;margin-top:2px;"><span style="font-size:7.5px;font-weight:700;color:#78350f;letter-spacing:0.05em;min-width:70px;padding-top:1px;white-space:nowrap;">${prevSign}Previous Tests</span><span style="font-size:8.5px;font-weight:700;color:#334155;line-height:1.4;">${esc(p.previousTests)}</span></div>` : ""}
+        ${p.previousTests || p.previousTestsDate ? `<div style="display:flex;gap:6px;background:#fef9c3;border-radius:4px;padding:3px 5px;margin-top:2px;"><span style="font-size:7.5px;font-weight:700;color:#78350f;letter-spacing:0.05em;min-width:70px;padding-top:1px;white-space:nowrap;">${prevSign}Previous Tests</span><span style="font-size:8.5px;font-weight:700;color:#334155;line-height:1.4;">${p.previousTests ? esc(p.previousTests) : ""}${p.previousTestsDate ? `${p.previousTests ? " — " : ""}Date: ${esc(p.previousTestsDate)}` : ""}</span></div>` : ""}
       </div>` : "";
 
     const leftHtml = ancillaryTests.length === 0
@@ -3262,10 +3272,11 @@ function ResultsView({
                                   <p className="text-xs text-slate-900 leading-relaxed">{patient.medications}</p>
                                 </div>
                               )}
-                              {patient.previousTests && (
+                              {(patient.previousTests || patient.previousTestsDate) && (
                                 <div>
                                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Previous Tests</p>
-                                  <p className="text-xs text-slate-900 leading-relaxed">{patient.previousTests}</p>
+                                  {patient.previousTests && <p className="text-xs text-slate-900 leading-relaxed">{patient.previousTests}</p>}
+                                  {patient.previousTestsDate && <p className="text-xs text-amber-700 font-medium mt-0.5">Date: {patient.previousTestsDate}</p>}
                                 </div>
                               )}
                             </div>

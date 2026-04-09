@@ -69,6 +69,7 @@ const updatePatientSchema = z.object({
   history: z.string().nullable().optional(),
   medications: z.string().nullable().optional(),
   previousTests: z.string().nullable().optional(),
+  previousTestsDate: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
   qualifyingTests: z.array(z.string()).optional(),
   appointmentStatus: z.string().nullable().optional(),
@@ -361,6 +362,7 @@ export async function registerRoutes(
       if (data.history !== undefined) updates.history = data.history || null;
       if (data.medications !== undefined) updates.medications = data.medications || null;
       if (data.previousTests !== undefined) updates.previousTests = data.previousTests || null;
+      if (data.previousTestsDate !== undefined) updates.previousTestsDate = data.previousTestsDate || null;
       if (data.notes !== undefined) updates.notes = data.notes || null;
       if (data.qualifyingTests !== undefined) updates.qualifyingTests = data.qualifyingTests;
       if (data.appointmentStatus !== undefined) updates.appointmentStatus = data.appointmentStatus || "pending";
