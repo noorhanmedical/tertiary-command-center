@@ -11,6 +11,7 @@ export interface ParsedPatient {
   diagnoses?: string;
   history?: string;
   medications?: string;
+  previousTests?: string;
   notes?: string;
   rawText?: string;
 }
@@ -165,10 +166,12 @@ For each record extract:
 - "diagnoses": all diagnoses/conditions/Dx copied verbatim from the source, joined into one string if multiple sections, or null
 - "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
 - "medications": all medications/Rx/prescriptions copied verbatim from the source, joined into one string if multiple sections, or null
+- "previousTests": any mention of previous tests, prior imaging, past ancillary studies, HGA records, or similar historical test records copied verbatim, or null
 
 Rules:
-- CRITICAL: Copy diagnoses, history, and medications EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
+- CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
 - For medications: only include actual drug/prescription names and dosages. If the only value looks like a visit reason, test name, or scheduling code (e.g. "BrainWave", "FU HGA", "med refills", "follow up", "physical"), set medications to null.
+- For previousTests: look for labels like "Previous Tests:", "Prior Imaging:", "Previous Imaging:", "HGA Records:", "Past Studies:", "Ancillary History:", or similar. Copy the value verbatim.
 - Return exactly one result object per record, in the same order as the input.
 - Do NOT include a name field — names are managed externally.
 
@@ -185,9 +188,10 @@ For each record extract:
 - "diagnoses": copy the entire text under "Diagnoses:" verbatim, or null if absent
 - "history": copy the entire text under "History/HPI:" verbatim, or null if absent
 - "medications": copy the entire text under "Medications:" verbatim, or null if absent
+- "previousTests": copy the entire text under any label for previous tests or prior imaging (e.g. "Previous Tests:", "Prior Imaging:", "HGA Records:", "Past Studies:") verbatim, or null if absent
 
 Rules:
-- CRITICAL: Copy diagnoses, history, and medications EXACTLY as written under their labeled sections. Do NOT rephrase, reword, summarize, or alter the text in any way.
+- CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written under their labeled sections. Do NOT rephrase, reword, summarize, or alter the text in any way.
 - Each labeled section (Diagnoses:, History/HPI:, Medications:) is a discrete column from the source EHR — do not mix content between sections.
 - For medications: if no "Medications:" section exists, set to null. Do not infer medications from the history text.
 - Return exactly one result object per record. Include the "name" field in every result.
@@ -205,14 +209,16 @@ For each patient return:
 - "diagnoses": all diagnoses/conditions/Dx copied verbatim from the source, joined into one string if multiple sections, or null
 - "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
 - "medications": all medications/Rx copied verbatim from the source, joined into one string if multiple sections, or null
+- "previousTests": any mention of previous tests, prior imaging, past ancillary studies, HGA records, or similar historical test data copied verbatim, or null
 
 Rules:
-- CRITICAL: Copy diagnoses, history, and medications EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
+- CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
 - Extract ALL patients in the input — even if there are 20 or more.
 - The input may be tab-separated spreadsheet data, a simple name list, or mixed clinical notes — handle all formats.
 - If a row is clearly a header, summary, or empty — skip it.
 - If there is no clinical data for a patient, still include them with null clinical fields.
 - For the "medications" field: only include actual drug/prescription names and dosages. If the only value present looks like a visit reason, appointment note, scheduling code, or test name (e.g. "BrainWave", "VitalWave", "EEG", "FU HGA", "med refills", "follow up", "HGA", "new patient", "physical", "wellness"), set medications to null instead.
+- For the "previousTests" field: look for labels like "Previous Tests:", "Prior Imaging:", "Previous Imaging:", "HGA Records:", "Past Studies:", "Ancillary History:", or similar column headers in spreadsheet data. Copy the value verbatim.
 
 Respond with a JSON object: { "patients": [ ...array of ALL patient objects... ] }. No markdown. Do not truncate.`;
 
@@ -254,6 +260,7 @@ async function parseSingleChunk(chunk: string): Promise<ParsedPatient[]> {
       diagnoses: p.diagnoses || undefined,
       history: p.history || undefined,
       medications: p.medications || undefined,
+      previousTests: p.previousTests || undefined,
     }));
 }
 
@@ -381,6 +388,7 @@ async function parseEndDelimitedBatch(batch: { name: string; block: string; insu
       diagnoses: r.diagnoses || undefined,
       history: r.history || undefined,
       medications: r.medications || undefined,
+      previousTests: r.previousTests || undefined,
     };
   });
 }
@@ -475,6 +483,7 @@ async function parseTsvBatch(batch: { name: string; block: string; insurance?: s
       diagnoses: r.diagnoses || undefined,
       history: r.history || undefined,
       medications: r.medications || undefined,
+      previousTests: r.previousTests || undefined,
     };
   });
 }
@@ -568,6 +577,7 @@ function mergePatients(a: ParsedPatient, b: ParsedPatient): ParsedPatient {
     diagnoses: pickRicher(a.diagnoses, b.diagnoses),
     history: pickRicher(a.history, b.history),
     medications: pickRicher(a.medications, b.medications),
+    previousTests: pickRicher(a.previousTests, b.previousTests),
   };
 }
 
