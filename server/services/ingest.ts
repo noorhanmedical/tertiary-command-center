@@ -42,6 +42,100 @@ export function excelToText(buffer: Buffer): string {
   return lines.join("\n");
 }
 
+const EXCEL_COL_MAP_PATTERNS: Array<{ key: string; pattern: RegExp }> = [
+  { key: "name",       pattern: /^(name|patientname|patient)$/ },
+  { key: "time",       pattern: /^(time|appttime|appointmenttime|start|starttime)$/ },
+  { key: "age",        pattern: /^(age)$/ },
+  { key: "gender",     pattern: /^(gender|sex)$/ },
+  { key: "dob",        pattern: /^(dob|dateofbirth|birthdate)$/ },
+  { key: "insurance",  pattern: /^(insurance|payer|insurancetype|insuranceplan)$/ },
+  { key: "diagnoses",  pattern: /^(diagnoses|dx|diagnosis|conditions|assessmentplan|assessment)$/ },
+  { key: "history",    pattern: /^(hpi|history|pmh|medicalhistory|pastmedicalhistory|pasthistory)$/ },
+  { key: "medications",pattern: /^(medications|rx|meds|prescriptions|currentmeds|currentmedications)$/ },
+  { key: "notes",      pattern: /^(notes|note|comments|comment|chiefcomplaint|cc|reason|visitreason)$/ },
+];
+
+export function excelToSegments(buffer: Buffer): { name: string; block: string; insurance?: string }[] | null {
+  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const allSegments: { name: string; block: string; insurance?: string }[] = [];
+
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
+    if (rows.length === 0) continue;
+
+    const headers = Object.keys(rows[0]);
+    const colMap: Record<string, string> = {};
+    for (const h of headers) {
+      const normalized = h.trim().toLowerCase().replace(/[\s_\-./]/g, "");
+      for (const { key, pattern } of EXCEL_COL_MAP_PATTERNS) {
+        if (!colMap[key] && pattern.test(normalized)) {
+          colMap[key] = h;
+          break;
+        }
+      }
+    }
+
+    if (!colMap.name) continue;
+
+    for (const row of rows) {
+      const name = String(row[colMap.name] ?? "").trim();
+      if (!name || isProviderName(name)) continue;
+
+      const parts: string[] = [];
+      if (colMap.time) {
+        const val = String(row[colMap.time] ?? "").trim();
+        if (val) parts.push(`Time: ${val}`);
+      }
+      parts.push(`Patient: ${name}`);
+      if (colMap.age) {
+        const val = String(row[colMap.age] ?? "").trim();
+        if (val) parts.push(`Age: ${val}`);
+      }
+      if (colMap.gender) {
+        const val = String(row[colMap.gender] ?? "").trim();
+        if (val) parts.push(`Gender: ${val}`);
+      }
+      if (colMap.dob) {
+        const val = String(row[colMap.dob] ?? "").trim();
+        if (val) parts.push(`DOB: ${val}`);
+      }
+      if (colMap.diagnoses) {
+        const val = String(row[colMap.diagnoses] ?? "").trim();
+        if (val) parts.push(`Diagnoses: ${val}`);
+      }
+      if (colMap.history) {
+        const val = String(row[colMap.history] ?? "").trim();
+        if (val) parts.push(`History: ${val}`);
+      }
+      if (colMap.medications) {
+        const val = String(row[colMap.medications] ?? "").trim();
+        if (val) parts.push(`Medications: ${val}`);
+      }
+      if (colMap.notes) {
+        const val = String(row[colMap.notes] ?? "").trim();
+        if (val) parts.push(`Notes: ${val}`);
+      }
+
+      const insurance = colMap.insurance
+        ? (String(row[colMap.insurance] ?? "").trim() || undefined)
+        : undefined;
+
+      allSegments.push({ name, block: parts.join("\n"), insurance });
+    }
+  }
+
+  return allSegments.length > 0 ? allSegments : null;
+}
+
+export async function parseExcelFile(buffer: Buffer): Promise<ParsedPatient[]> {
+  const segments = excelToSegments(buffer);
+  if (segments && segments.length > 0) {
+    return parseTsvBlocks(segments);
+  }
+  return parseWithAI(excelToText(buffer));
+}
+
 export function csvToText(buffer: Buffer): string {
   try {
     const records = parse(buffer.toString("utf-8"), {
@@ -79,6 +173,25 @@ Rules:
 - Do NOT include a name field — names are managed externally.
 
 Respond with JSON: { "records": [ ...one object per input record, in order... ] }. No markdown. Do not truncate.`;
+
+const TSV_BLOCK_SYSTEM_PROMPT = `You are a clinical data parser. The input contains patient records separated by "---". Each record starts with "Patient: <name>". Extract clinical data and return each patient's name exactly as given.
+
+For each record extract:
+- "name": patient name exactly as it appears after "Patient:" (required)
+- "time": appointment time if present (e.g. "9:00 AM"), or null
+- "age": age as a number if present, or null
+- "gender": gender if present (M/F/Male/Female), or null
+- "insurance": insurance carrier/plan name if present (e.g. "Blue Cross Blue Shield", "Medicare", "Cigna", "Aetna", "United Healthcare"), or null
+- "diagnoses": all diagnoses/conditions/Dx combined into one string, or null
+- "history": past medical history/Hx/PMH combined into one string, or null
+- "medications": all medications/Rx/prescriptions combined into one string, or null
+
+Rules:
+- Expand abbreviations: HTN=hypertension, DM=diabetes mellitus, HLD=hyperlipidemia, CAD, CHF, COPD, CKD, OA=osteoarthritis, GERD, A-fib, etc.
+- For medications: only include actual drug/prescription names and dosages. If the only value looks like a visit reason, test name, or scheduling code (e.g. "BrainWave", "FU HGA", "med refills", "follow up", "physical"), set medications to null.
+- Return exactly one result object per record. Include the "name" field in every result.
+
+Respond with JSON: { "records": [ ...one object per patient record... ] }. No markdown. Do not truncate.`;
 
 const PARSE_SYSTEM_PROMPT = `You are a clinical data parser. Extract EVERY patient record from the input text — do not stop early, do not skip any.
 
@@ -299,6 +412,98 @@ async function parseEndDelimitedBlocks(segments: { name: string; block: string; 
   return results;
 }
 
+async function parseTsvBatch(batch: { name: string; block: string; insurance?: string }[]): Promise<ParsedPatient[]> {
+  const combined = batch.map((s) => s.block).join("\n\n---\n\n");
+
+  const aiResponse = await withRetry(
+    () =>
+      openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: TSV_BLOCK_SYSTEM_PROMPT },
+          { role: "user", content: combined },
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+        max_completion_tokens: 16000,
+      }),
+    3,
+    "parseTsvBatch"
+  );
+
+  const content = aiResponse.choices[0]?.message?.content?.trim() || "{}";
+  let parsed: any;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    parsed = JSON.parse(cleaned);
+  }
+
+  const arr: any[] = Array.isArray(parsed) ? parsed : (parsed.records || parsed.patients || []);
+
+  const byName = new Map<string, any>();
+  for (const r of arr) {
+    if (r.name && typeof r.name === "string") {
+      const keys = getNormalizedKeys(r.name);
+      for (const k of keys) {
+        if (!byName.has(k)) byName.set(k, r);
+      }
+    }
+  }
+
+  return batch.map((seg) => {
+    const segKeys = getNormalizedKeys(seg.name);
+    let r: any = null;
+    for (const k of segKeys) {
+      if (byName.has(k)) {
+        r = byName.get(k);
+        break;
+      }
+    }
+    if (!r) {
+      console.warn(`parseTsvBatch: no AI result matched patient "${seg.name}" by name; record will have no clinical data`);
+      r = {};
+    }
+    return {
+      name: seg.name.trim(),
+      time: r.time || undefined,
+      age: r.age ? parseInt(String(r.age)) : undefined,
+      gender: r.gender || undefined,
+      insurance: r.insurance || seg.insurance || undefined,
+      diagnoses: r.diagnoses || undefined,
+      history: r.history || undefined,
+      medications: r.medications || undefined,
+    };
+  });
+}
+
+async function parseTsvBlocks(segments: { name: string; block: string; insurance?: string }[]): Promise<ParsedPatient[]> {
+  const MAX_BATCH_CHARS = 160000;
+  const batches: { name: string; block: string; insurance?: string }[][] = [];
+  let currentBatch: { name: string; block: string; insurance?: string }[] = [];
+  let currentLen = 0;
+
+  for (const seg of segments) {
+    const segLen = seg.block.length + 20;
+    if (currentBatch.length > 0 && currentLen + segLen > MAX_BATCH_CHARS) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentLen = 0;
+    }
+    currentBatch.push(seg);
+    currentLen += segLen;
+  }
+  if (currentBatch.length > 0) batches.push(currentBatch);
+
+  const results: ParsedPatient[] = [];
+  for (const batch of batches) {
+    const batchResults = await parseTsvBatch(batch);
+    results.push(...batchResults);
+  }
+  return results;
+}
+
 function splitIntoChunks(text: string, chunkSize = 8000): string[] {
   if (text.length <= chunkSize) return [text];
   const chunks: string[] = [];
@@ -365,16 +570,112 @@ function mergePatients(a: ParsedPatient, b: ParsedPatient): ParsedPatient {
   };
 }
 
+const EHR_TSV_COLUMN_LABELS = [
+  "time",
+  "name",
+  "gender",
+  "age",
+  "dob",
+  "insurance",
+  "diagnoses",
+  "hpi",
+  "medications",
+  "notes",
+  "reason",
+  "dx",
+  "pmh",
+  "rx",
+  "hx",
+];
+
+function looksLikeEhrTsvRow(row: string[]): boolean {
+  if (row.length < 2) return false;
+  const col0 = row[0]?.trim() ?? "";
+  const col1 = row[1]?.trim() ?? "";
+  const hasTime = /^\d{1,2}:\d{2}/.test(col0) || /^(am|pm)/i.test(col0);
+  const hasName = col1.length > 0 && /[A-Za-z]/.test(col1) && col1.length < 80;
+  return hasTime && hasName;
+}
+
+function isEhrTsvHeader(row: string[]): boolean {
+  if (row.length < 2) return false;
+  const lower = row.map((c) => c.trim().toLowerCase());
+  return lower.some((c) => EHR_TSV_COLUMN_LABELS.includes(c));
+}
+
+function parseTsvWithQuotedFields(text: string): string[][] | null {
+  try {
+    const rows = parse(text, {
+      delimiter: "\t",
+      relax_column_count: true,
+      skip_empty_lines: false,
+      relax_quotes: true,
+    }) as string[][];
+    return rows;
+  } catch {
+    return null;
+  }
+}
+
+function detectAndParseTsvSegments(text: string): { name: string; block: string; insurance?: string }[] | null {
+  const rows = parseTsvWithQuotedFields(text);
+  if (!rows || rows.length < 2) return null;
+
+  const patientRows = rows.filter((row) => looksLikeEhrTsvRow(row) && !isEhrTsvHeader(row));
+  if (patientRows.length === 0) return null;
+
+  const totalRows = rows.filter((r) => r.some((c) => c.trim())).length;
+  if (patientRows.length < Math.max(1, totalRows * 0.3)) return null;
+
+  const segments: { name: string; block: string; insurance?: string }[] = [];
+
+  for (const row of patientRows) {
+    const time = row[0]?.trim() ?? "";
+    const name = row[1]?.trim() ?? "";
+    if (!name) continue;
+
+    const parts: string[] = [];
+    if (time) parts.push(`Time: ${time}`);
+    parts.push(`Patient: ${name}`);
+
+    const remainingCols = row.slice(2);
+    for (const col of remainingCols) {
+      const val = col?.trim();
+      if (val) parts.push(val);
+    }
+
+    const block = parts.join("\n");
+
+    const lastCol = row[row.length - 1]?.trim();
+    const looksLikeInsurance =
+      lastCol &&
+      lastCol !== name &&
+      lastCol !== time &&
+      /[A-Za-z]/.test(lastCol) &&
+      lastCol.length < 100 &&
+      /medicare|medicaid|blue\s*cross|blue\s*shield|aetna|cigna|humana|united|anthem|molina|kaiser|tricare|bcbs|bcbsm|ppo|hmo|self[\s-]?pay|private|commercial|uninsured/i.test(lastCol);
+    const insurance = looksLikeInsurance ? lastCol : undefined;
+
+    segments.push({ name, block, insurance });
+  }
+
+  return segments.length > 0 ? segments : null;
+}
+
 export async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
   if (!rawText.trim()) return [];
   try {
     const trimmed = rawText.substring(0, 400000);
 
-    const segments = splitByEndDelimiter(trimmed);
+    const endSegments = splitByEndDelimiter(trimmed);
+    const tsvSegments = !endSegments ? detectAndParseTsvSegments(trimmed) : null;
+
     let allPatients: ParsedPatient[];
 
-    if (segments) {
-      allPatients = await parseEndDelimitedBlocks(segments);
+    if (endSegments) {
+      allPatients = await parseEndDelimitedBlocks(endSegments);
+    } else if (tsvSegments) {
+      allPatients = await parseTsvBlocks(tsvSegments);
     } else {
       const chunks = splitIntoChunks(trimmed, 12000);
       const results = await Promise.all(chunks.map(parseSingleChunk));

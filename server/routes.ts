@@ -7,7 +7,7 @@ import { z } from "zod";
 import { batchProcess } from "./replit_integrations/batch";
 import {
   parseWithAI,
-  excelToText,
+  parseExcelFile,
   csvToText,
   parseHistoryCsv,
   parseHistoryImport,
@@ -234,7 +234,7 @@ export async function registerRoutes(
       for (const file of files) {
         const ext = file.originalname.toLowerCase().split(".").pop();
         if (ext === "xlsx" || ext === "xls") {
-          allPatients.push(...await parseWithAI(excelToText(file.buffer)));
+          allPatients.push(...await parseExcelFile(file.buffer));
         } else if (ext === "csv") {
           allPatients.push(...await parseWithAI(csvToText(file.buffer)));
         } else if (ext === "pdf") {
