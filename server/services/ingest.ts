@@ -174,21 +174,22 @@ Rules:
 
 Respond with JSON: { "records": [ ...one object per input record, in order... ] }. No markdown. Do not truncate.`;
 
-const TSV_BLOCK_SYSTEM_PROMPT = `You are a clinical data parser. The input contains patient records separated by "---". Each record starts with "Patient: <name>". Extract clinical data and return each patient's name exactly as given.
+const TSV_BLOCK_SYSTEM_PROMPT = `You are a clinical data parser. The input contains patient records separated by "---". Each record starts with "Patient: <name>" and has pre-labeled sections (Diagnoses:, History/HPI:, Medications:). Extract clinical data and return each patient's name exactly as given.
 
 For each record extract:
 - "name": patient name exactly as it appears after "Patient:" (required)
-- "time": appointment time if present (e.g. "9:00 AM"), or null
-- "age": age as a number if present, or null
-- "gender": gender if present (M/F/Male/Female), or null
-- "insurance": insurance carrier/plan name if present (e.g. "Blue Cross Blue Shield", "Medicare", "Cigna", "Aetna", "United Healthcare"), or null
-- "diagnoses": all diagnoses/conditions/Dx copied verbatim from the source, joined into one string if multiple sections, or null
-- "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
-- "medications": all medications/Rx/prescriptions copied verbatim from the source, joined into one string if multiple sections, or null
+- "time": appointment time if present after "Time:" (e.g. "9:00 AM"), or null
+- "age": age as a number if present after "Age:", or null
+- "gender": gender if present after "Gender:" (M/F/Male/Female), or null
+- "insurance": insurance carrier/plan if present, or null
+- "diagnoses": copy the entire text under "Diagnoses:" verbatim, or null if absent
+- "history": copy the entire text under "History/HPI:" verbatim, or null if absent
+- "medications": copy the entire text under "Medications:" verbatim, or null if absent
 
 Rules:
-- CRITICAL: Copy diagnoses, history, and medications EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
-- For medications: only include actual drug/prescription names and dosages. If the only value looks like a visit reason, test name, or scheduling code (e.g. "BrainWave", "FU HGA", "med refills", "follow up", "physical"), set medications to null.
+- CRITICAL: Copy diagnoses, history, and medications EXACTLY as written under their labeled sections. Do NOT rephrase, reword, summarize, or alter the text in any way.
+- Each labeled section (Diagnoses:, History/HPI:, Medications:) is a discrete column from the source EHR — do not mix content between sections.
+- For medications: if no "Medications:" section exists, set to null. Do not infer medications from the history text.
 - Return exactly one result object per record. Include the "name" field in every result.
 
 Respond with JSON: { "records": [ ...one object per patient record... ] }. No markdown. Do not truncate.`;
@@ -617,6 +618,48 @@ function parseTsvWithQuotedFields(text: string): string[][] | null {
   }
 }
 
+type TsvColKind = "diagnoses" | "history" | "medications" | "insurance" | "scalar" | "skip";
+
+function classifyTsvColumn(val: string): TsvColKind {
+  const trimmed = val.trim();
+  if (!trimmed) return "skip";
+
+  // Short scalar: gender, age, MRN — no newlines, short
+  if (!trimmed.includes("\n") && trimmed.length < 40) {
+    if (/^(m|f|male|female)$/i.test(trimmed)) return "scalar"; // gender
+    if (/^\d{1,3}$/.test(trimmed)) return "scalar"; // age
+    if (/^[a-z]?\d{4,10}$/i.test(trimmed)) return "skip"; // MRN/patient ID — not clinically useful
+    if (/medicare|medicaid|blue\s*cross|blue\s*shield|aetna|cigna|humana|united|anthem|molina|kaiser|tricare|bcbs|bcbsm|ppo|hmo|self[\s-]?pay|private|commercial|uninsured/i.test(trimmed)) return "insurance";
+  }
+
+  // History/HPI: starts with known narrative headers or contains HPI sections
+  if (/^(reason for appointment|history of present illness|hpi:|chief complaint|hpi\b|subjective|assessment|medical history|past medical history|constitutional:)/i.test(trimmed)) return "history";
+
+  // Medications: EHR medication list patterns
+  // - "Taking - by" pattern (this EHR's format)
+  // - Drug name followed by dose (mg/mcg/ml/tablet/capsule/unit) then frequency keywords
+  const medPatterns = [
+    /Taking\s*-\s*by\s+[A-Z]/,
+    /\b\d+\s*(mg|mcg|ml|units?|tablet|capsule|cap|grain|iu)\b/i,
+    /\b(once|twice|three times|QD|BID|TID|QID|QAM|QPM|QHS|PRN|daily|nightly|weekly)\b/i,
+    /\b(Orally|by Mouth|Subcutaneous|Nasally|Topically|Externally|Under the Tongue)\b/i,
+  ];
+  const medMatchCount = medPatterns.filter((p) => p.test(trimmed)).length;
+  if (medMatchCount >= 2) return "medications";
+
+  // Diagnoses: multi-line list of condition names, or a single condition line
+  // Typical diagnosis fields are shorter per line and contain medical condition terminology
+  const lines = trimmed.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length >= 1 && lines.every((l) => l.length < 200 && !/^(Taking|H\s+|R\d{2}|by [A-Z])/.test(l))) {
+    // Looks like a list of conditions rather than a narrative
+    if (!trimmed.includes("History of Present Illness") && !trimmed.includes("Reason for Appointment")) {
+      return "diagnoses";
+    }
+  }
+
+  return "history"; // default large text blocks to history/notes
+}
+
 function detectAndParseTsvSegments(text: string): { name: string; block: string; insurance?: string }[] | null {
   const rows = parseTsvWithQuotedFields(text);
   if (!rows || rows.length < 2) return null;
@@ -638,23 +681,61 @@ function detectAndParseTsvSegments(text: string): { name: string; block: string;
     if (time) parts.push(`Time: ${time}`);
     parts.push(`Patient: ${name}`);
 
-    const remainingCols = row.slice(2);
-    for (const col of remainingCols) {
-      const val = col?.trim();
-      if (val) parts.push(val);
+    // Classify each remaining column and label it explicitly
+    const labeledFields: { label: string; val: string }[] = [];
+    let detectedInsurance: string | undefined;
+
+    for (const col of row.slice(2)) {
+      const val = col?.trim() ?? "";
+      if (!val) continue;
+
+      const kind = classifyTsvColumn(val);
+      if (kind === "skip") continue;
+      if (kind === "insurance") { detectedInsurance = val; continue; }
+      if (kind === "scalar") {
+        // Gender or age — append inline rather than as a labeled block
+        if (/^(m|f|male|female)$/i.test(val)) labeledFields.push({ label: "Gender", val });
+        else if (/^\d{1,3}$/.test(val)) labeledFields.push({ label: "Age", val });
+        continue;
+      }
+
+      // Deduplicate: if we already have a field of this kind, pick the longer/richer one
+      const existing = labeledFields.find((f) => f.label === kind);
+      if (existing) {
+        if (val.length > existing.val.length) existing.val = val;
+      } else {
+        labeledFields.push({ label: kind, val });
+      }
     }
 
-    const block = parts.join("\n");
+    // Build the labeled block
+    const scalarLine = labeledFields
+      .filter((f) => f.label === "Gender" || f.label === "Age")
+      .map((f) => `${f.label}: ${f.val}`)
+      .join(" | ");
+    if (scalarLine) parts.push(scalarLine);
 
+    for (const { label, val } of labeledFields) {
+      if (label === "Gender" || label === "Age") continue;
+      const displayLabel =
+        label === "diagnoses" ? "Diagnoses" :
+        label === "history"   ? "History/HPI" :
+        label === "medications" ? "Medications" : label;
+      parts.push(`${displayLabel}:\n${val}`);
+    }
+
+    const block = parts.join("\n\n");
+
+    // Insurance: prefer column-detected, fall back to last-col heuristic
     const lastCol = row[row.length - 1]?.trim();
-    const looksLikeInsurance =
+    const lastColIsInsurance =
       lastCol &&
       lastCol !== name &&
       lastCol !== time &&
       /[A-Za-z]/.test(lastCol) &&
       lastCol.length < 100 &&
       /medicare|medicaid|blue\s*cross|blue\s*shield|aetna|cigna|humana|united|anthem|molina|kaiser|tricare|bcbs|bcbsm|ppo|hmo|self[\s-]?pay|private|commercial|uninsured/i.test(lastCol);
-    const insurance = looksLikeInsurance ? lastCol : undefined;
+    const insurance = detectedInsurance || (lastColIsInsurance ? lastCol : undefined);
 
     segments.push({ name, block, insurance });
   }
