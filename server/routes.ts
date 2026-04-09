@@ -2004,5 +2004,60 @@ export async function registerRoutes(
     }
   });
 
+  const generateJustificationSchema = z.object({
+    patient: z.object({
+      patientName: z.string(),
+      dateOfBirth: z.string().optional(),
+    }),
+    service: z.enum(["VitalWave", "Ultrasound", "BrainWave", "PGx"]),
+    selectedConditions: z.array(z.string()),
+    notes: z.array(z.string()),
+    icd10Codes: z.array(z.string()).optional(),
+    cptCodes: z.array(z.string()).optional(),
+  });
+
+  app.post("/api/generate-justification", async (req, res) => {
+    try {
+      const parsed = generateJustificationSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const { generateOpenAIJustificationPrompt } = await import("../shared/plexus");
+      const { openai, withRetry } = await import("./services/aiClient");
+
+      const prompt = generateOpenAIJustificationPrompt({
+        patient: parsed.data.patient,
+        service: parsed.data.service,
+        selectedConditions: parsed.data.selectedConditions,
+        notes: parsed.data.notes,
+        icd10Codes: parsed.data.icd10Codes,
+        cptCodes: parsed.data.cptCodes,
+      });
+
+      const response = await withRetry(
+        () =>
+          openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+              {
+                role: "system",
+                content: "You are a CMS-certified medical scribe producing audit-ready clinical documentation. Output only the narrative text with no headings, bullet points, or preamble.",
+              },
+              { role: "user", content: prompt },
+            ],
+            temperature: 0.3,
+            max_completion_tokens: 1200,
+          }),
+        3,
+        "generateJustification"
+      );
+
+      const justification = response.choices[0]?.message?.content?.trim() || "";
+      res.json({ justification });
+    } catch (error: any) {
+      console.error("[generate-justification] Error:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }

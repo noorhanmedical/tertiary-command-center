@@ -494,6 +494,7 @@ export function generateVitalWaveDocuments(args: {
   screeningResult: ScreeningResult;
   vitalWaveConfig?: VitalWaveConfig;
   vitalWaveScreening?: Record<string, Record<string, boolean>>;
+  aiJustification?: string;
 }): Record<'preProcedureOrder' | 'postProcedureNote' | 'billing', GeneratedDocument> {
   const generatedAtISO = isoNow(args.input.nowISO);
   const plexusId = ensurePlexusId(args.input.plexusId);
@@ -529,6 +530,7 @@ export function generateVitalWaveDocuments(args: {
       },
       { heading: 'Procedure Ordered', body: 'VitalWave - Comprehensive Autonomic & Vascular Assessment' },
       { heading: 'Diagnosis', body: dxList.length ? dxList.map((d) => `\u2022 ${d}`).join('\n') : 'No conditions selected in screening form' },
+      ...(args.aiJustification ? [{ heading: 'Clinical Justification', body: args.aiJustification }] : []),
       { heading: 'Notes', body: notes || 'Select conditions in the screening form.' },
       { heading: 'Procedures', body: 'Comprehensive autonomic nervous system testing including parasympathetic and sympathetic function evaluation with tilt table testing. Arterial physiologic studies of upper and lower extremities. Rhythm electrocardiography with interpretation and report.' },
 
@@ -660,6 +662,7 @@ export function generateUltrasoundDocuments(args: {
   screeningResult: ScreeningResult;
   screening: UltrasoundScreeningData;
   config: UltrasoundConfig;
+  aiJustification?: string;
 }): Record<'preProcedureOrder' | 'postProcedureNote' | 'billing', GeneratedDocument> {
   const generatedAtISO = isoNow(args.input.nowISO);
   const plexusId = ensurePlexusId(args.input.plexusId);
@@ -690,6 +693,7 @@ export function generateUltrasoundDocuments(args: {
       },
       { heading: 'Procedures Ordered', body: selection.length ? selection.map((t) => `\u2022 ${t}`).join('\n') : 'None selected' },
       { heading: 'Diagnosis', body: selectedConditions.length ? selectedConditions.map((d) => `\u2022 ${d}`).join('\n') : 'Select conditions in the screening form.' },
+      ...(args.aiJustification ? [{ heading: 'Clinical Justification', body: args.aiJustification }] : []),
       { heading: 'Notes', body: buildUltrasoundNotesBody(selection, args.screening.conditions || {}, args.config, args.screening.otherText) },
 
     ]
@@ -788,6 +792,7 @@ export function generateUltrasoundDocuments(args: {
 export function generateBrainWaveDocuments(args: {
   input: GenerateInput;
   screeningResult: ScreeningResult;
+  aiJustification?: string;
 }): Record<'preProcedureOrder' | 'postProcedureNote' | 'billing', GeneratedDocument> {
   const generatedAtISO = isoNow(args.input.nowISO);
   const plexusId = ensurePlexusId(args.input.plexusId);
@@ -815,6 +820,7 @@ export function generateBrainWaveDocuments(args: {
       },
       { heading: 'Procedure Ordered', body: 'BrainWave - Comprehensive Assessment' },
       { heading: 'Diagnosis', body: args.screeningResult.selectedConditions.length ? args.screeningResult.selectedConditions.map((d) => `\u2022 ${d}`).join('\n') : 'Select conditions in the screening form.' },
+      ...(args.aiJustification ? [{ heading: 'Clinical Justification', body: args.aiJustification }] : []),
       { heading: 'Notes', body: args.screeningResult.notes.length ? args.screeningResult.notes.join(' ') : 'Select conditions in the screening form.' },
 
     ]
@@ -862,6 +868,7 @@ export function generateBrainWaveDocuments(args: {
 export function generatePgxDocuments(args: {
   input: GenerateInput;
   screeningResult: ScreeningResult;
+  aiJustification?: string;
 }): Record<'preProcedureOrder' | 'postProcedureNote' | 'billing', GeneratedDocument> {
   const generatedAtISO = isoNow(args.input.nowISO);
   const plexusId = ensurePlexusId(args.input.plexusId);
@@ -895,6 +902,7 @@ export function generatePgxDocuments(args: {
         ].join('\n')
       },
       { heading: 'Clinical Indication', body: 'History of adverse or failed medication trials; optimization of therapy and avoidance of drug\u2013gene interactions.' },
+      ...(args.aiJustification ? [{ heading: 'Clinical Justification', body: args.aiJustification }] : []),
       { heading: 'Trigger Medications Identified', body: args.screeningResult.selectedConditions.length ? args.screeningResult.selectedConditions.map((t) => `\u2022 ${t}`).join('\n') : 'None identified from screening' },
 
     ]
@@ -1008,20 +1016,41 @@ export type OpenAIPromptInput = {
   service: PlexusService;
   selectedConditions: string[];
   notes: string[];
+  icd10Codes?: string[];
+  cptCodes?: string[];
 };
 
 export function generateOpenAIJustificationPrompt(input: OpenAIPromptInput): string {
+  const serviceDescriptions: Record<string, string> = {
+    VitalWave: 'VitalWave Comprehensive Autonomic & Vascular Assessment (non-invasive cardiovascular and autonomic nervous system diagnostic testing)',
+    Ultrasound: 'Diagnostic Ultrasound study',
+    BrainWave: 'BrainWave Comprehensive Neurological Assessment (EEG, neuropsychological testing, and related neurodiagnostic procedures)',
+    PGx: 'Pharmacogenomic (PGx) Testing to assess drug-gene interactions and optimize medication therapy',
+  };
+  const serviceDesc = serviceDescriptions[input.service] || `${input.service} diagnostic testing`;
+
   return [
-    `Act as a professional medical scribe. Your task is to generate a highly detailed, CMS-compliant, and audit-ready clinical justification for ordering a ${input.service} test.`,
+    `You are a CMS-certified medical scribe and clinical documentation specialist. Generate a 2-4 paragraph clinical justification narrative that is fully CMS-compliant and audit-ready for the following pre-procedure order.`,
+    ``,
+    `PATIENT INFORMATION:`,
     `Patient Name: ${input.patient.patientName}`,
     `Date of Birth: ${input.patient.dateOfBirth || 'Not specified'}`,
-    `Service Ordered: ${input.service}`,
+    ``,
+    `SERVICE ORDERED: ${serviceDesc}`,
+    input.icd10Codes?.length ? `ICD-10 Diagnosis Codes: ${input.icd10Codes.join(', ')}` : '',
+    input.cptCodes?.length ? `CPT Procedure Codes: ${input.cptCodes.join(', ')}` : '',
     `Selected Diagnoses/Conditions: ${input.selectedConditions.length ? input.selectedConditions.join(', ') : 'None specified'}`,
-    `Clinical Notes: ${input.notes.length ? input.notes.join(' ') : 'None'}`,
-    `\nInstructions:`,
-    `- Write a cohesive 1-2 paragraph clinical narrative.`,
-    `- Ensure it clearly justifies the medical necessity of the ${input.service} test based on the listed diagnoses and clinical notes.`,
-    `- Avoid using placeholder text; use only the provided patient data.`,
-    `- Ensure the tone is objective, clinical, and suitable for a formal medical record.`
-  ].join('\n');
+    `Clinical Context (condition-mapped notes): ${input.notes.length ? input.notes.join(' ') : 'None'}`,
+    ``,
+    `REQUIREMENTS FOR THE JUSTIFICATION NARRATIVE:`,
+    `- Write 2-4 cohesive paragraphs in formal clinical language suitable for inclusion in a medical record.`,
+    `- Clearly state the medical necessity of the ordered procedure, linking the patient's specific diagnoses to the clinical rationale for testing.`,
+    `- Reference the relevant ICD-10 diagnosis codes and CPT procedure codes by number when applicable.`,
+    `- Explain how the test results will directly inform or change clinical management for this patient.`,
+    `- Use language consistent with CMS Local Coverage Determinations (LCDs) and medical necessity documentation standards.`,
+    `- The narrative must be patient-specific: reference ${input.patient.patientName}'s conditions and the specific service ordered.`,
+    `- Do not use placeholder text, brackets, or template language. Use only the data provided above.`,
+    `- Ensure the tone is objective, evidenced-based, and audit-ready.`,
+    `- Output only the narrative paragraphs — no headings, no bullet points, no preamble.`
+  ].filter((line) => line !== null && line !== undefined).join('\n');
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useLocation } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import {
   Brain,
   Pill,
   Waves,
+  Loader2,
 } from "lucide-react";
 import {
   type PlexusService,
@@ -41,6 +42,7 @@ import {
   generatePgxDocuments,
   resolveClinicForClinician,
 } from "@shared/plexus";
+import { apiRequest } from "@/lib/queryClient";
 
 type Step = "patient" | "service" | "screening" | "documents";
 
@@ -182,12 +184,13 @@ export default function PlexusPage() {
   const [pgxScreening, setPgxScreening] = useState<PgxScreeningData>({ matches: [] });
 
   const [documents, setDocuments] = useState<GeneratedDocument[]>([]);
+  const [isGeneratingJustification, setIsGeneratingJustification] = useState(false);
 
   function patientIsValid() {
     return patient.patientName.trim() && patient.clinicianName.trim();
   }
 
-  function handleGenerateDocs() {
+  const handleGenerateDocs = useCallback(async () => {
     if (!service) return;
 
     const patientDemographics = {
@@ -205,28 +208,79 @@ export default function PlexusPage() {
 
     const input = { patient: patientDemographics, clinician: clinicianInfo, clinic };
 
+    let aiJustification: string | undefined;
+    try {
+      setIsGeneratingJustification(true);
+      let selectedConditions: string[] = [];
+      let notes: string[] = [];
+      let icd10Codes: string[] = [];
+      let cptCodes: string[] = [];
+
+      if (service === "VitalWave") {
+        const result = vitalWaveScreeningToResult({ config: VITALWAVE_CONFIG, screening: vwScreening });
+        selectedConditions = result.selectedConditions;
+        notes = result.notes;
+        icd10Codes = result.icd10Codes;
+        cptCodes = result.cptCodes;
+      } else if (service === "Ultrasound") {
+        const result = ultrasoundScreeningToResult({ config: ULTRASOUND_CONFIG, screening: usScreening });
+        selectedConditions = result.selectedConditions;
+        notes = result.notes;
+        icd10Codes = result.icd10Codes;
+        cptCodes = result.cptCodes;
+      } else if (service === "BrainWave") {
+        const result = brainWaveScreeningToResult({ mapping: BRAINWAVE_MAPPING, screening: bwScreening });
+        selectedConditions = result.selectedConditions;
+        notes = result.notes;
+        icd10Codes = result.icd10Codes;
+        cptCodes = result.cptCodes;
+      } else if (service === "PGx") {
+        const result = pgxScreeningToResult({ screening: pgxScreening });
+        selectedConditions = result.selectedConditions;
+        notes = result.notes;
+        icd10Codes = result.icd10Codes;
+        cptCodes = result.cptCodes;
+      }
+
+      const response = await apiRequest("POST", "/api/generate-justification", {
+        patient: { patientName: patientDemographics.patientName, dateOfBirth: patientDemographics.dateOfBirth },
+        service,
+        selectedConditions,
+        notes,
+        icd10Codes,
+        cptCodes,
+      });
+      const data = await response.json();
+      aiJustification = data.justification || undefined;
+    } catch (err) {
+      console.error("[generate-justification] AI call failed, using fallback:", err);
+      aiJustification = undefined;
+    } finally {
+      setIsGeneratingJustification(false);
+    }
+
     let docs: GeneratedDocument[] = [];
     if (service === "VitalWave") {
       const result = vitalWaveScreeningToResult({ config: VITALWAVE_CONFIG, screening: vwScreening });
-      const generated = generateVitalWaveDocuments({ input, screeningResult: result, vitalWaveConfig: VITALWAVE_CONFIG, vitalWaveScreening: vwScreening });
+      const generated = generateVitalWaveDocuments({ input, screeningResult: result, vitalWaveConfig: VITALWAVE_CONFIG, vitalWaveScreening: vwScreening, aiJustification });
       docs = [generated.preProcedureOrder, generated.postProcedureNote, generated.billing];
     } else if (service === "Ultrasound") {
       const result = ultrasoundScreeningToResult({ config: ULTRASOUND_CONFIG, screening: usScreening });
-      const generated = generateUltrasoundDocuments({ input, screeningResult: result, screening: usScreening, config: ULTRASOUND_CONFIG });
+      const generated = generateUltrasoundDocuments({ input, screeningResult: result, screening: usScreening, config: ULTRASOUND_CONFIG, aiJustification });
       docs = [generated.preProcedureOrder, generated.postProcedureNote, generated.billing];
     } else if (service === "BrainWave") {
       const result = brainWaveScreeningToResult({ mapping: BRAINWAVE_MAPPING, screening: bwScreening });
-      const generated = generateBrainWaveDocuments({ input, screeningResult: result });
+      const generated = generateBrainWaveDocuments({ input, screeningResult: result, aiJustification });
       docs = [generated.preProcedureOrder, generated.postProcedureNote, generated.billing];
     } else if (service === "PGx") {
       const result = pgxScreeningToResult({ screening: pgxScreening });
-      const generated = generatePgxDocuments({ input, screeningResult: result });
+      const generated = generatePgxDocuments({ input, screeningResult: result, aiJustification });
       docs = [generated.preProcedureOrder, generated.postProcedureNote, generated.billing];
     }
 
     setDocuments(docs);
     setStep("documents");
-  }
+  }, [service, patient, vwScreening, usScreening, bwScreening, pgxScreening]);
 
   function handleBack() {
     if (step === "documents") setStep("screening");
@@ -492,9 +546,18 @@ export default function PlexusPage() {
                 ))}
               </div>
               <div className="mt-6 flex justify-end">
-                <Button onClick={handleGenerateDocs} data-testid="button-generate-documents">
-                  Generate Documents
-                  <ChevronRight className="w-4 h-4 ml-1" />
+                <Button onClick={handleGenerateDocs} disabled={isGeneratingJustification} data-testid="button-generate-documents">
+                  {isGeneratingJustification ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      Generate Documents
+                      <ChevronRight className="w-4 h-4 ml-1" />
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
@@ -593,9 +656,18 @@ export default function PlexusPage() {
                 })}
               </div>
               <div className="mt-6 flex justify-end">
-                <Button onClick={handleGenerateDocs} data-testid="button-generate-documents">
-                  Generate Documents
-                  <ChevronRight className="w-4 h-4 ml-1" />
+                <Button onClick={handleGenerateDocs} disabled={isGeneratingJustification} data-testid="button-generate-documents">
+                  {isGeneratingJustification ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      Generate Documents
+                      <ChevronRight className="w-4 h-4 ml-1" />
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
@@ -647,9 +719,18 @@ export default function PlexusPage() {
                 ))}
               </div>
               <div className="mt-6 flex justify-end">
-                <Button onClick={handleGenerateDocs} data-testid="button-generate-documents">
-                  Generate Documents
-                  <ChevronRight className="w-4 h-4 ml-1" />
+                <Button onClick={handleGenerateDocs} disabled={isGeneratingJustification} data-testid="button-generate-documents">
+                  {isGeneratingJustification ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      Generate Documents
+                      <ChevronRight className="w-4 h-4 ml-1" />
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
@@ -693,9 +774,18 @@ export default function PlexusPage() {
                 </div>
               </Card>
               <div className="mt-6 flex justify-end">
-                <Button onClick={handleGenerateDocs} data-testid="button-generate-documents">
-                  Generate Documents
-                  <ChevronRight className="w-4 h-4 ml-1" />
+                <Button onClick={handleGenerateDocs} disabled={isGeneratingJustification} data-testid="button-generate-documents">
+                  {isGeneratingJustification ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      Generate Documents
+                      <ChevronRight className="w-4 h-4 ml-1" />
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
