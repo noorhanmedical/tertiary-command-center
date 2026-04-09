@@ -73,24 +73,7 @@ import { SiGooglesheets } from "react-icons/si";
 import { ExternalLink } from "lucide-react";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
 import { PlexusDrive } from "@/components/PlexusDrive";
-import {
-  ULTRASOUND_CONFIG,
-  VITALWAVE_CONFIG,
-  BRAINWAVE_MAPPING,
-  type GeneratedDocument,
-  type UltrasoundScreeningData,
-  type VitalWaveScreeningData,
-  type BrainWaveScreeningData,
-  generateVitalWaveDocuments,
-  generateUltrasoundDocuments,
-  generateBrainWaveDocuments,
-  vitalWaveScreeningToResult,
-  ultrasoundScreeningToResult,
-  brainWaveScreeningToResult,
-  DEFAULT_CLINIC,
-  resolveClinicForClinician,
-  resolveClinicianNpi,
-} from "@shared/plexus";
+import { type GeneratedDocument } from "@shared/plexus";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[]; icd10_codes?: string[]; pearls?: string[]; approvalRequired?: boolean };
@@ -2014,17 +1997,6 @@ const TEST_TO_ULTRASOUND_KEY: Record<string, string> = {
   "Upper Extremity Arterial Doppler": "Upper Extremity Arterial",
   "Upper Extremity Venous Duplex": "Upper Extremity Venous",
 };
-
-// autoGeneratePatientNotes is imported from @/lib/noteGeneration
-
-function _dummyToRemoveUnusedImportWarnings() {
-  // These plexus imports are kept for use in the Plexus DocGen preview UI
-  void BRAINWAVE_MAPPING; void VITALWAVE_CONFIG; void ULTRASOUND_CONFIG;
-  void generateBrainWaveDocuments; void generateVitalWaveDocuments; void generateUltrasoundDocuments;
-  void brainWaveScreeningToResult; void vitalWaveScreeningToResult; void ultrasoundScreeningToResult;
-  void DEFAULT_CLINIC; void resolveClinicForClinician; void resolveClinicianNpi;
-}
-void _dummyToRemoveUnusedImportWarnings;
 
 
 function formatScheduleDate(scheduleDate: string | null | undefined, createdAt: string | Date | null | undefined): string {
