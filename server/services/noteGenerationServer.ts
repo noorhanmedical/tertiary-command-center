@@ -100,19 +100,29 @@ function combineJustifications(docGenText: string | undefined, clinicianUndersta
   return parts.length > 0 ? parts.join("\n\n") : undefined;
 }
 
-function getReasoningField<K extends "icd10_codes" | "qualifying_factors" | "clinician_understanding">(
+function getReasoningStringArray(
   reasoning: Record<string, unknown> | null | undefined,
   test: string,
-  field: K
-): K extends "clinician_understanding" ? string : string[] {
+  field: "icd10_codes" | "qualifying_factors"
+): string[] {
   const r = reasoning?.[test];
   if (r && typeof r === "object" && !Array.isArray(r)) {
     const val = (r as Record<string, unknown>)[field];
-    if (field === "clinician_understanding") return (typeof val === "string" ? val : "") as any;
-    return (Array.isArray(val) ? val : []) as any;
+    return Array.isArray(val) ? (val as string[]) : [];
   }
-  if (field === "clinician_understanding") return "" as any;
-  return [] as any;
+  return [];
+}
+
+function getReasoningString(
+  reasoning: Record<string, unknown> | null | undefined,
+  test: string
+): string {
+  const r = reasoning?.[test];
+  if (r && typeof r === "object" && !Array.isArray(r)) {
+    const val = (r as Record<string, unknown>)["clinician_understanding"];
+    return typeof val === "string" ? val : "";
+  }
+  return "";
 }
 
 export async function autoGeneratePatientNotesServer(
@@ -155,9 +165,9 @@ export async function autoGeneratePatientNotesServer(
 
   if (hasBrainWave) {
     const bwTest = tests.find((t) => t.toLowerCase().includes("brain")) || "BrainWave";
-    const icd10 = getReasoningField(reasoning, bwTest, "icd10_codes");
-    const factors = getReasoningField(reasoning, bwTest, "qualifying_factors");
-    const clinicianUnderstanding = getReasoningField(reasoning, bwTest, "clinician_understanding");
+    const icd10 = getReasoningStringArray(reasoning, bwTest, "icd10_codes");
+    const factors = getReasoningStringArray(reasoning, bwTest, "qualifying_factors");
+    const clinicianUnderstanding = getReasoningString(reasoning, bwTest);
 
     const screening: BrainWaveScreeningData = { group1: {}, group2: {}, group3: {} };
     factors.forEach((f) => {
@@ -193,9 +203,9 @@ export async function autoGeneratePatientNotesServer(
 
   if (hasVitalWave) {
     const vwTest = tests.find((t) => t.toLowerCase().includes("vital")) || "VitalWave";
-    const icd10 = getReasoningField(reasoning, vwTest, "icd10_codes");
-    const factors = getReasoningField(reasoning, vwTest, "qualifying_factors");
-    const clinicianUnderstanding = getReasoningField(reasoning, vwTest, "clinician_understanding");
+    const icd10 = getReasoningStringArray(reasoning, vwTest, "icd10_codes");
+    const factors = getReasoningStringArray(reasoning, vwTest, "qualifying_factors");
+    const clinicianUnderstanding = getReasoningString(reasoning, vwTest);
 
     const screening: VitalWaveScreeningData = {};
     Object.entries(VITALWAVE_CONFIG).forEach(([groupKey, group]) => {
@@ -232,9 +242,9 @@ export async function autoGeneratePatientNotesServer(
     const factors: string[] = [];
     const clinicianUnderstandings: string[] = [];
     ultrasoundTests.forEach((t) => {
-      icd10.push(...getReasoningField(reasoning, t, "icd10_codes"));
-      factors.push(...getReasoningField(reasoning, t, "qualifying_factors"));
-      const cu = getReasoningField(reasoning, t, "clinician_understanding");
+      icd10.push(...getReasoningStringArray(reasoning, t, "icd10_codes"));
+      factors.push(...getReasoningStringArray(reasoning, t, "qualifying_factors"));
+      const cu = getReasoningString(reasoning, t);
       if (cu) clinicianUnderstandings.push(cu);
     });
 

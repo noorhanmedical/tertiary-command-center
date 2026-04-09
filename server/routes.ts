@@ -2101,19 +2101,21 @@ export async function registerRoutes(
 
       await storage.deleteGeneratedNotesByPatient(patientId);
 
-      const payload = docs.map((doc) => ({
-        patientId: patient.id,
-        batchId: batch.id,
-        facility: batch.facility ?? null,
-        scheduleDate: batch.scheduleDate ?? null,
-        patientName: patient.name,
-        service: doc.service,
-        docKind: doc.kind,
-        title: doc.title,
-        sections: doc.sections as any,
-      }));
+      const records = docs.map((doc) =>
+        saveGeneratedNoteSchema.parse({
+          patientId: patient.id,
+          batchId: batch.id,
+          facility: batch.facility ?? null,
+          scheduleDate: batch.scheduleDate ?? null,
+          patientName: patient.name,
+          service: doc.service,
+          docKind: doc.kind,
+          title: doc.title,
+          sections: doc.sections,
+        })
+      );
 
-      const saved = await storage.saveGeneratedNotes(payload);
+      const saved = await storage.saveGeneratedNotes(records);
       res.json({ notes: saved });
     } catch (error: any) {
       console.error("[refresh-notes] Error:", error.message);
