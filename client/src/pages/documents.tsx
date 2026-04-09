@@ -8,6 +8,7 @@ import { Link } from "wouter";
 import { ArrowLeft, FileText, Building2, Calendar, ChevronDown, ChevronRight, Copy, Printer, Trash2, RefreshCw, ClipboardList, ExternalLink, Upload, AlertTriangle } from "lucide-react";
 import { SiGoogledrive } from "react-icons/si";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
+import { DocumentSection } from "@/components/DocumentSection";
 type NoteSection = { heading: string; body: string };
 
 function noteNeedsDx(sections: NoteSection[], docKind: string): boolean {
@@ -513,13 +514,11 @@ export default function DocumentsPage() {
                                                         )}
                                                       </div>
                                                       {expandedNotes.has(note.id) && (
-                                                        <div className="pb-3 space-y-1.5" data-testid={`note-content-${note.id}`}>
-                                                          {note.sections.filter((s) => s.heading !== "__screening_meta__").map((s, si) => (
-                                                            <div key={si} className="text-[11px] text-slate-700 leading-snug">
-                                                              <span className="font-semibold">{s.heading}: </span>
-                                                              <span className="whitespace-pre-wrap">{s.body}</span>
-                                                            </div>
-                                                          ))}
+                                                        <div className="pb-3" data-testid={`note-content-${note.id}`}>
+                                                          <DocumentSection
+                                                            doc={{ kind: note.docKind, title: note.title, sections: note.sections }}
+                                                            index={note.id}
+                                                          />
                                                         </div>
                                                       )}
                                                     </div>
