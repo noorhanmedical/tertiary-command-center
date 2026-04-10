@@ -62,9 +62,9 @@ function generateVitalWaveSlots(): string[] {
   const slots: string[] = [];
   for (let h = 8; h <= 16; h++) {
     slots.push(`${String(h).padStart(2, "0")}:00`);
-    slots.push(`${String(h).padStart(2, "0")}:30`);
+    if (h < 16) slots.push(`${String(h).padStart(2, "0")}:30`);
   }
-  slots.push("17:00");
+  slots.push("16:30");
   return slots;
 }
 
@@ -168,8 +168,8 @@ function SlotGrid({ appointments, selectedDate, facility: _facility, onBook, onC
   for (const a of appointments) {
     if (a.scheduledDate !== selectedDate) continue;
     if (a.status !== "scheduled") continue;
-    if (isBrainWave(a.testType)) bookedBW.set(a.scheduledTime, a);
-    else if (isVitalWave(a.testType)) bookedVW.set(a.scheduledTime, a);
+    if (isVitalWave(a.testType)) bookedVW.set(a.scheduledTime, a);
+    else bookedBW.set(a.scheduledTime, a);
   }
 
   return (

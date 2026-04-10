@@ -1616,6 +1616,7 @@ function PatientScheduleModal({ patient, onClose }: { patient: PatientScreening;
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/appointments/upcoming"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments/patient", patient.id] });
       toast({ title: "Appointment booked!", description: `${patient.name} scheduled for ${selectedTestType}` });
       onClose();
     },
@@ -1624,8 +1625,9 @@ function PatientScheduleModal({ patient, onClose }: { patient: PatientScreening;
     },
   });
 
-  const slots = selectedTestType === "VitalWave"
-    ? (() => { const s: string[] = []; for (let h = 8; h <= 16; h++) { s.push(`${String(h).padStart(2, "0")}:00`); s.push(`${String(h).padStart(2, "0")}:30`); } s.push("17:00"); return s; })()
+  const isVW = selectedTestType === "VitalWave";
+  const slots = isVW
+    ? (() => { const s: string[] = []; for (let h = 8; h <= 16; h++) { s.push(`${String(h).padStart(2, "0")}:00`); if (h < 16) s.push(`${String(h).padStart(2, "0")}:30`); } s.push("16:30"); return s; })()
     : (() => { const s: string[] = []; for (let h = 8; h <= 16; h++) { s.push(`${String(h).padStart(2, "0")}:00`); } return s; })();
 
   const selectedDateStr = selectedDay
@@ -1634,7 +1636,11 @@ function PatientScheduleModal({ patient, onClose }: { patient: PatientScreening;
 
   const bookedSlots = new Set(
     appointments
-      .filter((a) => a.scheduledDate === selectedDateStr && a.status === "scheduled" && a.testType === selectedTestType)
+      .filter((a) => {
+        if (a.scheduledDate !== selectedDateStr || a.status !== "scheduled") return false;
+        const aIsVW = a.testType === "VitalWave";
+        return aIsVW === isVW;
+      })
       .map((a) => a.scheduledTime)
   );
 
@@ -1825,6 +1831,12 @@ function PatientCard({
   const cardQueryClient = useQueryClient();
   const { toast: cardToast } = useToast();
 
+  const { data: patientAppts = [] } = useQuery<any[]>({
+    queryKey: ["/api/appointments/patient", patient.id],
+    enabled: !!patient.id,
+  });
+  const scheduledAppt = patientAppts.find((a: any) => a.status === "scheduled");
+
   useEffect(() => { setLocalTests(patient.qualifyingTests || []); }, [patient.qualifyingTests]);
 
   const handleAddTest = useCallback((test: string) => {
@@ -1966,6 +1978,15 @@ function PatientCard({
               {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
               {isCompleted ? "Re-Generate" : "Generate"}
             </Button>
+            {scheduledAppt && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-medium text-primary bg-primary/10 border border-primary/20 rounded-full px-2 py-0.5"
+                data-testid={`badge-scheduled-${patient.id}`}
+              >
+                <Calendar className="w-2.5 h-2.5" />
+                {scheduledAppt.scheduledDate}
+              </span>
+            )}
             <Button
               variant="ghost"
               size="icon"
