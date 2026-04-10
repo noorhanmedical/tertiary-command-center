@@ -7,6 +7,7 @@ import {
   generatedNotes,
   billingRecords,
   uploadedDocuments,
+  ancillaryAppointments,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
@@ -21,11 +22,13 @@ import {
   type InsertBillingRecord,
   type UploadedDocument,
   type InsertUploadedDocument,
+  type AncillaryAppointment,
+  type InsertAncillaryAppointment,
   users,
   type User,
   type InsertUser,
 } from "@shared/schema";
-import { eq, desc, ilike, sql, and } from "drizzle-orm";
+import { eq, desc, ilike, sql, and, gte, asc } from "drizzle-orm";
 
 function parseTimeToMinutes(time: string | null | undefined): number {
   if (!time) return Infinity;
@@ -95,6 +98,12 @@ export interface IStorage {
 
   saveUploadedDocument(record: InsertUploadedDocument): Promise<UploadedDocument>;
   getAllUploadedDocuments(): Promise<UploadedDocument[]>;
+
+  createAppointment(record: InsertAncillaryAppointment): Promise<AncillaryAppointment>;
+  getAppointments(filters?: { facility?: string; date?: string; testType?: string; status?: string }): Promise<AncillaryAppointment[]>;
+  getUpcomingAppointments(limit?: number): Promise<AncillaryAppointment[]>;
+  cancelAppointment(id: number): Promise<AncillaryAppointment | undefined>;
+  getAppointmentsByPatient(patientScreeningId: number): Promise<AncillaryAppointment[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -312,6 +321,53 @@ export class DatabaseStorage implements IStorage {
 
   async getAllUploadedDocuments(): Promise<UploadedDocument[]> {
     return db.select().from(uploadedDocuments).orderBy(desc(uploadedDocuments.uploadedAt));
+  }
+
+  async createAppointment(record: InsertAncillaryAppointment): Promise<AncillaryAppointment> {
+    const [result] = await db.insert(ancillaryAppointments).values(record).returning();
+    return result;
+  }
+
+  async getAppointments(filters?: { facility?: string; date?: string; testType?: string; status?: string }): Promise<AncillaryAppointment[]> {
+    const conditions = [];
+    if (filters?.facility) conditions.push(eq(ancillaryAppointments.facility, filters.facility));
+    if (filters?.date) conditions.push(eq(ancillaryAppointments.scheduledDate, filters.date));
+    if (filters?.testType) conditions.push(eq(ancillaryAppointments.testType, filters.testType));
+    if (filters?.status) conditions.push(eq(ancillaryAppointments.status, filters.status));
+
+    if (conditions.length > 0) {
+      return db.select().from(ancillaryAppointments)
+        .where(and(...conditions))
+        .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime));
+    }
+    return db.select().from(ancillaryAppointments)
+      .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime));
+  }
+
+  async getUpcomingAppointments(limit = 10): Promise<AncillaryAppointment[]> {
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    return db.select().from(ancillaryAppointments)
+      .where(and(
+        gte(ancillaryAppointments.scheduledDate, todayStr),
+        eq(ancillaryAppointments.status, "scheduled")
+      ))
+      .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime))
+      .limit(limit);
+  }
+
+  async cancelAppointment(id: number): Promise<AncillaryAppointment | undefined> {
+    const [result] = await db.update(ancillaryAppointments)
+      .set({ status: "cancelled" })
+      .where(eq(ancillaryAppointments.id, id))
+      .returning();
+    return result;
+  }
+
+  async getAppointmentsByPatient(patientScreeningId: number): Promise<AncillaryAppointment[]> {
+    return db.select().from(ancillaryAppointments)
+      .where(eq(ancillaryAppointments.patientScreeningId, patientScreeningId))
+      .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime));
   }
 }
 

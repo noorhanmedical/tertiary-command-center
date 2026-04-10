@@ -26,6 +26,15 @@ This project is an AI-powered patient screening application designed to analyze 
 ## System Architecture
 The application features a React + Vite + Tailwind CSS + Shadcn UI frontend, providing an iOS-style card layout and a modern user experience with a clean, icy blue-white theme. The backend is built with Express.js, handling file parsing, OpenAI integration, and API routing. PostgreSQL, managed with Drizzle ORM, serves as the database, utilizing explicit indexes for optimized performance. The system employs a 3-step draft workflow: build schedule, edit clinical data, and analyze for ancillaries. Core features include tab-based navigation for schedules, a collapsible sidebar for schedule history, and an expandable patient result card view. A service layer encapsulates AI client interactions, data ingestion, and screening logic. Operational robustness is ensured through health checks, graceful shutdown mechanisms, and schema management via Drizzle migrations. Documents are generated client-side and can be exported.
 
+### Ancillary Appointment Scheduling (Task #104)
+A connected scheduling system with a single `ancillary_appointments` DB table shared across three surfaces:
+1. **Home page tile** (`/`): "Upcoming Appointments" card showing next N appointments with click-through to `/appointments`
+2. **`/appointments` page**: Three clinic tabs (Taylor Family Practice, NWPG - Spring, NWPG - Veterans), each with a monthly calendar (booking-dot indicators) and a side-by-side BrainWave (1hr) / VitalWave (30min) slot grid. Click a slot to book, click X to cancel.
+3. **Patient card calendar icon**: A calendar button in every patient card's action bar opens a scheduling modal (pick test type, pick date, pick slot, confirm booking). Post-booking badge shows on card.
+- DB table: `ancillary_appointments` (id, patientScreeningId nullable FK, patientName, facility, scheduledDate YYYY-MM-DD, scheduledTime HH:MM 24h, testType, status scheduled|cancelled, createdAt)
+- API: `GET /api/appointments`, `POST /api/appointments`, `PATCH /api/appointments/:id`, `GET /api/appointments/patient/:patientId`
+- Duplicate-slot check on create (409 if same facility+date+time+testType already scheduled)
+
 ## External Dependencies
 - **OpenAI GPT-5.2**: Used for AI-powered patient qualification and clinical note generation.
 - **Google Workspace (Google Sheets, Google Drive)**: Integrated for synchronizing patient and billing data, and for exporting generated clinical notes as Google Docs.
