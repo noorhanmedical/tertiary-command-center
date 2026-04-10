@@ -2178,5 +2178,92 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/ai-select-conditions", async (req, res) => {
+    try {
+      const schema = z.object({
+        patientId: z.number().int(),
+        service: z.enum(["VitalWave", "Ultrasound", "BrainWave", "PGx"]),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const { patientId, service } = parsed.data;
+      const patient = await storage.getPatientScreening(patientId);
+      if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      const { VITALWAVE_CONFIG, ULTRASOUND_CONFIG, BRAINWAVE_MAPPING } = await import("../shared/plexus");
+      const { openai, withRetry } = await import("./services/aiClient");
+
+      let availableConditions: string[] = [];
+
+      if (service === "VitalWave") {
+        Object.values(VITALWAVE_CONFIG).forEach((group) => {
+          group.conditions.forEach((c) => availableConditions.push(c.name));
+        });
+      } else if (service === "BrainWave") {
+        availableConditions = Object.keys(BRAINWAVE_MAPPING);
+      } else if (service === "Ultrasound") {
+        Object.values(ULTRASOUND_CONFIG).forEach((cfg) => {
+          cfg.conditions.forEach((c) => { if (c.name !== "Other") availableConditions.push(c.name); });
+        });
+        availableConditions = [...new Set(availableConditions)];
+      } else {
+        return res.json({ conditions: [] });
+      }
+
+      const clinicalData = [
+        patient.diagnoses ? `Diagnoses: ${patient.diagnoses}` : null,
+        patient.history ? `History/PMH: ${patient.history}` : null,
+        patient.medications ? `Medications: ${patient.medications}` : null,
+      ].filter(Boolean).join("\n");
+
+      if (!clinicalData.trim()) {
+        return res.json({ conditions: [] });
+      }
+
+      const prompt = `You are a clinical decision support tool. Given patient clinical data, select which conditions from the provided list apply to this patient. Be liberal — include any condition that has a reasonable clinical connection. Return ONLY a valid JSON array of condition names, exactly as spelled from the list. No explanation, no markdown.
+
+Patient clinical data:
+${clinicalData}
+
+Available conditions for ${service}:
+${availableConditions.map((c) => `- "${c}"`).join("\n")}
+
+Return format: ["Condition Name 1", "Condition Name 2", ...]`;
+
+      const response = await withRetry(
+        () =>
+          openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+              { role: "system", content: "You are a clinical decision support tool. Return only valid JSON arrays." },
+              { role: "user", content: prompt },
+            ],
+            temperature: 0.1,
+            max_completion_tokens: 500,
+          }),
+        3,
+        "aiSelectConditions"
+      );
+
+      const raw = response.choices[0]?.message?.content?.trim() || "[]";
+      let selected: string[] = [];
+      try {
+        const cleaned = raw.replace(/^```[a-z]*\n?/, "").replace(/\n?```$/, "").trim();
+        const parsed = JSON.parse(cleaned);
+        if (Array.isArray(parsed)) {
+          selected = parsed.filter((c: unknown) => typeof c === "string" && availableConditions.includes(c));
+        }
+      } catch {
+        console.warn("[ai-select-conditions] Failed to parse AI response:", raw);
+      }
+
+      res.json({ conditions: selected });
+    } catch (error: any) {
+      console.error("[ai-select-conditions] Error:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }

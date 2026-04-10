@@ -370,6 +370,7 @@ export function EditableScreeningFormModal({
   });
 
   const [initialized, setInitialized] = useState(!needsFallback);
+  const [aiLoading, setAiLoading] = useState(needsFallback);
 
   const [vwScreening, setVwScreening] = useState<VitalWaveScreeningData>(() =>
     buildInitialVwScreening(meta.selectedConditions)
@@ -386,27 +387,60 @@ export function EditableScreeningFormModal({
 
   useEffect(() => {
     if (!needsFallback || initialized) return;
+
+    const applyFuzzyFallback = (record: PatientScreeningRecord) => {
+      const conditions = buildConditionsFromPatientRecord(record, service);
+      if (service === "VitalWave") {
+        setVwScreening(buildInitialVwScreening(conditions));
+      } else if (service === "BrainWave") {
+        setBwScreening(buildInitialBwScreening(conditions));
+      } else if (service === "Ultrasound") {
+        const selection = buildUltrasoundSelectionFromPatient(record);
+        setUsScreening(buildInitialUsScreening(conditions, selection, {}, null));
+      } else if (service === "PGx") {
+        setPgxScreening(buildInitialPgxScreening(conditions));
+      }
+    };
+
     if (patientFetchError) {
       setInitialized(true);
+      setAiLoading(false);
       return;
     }
     if (!patientRecord) return;
 
-    const conditions = buildConditionsFromPatientRecord(patientRecord, service);
-
-    if (service === "VitalWave") {
-      setVwScreening(buildInitialVwScreening(conditions));
-    } else if (service === "BrainWave") {
-      setBwScreening(buildInitialBwScreening(conditions));
-    } else if (service === "Ultrasound") {
-      const selection = buildUltrasoundSelectionFromPatient(patientRecord);
-      setUsScreening(buildInitialUsScreening(conditions, selection, {}, null));
-    } else if (service === "PGx") {
-      setPgxScreening(buildInitialPgxScreening(conditions));
+    if (service === "PGx") {
+      applyFuzzyFallback(patientRecord);
+      setInitialized(true);
+      setAiLoading(false);
+      return;
     }
 
-    setInitialized(true);
-  }, [needsFallback, initialized, patientRecord, patientFetchError, service]);
+    apiRequest("POST", "/api/ai-select-conditions", { patientId: note.patientId, service })
+      .then((r) => r.json())
+      .then((data: { conditions?: string[] }) => {
+        const aiConditions = Array.isArray(data.conditions) ? data.conditions : [];
+        if (aiConditions.length > 0) {
+          if (service === "VitalWave") {
+            setVwScreening(buildInitialVwScreening(aiConditions));
+          } else if (service === "BrainWave") {
+            setBwScreening(buildInitialBwScreening(aiConditions));
+          } else if (service === "Ultrasound") {
+            const selection = buildUltrasoundSelectionFromPatient(patientRecord);
+            setUsScreening(buildInitialUsScreening(aiConditions, selection, {}, null));
+          }
+        } else {
+          applyFuzzyFallback(patientRecord);
+        }
+      })
+      .catch(() => {
+        applyFuzzyFallback(patientRecord);
+      })
+      .finally(() => {
+        setInitialized(true);
+        setAiLoading(false);
+      });
+  }, [needsFallback, initialized, patientRecord, patientFetchError, service, note.patientId]);
 
   const regenerateMutation = useMutation({
     mutationFn: async (payload: Array<{
@@ -533,10 +567,10 @@ export function EditableScreeningFormModal({
 
         <p className="text-xs text-slate-500 -mt-1">{note.title}</p>
 
-        {needsFallback && !initialized && (
+        {aiLoading && (
           <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
             <RefreshCw className="w-3 h-3 animate-spin" />
-            Loading patient data…
+            AI filling in conditions from clinical data…
           </div>
         )}
 
