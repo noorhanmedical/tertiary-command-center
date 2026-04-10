@@ -1984,7 +1984,7 @@ function PatientCard({
                 data-testid={`badge-scheduled-${patient.id}`}
               >
                 <Calendar className="w-2.5 h-2.5" />
-                {scheduledAppt.scheduledDate}
+                Scheduled {scheduledAppt.scheduledDate}
               </span>
             )}
             <Button
