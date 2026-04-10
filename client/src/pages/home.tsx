@@ -33,7 +33,7 @@ import {
   Activity,
   Scan,
   Loader2,
-  ChevronDown,
+  ChevronDown, // used in sidebar/results
   ChevronRight,
   Download,
   Stethoscope,
@@ -65,8 +65,6 @@ import {
   Phone,
   ClipboardList,
   RefreshCw,
-  ChevronUp,
-  ClipboardPaste,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1559,7 +1557,6 @@ function PatientCard({
   const [localNoPrevTests, setLocalNoPrevTests] = useState(patient.noPreviousTests || false);
   const [pasteText, setPasteText] = useState("");
   const [isParsing, setIsParsing] = useState(false);
-  const [showPaste, setShowPaste] = useState(false);
 
   useEffect(() => { setLocalName(patient.name || ""); }, [patient.name]);
   useEffect(() => { setLocalTime(patient.time || ""); }, [patient.time]);
@@ -1588,7 +1585,7 @@ function PatientCard({
             />
             <div className="flex items-center gap-1.5">
               <Input
-                placeholder="Time (optional)"
+                placeholder="Time"
                 value={localTime}
                 onChange={(e) => setLocalTime(e.target.value)}
                 onBlur={() => { if (localTime !== (patient.time || "")) onUpdate("time", localTime); }}
@@ -1629,28 +1626,82 @@ function PatientCard({
             </Badge>
           )}
         </div>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onAnalyze}
-            disabled={isAnalyzing}
-            className="gap-1.5"
-            data-testid={`button-generate-${patient.id}`}
-          >
-            {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            {isCompleted ? "Re-Generate" : "Generate"}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => { if (confirm("Remove this patient?")) onDelete(); }}
-            title="Remove patient"
-            className="text-muted-foreground hover:text-destructive"
-            data-testid={`button-delete-patient-${patient.id}`}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
+        <div className="flex flex-col gap-2 items-end min-w-[220px]">
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onAnalyze}
+              disabled={isAnalyzing}
+              className="gap-1.5"
+              data-testid={`button-generate-${patient.id}`}
+            >
+              {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {isCompleted ? "Re-Generate" : "Generate"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => { if (confirm("Remove this patient?")) onDelete(); }}
+              title="Remove patient"
+              className="text-muted-foreground hover:text-destructive"
+              data-testid={`button-delete-patient-${patient.id}`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+          <div className="w-full space-y-1.5">
+            <Textarea
+              placeholder="Paste patient info here — name, DOB, insurance, meds, previous tests…"
+              className="min-h-[64px] resize-none text-xs w-full"
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              data-testid={`input-paste-info-${patient.id}`}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!pasteText.trim() || isParsing}
+              className="gap-1.5 w-full"
+              onClick={async () => {
+                if (!pasteText.trim()) return;
+                setIsParsing(true);
+                try {
+                  const res = await apiRequest("POST", "/api/parse-patient-paste", { text: pasteText });
+                  const data: { fields?: Record<string, string>; error?: string } = await res.json();
+                  if (data.error) throw new Error(data.error);
+                  const f = data.fields || {};
+                  const updates: Array<[string, string]> = [];
+                  if (f.name && f.name !== (patient.name || "")) { setLocalName(f.name); updates.push(["name", f.name]); }
+                  if (f.dob && f.dob !== (patient.dob || "")) { setLocalDob(f.dob); updates.push(["dob", f.dob]); }
+                  if (f.phone && f.phone !== (patient.phoneNumber || "")) { setLocalPhone(f.phone); updates.push(["phoneNumber", f.phone]); }
+                  if (f.insurance && f.insurance !== (patient.insurance || "")) { setLocalInsurance(f.insurance); updates.push(["insurance", f.insurance]); }
+                  if (f.diagnoses && f.diagnoses !== (patient.diagnoses || "")) { setLocalDx(f.diagnoses); updates.push(["diagnoses", f.diagnoses]); }
+                  if (f.history && f.history !== (patient.history || "")) { setLocalHx(f.history); updates.push(["history", f.history]); }
+                  if (f.medications && f.medications !== (patient.medications || "")) { setLocalRx(f.medications); updates.push(["medications", f.medications]); }
+                  if (f.previousTests && f.previousTests !== (patient.previousTests || "")) {
+                    setLocalPrevTests(f.previousTests);
+                    updates.push(["previousTests", f.previousTests]);
+                    if (localNoPrevTests) {
+                      setLocalNoPrevTests(false);
+                      onUpdate("noPreviousTests", false);
+                    }
+                  }
+                  if (f.previousTestsDate && f.previousTestsDate !== (patient.previousTestsDate || "")) { setLocalPrevTestsDate(f.previousTestsDate); updates.push(["previousTestsDate", f.previousTestsDate]); }
+                  updates.forEach(([field, value]) => onUpdate(field, value));
+                  if (updates.length > 0) setPasteText("");
+                } catch (err: any) {
+                  cardToast({ title: "Parse failed", description: err.message || "Could not parse patient info.", variant: "destructive" });
+                } finally {
+                  setIsParsing(false);
+                }
+              }}
+              data-testid={`button-parse-paste-${patient.id}`}
+            >
+              {isParsing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {isParsing ? "Parsing…" : "Parse & Fill"}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -1766,77 +1817,6 @@ function PatientCard({
             <p className="text-xs text-red-500 mt-1" data-testid={`text-prev-tests-required-${patient.id}`}>Required — enter previous tests or check "No previous tests"</p>
           )}
         </div>
-      </div>
-
-      {/* Paste Info Section */}
-      <div className="px-4 pb-3 border-t border-dashed border-slate-200 dark:border-slate-700 pt-3">
-        <button
-          className="flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 transition-colors"
-          onClick={() => setShowPaste((v) => !v)}
-          data-testid={`button-toggle-paste-${patient.id}`}
-        >
-          <ClipboardPaste className="w-3.5 h-3.5" />
-          {showPaste ? "Hide Paste Info" : "Paste Info"}
-          {showPaste ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-        </button>
-        {showPaste && (
-          <div className="mt-2 space-y-2">
-            <p className="text-xs text-muted-foreground">Paste any patient text (EHR note, demographics, insurance card) and AI will extract the fields.</p>
-            <Textarea
-              placeholder="Paste patient info here — name, DOB, insurance, medications, previous tests, etc."
-              className="min-h-[80px] resize-none text-sm"
-              value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
-              data-testid={`input-paste-info-${patient.id}`}
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!pasteText.trim() || isParsing}
-              className="gap-1.5"
-              onClick={async () => {
-                if (!pasteText.trim()) return;
-                setIsParsing(true);
-                try {
-                  const res = await apiRequest("POST", "/api/parse-patient-paste", { text: pasteText });
-                  const data: { fields?: Record<string, string>; error?: string } = await res.json();
-                  if (data.error) throw new Error(data.error);
-                  const f = data.fields || {};
-                  const updates: Array<[string, string]> = [];
-                  if (f.name && f.name !== (patient.name || "")) { setLocalName(f.name); updates.push(["name", f.name]); }
-                  if (f.dob && f.dob !== (patient.dob || "")) { setLocalDob(f.dob); updates.push(["dob", f.dob]); }
-                  if (f.phone && f.phone !== (patient.phoneNumber || "")) { setLocalPhone(f.phone); updates.push(["phoneNumber", f.phone]); }
-                  if (f.insurance && f.insurance !== (patient.insurance || "")) { setLocalInsurance(f.insurance); updates.push(["insurance", f.insurance]); }
-                  if (f.diagnoses && f.diagnoses !== (patient.diagnoses || "")) { setLocalDx(f.diagnoses); updates.push(["diagnoses", f.diagnoses]); }
-                  if (f.history && f.history !== (patient.history || "")) { setLocalHx(f.history); updates.push(["history", f.history]); }
-                  if (f.medications && f.medications !== (patient.medications || "")) { setLocalRx(f.medications); updates.push(["medications", f.medications]); }
-                  if (f.previousTests && f.previousTests !== (patient.previousTests || "")) {
-                    setLocalPrevTests(f.previousTests);
-                    updates.push(["previousTests", f.previousTests]);
-                    if (localNoPrevTests) {
-                      setLocalNoPrevTests(false);
-                      onUpdate("noPreviousTests", false);
-                    }
-                  }
-                  if (f.previousTestsDate && f.previousTestsDate !== (patient.previousTestsDate || "")) { setLocalPrevTestsDate(f.previousTestsDate); updates.push(["previousTestsDate", f.previousTestsDate]); }
-                  updates.forEach(([field, value]) => onUpdate(field, value));
-                  if (updates.length > 0) {
-                    setPasteText("");
-                    setShowPaste(false);
-                  }
-                } catch (err: any) {
-                  cardToast({ title: "Parse failed", description: err.message || "Could not parse patient info.", variant: "destructive" });
-                } finally {
-                  setIsParsing(false);
-                }
-              }}
-              data-testid={`button-parse-paste-${patient.id}`}
-            >
-              {isParsing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              {isParsing ? "Parsing…" : "Parse & Fill"}
-            </Button>
-          </div>
-        )}
       </div>
 
       <div className="px-4 pb-3">
