@@ -549,7 +549,7 @@ export function generateVitalWaveDocuments(args: {
       },
       { heading: 'Procedure Ordered', body: 'VitalWave - Comprehensive Autonomic & Vascular Assessment' },
       { heading: 'Diagnosis', body: dxList.length ? dxList.map((d) => `\u2022 ${d}`).join('\n') : 'No conditions selected in screening form' },
-      { heading: 'Notes', body: args.aiJustification ? (args.aiJustification + '\n\n' + (notes || '')) : (notes || 'Select conditions in the screening form.') },
+      { heading: 'Notes', body: args.aiJustification ? ([args.aiJustification, notes].filter(Boolean).join('\n\n')) : (notes || 'Select conditions in the screening form.') },
       { heading: 'Procedures', body: 'Comprehensive autonomic nervous system testing including parasympathetic and sympathetic function evaluation with tilt table testing. Arterial physiologic studies of upper and lower extremities. Rhythm electrocardiography with interpretation and report.' },
 
     ],
