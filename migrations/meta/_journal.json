@@ -22,6 +22,20 @@
       "when": 1775457438231,
       "tag": "0002_add_app_settings_and_drive_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1775800000000,
+      "tag": "0003_add_previous_tests_date",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1775838100000,
+      "tag": "0004_add_no_previous_tests",
+      "breakpoints": true
     }
   ]
 }
