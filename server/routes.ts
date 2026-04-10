@@ -2313,25 +2313,31 @@ Return format: ["Condition Name 1", "Condition Name 2", ...]`;
 
       const { openai, withRetry } = await import("./services/aiClient");
 
-      const prompt = `You are a medical records parser. Extract structured patient information from the following raw text. Return ONLY a valid JSON object with any of these fields that you can find (omit fields you cannot determine):
+      const prompt = `You are a clinical data extractor for a medical office. Your job is to pull as much patient information as possible from raw pasted text — EHR notes, schedule entries, demographics, problem lists, visit notes, insurance cards, or any mix. Be GENEROUS and AGGRESSIVE in extraction: if clinical data is present in any form, include it.
 
+Extract all available fields and return ONLY a valid JSON object. Omit a field only if that information is completely absent from the text.
+
+Fields to extract:
 {
-  "name": "LAST, FIRST (all caps preferred)",
-  "dob": "YYYY-MM-DD or MM/DD/YYYY",
-  "phone": "phone number as string",
-  "insurance": "insurance plan name or payer name",
-  "diagnoses": "comma-separated list of diagnoses/conditions",
-  "history": "medical history summary",
-  "medications": "comma-separated list of medications",
-  "previousTests": "comma-separated list of previous ancillary tests with dates if available, e.g. Echo TTE 01/2024, ABI 06/2023",
-  "previousTestsDate": "date of most recent previous test in YYYY-MM-DD format"
+  "name": "Patient name in LAST, FIRST format (all caps preferred). Look for any name-like pattern.",
+  "dob": "Date of birth as YYYY-MM-DD or MM/DD/YYYY. Look for DOB:, born, birth date, or date patterns near 'DOB'.",
+  "phone": "Phone number as a string. Look for phone, cell, mobile, tel, contact number.",
+  "insurance": "Insurance payer or plan name. Look for insurance, payer, carrier, plan, coverage, MCO, HMO, PPO.",
+  "diagnoses": "Comma-separated list of ALL active diagnoses, problems, conditions, or complaints. Include ICD descriptions, problem list items, Assessment items, chief complaint conditions, Dx:, diagnosis:, Problems:, Assessment/Plan diagnoses, or any medical condition mentioned. Examples: HTN, DM2, HLD, CAD, CKD, peripheral artery disease, chest pain, shortness of breath.",
+  "history": "Summary of past medical history. Include PMH:, past history, prior conditions, previous illnesses, past surgeries, prior hospitalizations, family history if notable. Examples: MI 2019, CABG 2020, stroke 2021, appendectomy.",
+  "medications": "Comma-separated list of ALL medications mentioned. Include Rx:, medications:, meds:, current meds, drug names with or without dosage. Examples: Metformin 1000mg, Lisinopril 10mg, Atorvastatin, aspirin 81mg.",
+  "previousTests": "Comma-separated list of prior diagnostic tests with dates if available. Look for prior studies, past imaging, previous EKGs, prior echos, dopplers, ABIs, stress tests, labs, ultrasounds. Examples: Echo TTE 01/2024, Carotid Duplex 06/2023, ABI 03/2022.",
+  "previousTestsDate": "Date of the most recent previous test in YYYY-MM-DD format."
 }
 
-Rules:
-- Only include fields you can confidently extract from the text
-- For "name" use LAST, FIRST format if possible
-- For "previousTests" look for any prior diagnostic tests, imaging, EKGs, dopplers, echos, etc.
-- Return ONLY the JSON object, no explanation, no markdown
+Critical rules:
+- Be AGGRESSIVE: if a condition, medication, or test is mentioned anywhere in the text, include it
+- For "diagnoses": include everything from problem lists, assessment sections, chief complaint, HPI, and inline mentions
+- For "medications": include every drug name you see, with or without dose
+- For "history": include PMH, surgical history, relevant family history
+- Omit a field ONLY if that information is truly not present anywhere in the text
+- For "name": use LAST, FIRST all-caps if possible
+- Return ONLY the JSON object, no explanation, no markdown, no code fences
 
 Raw text:
 ${parsed.data.text}`;
@@ -2340,11 +2346,11 @@ ${parsed.data.text}`;
         () => openai.chat.completions.create({
           model: "gpt-4o-mini",
           messages: [
-            { role: "system", content: "You are a medical records parser. Output only valid JSON." },
+            { role: "system", content: "You are an aggressive clinical data extractor for a medical office. Extract every piece of patient information from the text. Output only valid JSON, no explanation." },
             { role: "user", content: prompt },
           ],
           temperature: 0.1,
-          max_completion_tokens: 800,
+          max_completion_tokens: 1200,
         }),
         2,
         "parsePatientPaste"
