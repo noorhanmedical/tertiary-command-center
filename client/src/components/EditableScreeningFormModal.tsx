@@ -416,21 +416,19 @@ export function EditableScreeningFormModal({
       return;
     }
 
-    apiRequest("POST", "/api/ai-select-conditions", { patientId: note.patientId, service })
-      .then((r) => r.json())
-      .then((data: { conditions?: string[] }) => {
+    const qualifyingTests = patientRecord.qualifyingTests || [];
+    apiRequest("POST", "/api/ai-select-conditions", { patientId: note.patientId, service, qualifyingTests })
+      .then(async (r) => {
+        if (!r.ok) throw new Error("ai-select-conditions non-ok");
+        const data: { conditions?: string[] } = await r.json();
         const aiConditions = Array.isArray(data.conditions) ? data.conditions : [];
-        if (aiConditions.length > 0) {
-          if (service === "VitalWave") {
-            setVwScreening(buildInitialVwScreening(aiConditions));
-          } else if (service === "BrainWave") {
-            setBwScreening(buildInitialBwScreening(aiConditions));
-          } else if (service === "Ultrasound") {
-            const selection = buildUltrasoundSelectionFromPatient(patientRecord);
-            setUsScreening(buildInitialUsScreening(aiConditions, selection, {}, null));
-          }
-        } else {
-          applyFuzzyFallback(patientRecord);
+        if (service === "VitalWave") {
+          setVwScreening(buildInitialVwScreening(aiConditions));
+        } else if (service === "BrainWave") {
+          setBwScreening(buildInitialBwScreening(aiConditions));
+        } else if (service === "Ultrasound") {
+          const selection = buildUltrasoundSelectionFromPatient(patientRecord);
+          setUsScreening(buildInitialUsScreening(aiConditions, selection, {}, null));
         }
       })
       .catch(() => {

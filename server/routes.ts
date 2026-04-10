@@ -2183,16 +2183,20 @@ export async function registerRoutes(
       const schema = z.object({
         patientId: z.number().int(),
         service: z.enum(["VitalWave", "Ultrasound", "BrainWave", "PGx"]),
+        qualifyingTests: z.array(z.string()).optional(),
       });
       const parsed = schema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
 
-      const { patientId, service } = parsed.data;
+      const { patientId, service, qualifyingTests: clientQualifyingTests } = parsed.data;
       const patient = await storage.getPatientScreening(patientId);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
 
       const { VITALWAVE_CONFIG, ULTRASOUND_CONFIG, BRAINWAVE_MAPPING } = await import("../shared/plexus");
       const { openai, withRetry } = await import("./services/aiClient");
+
+      const qualifyingTests: string[] = clientQualifyingTests || (patient.qualifyingTests as string[]) || [];
+      const reasoning = (patient.reasoning || {}) as Record<string, { clinician_understanding?: string; qualifying_factors?: string[] } | string>;
 
       let availableConditions: string[] = [];
 
@@ -2203,8 +2207,31 @@ export async function registerRoutes(
       } else if (service === "BrainWave") {
         availableConditions = Object.keys(BRAINWAVE_MAPPING);
       } else if (service === "Ultrasound") {
-        Object.values(ULTRASOUND_CONFIG).forEach((cfg) => {
-          cfg.conditions.forEach((c) => { if (c.name !== "Other") availableConditions.push(c.name); });
+        const TEST_TO_US_TYPE: Record<string, string> = {
+          "Bilateral Carotid Duplex": "Carotid Duplex",
+          "Echocardiogram TTE": "Echocardiogram TTE",
+          "Renal Artery Doppler": "Renal Artery Duplex",
+          "Lower Extremity Arterial Doppler": "Lower Extremity Arterial",
+          "Lower Extremity Venous Duplex": "Lower Extremity Venous",
+          "Abdominal Aortic Aneurysm Duplex": "Abdominal Aorta",
+          "Stress Echocardiogram": "Stress Echocardiogram",
+          "Upper Extremity Arterial Doppler": "Upper Extremity Arterial",
+          "Upper Extremity Venous Duplex": "Upper Extremity Venous",
+        };
+        const selectedUsTypes = new Set<string>();
+        qualifyingTests.forEach((t) => {
+          const mapped = TEST_TO_US_TYPE[t];
+          if (mapped && ULTRASOUND_CONFIG[mapped]) { selectedUsTypes.add(mapped); return; }
+          Object.keys(ULTRASOUND_CONFIG).forEach((type) => {
+            if (t.toLowerCase().includes(type.toLowerCase()) || type.toLowerCase().includes(t.toLowerCase())) {
+              selectedUsTypes.add(type);
+            }
+          });
+        });
+        const typesToUse = selectedUsTypes.size > 0 ? [...selectedUsTypes] : Object.keys(ULTRASOUND_CONFIG);
+        typesToUse.forEach((type) => {
+          const cfg = ULTRASOUND_CONFIG[type];
+          if (cfg) cfg.conditions.forEach((c) => { if (c.name !== "Other") availableConditions.push(c.name); });
         });
         availableConditions = [...new Set(availableConditions)];
       } else {
@@ -2221,10 +2248,21 @@ export async function registerRoutes(
         return res.json({ conditions: [] });
       }
 
+      const reasoningContext: string[] = [];
+      qualifyingTests.forEach((t) => {
+        const r = reasoning[t];
+        if (r && typeof r === "object") {
+          if (r.clinician_understanding) reasoningContext.push(`${t}: ${r.clinician_understanding}`);
+          else if (r.qualifying_factors?.length) reasoningContext.push(`${t} factors: ${r.qualifying_factors.join(", ")}`);
+        }
+      });
+
       const prompt = `You are a clinical decision support tool. Given patient clinical data, select which conditions from the provided list apply to this patient. Be liberal — include any condition that has a reasonable clinical connection. Return ONLY a valid JSON array of condition names, exactly as spelled from the list. No explanation, no markdown.
 
 Patient clinical data:
-${clinicalData}
+${clinicalData}${reasoningContext.length > 0 ? `\n\nAI qualifying context:\n${reasoningContext.join("\n")}` : ""}
+
+Qualifying tests: ${qualifyingTests.join(", ") || "None"}
 
 Available conditions for ${service}:
 ${availableConditions.map((c) => `- "${c}"`).join("\n")}
