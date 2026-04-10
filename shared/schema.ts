@@ -62,6 +62,7 @@ export const patientScreenings = pgTable("patient_screenings", {
   medications: text("medications"),
   previousTests: text("previous_tests"),
   previousTestsDate: text("previous_tests_date"),
+  noPreviousTests: boolean("no_previous_tests").notNull().default(false),
   notes: text("notes"),
   qualifyingTests: text("qualifying_tests").array(),
   reasoning: jsonb("reasoning"),

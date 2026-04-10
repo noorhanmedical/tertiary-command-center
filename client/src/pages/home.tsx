@@ -65,6 +65,8 @@ import {
   Phone,
   ClipboardList,
   RefreshCw,
+  ChevronUp,
+  ClipboardPaste,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1487,7 +1489,7 @@ function PatientCard({
 }: {
   patient: PatientScreening;
   isAnalyzing: boolean;
-  onUpdate: (field: string, value: string | string[]) => void;
+  onUpdate: (field: string, value: string | string[] | boolean) => void;
   onDelete: () => void;
   onAnalyze: () => void;
 }) {
@@ -1554,6 +1556,10 @@ function PatientCard({
   const [localRx, setLocalRx] = useState(patient.medications || "");
   const [localPrevTests, setLocalPrevTests] = useState(patient.previousTests || "");
   const [localPrevTestsDate, setLocalPrevTestsDate] = useState(patient.previousTestsDate || "");
+  const [localNoPrevTests, setLocalNoPrevTests] = useState(patient.noPreviousTests || false);
+  const [pasteText, setPasteText] = useState("");
+  const [isParsing, setIsParsing] = useState(false);
+  const [showPaste, setShowPaste] = useState(false);
 
   useEffect(() => { setLocalName(patient.name || ""); }, [patient.name]);
   useEffect(() => { setLocalTime(patient.time || ""); }, [patient.time]);
@@ -1565,6 +1571,7 @@ function PatientCard({
   useEffect(() => { setLocalRx(patient.medications || ""); }, [patient.medications]);
   useEffect(() => { setLocalPrevTests(patient.previousTests || ""); }, [patient.previousTests]);
   useEffect(() => { setLocalPrevTestsDate(patient.previousTestsDate || ""); }, [patient.previousTestsDate]);
+  useEffect(() => { setLocalNoPrevTests(patient.noPreviousTests || false); }, [patient.noPreviousTests]);
 
   return (
     <Card className={`overflow-visible ${isCompleted ? "ring-1 ring-emerald-200 dark:ring-emerald-800" : ""}`} data-testid={`card-patient-${patient.id}`}>
@@ -1613,14 +1620,6 @@ function PatientCard({
                 onBlur={() => { if (localInsurance !== (patient.insurance || "")) onUpdate("insurance", localInsurance); }}
                 className="h-6 text-xs px-2"
                 data-testid={`input-patient-insurance-${patient.id}`}
-              />
-              <Input
-                placeholder="Prev Tests Date"
-                value={localPrevTestsDate}
-                onChange={(e) => setLocalPrevTestsDate(e.target.value)}
-                onBlur={() => { if (localPrevTestsDate !== (patient.previousTestsDate || "")) onUpdate("previousTestsDate", localPrevTestsDate); }}
-                className="h-6 text-xs px-2"
-                data-testid={`input-prev-tests-date-${patient.id}`}
               />
             </div>
           </div>
@@ -1695,34 +1694,142 @@ function PatientCard({
             data-testid={`input-rx-${patient.id}`}
           />
         </div>
-        <div>
-          <label className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5">
-            <ClipboardList className="w-3.5 h-3.5" /> Previous Tests
-          </label>
-          <Textarea
-            placeholder="Echo TTE 01/2024, ABI 06/2023..."
-            className="min-h-[70px] resize-none text-sm"
-            value={localPrevTests}
-            onChange={(e) => setLocalPrevTests(e.target.value)}
-            onBlur={() => {
-              if (localPrevTests !== (patient.previousTests || "")) {
-                onUpdate("previousTests", localPrevTests);
-                const extracted = extractMostRecentDate(localPrevTests);
-                if (extracted) {
-                  const yr = extracted.getFullYear();
-                  const mo = String(extracted.getMonth() + 1).padStart(2, "0");
-                  const dy = String(extracted.getDate()).padStart(2, "0");
-                  const dateStr = `${yr}-${mo}-${dy}`;
-                  if (dateStr !== localPrevTestsDate) {
-                    setLocalPrevTestsDate(dateStr);
-                    onUpdate("previousTestsDate", dateStr);
+        <div className="col-span-1 md:col-span-2 lg:col-span-4">
+          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+            <label className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+              <ClipboardList className="w-3.5 h-3.5" />
+              Previous Tests
+              {!localNoPrevTests && <span className="text-red-500 font-bold ml-0.5">*</span>}
+            </label>
+            <label className="flex items-center gap-1.5 ml-auto cursor-pointer select-none" data-testid={`label-no-prev-tests-${patient.id}`}>
+              <input
+                type="checkbox"
+                checked={localNoPrevTests}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setLocalNoPrevTests(checked);
+                  if (checked) {
+                    setLocalPrevTests("");
+                    setLocalPrevTestsDate("");
+                    onUpdate("noPreviousTests", true);
+                    onUpdate("previousTests", "");
+                    onUpdate("previousTestsDate", "");
+                  } else {
+                    onUpdate("noPreviousTests", false);
+                  }
+                }}
+                className="w-3.5 h-3.5 accent-primary"
+                data-testid={`checkbox-no-prev-tests-${patient.id}`}
+              />
+              <span className="text-xs text-muted-foreground">No previous tests</span>
+            </label>
+          </div>
+          <div className={`flex gap-2 ${localNoPrevTests ? "opacity-40 pointer-events-none" : ""}`}>
+            <Textarea
+              placeholder="Echo TTE 01/2024, Carotid Duplex 06/2023..."
+              className={`min-h-[60px] resize-none text-sm flex-1 ${!localNoPrevTests && !localPrevTests ? "border-red-300 focus-visible:ring-red-300" : ""}`}
+              value={localPrevTests}
+              disabled={localNoPrevTests}
+              onChange={(e) => setLocalPrevTests(e.target.value)}
+              onBlur={() => {
+                if (localPrevTests !== (patient.previousTests || "")) {
+                  onUpdate("previousTests", localPrevTests);
+                  const extracted = extractMostRecentDate(localPrevTests);
+                  if (extracted) {
+                    const yr = extracted.getFullYear();
+                    const mo = String(extracted.getMonth() + 1).padStart(2, "0");
+                    const dy = String(extracted.getDate()).padStart(2, "0");
+                    const dateStr = `${yr}-${mo}-${dy}`;
+                    if (dateStr !== localPrevTestsDate) {
+                      setLocalPrevTestsDate(dateStr);
+                      onUpdate("previousTestsDate", dateStr);
+                    }
                   }
                 }
-              }
-            }}
-            data-testid={`input-prev-tests-${patient.id}`}
-          />
+              }}
+              data-testid={`input-prev-tests-${patient.id}`}
+            />
+            <div className="flex flex-col gap-1 w-32 shrink-0">
+              <label className="text-xs text-muted-foreground font-medium">Most Recent Date</label>
+              <Input
+                placeholder="YYYY-MM-DD"
+                value={localPrevTestsDate}
+                disabled={localNoPrevTests}
+                onChange={(e) => setLocalPrevTestsDate(e.target.value)}
+                onBlur={() => { if (localPrevTestsDate !== (patient.previousTestsDate || "")) onUpdate("previousTestsDate", localPrevTestsDate); }}
+                className="h-8 text-xs px-2"
+                data-testid={`input-prev-tests-date-${patient.id}`}
+              />
+            </div>
+          </div>
+          {!localNoPrevTests && !localPrevTests && (
+            <p className="text-xs text-red-500 mt-1" data-testid={`text-prev-tests-required-${patient.id}`}>Required — enter previous tests or check "No previous tests"</p>
+          )}
         </div>
+      </div>
+
+      {/* Paste Info Section */}
+      <div className="px-4 pb-3 border-t border-dashed border-slate-200 dark:border-slate-700 pt-3">
+        <button
+          className="flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 transition-colors"
+          onClick={() => setShowPaste((v) => !v)}
+          data-testid={`button-toggle-paste-${patient.id}`}
+        >
+          <ClipboardPaste className="w-3.5 h-3.5" />
+          {showPaste ? "Hide Paste Info" : "Paste Info"}
+          {showPaste ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        </button>
+        {showPaste && (
+          <div className="mt-2 space-y-2">
+            <p className="text-xs text-muted-foreground">Paste any patient text (EHR note, demographics, insurance card) and AI will extract the fields.</p>
+            <Textarea
+              placeholder="Paste patient info here — name, DOB, insurance, medications, previous tests, etc."
+              className="min-h-[80px] resize-none text-sm"
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              data-testid={`input-paste-info-${patient.id}`}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!pasteText.trim() || isParsing}
+              className="gap-1.5"
+              onClick={async () => {
+                if (!pasteText.trim()) return;
+                setIsParsing(true);
+                try {
+                  const res = await apiRequest("POST", "/api/parse-patient-paste", { text: pasteText });
+                  const data: { fields?: Record<string, string>; error?: string } = await res.json();
+                  if (data.error) throw new Error(data.error);
+                  const f = data.fields || {};
+                  const updates: Array<[string, string]> = [];
+                  if (f.name && f.name !== (patient.name || "")) { setLocalName(f.name); updates.push(["name", f.name]); }
+                  if (f.dob && f.dob !== (patient.dob || "")) { setLocalDob(f.dob); updates.push(["dob", f.dob]); }
+                  if (f.phone && f.phone !== (patient.phoneNumber || "")) { setLocalPhone(f.phone); updates.push(["phoneNumber", f.phone]); }
+                  if (f.insurance && f.insurance !== (patient.insurance || "")) { setLocalInsurance(f.insurance); updates.push(["insurance", f.insurance]); }
+                  if (f.diagnoses && f.diagnoses !== (patient.diagnoses || "")) { setLocalDx(f.diagnoses); updates.push(["diagnoses", f.diagnoses]); }
+                  if (f.history && f.history !== (patient.history || "")) { setLocalHx(f.history); updates.push(["history", f.history]); }
+                  if (f.medications && f.medications !== (patient.medications || "")) { setLocalRx(f.medications); updates.push(["medications", f.medications]); }
+                  if (f.previousTests && f.previousTests !== (patient.previousTests || "")) { setLocalPrevTests(f.previousTests); updates.push(["previousTests", f.previousTests]); }
+                  if (f.previousTestsDate && f.previousTestsDate !== (patient.previousTestsDate || "")) { setLocalPrevTestsDate(f.previousTestsDate); updates.push(["previousTestsDate", f.previousTestsDate]); }
+                  updates.forEach(([field, value]) => onUpdate(field, value));
+                  if (updates.length > 0) {
+                    setPasteText("");
+                    setShowPaste(false);
+                  }
+                } catch (err: any) {
+                  cardToast({ title: "Parse failed", description: err.message || "Could not parse patient info.", variant: "destructive" });
+                } finally {
+                  setIsParsing(false);
+                }
+              }}
+              data-testid={`button-parse-paste-${patient.id}`}
+            >
+              {isParsing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {isParsing ? "Parsing…" : "Parse & Fill"}
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className="px-4 pb-3">

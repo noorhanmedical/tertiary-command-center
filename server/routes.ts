@@ -141,6 +141,7 @@ const updatePatientSchema = z.object({
   medications: z.string().nullable().optional(),
   previousTests: z.string().nullable().optional(),
   previousTestsDate: z.string().nullable().optional(),
+  noPreviousTests: z.boolean().optional(),
   notes: z.string().nullable().optional(),
   qualifyingTests: z.array(z.string()).optional(),
   appointmentStatus: z.string().nullable().optional(),
@@ -442,6 +443,7 @@ export async function registerRoutes(
       } else if (data.previousTests !== undefined) {
         updates.previousTestsDate = extractDateFromPrevTests(data.previousTests) || null;
       }
+      if (data.noPreviousTests !== undefined) updates.noPreviousTests = data.noPreviousTests;
       if (data.notes !== undefined) updates.notes = data.notes || null;
       if (data.qualifyingTests !== undefined) updates.qualifyingTests = data.qualifyingTests;
       if (data.appointmentStatus !== undefined) updates.appointmentStatus = data.appointmentStatus || "pending";
@@ -2299,6 +2301,73 @@ Return format: ["Condition Name 1", "Condition Name 2", ...]`;
       res.json({ conditions: selected });
     } catch (error: any) {
       console.error("[ai-select-conditions] Error:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/parse-patient-paste", async (req, res) => {
+    try {
+      const schema = z.object({ text: z.string().min(1).max(10000) });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const { openai, withRetry } = await import("./services/aiClient");
+
+      const prompt = `You are a medical records parser. Extract structured patient information from the following raw text. Return ONLY a valid JSON object with any of these fields that you can find (omit fields you cannot determine):
+
+{
+  "name": "LAST, FIRST (all caps preferred)",
+  "dob": "YYYY-MM-DD or MM/DD/YYYY",
+  "phone": "phone number as string",
+  "insurance": "insurance plan name or payer name",
+  "diagnoses": "comma-separated list of diagnoses/conditions",
+  "history": "medical history summary",
+  "medications": "comma-separated list of medications",
+  "previousTests": "comma-separated list of previous ancillary tests with dates if available, e.g. Echo TTE 01/2024, ABI 06/2023",
+  "previousTestsDate": "date of most recent previous test in YYYY-MM-DD format"
+}
+
+Rules:
+- Only include fields you can confidently extract from the text
+- For "name" use LAST, FIRST format if possible
+- For "previousTests" look for any prior diagnostic tests, imaging, EKGs, dopplers, echos, etc.
+- Return ONLY the JSON object, no explanation, no markdown
+
+Raw text:
+${parsed.data.text}`;
+
+      const response = await withRetry(
+        () => openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: "You are a medical records parser. Output only valid JSON." },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.1,
+          max_completion_tokens: 800,
+        }),
+        2,
+        "parsePatientPaste"
+      );
+
+      const raw = response.choices[0]?.message?.content?.trim() || "{}";
+      let result: Record<string, string> = {};
+      try {
+        const cleaned = raw.replace(/^```[a-z]*\n?/, "").replace(/\n?```$/, "").trim();
+        const obj = JSON.parse(cleaned);
+        const allowedKeys = ["name", "dob", "phone", "insurance", "diagnoses", "history", "medications", "previousTests", "previousTestsDate"];
+        allowedKeys.forEach((k) => {
+          if (obj[k] && typeof obj[k] === "string" && obj[k].trim()) {
+            result[k] = obj[k].trim();
+          }
+        });
+      } catch {
+        console.warn("[parse-patient-paste] Failed to parse AI response:", raw);
+      }
+
+      res.json({ fields: result });
+    } catch (error: any) {
+      console.error("[parse-patient-paste] Error:", error.message);
       res.status(500).json({ error: error.message });
     }
   });
