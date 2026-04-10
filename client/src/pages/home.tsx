@@ -1810,7 +1810,14 @@ function PatientCard({
                   if (f.diagnoses && f.diagnoses !== (patient.diagnoses || "")) { setLocalDx(f.diagnoses); updates.push(["diagnoses", f.diagnoses]); }
                   if (f.history && f.history !== (patient.history || "")) { setLocalHx(f.history); updates.push(["history", f.history]); }
                   if (f.medications && f.medications !== (patient.medications || "")) { setLocalRx(f.medications); updates.push(["medications", f.medications]); }
-                  if (f.previousTests && f.previousTests !== (patient.previousTests || "")) { setLocalPrevTests(f.previousTests); updates.push(["previousTests", f.previousTests]); }
+                  if (f.previousTests && f.previousTests !== (patient.previousTests || "")) {
+                    setLocalPrevTests(f.previousTests);
+                    updates.push(["previousTests", f.previousTests]);
+                    if (localNoPrevTests) {
+                      setLocalNoPrevTests(false);
+                      onUpdate("noPreviousTests", false);
+                    }
+                  }
                   if (f.previousTestsDate && f.previousTestsDate !== (patient.previousTestsDate || "")) { setLocalPrevTestsDate(f.previousTestsDate); updates.push(["previousTestsDate", f.previousTestsDate]); }
                   updates.forEach(([field, value]) => onUpdate(field, value));
                   if (updates.length > 0) {
