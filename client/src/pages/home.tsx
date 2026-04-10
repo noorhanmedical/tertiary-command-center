@@ -69,7 +69,7 @@ import {
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { ScreeningBatch, PatientScreening, PatientTestHistory } from "@shared/schema";
+import type { ScreeningBatch, PatientScreening, PatientTestHistory, AncillaryAppointment } from "@shared/schema";
 import { SiGooglesheets } from "react-icons/si";
 import { ExternalLink } from "lucide-react";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
@@ -185,7 +185,7 @@ const IMPORT_ACCESS_CODE = "1234";
 type TabItem = { type: "home" } | { type: "history" } | { type: "references" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
 
 function UpcomingAppointmentsMini() {
-  const { data: appts = [], isLoading } = useQuery<any[]>({
+  const { data: appts = [], isLoading } = useQuery<AncillaryAppointment[]>({
     queryKey: ["/api/appointments/upcoming"],
     queryFn: async () => {
       const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
@@ -210,7 +210,7 @@ function UpcomingAppointmentsMini() {
 
   return (
     <div className="space-y-1.5" data-testid="upcoming-appointments-list">
-      {appts.map((a: any) => (
+      {appts.map((a: AncillaryAppointment) => (
         <div key={a.id} className="flex items-center gap-2 text-xs">
           <span className="text-slate-500 w-20 shrink-0">{new Date(a.scheduledDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
           <span className="text-slate-500 w-16 shrink-0">{fmt12(a.scheduledTime)}</span>
@@ -1572,7 +1572,7 @@ function PatientScheduleModal({ patient, onClose }: { patient: PatientScreening;
 
   const facility = (patient.facility as string) || "Taylor Family Practice";
 
-  const { data: appointments = [] } = useQuery<any[]>({
+  const { data: appointments = [] } = useQuery<AncillaryAppointment[]>({
     queryKey: ["/api/appointments", facility],
     queryFn: async () => {
       const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
@@ -1584,7 +1584,7 @@ function PatientScheduleModal({ patient, onClose }: { patient: PatientScreening;
     },
   });
 
-  const { data: patientAppts = [] } = useQuery<any[]>({
+  const { data: patientAppts = [] } = useQuery<AncillaryAppointment[]>({
     queryKey: ["/api/appointments/patient", patient.id],
     queryFn: async () => {
       const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
@@ -1831,11 +1831,11 @@ function PatientCard({
   const cardQueryClient = useQueryClient();
   const { toast: cardToast } = useToast();
 
-  const { data: patientAppts = [] } = useQuery<any[]>({
+  const { data: patientAppts = [] } = useQuery<AncillaryAppointment[]>({
     queryKey: ["/api/appointments/patient", patient.id],
     enabled: !!patient.id,
   });
-  const scheduledAppt = patientAppts.find((a: any) => a.status === "scheduled");
+  const scheduledAppt = patientAppts.find((a: AncillaryAppointment) => a.status === "scheduled");
 
   useEffect(() => { setLocalTests(patient.qualifyingTests || []); }, [patient.qualifyingTests]);
 
