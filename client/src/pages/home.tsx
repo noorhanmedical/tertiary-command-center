@@ -184,41 +184,107 @@ const IMPORT_ACCESS_CODE = "1234";
 
 type TabItem = { type: "home" } | { type: "history" } | { type: "references" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
 
-function UpcomingAppointmentsMini() {
+function ScheduleTile() {
+  const fmt12 = (time24: string) => {
+    const [h, m] = time24.split(":").map(Number);
+    return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+  };
+
   const { data: appts = [], isLoading } = useQuery<AncillaryAppointment[]>({
-    queryKey: ["/api/appointments/upcoming"],
+    queryKey: ["/api/appointments/schedule-tile"],
     queryFn: async () => {
       const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
       const headers: Record<string, string> = {};
       if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch("/api/appointments?upcoming=true&limit=5", { headers });
+      const res = await fetch("/api/appointments?upcoming=true&limit=100", { headers });
       if (!res.ok) return [];
       return res.json();
     },
     refetchInterval: 60000,
   });
 
-  const fmt12 = (time24: string) => {
-    const [h, m] = time24.split(":").map(Number);
-    return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
-  };
+  const DISPLAY_MAX = 20;
+  const displayed = appts.slice(0, DISPLAY_MAX);
+  const overflow = appts.length - DISPLAY_MAX;
 
-  if (isLoading) return <div className="text-xs text-slate-400 py-1">Loading…</div>;
-  if (appts.length === 0) return (
-    <div className="text-xs text-slate-400 italic py-1">No upcoming appointments — click to schedule</div>
-  );
+  const grouped: Record<string, AncillaryAppointment[]> = {};
+  for (const a of displayed) {
+    if (!grouped[a.scheduledDate]) grouped[a.scheduledDate] = [];
+    grouped[a.scheduledDate].push(a);
+  }
+  const sortedDates = Object.keys(grouped).sort();
+
+  function testTypeBadge(testType: string) {
+    if (testType === "BrainWave") return { label: "BrainWave", cls: "bg-violet-100 text-violet-700" };
+    if (testType === "VitalWave") return { label: "VitalWave", cls: "bg-red-100 text-red-600" };
+    return { label: testType, cls: "bg-emerald-100 text-emerald-700" };
+  }
+
+  function formatDateHeader(dateStr: string) {
+    const d = new Date(dateStr + "T00:00:00");
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    if (d.getTime() === today.getTime()) return "Today";
+    if (d.getTime() === tomorrow.getTime()) return "Tomorrow";
+    return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-2 animate-pulse">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="h-8 bg-slate-100 rounded-lg" />
+        ))}
+      </div>
+    );
+  }
+
+  if (appts.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 text-center" data-testid="schedule-tile-empty">
+        <Calendar className="w-10 h-10 text-slate-300 mb-3" strokeWidth={1.5} />
+        <p className="text-sm font-medium text-slate-500 mb-1">No appointments scheduled</p>
+        <p className="text-xs text-slate-400">Book BrainWave and VitalWave slots from the Schedule page</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-1.5" data-testid="upcoming-appointments-list">
-      {appts.map((a: AncillaryAppointment) => (
-        <div key={a.id} className="flex items-center gap-2 text-xs">
-          <span className="text-slate-500 w-20 shrink-0">{new Date(a.scheduledDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
-          <span className="text-slate-500 w-16 shrink-0">{fmt12(a.scheduledTime)}</span>
-          <span className="font-medium text-slate-700 truncate">{a.patientName}</span>
-          <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-semibold ${a.testType === "BrainWave" ? "bg-violet-100 text-violet-700" : a.testType === "VitalWave" ? "bg-red-100 text-red-600" : "bg-emerald-100 text-emerald-700"}`}>{a.testType === "BrainWave" ? "BW" : a.testType === "VitalWave" ? "VW" : a.testType.split(" ").map((w: string) => w[0]).join("")}</span>
-          <span className="text-slate-400 truncate">{a.facility}</span>
-        </div>
-      ))}
+    <div data-testid="schedule-tile-list">
+      <div className="space-y-4">
+        {sortedDates.map((dateStr) => (
+          <div key={dateStr}>
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                {formatDateHeader(dateStr)}
+              </span>
+              <div className="flex-1 h-px bg-slate-100" />
+            </div>
+            <div className="space-y-1">
+              {grouped[dateStr].map((a) => {
+                const badge = testTypeBadge(a.testType);
+                return (
+                  <div
+                    key={a.id}
+                    className="flex items-center gap-3 px-3 py-2 rounded-xl bg-slate-50/80 border border-slate-100 hover:bg-slate-100/70 transition-colors"
+                    data-testid={`schedule-tile-row-${a.id}`}
+                  >
+                    <span className="text-xs font-semibold text-primary w-16 shrink-0 tabular-nums">{fmt12(a.scheduledTime)}</span>
+                    <span className="text-xs font-medium text-slate-800 flex-1 truncate">{a.patientName}</span>
+                    <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                    <span className="text-[10px] text-slate-400 shrink-0 truncate max-w-[120px]">{a.facility}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      {overflow > 0 && (
+        <p className="text-xs text-slate-400 mt-3 text-center">+{overflow} more — view full schedule</p>
+      )}
     </div>
   );
 }
@@ -1458,27 +1524,30 @@ export default function Home() {
                     </div>
                   </Card>
 
-                  <Link href="/appointments">
-                    <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03] col-span-2 lg:col-span-3"
-                      data-testid="tile-appointments"
-                    >
-                      <div className="p-5">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <Calendar className="w-8 h-8 text-indigo-500" strokeWidth={1.75} />
-                            <div>
-                              <span className="text-sm font-semibold text-slate-800 dark:text-foreground" data-testid="text-tile-appointments">Upcoming Appointments</span>
-                              <p className="text-xs text-slate-500">BrainWave & VitalWave scheduling</p>
-                            </div>
-                          </div>
-                          <span className="text-xs text-primary font-medium group-hover:underline">View All →</span>
-                        </div>
-                        <UpcomingAppointmentsMini />
-                      </div>
-                    </Card>
-                  </Link>
                 </div>
+
+                <Link href="/appointments">
+                  <Card
+                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-shadow hover:shadow-md mt-4"
+                    data-testid="tile-appointments"
+                  >
+                    <div className="p-5">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                            <Calendar className="w-5 h-5 text-primary" strokeWidth={1.75} />
+                          </div>
+                          <div>
+                            <span className="text-base font-bold text-slate-800 dark:text-foreground" data-testid="text-tile-appointments">Schedule</span>
+                            <p className="text-xs text-slate-500">Ancillary appointment schedule</p>
+                          </div>
+                        </div>
+                        <span className="text-xs text-primary font-medium group-hover:underline shrink-0">View Full Schedule →</span>
+                      </div>
+                      <ScheduleTile />
+                    </div>
+                  </Card>
+                </Link>
 
                 {batches.length > 0 && (
                   <div className="mt-10">
