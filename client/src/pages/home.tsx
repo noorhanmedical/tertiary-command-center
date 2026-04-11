@@ -250,7 +250,7 @@ function ScheduleTile() {
   }
 
   return (
-    <div data-testid="schedule-tile-list">
+    <div data-testid="schedule-tile-list" className="max-h-[400px] overflow-y-auto pr-1">
       <div className="space-y-4">
         {sortedDates.map((dateStr) => (
           <div key={dateStr}>

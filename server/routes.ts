@@ -2383,7 +2383,8 @@ ${parsed.data.text}`;
     try {
       const { facility, date, testType, status, upcoming } = req.query as Record<string, string>;
       if (upcoming === "true") {
-        const limitParam = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+        const parsedLimit = parseInt(req.query.limit as string);
+        const limitParam = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
         const appts = await storage.getUpcomingAppointments(limitParam);
         return res.json(appts);
       }
