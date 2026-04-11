@@ -2383,8 +2383,8 @@ ${parsed.data.text}`;
     try {
       const { facility, date, testType, status, upcoming } = req.query as Record<string, string>;
       if (upcoming === "true") {
-        const limit = parseInt(req.query.limit as string) || 10;
-        const appts = await storage.getUpcomingAppointments(limit);
+        const limitParam = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+        const appts = await storage.getUpcomingAppointments(limitParam);
         return res.json(appts);
       }
       const appts = await storage.getAppointments({ facility, date, testType, status });

@@ -344,16 +344,17 @@ export class DatabaseStorage implements IStorage {
       .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime));
   }
 
-  async getUpcomingAppointments(limit = 10): Promise<AncillaryAppointment[]> {
+  async getUpcomingAppointments(limit?: number): Promise<AncillaryAppointment[]> {
     const today = new Date();
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    return db.select().from(ancillaryAppointments)
+    const query = db.select().from(ancillaryAppointments)
       .where(and(
         gte(ancillaryAppointments.scheduledDate, todayStr),
         eq(ancillaryAppointments.status, "scheduled")
       ))
-      .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime))
-      .limit(limit);
+      .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime));
+    if (limit !== undefined) return query.limit(limit);
+    return query;
   }
 
   async cancelAppointment(id: number): Promise<AncillaryAppointment | undefined> {

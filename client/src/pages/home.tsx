@@ -196,19 +196,15 @@ function ScheduleTile() {
       const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
       const headers: Record<string, string> = {};
       if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch("/api/appointments?upcoming=true&limit=100", { headers });
+      const res = await fetch("/api/appointments?upcoming=true", { headers });
       if (!res.ok) return [];
       return res.json();
     },
     refetchInterval: 60000,
   });
 
-  const DISPLAY_MAX = 20;
-  const displayed = appts.slice(0, DISPLAY_MAX);
-  const overflow = appts.length - DISPLAY_MAX;
-
   const grouped: Record<string, AncillaryAppointment[]> = {};
-  for (const a of displayed) {
+  for (const a of appts) {
     if (!grouped[a.scheduledDate]) grouped[a.scheduledDate] = [];
     grouped[a.scheduledDate].push(a);
   }
@@ -246,7 +242,9 @@ function ScheduleTile() {
       <div className="flex flex-col items-center justify-center py-10 text-center" data-testid="schedule-tile-empty">
         <Calendar className="w-10 h-10 text-slate-300 mb-3" strokeWidth={1.5} />
         <p className="text-sm font-medium text-slate-500 mb-1">No appointments scheduled</p>
-        <p className="text-xs text-slate-400">Book BrainWave and VitalWave slots from the Schedule page</p>
+        <span className="text-xs text-primary font-medium hover:underline cursor-pointer" data-testid="link-schedule-go">
+          Go to Schedule →
+        </span>
       </div>
     );
   }
@@ -282,9 +280,6 @@ function ScheduleTile() {
           </div>
         ))}
       </div>
-      {overflow > 0 && (
-        <p className="text-xs text-slate-400 mt-3 text-center">+{overflow} more — view full schedule</p>
-      )}
     </div>
   );
 }
