@@ -2280,21 +2280,22 @@ Fields to extract:
   "dob": "Date of birth as YYYY-MM-DD or MM/DD/YYYY. Look for DOB:, born, birth date, or date patterns near 'DOB'.",
   "phone": "Phone number as a string. Look for phone, cell, mobile, tel, contact number.",
   "insurance": "Insurance payer or plan name. Look for insurance, payer, carrier, plan, coverage, MCO, HMO, PPO.",
-  "diagnoses": "Comma-separated list of ALL active diagnoses, problems, conditions, or complaints. Include ICD descriptions, problem list items, Assessment items, chief complaint conditions, Dx:, diagnosis:, Problems:, Assessment/Plan diagnoses, or any medical condition mentioned. Examples: HTN, DM2, HLD, CAD, CKD, peripheral artery disease, chest pain, shortness of breath.",
+  "diagnoses": "Comma-separated list of ACTIVE medical conditions and diagnoses ONLY — disease names, ICD descriptions, problem list items, Assessment/Plan conditions. Examples: HTN, DM2, HLD, CAD, CKD, peripheral artery disease, chest pain, shortness of breath. CRITICAL: Do NOT include medication names, drug names, dosages, test names, imaging study names, or previous test results here — those go in medications or previousTests.",
   "history": "Summary of past medical history. Include PMH:, past history, prior conditions, previous illnesses, past surgeries, prior hospitalizations, family history if notable. Examples: MI 2019, CABG 2020, stroke 2021, appendectomy.",
   "medications": "Comma-separated list of ALL medications mentioned. Include Rx:, medications:, meds:, current meds, drug names with or without dosage. Examples: Metformin 1000mg, Lisinopril 10mg, Atorvastatin, aspirin 81mg.",
-  "previousTests": "Comma-separated list of prior diagnostic tests with dates if available. Look for prior studies, past imaging, previous EKGs, prior echos, dopplers, ABIs, stress tests, labs, ultrasounds. Examples: Echo TTE 01/2024, Carotid Duplex 06/2023, ABI 03/2022.",
+  "previousTests": "Comma-separated list of prior diagnostic tests or imaging with dates if available. Scan the ENTIRE note — look for prior studies, past imaging, previous EKGs, prior echos, dopplers, ABIs, stress tests, ultrasounds, BrainWave, VitalWave, Carotid Duplex, Echocardiogram, Renal Artery Doppler, LE Arterial Doppler, LE Venous Duplex, Abdominal Aorta — even if mentioned inline without a label. Example entries: 'COMPLETED ✅ - BrainWave on 04/01/2026', 'Echo TTE 01/2024', 'Carotid Duplex 06/2023'. If you find any of these anywhere in the text, put them here.",
   "previousTestsDate": "Date of the most recent previous test in YYYY-MM-DD format."
 }
 
 Critical rules:
-- Be AGGRESSIVE: if a condition, medication, or test is mentioned anywhere in the text, include it
-- For "diagnoses": include everything from problem lists, assessment sections, chief complaint, HPI, and inline mentions
-- For "medications": include every drug name you see, with or without dose
-- For "history": include PMH, surgical history, relevant family history
-- Omit a field ONLY if that information is truly not present anywhere in the text
-- For "name": use LAST, FIRST all-caps if possible
-- Return ONLY the JSON object, no explanation, no markdown, no code fences
+- FIELD BOUNDARIES are strict: diagnoses = medical conditions only; medications = drugs only; previousTests = prior studies/imaging only. Never mix them.
+- For "diagnoses": include everything from problem lists, assessment sections, chief complaint, HPI, BUT strip out any drug names or test/imaging references — those belong elsewhere.
+- For "previousTests": be AGGRESSIVE — search the full note for any mention of a previously performed test or imaging study, labeled or not.
+- For "medications": include every drug name you see, with or without dose.
+- For "history": include PMH, surgical history, relevant family history.
+- Omit a field ONLY if that information is truly not present anywhere in the text.
+- For "name": use LAST, FIRST all-caps if possible.
+- Return ONLY the JSON object, no explanation, no markdown, no code fences.
 
 Raw text:
 ${parsed.data.text}`;

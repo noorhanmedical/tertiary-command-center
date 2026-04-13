@@ -163,15 +163,16 @@ For each record extract:
 - "age": age as a number if present, or null
 - "gender": gender if present (M/F/Male/Female), or null
 - "insurance": insurance carrier/plan name if present (e.g. "Blue Cross Blue Shield", "Medicare", "Cigna", "Aetna", "United Healthcare"), or null
-- "diagnoses": all diagnoses/conditions/Dx copied verbatim from the source, joined into one string if multiple sections, or null
+- "diagnoses": medical conditions/diagnoses/problems ONLY — e.g. hypertension, diabetes, COPD, chest pain, neuropathy. NEVER put medication names, drug names, dosages, test names, imaging study results, or previous ancillary history here.
 - "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
 - "medications": all medications/Rx/prescriptions copied verbatim from the source, joined into one string if multiple sections, or null
-- "previousTests": any mention of previous tests, prior imaging, past ancillary studies, HGA records, or similar historical test records copied verbatim, or null
+- "previousTests": ALL mentions of previously performed tests or imaging anywhere in the note — including BrainWave, VitalWave, Carotid Duplex, Echocardiogram, Echo TTE, Renal Artery Doppler, LE Arterial Doppler, LE Venous Duplex, Abdominal Aorta, EKG, ABI, stress test, ultrasound, or any prior study. Look throughout the entire narrative, not just labeled sections. Copy verbatim.
 
 Rules:
 - CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
+- FIELD SEPARATION: Diagnoses must contain ONLY disease names and medical conditions. If you see drug/medication names in what appears to be a diagnoses section, move them to medications. If you see test names or "COMPLETED ✅" style entries, move them to previousTests.
 - For medications: only include actual drug/prescription names and dosages. If the only value looks like a visit reason, test name, or scheduling code (e.g. "BrainWave", "FU HGA", "med refills", "follow up", "physical"), set medications to null.
-- For previousTests: look for labels like "Previous Tests:", "Prior Imaging:", "Previous Imaging:", "HGA Records:", "Past Studies:", "Ancillary History:", or similar. Copy the value verbatim.
+- For previousTests: scan the ENTIRE note — do not rely solely on labeled sections. Any list of completed tests or prior imaging found anywhere in the record belongs here, even if unlabeled.
 - Return exactly one result object per record, in the same order as the input.
 - Do NOT include a name field — names are managed externally.
 
@@ -206,19 +207,20 @@ For each patient return:
 - "age": age as a number if present, or null
 - "gender": gender if present (M/F/Male/Female), or null
 - "insurance": insurance carrier/plan name if present (e.g. "Blue Cross", "Medicare", "Cigna"), or null
-- "diagnoses": all diagnoses/conditions/Dx copied verbatim from the source, joined into one string if multiple sections, or null
+- "diagnoses": medical conditions/diagnoses/problems ONLY — e.g. hypertension, diabetes, COPD, chest pain, neuropathy. NEVER put medication names, drug names, dosages, test names, imaging study results, or previous ancillary history here.
 - "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
 - "medications": all medications/Rx copied verbatim from the source, joined into one string if multiple sections, or null
-- "previousTests": any mention of previous tests, prior imaging, past ancillary studies, HGA records, or similar historical test data copied verbatim, or null
+- "previousTests": ALL mentions of previously performed tests or imaging anywhere in the note — including BrainWave, VitalWave, Carotid Duplex, Echocardiogram, Echo TTE, Renal Artery Doppler, LE Arterial Doppler, LE Venous Duplex, Abdominal Aorta, EKG, ABI, stress test, ultrasound, or any prior study. Look throughout the entire narrative, not just labeled sections. Copy verbatim.
 
 Rules:
 - CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
+- FIELD SEPARATION: Diagnoses must contain ONLY disease names and medical conditions. If you see drug/medication names mixed into a diagnoses section, move them to medications. If you see test names, "COMPLETED ✅" entries, or prior imaging listed, move them to previousTests — NEVER leave them in diagnoses.
 - Extract ALL patients in the input — even if there are 20 or more.
 - The input may be tab-separated spreadsheet data, a simple name list, or mixed clinical notes — handle all formats.
 - If a row is clearly a header, summary, or empty — skip it.
 - If there is no clinical data for a patient, still include them with null clinical fields.
 - For the "medications" field: only include actual drug/prescription names and dosages. If the only value present looks like a visit reason, appointment note, scheduling code, or test name (e.g. "BrainWave", "VitalWave", "EEG", "FU HGA", "med refills", "follow up", "HGA", "new patient", "physical", "wellness"), set medications to null instead.
-- For the "previousTests" field: look for labels like "Previous Tests:", "Prior Imaging:", "Previous Imaging:", "HGA Records:", "Past Studies:", "Ancillary History:", or similar column headers in spreadsheet data. Copy the value verbatim.
+- For the "previousTests" field: scan the ENTIRE note — do not rely solely on labeled sections. Any list of completed tests or prior imaging found anywhere in the record belongs here, even if unlabeled. Look for labels like "Previous Tests:", "Prior Imaging:", "HGA Records:", "Past Studies:", "Ancillary History:", AND for inline mentions like "had an Echo last year" or "COMPLETED ✅ - BrainWave on 04/01/2026".
 
 Respond with a JSON object: { "patients": [ ...array of ALL patient objects... ] }. No markdown. Do not truncate.`;
 
