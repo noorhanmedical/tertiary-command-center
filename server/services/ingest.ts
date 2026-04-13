@@ -214,7 +214,7 @@ For each patient return:
 
 Rules:
 - CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
-- FIELD SEPARATION: Diagnoses must contain ONLY disease names and medical conditions. If you see drug/medication names mixed into a diagnoses section, move them to medications. If you see test names, "COMPLETED ✅" entries, or prior imaging listed, move them to previousTests — NEVER leave them in diagnoses.
+- FIELD SEPARATION: Diagnoses must contain ONLY disease names and medical conditions (e.g. hypertension, diabetes, COPD, neuropathy, varicose veins). Medical conditions are NOT previous tests — "Varicose veins of lower extremity" is a diagnosis, NOT a previous test. Only put something in previousTests if it explicitly describes a completed ancillary study (BrainWave, VitalWave, Carotid Duplex, Echo TTE, EKG, Doppler, etc.) or is marked COMPLETED. If you see drug/medication names mixed into a diagnoses section, move them to medications. NEVER put actual medical conditions into previousTests.
 - NEVER include column header words (such as "Name", "DOB", "Time", "Insurance", "Diagnoses", "Medications", "History", "Rx", "Hx", "Dx") as entries in any clinical field.
 - NEVER put narrative sentences, patient introductions, or visit note prose into medications. The medications field must contain ONLY drug names and dosages — nothing else.
 - Extract ALL patients in the input — even if there are 20 or more.
@@ -657,7 +657,7 @@ function classifyTsvColumn(val: string): TsvColKind {
   if (!trimmed.includes("\n") && trimmed.length < 40) {
     if (/^(m|f|male|female)$/i.test(trimmed)) return "scalar"; // gender
     if (/^\d{1,3}$/.test(trimmed)) return "scalar"; // age
-    if (/^[a-z]?\d{4,10}$/i.test(trimmed)) return "skip"; // MRN/patient ID — not clinically useful
+    if (/^[a-zA-Z]{0,4}\d{4,12}$/.test(trimmed)) return "skip"; // MRN/encounter ID (e.g. HF550792307) — not clinically useful
     if (/medicare|medicaid|blue\s*cross|blue\s*shield|aetna|cigna|humana|united|anthem|molina|kaiser|tricare|bcbs|bcbsm|ppo|hmo|self[\s-]?pay|private|commercial|uninsured/i.test(trimmed)) return "insurance";
   }
 
@@ -681,17 +681,17 @@ function classifyTsvColumn(val: string): TsvColKind {
 
   // Previous tests: content-based detection — catches "COMPLETED ✅" entries and known
   // ancillary test names regardless of what column header was used
-  const prevTestContentRE = /COMPLETED\s*✅|COMPLETED\s*-|BrainWave|VitalWave|\bCarotid\b|\bEchocardiogram\b|\bEcho\b|\bDoppler\b|\bRenal\b|\bVenous\b|\bArterial\b|Carotid\s*Duplex|Echo\s*TTE|Renal\s*Artery|LE\s*Arterial|LE\s*Venous|Abdominal\s*Aort|Lower\s*Extremity|Upper\s*Extremity|Venous\s*Duplex|Arterial\s*Doppler|\bultrasound\b|\bEKG\b|\bABI\b|stress\s*test|stress\s*echo/i;
+  // Use specific compound test names only — NOT single words like "Renal", "Venous", "Carotid"
+  // which appear regularly in medical conditions (e.g. "Renal failure", "Venous insufficiency")
+  const prevTestContentRE = /COMPLETED\s*✅|COMPLETED\s*-|BrainWave|VitalWave|Carotid\s+Duplex|\bEchocardiogram\b|Echo\s+TTE|Renal\s+Artery\s+(Doppler|Duplex)|LE\s+Arterial\s+(Doppler|Duplex)|LE\s+Venous\s+(Doppler|Duplex)|Lower\s+Extremity\s+(Arterial|Venous)\s*(Doppler|Duplex)|Upper\s+Extremity\s+(Arterial|Venous)\s*(Doppler|Duplex)|Abdominal\s+Aort\w+\s+Duplex|Venous\s+Duplex|Arterial\s+Doppler|\bEKG\b|\bABI\b|stress\s+echo/i;
   if (prevTestContentRE.test(trimmed)) return "previousTests";
 
-  // Diagnoses: multi-line list of condition names, or a single condition line
-  // Typical diagnosis fields are shorter per line and contain medical condition terminology
+  // Diagnoses: multi-line list of condition names, or a single condition line (possibly long comma-separated)
   const lines = trimmed.split("\n").map((l) => l.trim()).filter(Boolean);
-  if (lines.length >= 1 && lines.every((l) => l.length < 200 && !/^(Taking|H\s+|R\d{2}|by [A-Z])/.test(l))) {
-    // Looks like a list of conditions rather than a narrative
-    if (!trimmed.includes("History of Present Illness") && !trimmed.includes("Reason for Appointment")) {
-      return "diagnoses";
-    }
+  const noNarrativeHeaders = !trimmed.includes("History of Present Illness") && !trimmed.includes("Reason for Appointment") && !trimmed.includes("Chief Complaint") && !trimmed.includes("HPI:");
+  const noNarrativeSignals = !/\bpresented?\b|\breports?\b|\bcomplains?\b|\bpatient\b|\bfollow.?up\b/i.test(trimmed);
+  if (lines.length >= 1 && noNarrativeHeaders && noNarrativeSignals && lines.every((l) => l.length < 500 && !/^(Taking|H\s+|R\d{2}|by [A-Z])/.test(l))) {
+    return "diagnoses";
   }
 
   return "history"; // default large text blocks to history/notes
@@ -802,8 +802,10 @@ function sanitizePatientFields(p: ParsedPatient): ParsedPatient {
   const MED_LINE_RE =
     /\b\d+(\.\d+)?\s*(mg|mcg|ml|units?|tablet|capsule|cap|grain|iu)\b|\b(tablet|capsule|injection|suspension|solution|drops?|spray|patch|cream|gel|ointment|inhaler|syrup|suppository|auto-injector|syringe)\b/i;
 
+  // Specific compound test names only — avoid single words like "Carotid", "Venous", "Renal"
+  // that appear in everyday diagnoses (e.g. "Carotid artery disease", "Renal failure")
   const TEST_LINE_RE =
-    /COMPLETED\s*[✅\-]|COMPLETED\s*$|BrainWave|VitalWave|\bCarotid\b|\bEchocardiogram\b|\bDoppler\b|echo\s+(TTE|on\b)|\bEKG\b|\bABI\b|stress\s*(test|echo)|ultrasound/i;
+    /COMPLETED\s*[✅\-]|COMPLETED\s*$|BrainWave|VitalWave|Carotid\s+Duplex|\bEchocardiogram\b|Echo\s+TTE|Renal\s+Artery\s+(Doppler|Duplex)|Venous\s+Duplex|Arterial\s+Doppler|Lower\s+Extremity\s+(Arterial|Venous)|Upper\s+Extremity\s+(Arterial|Venous)|LE\s+(Arterial|Venous)\s+(Doppler|Duplex)|\bEKG\b|\bABI\b|stress\s+echo/i;
 
   // Signals that a line is a narrative sentence, not a list entry
   const NARRATIVE_RE = /\bpresented?\b|\bpatient\b|\ba (male|female)\b|\bfollow.?up\b|\bhistory of\b|\bfor (the|a|an)\b|\breports?\b|\bcomplains?\b/i;
