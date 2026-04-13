@@ -340,6 +340,7 @@ export async function registerRoutes(
           medications: p.medications || null,
           previousTests: p.previousTests || null,
           previousTestsDate: extractDateFromPrevTests(p.previousTests) || null,
+          noPreviousTests: p.noPreviousTests ?? false,
           notes: p.notes || null,
           qualifyingTests: [],
           reasoning: {},

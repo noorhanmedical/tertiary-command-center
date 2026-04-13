@@ -809,13 +809,14 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
       if (colFieldMap.has(colIdx)) {
         const mappedField = colFieldMap.get(colIdx)!;
         if (mappedField === "skip") continue;
-        // For diagnoses/history/medications: append to existing value (INDICATIONS + Dx both map to diagnoses)
+        // For diagnoses/history/medications: concatenate values from multiple mapped columns
+        // so both INDICATIONS and Dx content are preserved.
         const existing = kindValues[mappedField];
         if (!existing) {
           kindValues[mappedField] = val;
         } else {
-          // Prefer the longer/richer of two values for the same field (e.g. two Dx-like columns)
-          kindValues[mappedField] = val.length > existing.length ? val : existing;
+          // Avoid duplicating content if the texts are identical
+          kindValues[mappedField] = existing.includes(val) ? existing : `${existing}\n${val}`;
         }
         continue;
       }
