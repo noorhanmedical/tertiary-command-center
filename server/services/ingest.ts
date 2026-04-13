@@ -228,7 +228,7 @@ async function parseSingleChunk(chunk: string): Promise<ParsedPatient[]> {
   const aiResponse = await withRetry(
     () =>
       openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         messages: [
           { role: "system", content: PARSE_SYSTEM_PROMPT },
           { role: "user", content: chunk },
@@ -355,7 +355,7 @@ async function parseEndDelimitedBatch(batch: { name: string; block: string; insu
   const aiResponse = await withRetry(
     () =>
       openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         messages: [
           { role: "system", content: END_BLOCK_SYSTEM_PROMPT },
           { role: "user", content: combined },
@@ -429,7 +429,7 @@ async function parseTsvBatch(batch: { name: string; block: string; insurance?: s
   const aiResponse = await withRetry(
     () =>
       openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         messages: [
           { role: "system", content: TSV_BLOCK_SYSTEM_PROMPT },
           { role: "user", content: combined },
@@ -667,12 +667,15 @@ function classifyTsvColumn(val: string): TsvColKind {
   // - Drug name followed by dose (mg/mcg/ml/tablet/capsule/unit) then frequency keywords
   const medPatterns = [
     /Taking\s*-\s*by\s+[A-Z]/,
-    /\b\d+\s*(mg|mcg|ml|units?|tablet|capsule|cap|grain|iu)\b/i,
+    /\b\d+(\.\d+)?\s*(mg|mcg|ml|units?|tablet|capsule|cap|grain|iu)\b/i,
     /\b(once|twice|three times|QD|BID|TID|QID|QAM|QPM|QHS|PRN|daily|nightly|weekly)\b/i,
     /\b(Orally|by Mouth|Subcutaneous|Nasally|Topically|Externally|Under the Tongue)\b/i,
   ];
   const medMatchCount = medPatterns.filter((p) => p.test(trimmed)).length;
   if (medMatchCount >= 2) return "medications";
+  // Also catch pharmaceutical-form-only lists (e.g. "ciprofloxacin ear drops, suspension\nomeprazole capsule")
+  const pharmaFormRE = /\b(tablet|capsule|injection|suspension|solution|drops?|spray|patch|cream|gel|ointment|inhaler|syrup|suppository|auto-injector|syringe)\b/i;
+  if (medMatchCount >= 1 && pharmaFormRE.test(trimmed)) return "medications";
 
   // Previous tests: content-based detection — catches "COMPLETED ✅" entries and known
   // ancillary test names regardless of what column header was used
@@ -785,6 +788,51 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
 
 /** Convert TSV segments directly to ParsedPatient[] without any AI call.
  *  Since each column is already classified by content, no inference is needed. */
+function sanitizePatientFields(p: ParsedPatient): ParsedPatient {
+  if (!p.diagnoses) return p;
+
+  const MED_LINE_RE =
+    /\b\d+(\.\d+)?\s*(mg|mcg|ml|units?|tablet|capsule|cap|grain|iu)\b|\b(tablet|capsule|injection|suspension|solution|drops?|spray|patch|cream|gel|ointment|inhaler|syrup|suppository|auto-injector|syringe)\b/i;
+
+  const TEST_LINE_RE =
+    /COMPLETED\s*[✅\-]|COMPLETED\s*$|BrainWave|VitalWave|\bCarotid\b|\bEchocardiogram\b|\bDoppler\b|echo\s+(TTE|on\b)|\bEKG\b|\bABI\b|stress\s*(test|echo)|ultrasound/i;
+
+  const lines = p.diagnoses.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return p;
+
+  const dxLines: string[] = [];
+  const medLines: string[] = [];
+  const testLines: string[] = [];
+
+  for (const line of lines) {
+    if (TEST_LINE_RE.test(line)) {
+      testLines.push(line);
+    } else if (MED_LINE_RE.test(line)) {
+      medLines.push(line);
+    } else {
+      dxLines.push(line);
+    }
+  }
+
+  if (medLines.length === 0 && testLines.length === 0) return p;
+
+  const diagnoses = dxLines.length > 0 ? dxLines.join("\n") : undefined;
+
+  let medications = p.medications;
+  if (medLines.length > 0) {
+    const movedMeds = medLines.join("\n");
+    medications = medications ? `${medications}\n${movedMeds}` : movedMeds;
+  }
+
+  let previousTests = p.previousTests;
+  if (testLines.length > 0) {
+    const movedTests = testLines.join("\n");
+    previousTests = previousTests ? `${previousTests}\n${movedTests}` : movedTests;
+  }
+
+  return { ...p, diagnoses, medications, previousTests };
+}
+
 function parseTsvSegmentsDirect(segments: TsvSegment[]): ParsedPatient[] {
   return segments.map((seg) => ({
     name: seg.name,
@@ -818,6 +866,8 @@ export async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
       const results = await Promise.all(chunks.map(parseSingleChunk));
       allPatients = results.flat();
     }
+
+    allPatients = allPatients.map(sanitizePatientFields);
 
     const grouped = new Map<string, ParsedPatient>();
     const keyIndex = new Map<string, string>();
