@@ -936,11 +936,6 @@ function sanitizePatientFields(p: ParsedPatient): ParsedPatient {
   const MED_LINE_RE =
     /\b\d+(\.\d+)?\s*(mg|mcg|ml|units?|tablet|capsule|cap|grain|iu)\b|\b(tablet|capsule|injection|suspension|solution|drops?|spray|patch|cream|gel|ointment|inhaler|syrup|suppository|auto-injector|syringe)\b/i;
 
-  // Specific compound test names only — avoid single words like "Carotid", "Venous", "Renal"
-  // that appear in everyday diagnoses (e.g. "Carotid artery disease", "Renal failure")
-  const TEST_LINE_RE =
-    /COMPLETED\s*[✅\-]|COMPLETED\s*$|BrainWave|VitalWave|Carotid\s+Duplex|\bEchocardiogram\b|Echo\s+TTE|Renal\s+Artery\s+(Doppler|Duplex)|Venous\s+Duplex|Arterial\s+Doppler|Lower\s+Extremity\s+(Arterial|Venous)|Upper\s+Extremity\s+(Arterial|Venous)|LE\s+(Arterial|Venous)\s+(Doppler|Duplex)|\bEKG\b|\bABI\b|stress\s+echo/i;
-
   // Signals that a line is a narrative sentence, not a list entry
   const NARRATIVE_RE = /\bpresented?\b|\bpatient\b|\ba (male|female)\b|\bfollow.?up\b|\bhistory of\b|\bfor (the|a|an)\b|\breports?\b|\bcomplains?\b/i;
 
@@ -954,18 +949,17 @@ function sanitizePatientFields(p: ParsedPatient): ParsedPatient {
     const lines = diagnoses.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const dxLines: string[] = [];
     const medLines: string[] = [];
-    const testLines: string[] = [];
 
     for (const line of lines) {
       const lower = line.toLowerCase();
       if (DX_JUNK_WORDS.has(lower)) continue; // strip column-header junk
 
-      if (TEST_LINE_RE.test(line)) {
-        testLines.push(line);
-      } else if (line.length <= 200 && !NARRATIVE_RE.test(line) && MED_LINE_RE.test(line)) {
+      if (line.length <= 200 && !NARRATIVE_RE.test(line) && MED_LINE_RE.test(line)) {
         // Short, non-narrative line that contains dosage/pharmaceutical form → medication
         medLines.push(line);
       } else {
+        // Keep all other lines (including any that mention test names) in diagnoses.
+        // previousTests is populated ONLY from the Ancillaries Completed column — never from Dx.
         dxLines.push(line);
       }
     }
@@ -974,10 +968,6 @@ function sanitizePatientFields(p: ParsedPatient): ParsedPatient {
     if (medLines.length > 0) {
       const moved = medLines.join("\n");
       medications = medications ? `${medications}\n${moved}` : moved;
-    }
-    if (testLines.length > 0) {
-      const moved = testLines.join("\n");
-      previousTests = previousTests ? `${previousTests}\n${moved}` : moved;
     }
   }
 
