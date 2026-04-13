@@ -172,7 +172,7 @@ Rules:
 - CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
 - FIELD SEPARATION: Diagnoses must contain ONLY disease names and medical conditions. If you see drug/medication names in what appears to be a diagnoses section, move them to medications. If you see test names or "COMPLETED ✅" style entries, move them to previousTests.
 - For medications: only include actual drug/prescription names and dosages. If the only value looks like a visit reason, test name, or scheduling code (e.g. "BrainWave", "FU HGA", "med refills", "follow up", "physical"), set medications to null.
-- For previousTests: scan the ENTIRE note — do not rely solely on labeled sections. Any list of completed tests or prior imaging found anywhere in the record belongs here, even if unlabeled.
+- For previousTests: scan the ENTIRE note — do not rely solely on labeled sections. Any list of completed tests or prior imaging found anywhere in the record belongs here, even if unlabeled. Recognized labels include: "Previous Tests:", "Prior Imaging:", "HGA Records:", "Past Studies:", "Ancillary History:", "Ancillaries Completed:", "Completed Ancillaries:", "Ancillaries:", "Tests Completed:".
 - Return exactly one result object per record, in the same order as the input.
 - Do NOT include a name field — names are managed externally.
 
@@ -220,7 +220,7 @@ Rules:
 - If a row is clearly a header, summary, or empty — skip it.
 - If there is no clinical data for a patient, still include them with null clinical fields.
 - For the "medications" field: only include actual drug/prescription names and dosages. If the only value present looks like a visit reason, appointment note, scheduling code, or test name (e.g. "BrainWave", "VitalWave", "EEG", "FU HGA", "med refills", "follow up", "HGA", "new patient", "physical", "wellness"), set medications to null instead.
-- For the "previousTests" field: scan the ENTIRE note — do not rely solely on labeled sections. Any list of completed tests or prior imaging found anywhere in the record belongs here, even if unlabeled. Look for labels like "Previous Tests:", "Prior Imaging:", "HGA Records:", "Past Studies:", "Ancillary History:", AND for inline mentions like "had an Echo last year" or "COMPLETED ✅ - BrainWave on 04/01/2026".
+- For the "previousTests" field: scan the ENTIRE note — do not rely solely on labeled sections. Any list of completed tests or prior imaging found anywhere in the record belongs here, even if unlabeled. Recognized labels include: "Previous Tests:", "Prior Imaging:", "HGA Records:", "Past Studies:", "Ancillary History:", "Ancillaries Completed:", "Completed Ancillaries:", "Ancillaries:", "Tests Completed:". Also capture inline mentions like "had an Echo last year" or "COMPLETED ✅ - BrainWave on 04/01/2026".
 
 Respond with a JSON object: { "patients": [ ...array of ALL patient objects... ] }. No markdown. Do not truncate.`;
 
@@ -674,6 +674,11 @@ function classifyTsvColumn(val: string): TsvColKind {
   const medMatchCount = medPatterns.filter((p) => p.test(trimmed)).length;
   if (medMatchCount >= 2) return "medications";
 
+  // Previous tests: content-based detection — catches "COMPLETED ✅" entries and known
+  // ancillary test names regardless of what column header was used
+  const prevTestContentRE = /COMPLETED\s*✅|COMPLETED\s*-|BrainWave|VitalWave|Carotid\s*Duplex|Echocardiogram|Echo\s*TTE|Renal\s*Artery|LE\s*Arterial|LE\s*Venous|Abdominal\s*Aort|Lower\s*Extremity|Upper\s*Extremity|Venous\s*Duplex|Arterial\s*Doppler|\bEKG\b|\bABI\b|stress\s*test|stress\s*echo/i;
+  if (prevTestContentRE.test(trimmed)) return "previousTests";
+
   // Diagnoses: multi-line list of condition names, or a single condition line
   // Typical diagnosis fields are shorter per line and contain medical condition terminology
   const lines = trimmed.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -687,7 +692,7 @@ function classifyTsvColumn(val: string): TsvColKind {
   return "history"; // default large text blocks to history/notes
 }
 
-const PREV_TESTS_HEADER_RE = /hga\s*records?|previous\s*tests?|prior\s*imaging|previous\s*imaging|past\s*studies|ancillary\s*history/i;
+const PREV_TESTS_HEADER_RE = /hga\s*records?|previous\s*tests?|prior\s*imaging|previous\s*imaging|past\s*studies|ancillary\s*history|ancillaries?\s*completed|completed\s*ancillaries?|ancillaries?\s*done|tests?\s*completed|completed\s*tests?|prior\s*ancillaries?|^ancillaries?$/i;
 
 function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
   const rows = parseTsvWithQuotedFields(text);
