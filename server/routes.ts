@@ -15,7 +15,6 @@ import {
 } from "./services/ingest";
 import {
   screenSinglePatientWithAI,
-  checkCooldownsForPatients,
   enrichFromReferenceDb,
   parseReferenceImportWithAI,
   analyzeTestWithAI,
@@ -540,25 +539,10 @@ export async function registerRoutes(
 
       const qualTests = match?.qualifyingTests || [];
 
-      let cooldownData: any[] = [];
-      if (qualTests.length > 0) {
-        try {
-          const batch = await storage.getScreeningBatch(patient.batchId);
-          const visitDate = batch?.scheduleDate || undefined;
-          const cooldowns = await checkCooldownsForPatients([{ name: patient.name, qualifyingTests: qualTests }], visitDate);
-          const patientCooldowns = cooldowns[patient.name];
-          if (patientCooldowns && patientCooldowns.length > 0) {
-            cooldownData = patientCooldowns;
-          }
-        } catch (e) {
-          console.error("Cooldown check failed:", e);
-        }
-      }
-
       const updated = await storage.updatePatientScreening(id, {
         qualifyingTests: qualTests,
         reasoning: match?.reasoning || {},
-        cooldownTests: cooldownData,
+        cooldownTests: [],
         diagnoses: match?.diagnoses || patient.diagnoses || null,
         history: match?.history || patient.history || null,
         medications: match?.medications || patient.medications || null,
@@ -715,33 +699,6 @@ export async function registerRoutes(
         },
         { concurrency: 5, retries: 3 }
       );
-
-      const patientsForCooldown: { name: string; qualifyingTests: string[] }[] = [];
-      for (const patient of patients) {
-        const match = aiResults.get(patient.id);
-        if (match?.qualifyingTests?.length > 0) {
-          patientsForCooldown.push({ name: patient.name, qualifyingTests: match.qualifyingTests });
-        }
-      }
-
-      for (const patient of patients) {
-        await storage.updatePatientScreening(patient.id, { cooldownTests: [] });
-      }
-
-      if (patientsForCooldown.length > 0) {
-        try {
-          const visitDate = batch?.scheduleDate || undefined;
-          const cooldownResults = await checkCooldownsForPatients(patientsForCooldown, visitDate);
-          for (const patient of patients) {
-            const violations = cooldownResults[patient.name];
-            if (violations && violations.length > 0) {
-              await storage.updatePatientScreening(patient.id, { cooldownTests: violations });
-            }
-          }
-        } catch (e) {
-          console.error("Batch cooldown check failed:", e);
-        }
-      }
 
       await storage.updateScreeningBatch(batchId, {
         status: "completed",

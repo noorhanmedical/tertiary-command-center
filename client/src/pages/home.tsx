@@ -52,7 +52,6 @@ import {
   PanelLeft,
   Database,
   AlertTriangle,
-  ShieldAlert,
   Search,
   Users,
   DollarSign,
@@ -2413,7 +2412,6 @@ const PDF_BASE_STYLES = `
   .clinical-field-label { font-size:10px; font-weight:700; color:#475569; margin-bottom:3px; }
   .clinical-field-val { font-size:11px; color:#1e293b; line-height:1.55; }
   .section-heading { font-size:11px; font-weight:700; color:#1e293b; margin:0 0 10px; text-transform:uppercase; letter-spacing:0.05em; }
-  .cooldown-box { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:12px; margin-bottom:14px; }
 `;
 
 function buildPrintWindow(title: string, bodyHtml: string, options?: { injectScript?: string }): void {
@@ -2527,19 +2525,6 @@ function formatScheduleDate(scheduleDate: string | null | undefined, createdAt: 
   return new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 }
 
-function classifyInsuranceForCooldown(insurance: string | null | undefined): "medicare" | "ppo" | "none" {
-  if (!insurance || !insurance.trim()) return "none";
-  const s = insurance.toLowerCase().trim();
-  const isMedicareAdvantage =
-    s.includes("advantage") ||
-    s.includes("mapd") ||
-    s.includes("ma-pd") ||
-    s.includes("hmo medicare") ||
-    s.includes("ma plan");
-  if (isMedicareAdvantage) return "ppo";
-  if (s.includes("medicare")) return "medicare";
-  return "ppo";
-}
 
 function extractMostRecentDate(text: string | null | undefined): Date | null {
   if (!text) return null;
@@ -2591,18 +2576,8 @@ function extractMostRecentDate(text: string | null | undefined): Date | null {
   return dates.reduce((a, b) => b > a ? b : a);
 }
 
-function getPrevTestsSign(insurance: string | null | undefined, previousTests: string | null | undefined, scheduleDate: string): string {
-  const insType = classifyInsuranceForCooldown(insurance);
-  if (insType === "none") return "";
-  const testDate = extractMostRecentDate(previousTests);
-  if (!testDate) return "";
-  const parts = scheduleDate.split("-").map(Number);
-  const refDate = parts.length === 3 ? new Date(parts[0], parts[1]-1, parts[2]) : new Date(scheduleDate);
-  if (isNaN(refDate.getTime())) return "";
-  const cooldownMonths = insType === "medicare" ? 12 : 6;
-  const cutoff = new Date(testDate);
-  cutoff.setMonth(cutoff.getMonth() + cooldownMonths);
-  return refDate <= cutoff ? "🛑 " : "🟢 ";
+function getPrevTestsSign(_insurance: string | null | undefined, _previousTests: string | null | undefined, _scheduleDate: string): string {
+  return "";
 }
 
 function generateClinicianPDF(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): void {
@@ -3537,16 +3512,14 @@ function ResultsView({
             {patients.map((patient) => {
               const allTests = patient.qualifyingTests || [];
               const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
-              const cooldowns = (patient.cooldownTests || []) as { test: string; lastDate: string; insuranceType: string; cooldownMonths: number }[];
               const qualTests = allTests.filter((t) => !isImagingTest(t));
               const qualImaging = allTests.filter((t) => isImagingTest(t));
               const isExpanded = expandedPatient === patient.id;
-              const hasCooldowns = cooldowns.length > 0;
 
               return (
                 <Card
                   key={patient.id}
-                  className={`rounded-2xl border-0 shadow-sm bg-white/85 backdrop-blur-sm overflow-hidden transition-shadow hover:shadow-md ${hasCooldowns ? "ring-1 ring-amber-300 dark:ring-amber-700" : ""}`}
+                  className="rounded-2xl border-0 shadow-sm bg-white/85 backdrop-blur-sm overflow-hidden transition-shadow hover:shadow-md"
                   data-testid={`row-result-${patient.id}`}
                 >
                   <div
@@ -3580,12 +3553,6 @@ function ResultsView({
                             >
                               {patient.patientType || "visit"}
                             </span>
-                            {hasCooldowns && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300" data-testid={`badge-cooldown-${patient.id}`}>
-                                <AlertTriangle className="w-3 h-3" />
-                                Cooldown ({cooldowns.length})
-                              </span>
-                            )}
                           </div>
                           {(patient.diagnoses || patient.history || patient.medications || patient.previousTests) && (
                             <div
@@ -3696,7 +3663,7 @@ function ResultsView({
                     </div>
                   </div>
 
-                  {isExpanded && (allTests.length > 0 || hasCooldowns) && (
+                  {isExpanded && allTests.length > 0 && (
                     <div className="border-t border-slate-100 bg-slate-50/60 p-5" data-testid={`row-expanded-${patient.id}`}>
                       <div className="flex items-center justify-between mb-4">
                         <h3 className="font-semibold text-base text-slate-900">{patient.name} — Ancillary Details</h3>
@@ -3704,37 +3671,6 @@ function ResultsView({
                           <X className="w-4 h-4 text-slate-400" />
                         </Button>
                       </div>
-
-                      {hasCooldowns && (
-                        <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-4 mb-4" data-testid={`card-cooldown-${patient.id}`}>
-                          <div className="flex items-center gap-2 mb-3">
-                            <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                            <span className="font-semibold text-sm text-amber-800 dark:text-amber-300">Cooldown Violations</span>
-                          </div>
-                          <div className="space-y-2">
-                            {cooldowns.map((cd, idx) => (
-                              <div key={idx} className="flex items-center justify-between gap-3 rounded-lg bg-white/80 dark:bg-amber-900/20 px-3 py-2" data-testid={`cooldown-item-${idx}`}>
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                                  <span className="text-sm font-medium text-amber-900 dark:text-amber-200 truncate">{cd.test}</span>
-                                </div>
-                                <div className="flex items-center gap-3 shrink-0 text-xs text-amber-700 dark:text-amber-400">
-                                  <span className="flex items-center gap-1">
-                                    <Calendar className="w-3 h-3" />
-                                    Last: {cd.lastDate}
-                                  </span>
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-200/60 dark:bg-amber-800/40 text-[10px] font-semibold uppercase">
-                                    {cd.insuranceType}
-                                  </span>
-                                  <span className="text-[10px]">
-                                    {cd.cooldownMonths}mo cooldown
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
 
                       <div className="flex flex-wrap gap-2">
                         {(() => {
