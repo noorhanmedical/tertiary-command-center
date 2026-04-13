@@ -583,6 +583,8 @@ function mergePatients(a: ParsedPatient, b: ParsedPatient): ParsedPatient {
     history: pickRicher(a.history, b.history),
     medications: pickRicher(a.medications, b.medications),
     previousTests: pickRicher(a.previousTests, b.previousTests),
+    // Preserve the flag if either source has it set
+    noPreviousTests: Boolean(a.noPreviousTests || b.noPreviousTests) || undefined,
   };
 }
 
@@ -702,7 +704,7 @@ function classifyTsvColumn(val: string): TsvColKind {
 const PREV_TESTS_HEADER_RE = /hga\s*records?|previous\s*tests?|prior\s*imaging|previous\s*imaging|past\s*studies|ancillary\s*history|ancillaries?\s*completed|completed\s*ancillaries?|ancillaries?\s*done|tests?\s*completed|completed\s*tests?|prior\s*ancillaries?|^ancillaries?$/i;
 
 // "No previous tests" language in an Ancillaries Completed cell — set noPreviousTests=true
-const NO_PREV_TESTS_RE = /^(no\s+record|no\s+prior|no\s+previous|none|n\/a|no\s+tests?|not\s+applicable|no\s+ancillar|no\s+hga)/i;
+const NO_PREV_TESTS_RE = /\bno\s+record\b|\bno\s+prior\b|\bno\s+previous\b|\bnone\b|\bn\/a\b|\bno\s+tests?\b|\bnot\s+applicable\b|\bno\s+ancillar|\bno\s+hga\b/i;
 
 // Column header → field mapping for labeled EHR exports.
 // Keys are lowercase-trimmed header labels; values are the ParsedPatient field they map to.
