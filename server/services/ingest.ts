@@ -676,7 +676,7 @@ function classifyTsvColumn(val: string): TsvColKind {
 
   // Previous tests: content-based detection — catches "COMPLETED ✅" entries and known
   // ancillary test names regardless of what column header was used
-  const prevTestContentRE = /COMPLETED\s*✅|COMPLETED\s*-|BrainWave|VitalWave|Carotid\s*Duplex|Echocardiogram|Echo\s*TTE|Renal\s*Artery|LE\s*Arterial|LE\s*Venous|Abdominal\s*Aort|Lower\s*Extremity|Upper\s*Extremity|Venous\s*Duplex|Arterial\s*Doppler|\bEKG\b|\bABI\b|stress\s*test|stress\s*echo/i;
+  const prevTestContentRE = /COMPLETED\s*✅|COMPLETED\s*-|BrainWave|VitalWave|\bCarotid\b|\bEchocardiogram\b|\bEcho\b|\bDoppler\b|\bRenal\b|\bVenous\b|\bArterial\b|Carotid\s*Duplex|Echo\s*TTE|Renal\s*Artery|LE\s*Arterial|LE\s*Venous|Abdominal\s*Aort|Lower\s*Extremity|Upper\s*Extremity|Venous\s*Duplex|Arterial\s*Doppler|\bultrasound\b|\bEKG\b|\bABI\b|stress\s*test|stress\s*echo/i;
   if (prevTestContentRE.test(trimmed)) return "previousTests";
 
   // Diagnoses: multi-line list of condition names, or a single condition line
