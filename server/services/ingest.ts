@@ -215,6 +215,8 @@ For each patient return:
 Rules:
 - CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
 - FIELD SEPARATION: Diagnoses must contain ONLY disease names and medical conditions. If you see drug/medication names mixed into a diagnoses section, move them to medications. If you see test names, "COMPLETED ✅" entries, or prior imaging listed, move them to previousTests — NEVER leave them in diagnoses.
+- NEVER include column header words (such as "Name", "DOB", "Time", "Insurance", "Diagnoses", "Medications", "History", "Rx", "Hx", "Dx") as entries in any clinical field.
+- NEVER put narrative sentences, patient introductions, or visit note prose into medications. The medications field must contain ONLY drug names and dosages — nothing else.
 - Extract ALL patients in the input — even if there are 20 or more.
 - The input may be tab-separated spreadsheet data, a simple name list, or mixed clinical notes — handle all formats.
 - If a row is clearly a header, summary, or empty — skip it.
@@ -788,49 +790,84 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
 
 /** Convert TSV segments directly to ParsedPatient[] without any AI call.
  *  Since each column is already classified by content, no inference is needed. */
-function sanitizePatientFields(p: ParsedPatient): ParsedPatient {
-  if (!p.diagnoses) return p;
+// Column-header words that sometimes bleed into diagnoses from TSV/pasted data
+const DX_JUNK_WORDS = new Set([
+  "name", "patient name", "dob", "date of birth", "time", "insurance",
+  "insurance type", "gender", "age", "mrn", "patient id", "patient",
+  "diagnoses", "diagnosis", "dx", "hx", "rx", "medications", "meds",
+  "previous tests", "prior tests", "hga records", "notes", "history",
+]);
 
+function sanitizePatientFields(p: ParsedPatient): ParsedPatient {
   const MED_LINE_RE =
     /\b\d+(\.\d+)?\s*(mg|mcg|ml|units?|tablet|capsule|cap|grain|iu)\b|\b(tablet|capsule|injection|suspension|solution|drops?|spray|patch|cream|gel|ointment|inhaler|syrup|suppository|auto-injector|syringe)\b/i;
 
   const TEST_LINE_RE =
     /COMPLETED\s*[✅\-]|COMPLETED\s*$|BrainWave|VitalWave|\bCarotid\b|\bEchocardiogram\b|\bDoppler\b|echo\s+(TTE|on\b)|\bEKG\b|\bABI\b|stress\s*(test|echo)|ultrasound/i;
 
-  const lines = p.diagnoses.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length === 0) return p;
+  // Signals that a line is a narrative sentence, not a list entry
+  const NARRATIVE_RE = /\bpresented?\b|\bpatient\b|\ba (male|female)\b|\bfollow.?up\b|\bhistory of\b|\bfor (the|a|an)\b|\breports?\b|\bcomplains?\b/i;
 
-  const dxLines: string[] = [];
-  const medLines: string[] = [];
-  const testLines: string[] = [];
+  // ── Sanitize diagnoses ──────────────────────────────────────────────────────
+  let diagnoses = p.diagnoses;
+  let medications = p.medications;
+  let previousTests = p.previousTests;
+  let history = p.history;
 
-  for (const line of lines) {
-    if (TEST_LINE_RE.test(line)) {
-      testLines.push(line);
-    } else if (MED_LINE_RE.test(line)) {
-      medLines.push(line);
-    } else {
-      dxLines.push(line);
+  if (diagnoses) {
+    const lines = diagnoses.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const dxLines: string[] = [];
+    const medLines: string[] = [];
+    const testLines: string[] = [];
+
+    for (const line of lines) {
+      const lower = line.toLowerCase();
+      if (DX_JUNK_WORDS.has(lower)) continue; // strip column-header junk
+
+      if (TEST_LINE_RE.test(line)) {
+        testLines.push(line);
+      } else if (line.length <= 200 && !NARRATIVE_RE.test(line) && MED_LINE_RE.test(line)) {
+        // Short, non-narrative line that contains dosage/pharmaceutical form → medication
+        medLines.push(line);
+      } else {
+        dxLines.push(line);
+      }
+    }
+
+    diagnoses = dxLines.length > 0 ? dxLines.join("\n") : undefined;
+    if (medLines.length > 0) {
+      const moved = medLines.join("\n");
+      medications = medications ? `${medications}\n${moved}` : moved;
+    }
+    if (testLines.length > 0) {
+      const moved = testLines.join("\n");
+      previousTests = previousTests ? `${previousTests}\n${moved}` : moved;
     }
   }
 
-  if (medLines.length === 0 && testLines.length === 0) return p;
+  // ── Sanitize medications — move misplaced narratives to history ─────────────
+  if (medications) {
+    const medRawLines = medications.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const realMedLines: string[] = [];
+    const narrativeLines: string[] = [];
 
-  const diagnoses = dxLines.length > 0 ? dxLines.join("\n") : undefined;
+    for (const line of medRawLines) {
+      // If a medications line is very long and reads like a clinical narrative, it belongs in history
+      if (line.length > 150 && NARRATIVE_RE.test(line)) {
+        narrativeLines.push(line);
+      } else {
+        realMedLines.push(line);
+      }
+    }
 
-  let medications = p.medications;
-  if (medLines.length > 0) {
-    const movedMeds = medLines.join("\n");
-    medications = medications ? `${medications}\n${movedMeds}` : movedMeds;
+    medications = realMedLines.length > 0 ? realMedLines.join("\n") : undefined;
+    if (narrativeLines.length > 0) {
+      const moved = narrativeLines.join("\n");
+      history = history ? `${history}\n${moved}` : moved;
+    }
   }
 
-  let previousTests = p.previousTests;
-  if (testLines.length > 0) {
-    const movedTests = testLines.join("\n");
-    previousTests = previousTests ? `${previousTests}\n${movedTests}` : movedTests;
-  }
-
-  return { ...p, diagnoses, medications, previousTests };
+  return { ...p, diagnoses, medications, previousTests, history };
 }
 
 function parseTsvSegmentsDirect(segments: TsvSegment[]): ParsedPatient[] {
