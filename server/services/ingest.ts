@@ -44,22 +44,26 @@ export function excelToText(buffer: Buffer): string {
   return lines.join("\n");
 }
 
+// Detects "no previous tests" language in an Ancillaries Completed cell
+const NO_PREV_TESTS_RE = /\bno\s+record\b|\bno\s+prior\b|\bno\s+previous\b|\bnone\b|\bn\/a\b|\bno\s+tests?\b|\bnot\s+applicable\b|\bno\s+ancillar|\bno\s+hga\b/i;
+
 const EXCEL_COL_MAP_PATTERNS: Array<{ key: string; pattern: RegExp }> = [
-  { key: "name",       pattern: /^(name|patientname|patient)$/ },
-  { key: "time",       pattern: /^(time|appttime|appointmenttime|start|starttime)$/ },
-  { key: "age",        pattern: /^(age)$/ },
-  { key: "gender",     pattern: /^(gender|sex)$/ },
-  { key: "dob",        pattern: /^(dob|dateofbirth|birthdate)$/ },
-  { key: "insurance",  pattern: /^(insurance|payer|insurancetype|insuranceplan)$/ },
-  { key: "diagnoses",  pattern: /^(diagnoses|dx|diagnosis|conditions|assessmentplan|assessment)$/ },
-  { key: "history",    pattern: /^(hpi|history|pmh|medicalhistory|pastmedicalhistory|pasthistory)$/ },
-  { key: "medications",pattern: /^(medications|rx|meds|prescriptions|currentmeds|currentmedications)$/ },
-  { key: "notes",      pattern: /^(notes|note|comments|comment|chiefcomplaint|cc|reason|visitreason)$/ },
+  { key: "name",          pattern: /^(name|patientname|patient)$/ },
+  { key: "time",          pattern: /^(time|appttime|appointmenttime|start|starttime)$/ },
+  { key: "age",           pattern: /^(age)$/ },
+  { key: "gender",        pattern: /^(gender|sex)$/ },
+  { key: "dob",           pattern: /^(dob|dateofbirth|birthdate)$/ },
+  { key: "insurance",     pattern: /^(insurance|payer|insurancetype|insuranceplan)$/ },
+  { key: "diagnoses",     pattern: /^(diagnoses|dx|diagnosis|conditions|assessmentplan|assessment)$/ },
+  { key: "history",       pattern: /^(hpi|history|pmh|medicalhistory|pastmedicalhistory|pasthistory)$/ },
+  { key: "medications",   pattern: /^(medications|rx|meds|prescriptions|currentmeds|currentmedications)$/ },
+  { key: "notes",         pattern: /^(notes|note|comments|comment|chiefcomplaint|cc|reason|visitreason)$/ },
+  { key: "previousTests", pattern: /^(ancillariescompleted|ancillariesdone|completedancillaries|hgarecords|previouslycompleted|testscompleted|ancillaryhistory|previousimaging|priorimaging)$/ },
 ];
 
-export function excelToSegments(buffer: Buffer): { name: string; block: string; insurance?: string }[] | null {
+export function excelToSegments(buffer: Buffer): { name: string; block: string; insurance?: string; noPreviousTests?: boolean }[] | null {
   const workbook = XLSX.read(buffer, { type: "buffer" });
-  const allSegments: { name: string; block: string; insurance?: string }[] = [];
+  const allSegments: { name: string; block: string; insurance?: string; noPreviousTests?: boolean }[] = [];
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
@@ -119,11 +123,24 @@ export function excelToSegments(buffer: Buffer): { name: string; block: string; 
         if (val) parts.push(`Notes: ${val}`);
       }
 
+      // Ancillaries Completed column → previousTests, with "no record" detection
+      let noPreviousTests: boolean | undefined;
+      if (colMap.previousTests) {
+        const val = String(row[colMap.previousTests] ?? "").trim();
+        if (val) {
+          if (NO_PREV_TESTS_RE.test(val)) {
+            noPreviousTests = true;
+          } else {
+            parts.push(`Ancillaries Completed: ${val}`);
+          }
+        }
+      }
+
       const insurance = colMap.insurance
         ? (String(row[colMap.insurance] ?? "").trim() || undefined)
         : undefined;
 
-      allSegments.push({ name, block: parts.join("\n"), insurance });
+      allSegments.push({ name, block: parts.join("\n"), insurance, noPreviousTests });
     }
   }
 
@@ -167,13 +184,13 @@ For each record extract:
 - "diagnoses": medical conditions/diagnoses/problems ONLY — e.g. hypertension, diabetes, COPD, chest pain, neuropathy. NEVER put medication names, drug names, dosages, test names, imaging study results, or previous ancillary history here.
 - "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
 - "medications": all medications/Rx/prescriptions copied verbatim from the source, joined into one string if multiple sections, or null
-- "previousTests": ALL mentions of previously performed tests or imaging anywhere in the note — including BrainWave, VitalWave, Carotid Duplex, Echocardiogram, Echo TTE, Renal Artery Doppler, LE Arterial Doppler, LE Venous Duplex, Abdominal Aorta, EKG, ABI, stress test, ultrasound, or any prior study. Look throughout the entire narrative, not just labeled sections. Copy verbatim.
+- "previousTests": ONLY copy text from an explicitly labeled section — recognized labels are: "Ancillaries Completed:", "Previous Tests:", "HGA Records:", "Ancillary History:", "Tests Completed:", "Prior Imaging:", "Past Studies:", "Completed Ancillaries:". Copy verbatim. If no such labeled section exists, return null. NEVER extract from Diagnoses, History, Medications, or any narrative text.
 
 Rules:
 - CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
-- FIELD SEPARATION: Diagnoses must contain ONLY disease names and medical conditions. If you see drug/medication names in what appears to be a diagnoses section, move them to medications. If you see test names or "COMPLETED ✅" style entries, move them to previousTests.
+- FIELD SEPARATION: Diagnoses must contain ONLY disease names and medical conditions from the Diagnoses/Dx column. NEVER move content between columns.
 - For medications: only include actual drug/prescription names and dosages. If the only value looks like a visit reason, test name, or scheduling code (e.g. "BrainWave", "FU HGA", "med refills", "follow up", "physical"), set medications to null.
-- For previousTests: scan the ENTIRE note — do not rely solely on labeled sections. Any list of completed tests or prior imaging found anywhere in the record belongs here, even if unlabeled. Recognized labels include: "Previous Tests:", "Prior Imaging:", "HGA Records:", "Past Studies:", "Ancillary History:", "Ancillaries Completed:", "Completed Ancillaries:", "Ancillaries:", "Tests Completed:".
+- For previousTests: ONLY use explicitly labeled ancillaries sections. Do NOT infer from diagnoses or history text. Even if the history mentions a past Echo or Doppler study, do not put it in previousTests unless it appears under an "Ancillaries Completed:" or equivalent label.
 - Return exactly one result object per record, in the same order as the input.
 - Do NOT include a name field — names are managed externally.
 
@@ -190,12 +207,13 @@ For each record extract:
 - "diagnoses": copy the entire text under "Diagnoses:" verbatim, or null if absent
 - "history": copy the entire text under "History/HPI:" verbatim, or null if absent
 - "medications": copy the entire text under "Medications:" verbatim, or null if absent
-- "previousTests": copy the entire text under any label for previous tests or prior imaging (e.g. "Previous Tests:", "Prior Imaging:", "HGA Records:", "Past Studies:") verbatim, or null if absent
+- "previousTests": ONLY copy text from an explicitly labeled section: "Ancillaries Completed:", "Previous Tests:", "HGA Records:", "Ancillary History:", "Tests Completed:", "Prior Imaging:", "Past Studies:", "Completed Ancillaries:". Copy verbatim. If no such section exists, return null. NEVER extract from Diagnoses, History, Medications, or any other section.
 
 Rules:
 - CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written under their labeled sections. Do NOT rephrase, reword, summarize, or alter the text in any way.
-- Each labeled section (Diagnoses:, History/HPI:, Medications:) is a discrete column from the source EHR — do not mix content between sections.
+- Each labeled section (Diagnoses:, History/HPI:, Medications:, Ancillaries Completed:) is a discrete column from the source EHR — NEVER mix content between sections.
 - For medications: if no "Medications:" section exists, set to null. Do not infer medications from the history text.
+- For previousTests: if no labeled ancillaries section exists, return null. Do not infer from diagnoses or history.
 - Return exactly one result object per record. Include the "name" field in every result.
 
 Respond with JSON: { "records": [ ...one object per patient record... ] }. No markdown. Do not truncate.`;
@@ -211,11 +229,11 @@ For each patient return:
 - "diagnoses": medical conditions/diagnoses/problems ONLY — e.g. hypertension, diabetes, COPD, chest pain, neuropathy. NEVER put medication names, drug names, dosages, test names, imaging study results, or previous ancillary history here.
 - "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
 - "medications": all medications/Rx copied verbatim from the source, joined into one string if multiple sections, or null
-- "previousTests": ALL mentions of previously performed tests or imaging anywhere in the note — including BrainWave, VitalWave, Carotid Duplex, Echocardiogram, Echo TTE, Renal Artery Doppler, LE Arterial Doppler, LE Venous Duplex, Abdominal Aorta, EKG, ABI, stress test, ultrasound, or any prior study. Look throughout the entire narrative, not just labeled sections. Copy verbatim.
+- "previousTests": ONLY copy text from an explicitly labeled section for prior ancillary tests — recognized labels are: "Ancillaries Completed:", "Previous Tests:", "HGA Records:", "Ancillary History:", "Tests Completed:", "Prior Imaging:", "Past Studies:", "Completed Ancillaries:". Copy that section's content verbatim. If no such labeled section is present, return null. NEVER extract from Diagnoses, History, Medications, or any unstructured narrative text.
 
 Rules:
 - CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
-- FIELD SEPARATION: Diagnoses must contain ONLY disease names and medical conditions (e.g. hypertension, diabetes, COPD, neuropathy, varicose veins). Medical conditions are NOT previous tests — "Varicose veins of lower extremity" is a diagnosis, NOT a previous test. Only put something in previousTests if it explicitly describes a completed ancillary study (BrainWave, VitalWave, Carotid Duplex, Echo TTE, EKG, Doppler, etc.) or is marked COMPLETED. If you see drug/medication names mixed into a diagnoses section, move them to medications. NEVER put actual medical conditions into previousTests.
+- FIELD SEPARATION: Each source column maps to exactly one output field. Diagnoses must contain ONLY disease names and medical conditions from the Dx/Diagnoses column. History must contain ONLY content from the Hx/History column. Medications must contain ONLY content from the Rx/Medications column. NEVER move content between columns.
 - NEVER include column header words (such as "Name", "DOB", "Time", "Insurance", "Diagnoses", "Medications", "History", "Rx", "Hx", "Dx") as entries in any clinical field.
 - NEVER put narrative sentences, patient introductions, or visit note prose into medications. The medications field must contain ONLY drug names and dosages — nothing else.
 - Extract ALL patients in the input — even if there are 20 or more.
@@ -223,7 +241,7 @@ Rules:
 - If a row is clearly a header, summary, or empty — skip it.
 - If there is no clinical data for a patient, still include them with null clinical fields.
 - For the "medications" field: only include actual drug/prescription names and dosages. If the only value present looks like a visit reason, appointment note, scheduling code, or test name (e.g. "BrainWave", "VitalWave", "EEG", "FU HGA", "med refills", "follow up", "HGA", "new patient", "physical", "wellness"), set medications to null instead.
-- For the "previousTests" field: scan the ENTIRE note — do not rely solely on labeled sections. Any list of completed tests or prior imaging found anywhere in the record belongs here, even if unlabeled. Recognized labels include: "Previous Tests:", "Prior Imaging:", "HGA Records:", "Past Studies:", "Ancillary History:", "Ancillaries Completed:", "Completed Ancillaries:", "Ancillaries:", "Tests Completed:". Also capture inline mentions like "had an Echo last year" or "COMPLETED ✅ - BrainWave on 04/01/2026".
+- For the "previousTests" field: ONLY use explicitly labeled ancillaries sections. Do NOT infer from diagnoses or history text. Even if a diagnosis mentions "Echo" or "Doppler", do not move it to previousTests unless it appears in an "Ancillaries Completed:" or equivalent labeled section.
 
 Respond with a JSON object: { "patients": [ ...array of ALL patient objects... ] }. No markdown. Do not truncate.`;
 
@@ -426,7 +444,7 @@ async function parseEndDelimitedBlocks(segments: { name: string; block: string; 
   return results;
 }
 
-async function parseTsvBatch(batch: { name: string; block: string; insurance?: string }[]): Promise<ParsedPatient[]> {
+async function parseTsvBatch(batch: { name: string; block: string; insurance?: string; noPreviousTests?: boolean }[]): Promise<ParsedPatient[]> {
   const combined = batch.map((s) => s.block).join("\n\n---\n\n");
 
   const aiResponse = await withRetry(
@@ -489,14 +507,16 @@ async function parseTsvBatch(batch: { name: string; block: string; insurance?: s
       history: r.history || undefined,
       medications: r.medications || undefined,
       previousTests: r.previousTests || undefined,
+      // Carry noPreviousTests flag from the segment (set when Excel cell was "No Record...")
+      noPreviousTests: seg.noPreviousTests,
     };
   });
 }
 
-async function parseTsvBlocks(segments: { name: string; block: string; insurance?: string }[]): Promise<ParsedPatient[]> {
+async function parseTsvBlocks(segments: { name: string; block: string; insurance?: string; noPreviousTests?: boolean }[]): Promise<ParsedPatient[]> {
   const MAX_BATCH_CHARS = 15000;
-  const batches: { name: string; block: string; insurance?: string }[][] = [];
-  let currentBatch: { name: string; block: string; insurance?: string }[] = [];
+  const batches: { name: string; block: string; insurance?: string; noPreviousTests?: boolean }[][] = [];
+  let currentBatch: { name: string; block: string; insurance?: string; noPreviousTests?: boolean }[] = [];
   let currentLen = 0;
 
   for (const seg of segments) {
@@ -703,9 +723,6 @@ function classifyTsvColumn(val: string): TsvColKind {
 
 const PREV_TESTS_HEADER_RE = /hga\s*records?|previous\s*tests?|prior\s*imaging|previous\s*imaging|past\s*studies|ancillary\s*history|ancillaries?\s*completed|completed\s*ancillaries?|ancillaries?\s*done|tests?\s*completed|completed\s*tests?|prior\s*ancillaries?|^ancillaries?$/i;
 
-// "No previous tests" language in an Ancillaries Completed cell — set noPreviousTests=true
-const NO_PREV_TESTS_RE = /\bno\s+record\b|\bno\s+prior\b|\bno\s+previous\b|\bnone\b|\bn\/a\b|\bno\s+tests?\b|\bnot\s+applicable\b|\bno\s+ancillar|\bno\s+hga\b/i;
-
 // Column header → field mapping for labeled EHR exports.
 // Keys are lowercase-trimmed header labels; values are the ParsedPatient field they map to.
 type HeaderFieldKind = "diagnoses" | "history" | "medications" | "skip";
@@ -753,35 +770,70 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
   const rows = parseTsvWithQuotedFields(text);
   if (!rows || rows.length < 2) return null;
 
-  const patientRows = rows.filter((row) => looksLikeEhrTsvRow(row) && !isEhrTsvHeader(row));
+  // --- Header-driven column detection ---
+  const headerRow = rows.find(isEhrTsvHeader);
+
+  // Determine name and time column positions from the header row.
+  // Legacy format:  TIME(0) | NAME(1) | ... (time-first)
+  // New format:     NAME(0) | AGE(1)  | ... (no time column)
+  let nameColIdx = 1;        // default: NAME at col 1 (legacy time-first format)
+  let timeColIdx: number | null = 0; // default: TIME at col 0
+
+  const prevTestsColIndices = new Set<number>();
+  const colFieldMap = new Map<number, HeaderFieldKind>();
+
+  if (headerRow) {
+    let foundName = false;
+    let foundTime = false;
+    headerRow.forEach((cell, i) => {
+      const label = cell.trim().toLowerCase();
+      // NAME column
+      if (!foundName && /^(name|patient\s*name|patient)$/.test(label)) {
+        nameColIdx = i;
+        foundName = true;
+      // TIME column
+      } else if (!foundTime && /^(time|appt\s*time|appointment\s*time|start\s*time|start)$/.test(label)) {
+        timeColIdx = i;
+        foundTime = true;
+      // Ancillaries Completed → previousTests
+      } else if (PREV_TESTS_HEADER_RE.test(cell.trim())) {
+        prevTestsColIndices.add(i);
+      // Other labeled fields (Dx, Hx, Rx, MRN, etc.)
+      } else if (HEADER_FIELD_MAP[label]) {
+        colFieldMap.set(i, HEADER_FIELD_MAP[label]);
+      }
+    });
+    // If no explicit TIME header found, don't assume col 0 is time
+    if (!foundTime) timeColIdx = null;
+  }
+
+  // Patient rows:
+  //   • When a header row is detected, accept ALL non-header non-empty rows as patient rows
+  //     (the header fully defines the structure, so content-sniffing is not needed).
+  //   • When no header row is detected, fall back to the legacy looksLikeEhrTsvRow check
+  //     (requires TIME at col 0, NAME at col 1).
+  let patientRows: string[][];
+  if (headerRow) {
+    patientRows = rows.filter((row) => !isEhrTsvHeader(row) && row.some((c) => c.trim()));
+  } else {
+    patientRows = rows.filter((row) => looksLikeEhrTsvRow(row) && !isEhrTsvHeader(row));
+  }
+
   if (patientRows.length === 0) return null;
 
   const totalRows = rows.filter((r) => r.some((c) => c.trim())).length;
   if (patientRows.length < Math.max(1, totalRows * 0.3)) return null;
 
-  // Detect column indices that correspond to "HGA RECORDS" or similar previous-tests headers
-  const headerRow = rows.find(isEhrTsvHeader);
-  const prevTestsColIndices = new Set<number>();
-  // Header-declared field routing: maps column index → explicit field
-  const colFieldMap = new Map<number, HeaderFieldKind>();
-
-  if (headerRow) {
-    headerRow.forEach((cell, i) => {
-      const label = cell.trim().toLowerCase();
-      if (PREV_TESTS_HEADER_RE.test(cell.trim())) {
-        prevTestsColIndices.add(i);
-      } else if (HEADER_FIELD_MAP[label]) {
-        colFieldMap.set(i, HEADER_FIELD_MAP[label]);
-      }
-    });
-  }
+  // Columns to skip when iterating over data cells (name and time are extracted separately)
+  const metaCols = new Set<number>([nameColIdx]);
+  if (timeColIdx !== null) metaCols.add(timeColIdx);
 
   const segments: TsvSegment[] = [];
 
   for (const row of patientRows) {
-    const time = row[0]?.trim() ?? "";
-    const name = row[1]?.trim() ?? "";
+    const name = row[nameColIdx]?.trim() ?? "";
     if (!name) continue;
+    const time = timeColIdx !== null ? (row[timeColIdx]?.trim() ?? "") : "";
 
     let gender: string | undefined;
     let age: number | undefined;
@@ -790,7 +842,10 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
     // Per-kind accumulator: store the longest/richest value seen for each kind
     const kindValues: Partial<Record<"diagnoses" | "history" | "medications" | "previousTests", string>> = {};
 
-    for (let colIdx = 2; colIdx < row.length; colIdx++) {
+    for (let colIdx = 0; colIdx < row.length; colIdx++) {
+      // Skip name and time columns — already extracted above
+      if (metaCols.has(colIdx)) continue;
+
       const val = row[colIdx]?.trim() ?? "";
       if (!val) continue;
 
@@ -811,13 +866,11 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
       if (colFieldMap.has(colIdx)) {
         const mappedField = colFieldMap.get(colIdx)!;
         if (mappedField === "skip") continue;
-        // For diagnoses/history/medications: concatenate values from multiple mapped columns
-        // so both INDICATIONS and Dx content are preserved.
+        // Concatenate values from multiple mapped columns (e.g. INDICATIONS + Dx → diagnoses)
         const existing = kindValues[mappedField];
         if (!existing) {
           kindValues[mappedField] = val;
         } else {
-          // Avoid duplicating content if the texts are identical
           kindValues[mappedField] = existing.includes(val) ? existing : `${existing}\n${val}`;
         }
         continue;
