@@ -12,6 +12,7 @@ export interface ParsedPatient {
   history?: string;
   medications?: string;
   previousTests?: string;
+  noPreviousTests?: boolean;
   notes?: string;
   rawText?: string;
 }
@@ -644,6 +645,7 @@ type TsvSegment = {
   history?: string;
   medications?: string;
   previousTests?: string;
+  noPreviousTests?: boolean;
 };
 
 function classifyTsvColumn(val: string): TsvColKind {
@@ -699,6 +701,52 @@ function classifyTsvColumn(val: string): TsvColKind {
 
 const PREV_TESTS_HEADER_RE = /hga\s*records?|previous\s*tests?|prior\s*imaging|previous\s*imaging|past\s*studies|ancillary\s*history|ancillaries?\s*completed|completed\s*ancillaries?|ancillaries?\s*done|tests?\s*completed|completed\s*tests?|prior\s*ancillaries?|^ancillaries?$/i;
 
+// "No previous tests" language in an Ancillaries Completed cell — set noPreviousTests=true
+const NO_PREV_TESTS_RE = /^(no\s+record|no\s+prior|no\s+previous|none|n\/a|no\s+tests?|not\s+applicable|no\s+ancillar|no\s+hga)/i;
+
+// Column header → field mapping for labeled EHR exports.
+// Keys are lowercase-trimmed header labels; values are the ParsedPatient field they map to.
+type HeaderFieldKind = "diagnoses" | "history" | "medications" | "skip";
+const HEADER_FIELD_MAP: Record<string, HeaderFieldKind> = {
+  // Diagnoses
+  dx: "diagnoses",
+  diagnosis: "diagnoses",
+  diagnoses: "diagnoses",
+  "problem list": "diagnoses",
+  problems: "diagnoses",
+  assessment: "diagnoses",
+  "icd codes": "diagnoses",
+  "dx list": "diagnoses",
+  indications: "diagnoses",
+  indication: "diagnoses",
+  // History
+  hx: "history",
+  history: "history",
+  pmh: "history",
+  hpi: "history",
+  "past medical history": "history",
+  "medical history": "history",
+  "clinical notes": "history",
+  "soap note": "history",
+  // Medications
+  rx: "medications",
+  medications: "medications",
+  meds: "medications",
+  "med list": "medications",
+  "current medications": "medications",
+  "medication list": "medications",
+  prescriptions: "medications",
+  // Skip
+  mrn: "skip",
+  "patient id": "skip",
+  "patient mrn": "skip",
+  "chart #": "skip",
+  "chart number": "skip",
+  "chart no": "skip",
+  "encounter id": "skip",
+  "encounter #": "skip",
+};
+
 function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
   const rows = parseTsvWithQuotedFields(text);
   if (!rows || rows.length < 2) return null;
@@ -712,9 +760,17 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
   // Detect column indices that correspond to "HGA RECORDS" or similar previous-tests headers
   const headerRow = rows.find(isEhrTsvHeader);
   const prevTestsColIndices = new Set<number>();
+  // Header-declared field routing: maps column index → explicit field
+  const colFieldMap = new Map<number, HeaderFieldKind>();
+
   if (headerRow) {
     headerRow.forEach((cell, i) => {
-      if (PREV_TESTS_HEADER_RE.test(cell.trim())) prevTestsColIndices.add(i);
+      const label = cell.trim().toLowerCase();
+      if (PREV_TESTS_HEADER_RE.test(cell.trim())) {
+        prevTestsColIndices.add(i);
+      } else if (HEADER_FIELD_MAP[label]) {
+        colFieldMap.set(i, HEADER_FIELD_MAP[label]);
+      }
     });
   }
 
@@ -728,6 +784,7 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
     let gender: string | undefined;
     let age: number | undefined;
     let detectedInsurance: string | undefined;
+    let noPreviousTests = false;
     // Per-kind accumulator: store the longest/richest value seen for each kind
     const kindValues: Partial<Record<"diagnoses" | "history" | "medications" | "previousTests", string>> = {};
 
@@ -737,8 +794,28 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
 
       // Header-declared previousTests column — route directly, skip content classifier
       if (prevTestsColIndices.has(colIdx)) {
-        if (!kindValues["previousTests"] || val.length > kindValues["previousTests"].length) {
-          kindValues["previousTests"] = val;
+        if (NO_PREV_TESTS_RE.test(val)) {
+          // "No Record of Plexus Ancillary Screens" etc. → mark as no previous tests
+          noPreviousTests = true;
+        } else {
+          if (!kindValues["previousTests"] || val.length > kindValues["previousTests"].length) {
+            kindValues["previousTests"] = val;
+          }
+        }
+        continue;
+      }
+
+      // Header-declared field mapping — bypass content classifier entirely
+      if (colFieldMap.has(colIdx)) {
+        const mappedField = colFieldMap.get(colIdx)!;
+        if (mappedField === "skip") continue;
+        // For diagnoses/history/medications: append to existing value (INDICATIONS + Dx both map to diagnoses)
+        const existing = kindValues[mappedField];
+        if (!existing) {
+          kindValues[mappedField] = val;
+        } else {
+          // Prefer the longer/richer of two values for the same field (e.g. two Dx-like columns)
+          kindValues[mappedField] = val.length > existing.length ? val : existing;
         }
         continue;
       }
@@ -754,7 +831,7 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
         continue;
       }
 
-      // Keep the longest version (richest content) for each kind
+      // Content-classified column: keep the longest version (richest content) for each kind
       const k = kind as "diagnoses" | "history" | "medications";
       if (!kindValues[k] || val.length > kindValues[k]!.length) {
         kindValues[k] = val;
@@ -782,6 +859,7 @@ function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
       history: kindValues["history"] || undefined,
       medications: kindValues["medications"] || undefined,
       previousTests: kindValues["previousTests"] || undefined,
+      noPreviousTests: noPreviousTests || undefined,
     });
   }
 
@@ -883,6 +961,7 @@ function parseTsvSegmentsDirect(segments: TsvSegment[]): ParsedPatient[] {
     history: seg.history,
     medications: seg.medications,
     previousTests: seg.previousTests,
+    noPreviousTests: seg.noPreviousTests,
   }));
 }
 
