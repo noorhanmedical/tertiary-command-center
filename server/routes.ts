@@ -1401,7 +1401,7 @@ export async function registerRoutes(
   }
 
   async function executeExportNotes(): Promise<ExportNotesResult> {
-    const { uploadTextAsGoogleDoc, ensurePlexusFolderTree } = await import("./googleDrive");
+    const { uploadTextAsGoogleDoc, ensureStructuredFacilityFolderTree } = await import("./googleDrive");
     const BATCH_LIMIT = 50;
     const allNotes = await storage.getAllGeneratedNotes();
     const unsynced = allNotes.filter((n) => !n.driveFileId).slice(0, BATCH_LIMIT);
@@ -1420,7 +1420,7 @@ export async function registerRoutes(
         let clinicalDocsFolderId: string | undefined;
         if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES_ALL.includes(note.service)) {
           try {
-            const tree = await ensurePlexusFolderTree(note.facility, note.patientName, note.service);
+            const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
             clinicalDocsFolderId = tree.clinicalDocsFolderId;
           } catch (e) {
             console.warn(`Could not resolve Drive folder for note ${note.id}, uploading to root:`, (e as Error).message);
@@ -1547,7 +1547,7 @@ export async function registerRoutes(
       const note = await storage.getGeneratedNote(noteId);
       if (!note) return res.status(404).json({ error: "Note not found" });
 
-      const { uploadTextAsGoogleDoc, ensurePlexusFolderTree } = await import("./googleDrive");
+      const { uploadTextAsGoogleDoc, ensureStructuredFacilityFolderTree } = await import("./googleDrive");
 
       const sections = (note.sections as { heading: string; body: string }[]) || [];
       const content = sections
@@ -1561,7 +1561,7 @@ export async function registerRoutes(
       let clinicalDocsFolderId: string | undefined;
       if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES.includes(note.service)) {
         try {
-          const tree = await ensurePlexusFolderTree(note.facility, note.patientName, note.service);
+          const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
           clinicalDocsFolderId = tree.clinicalDocsFolderId;
         } catch (e) {
           console.warn("Could not resolve Drive folder for note export, uploading to root:", (e as Error).message);
@@ -1656,8 +1656,8 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Only PDF files are accepted" });
       }
 
-      const { ensurePlexusFolderTree, uploadPdfToFolder } = await import("./googleDrive");
-      const tree = await ensurePlexusFolderTree(facility, patientName.trim(), ancillaryType);
+      const { ensureStructuredFacilityFolderTree, uploadPdfToFolder } = await import("./googleDrive");
+      const tree = await ensureStructuredFacilityFolderTree(facility, patientName.trim(), ancillaryType);
 
       const filename = file.originalname || `${patientName.trim()} - ${ancillaryType} Report.pdf`;
       const { id: driveFileId, webViewLink } = await uploadPdfToFolder(filename, file.buffer, tree.reportFolderId);
@@ -1731,8 +1731,8 @@ export async function registerRoutes(
       const isPdf = file.mimetype === "application/pdf" || (file.originalname?.toLowerCase().endsWith(".pdf") ?? false);
       if (!isPdf) return res.status(400).json({ error: "Only PDF files are accepted" });
 
-      const { ensurePlexusFolderTree, uploadPdfToFolder } = await import("./googleDrive");
-      const tree = await ensurePlexusFolderTree(facility, patientName.trim(), ancillaryType);
+      const { ensureStructuredFacilityFolderTree, uploadPdfToFolder } = await import("./googleDrive");
+      const tree = await ensureStructuredFacilityFolderTree(facility, patientName.trim(), ancillaryType);
 
       const folderId =
         docType === "informed_consent" ? tree.informedConsentFolderId :

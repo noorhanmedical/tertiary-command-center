@@ -365,3 +365,98 @@ export async function uploadPdfToFolder(
     webViewLink: resp.data.webViewLink!,
   };
 }
+
+
+function ancillaryClinicalDocumentsFolderName(facility: string, ancillaryType: string): string {
+  return `${ancillaryType} Clinical Documents ${facility}`;
+}
+
+function ancillaryReportFolderName(facility: string, ancillaryType: string): string {
+  return `${ancillaryType} Report ${facility}`;
+}
+
+async function getOrCreatePreferredRootFolder(
+  drive: Awaited<ReturnType<typeof getUncachableGoogleDriveClient>>
+): Promise<string> {
+  const preferredNames = ["AI Plexus Ancillary Platform", "Plexus Ancillary Platform"];
+
+  for (const name of preferredNames) {
+    const q = [
+      `name = ${driveQueryEscape(name)}`,
+      `mimeType = 'application/vnd.google-apps.folder'`,
+      `trashed = false`,
+    ].join(" and ");
+
+    const listResp = await drive.files.list({
+      q,
+      fields: "files(id,name)",
+      spaces: "drive",
+      pageSize: 10,
+    });
+
+    const existing = listResp.data.files?.[0];
+    if (existing?.id) return existing.id;
+  }
+
+  return getOrCreateFolder(drive, "AI Plexus Ancillary Platform");
+}
+
+export async function ensureStructuredFacilityFolderTree(
+  facility: string,
+  _patientName: string,
+  ancillaryType: string
+): Promise<FolderTree> {
+  const drive = await getUncachableGoogleDriveClient();
+
+  const rootId = await getOrCreatePreferredRootFolder(drive);
+
+  const clinicalDocumentsRootId = await getOrCreateFolder(drive, "Clinical Documents", rootId);
+  const reportsRootId = await getOrCreateFolder(drive, "Reports", rootId);
+
+  const facilityClinicalDocumentsFolderId = await getOrCreateFolder(
+    drive,
+    `${facility} Clinical Documents`,
+    clinicalDocumentsRootId
+  );
+
+  const facilityReportsFolderId = await getOrCreateFolder(
+    drive,
+    `${facility} Reports`,
+    reportsRootId
+  );
+
+  const clinicalDocsFolderId = await getOrCreateFolder(
+    drive,
+    ancillaryClinicalDocumentsFolderName(facility, ancillaryType),
+    facilityClinicalDocumentsFolderId
+  );
+
+  const reportFolderId = await getOrCreateFolder(
+    drive,
+    ancillaryReportFolderName(facility, ancillaryType),
+    facilityReportsFolderId
+  );
+
+  const informedConsentFolderId = await getOrCreateFolder(
+    drive,
+    "Informed Consent",
+    clinicalDocsFolderId
+  );
+
+  const screeningFormFolderId = await getOrCreateFolder(
+    drive,
+    "Screening Form",
+    clinicalDocsFolderId
+  );
+
+  return {
+    clinicalDocsFolderId,
+    reportFolderId,
+    informedConsentFolderId,
+    screeningFormFolderId,
+    facilityFolderId: facilityClinicalDocumentsFolderId,
+    patientFolderId: clinicalDocsFolderId,
+    ancillaryTypeFolderId: clinicalDocsFolderId,
+  };
+}
+
