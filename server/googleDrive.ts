@@ -378,6 +378,11 @@ function ancillaryReportFolderName(facility: string, ancillaryType: string): str
 async function getOrCreatePreferredRootFolder(
   drive: Awaited<ReturnType<typeof getUncachableGoogleDriveClient>>
 ): Promise<string> {
+  const explicitRootId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID;
+  if (explicitRootId) {
+    return explicitRootId;
+  }
+
   const preferredNames = ["AI Plexus Ancillary Platform", "Plexus Ancillary Platform"];
 
   for (const name of preferredNames) {
