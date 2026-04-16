@@ -3766,6 +3766,60 @@ function ResultsView({
         </div>
       </main>
 
+      <Dialog open={!!selectedTestDetail} onOpenChange={(open) => {
+        if (!open) setSelectedTestDetail(null);
+      }}>
+        <DialogContent className="sm:max-w-2xl" data-testid="dialog-qualification-detail">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedTestDetail ? `${categoryLabels[selectedTestDetail.category] || selectedTestDetail.category} Details` : "Qualification Details"}
+            </DialogTitle>
+          </DialogHeader>
+
+          {selectedTestDetail && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {selectedTestDetail.tests.map((test) => (
+                  <span
+                    key={test}
+                    className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getBadgeColor(getAncillaryCategory(test))}`}
+                  >
+                    {test}
+                  </span>
+                ))}
+              </div>
+
+              <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                {selectedTestDetail.tests.map((test) => {
+                  const reason = selectedTestDetail.reasoning?.[test];
+                  const reasonText =
+                    typeof reason === "string"
+                      ? reason
+                      : reason && typeof reason === "object" && "summary" in reason
+                      ? String(reason.summary || "")
+                      : "";
+
+                  return (
+                    <div key={test} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                      <div className="text-sm font-semibold text-slate-900 mb-1">{test}</div>
+                      <div className="text-sm text-slate-600 whitespace-pre-wrap">
+                        {reasonText || "No qualification reasoning available."}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSelectedTestDetail(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!completeModalPatient} onOpenChange={(open) => {
         if (!open) {
           setCompleteModalPatient(null);
