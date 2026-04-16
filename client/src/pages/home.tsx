@@ -3348,6 +3348,7 @@ function ResultsView({
   const [inlineScreeningFormDoc, setInlineScreeningFormDoc] = useState<{ doc: GeneratedDocument; patient: PatientScreening } | null>(null);
   const [completeModalPatient, setCompleteModalPatient] = useState<PatientScreening | null>(null);
   const [selectedCompletedTests, setSelectedCompletedTests] = useState<string[]>([]);
+  const [isGeneratingCompletedDocs, setIsGeneratingCompletedDocs] = useState(false);
 
   const { data: batchNotes = [] } = useQuery<Array<{ id: number; patientId: number; service: string; docKind: string; title: string; sections: Array<{ heading: string; body: string }> }>>({
     queryKey: ["/api/generated-notes/batch", batch?.id],
@@ -3399,9 +3400,15 @@ function ResultsView({
       return false;
     }
 
+    setIsGeneratingCompletedDocs(true);
     setGeneratingNotesFor((prev) => new Set(Array.from(prev).concat(patient.id)));
 
     try {
+      toast({
+        title: "Generating ancillary documents",
+        description: `Creating ancillary documents for ${patient.name}...`,
+      });
+
       onUpdatePatient(patient.id, {
         appointmentStatus: "completed",
         selectedCompletedTests: uniqueCompletedTests,
@@ -3427,8 +3434,8 @@ function ResultsView({
 
       if (!docs || docs.length === 0) {
         toast({
-          title: "No notes generated",
-          description: "The selected completed tests did not produce any note documents.",
+          title: "No ancillary documents generated",
+          description: "The selected completed tests did not produce any ancillary documents.",
           variant: "destructive",
         });
         return false;
@@ -3451,19 +3458,20 @@ function ResultsView({
       await saveNotesMutation.mutateAsync(payload);
 
       toast({
-        title: "Completed tests saved",
-        description: `${docs.length} note${docs.length === 1 ? "" : "s"} generated for ${patient.name}.`,
+        title: "Ancillary documents created",
+        description: `${docs.length} document${docs.length === 1 ? "" : "s"} generated for ${patient.name}.`,
       });
 
       return true;
     } catch (e: any) {
       toast({
-        title: "Failed to generate completed-test notes",
-        description: e?.message || "An unexpected error occurred while generating or saving notes.",
+        title: "Failed to generate ancillary documents",
+        description: e?.message || "An unexpected error occurred while generating or saving ancillary documents.",
         variant: "destructive",
       });
       return false;
     } finally {
+      setIsGeneratingCompletedDocs(false);
       setGeneratingNotesFor((prev) => {
         const s = new Set(prev);
         s.delete(patient.id);
@@ -3790,6 +3798,7 @@ function ResultsView({
         selectedCompletedTests={selectedCompletedTests}
         setSelectedCompletedTests={setSelectedCompletedTests}
         setCompleteModalPatient={setCompleteModalPatient}
+        isGenerating={isGeneratingCompletedDocs}
         onConfirm={async () => {
           if (!completeModalPatient) return;
           const ok = await completePatientWithSelectedTests(completeModalPatient, selectedCompletedTests);
