@@ -36,6 +36,7 @@ import {
 } from "./services/screening";
 import type { InsertBillingRecord } from "../shared/schema";
 import { registerTestHistoryRoutes } from "./routes/testHistory";
+import { registerPatientReferenceRoutes } from "./routes/patientReferences";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -47,6 +48,7 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   registerTestHistoryRoutes(app, { backgroundSyncPatients });
+  registerPatientReferenceRoutes(app, { backgroundSyncPatients });
 
   // ─── Reset any batches stuck in "processing" from a previous server run ────
   // Analysis jobs are in-process async tasks that do not survive a server restart.
@@ -696,96 +698,7 @@ export async function registerRoutes(
 
   // ─── Test History ──────────────────────────────────────────────────────────
 
-  app.get("/api/patient-references", async (req, res) => {
-    try {
-      const search = req.query.search as string | undefined;
-      if (search && search.trim()) {
-        const records = await storage.searchPatientReferences(search.trim());
-        res.json(records);
-      } else {
-        const records = await storage.getAllPatientReferences();
-        res.json(records);
-      }
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
 
-  app.post("/api/patient-references/import", upload.single("file"), async (req: any, res) => {
-    try {
-      let text = "";
-
-      if (req.file) {
-        const ext = req.file.originalname.toLowerCase().split(".").pop();
-        if (ext === "xlsx" || ext === "xls") {
-          const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-          for (const sheetName of workbook.SheetNames) {
-            const sheet = workbook.Sheets[sheetName];
-            text += sheetName + "\n" + XLSX.utils.sheet_to_csv(sheet) + "\n\n";
-          }
-        } else if (ext === "csv") {
-          text = req.file.buffer.toString("utf-8");
-        } else {
-          text = req.file.buffer.toString("utf-8");
-        }
-      } else if (req.body.text) {
-        text = req.body.text;
-      } else {
-        return res.status(400).json({ error: "No file or text provided" });
-      }
-
-      if (!text.trim()) return res.status(400).json({ error: "Empty data" });
-
-      const records = await parseReferenceImportWithAI(text);
-
-      const validRecords = records
-        .filter((r: any) => r.patientName && typeof r.patientName === "string")
-        .map((r: any) => ({
-          patientName: r.patientName.trim(),
-          diagnoses: r.diagnoses || null,
-          history: r.history || null,
-          medications: r.medications || null,
-          age: r.age ? String(r.age) : null,
-          gender: r.gender || null,
-          insurance: r.insurance || null,
-          notes: r.notes || null,
-        }));
-
-      if (validRecords.length === 0) {
-        return res.json({ imported: 0, records: [] });
-      }
-
-      const created = await storage.createPatientReferenceBulk(validRecords);
-      res.json({ imported: created.length, records: created });
-      void backgroundSyncPatients();
-    } catch (error: any) {
-      console.error("Patient reference import error:", error);
-      res.status(500).json({ error: error.message || "Import failed" });
-    }
-  });
-
-  app.delete("/api/patient-references/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      await storage.deletePatientReference(id);
-      res.status(204).send();
-      void backgroundSyncPatients();
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.delete("/api/patient-references", async (_req, res) => {
-    try {
-      await storage.deleteAllPatientReferences();
-      res.status(204).send();
-      void backgroundSyncPatients();
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // ─── Generated Notes ───────────────────────────────────────────────────────
   app.get("/api/generated-notes", async (_req, res) => {
     try {
       const notes = await storage.getAllGeneratedNotes();
