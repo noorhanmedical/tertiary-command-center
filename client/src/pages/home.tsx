@@ -3387,16 +3387,26 @@ function ResultsView({
         description: "Choose at least one completed test before marking the patient complete.",
         variant: "destructive",
       });
-      return;
+      return false;
     }
 
-    onUpdatePatient(patient.id, {
-      appointmentStatus: "completed",
-      selectedCompletedTests: uniqueCompletedTests,
-    });
+    if (!batch?.id) {
+      toast({
+        title: "Missing batch context",
+        description: "Could not determine the active schedule batch for note generation.",
+        variant: "destructive",
+      });
+      return false;
+    }
 
     setGeneratingNotesFor((prev) => new Set(Array.from(prev).concat(patient.id)));
+
     try {
+      onUpdatePatient(patient.id, {
+        appointmentStatus: "completed",
+        selectedCompletedTests: uniqueCompletedTests,
+      });
+
       const docs = await autoGeneratePatientNotes(
         {
           ...patient,
@@ -3415,23 +3425,50 @@ function ResultsView({
         batch?.clinicianName
       );
 
-      if (docs.length > 0) {
-        setPatientNotes((prev) => ({ ...prev, [patient.id]: docs }));
-        const payload = docs.map((doc) => ({
-          patientId: patient.id,
-          batchId: batch!.id,
-          facility: batch?.facility ?? null,
-          scheduleDate: batch?.scheduleDate ?? null,
-          patientName: patient.name,
-          service: doc.service,
-          docKind: doc.kind,
-          title: doc.title,
-          sections: doc.sections,
-        }));
-        saveNotesMutation.mutate(payload);
+      if (!docs || docs.length === 0) {
+        toast({
+          title: "No notes generated",
+          description: "The selected completed tests did not produce any note documents.",
+          variant: "destructive",
+        });
+        return false;
       }
+
+      setPatientNotes((prev) => ({ ...prev, [patient.id]: docs }));
+
+      const payload = docs.map((doc) => ({
+        patientId: patient.id,
+        batchId: batch.id,
+        facility: batch?.facility ?? null,
+        scheduleDate: batch?.scheduleDate ?? null,
+        patientName: patient.name,
+        service: doc.service,
+        docKind: doc.kind,
+        title: doc.title,
+        sections: doc.sections,
+      }));
+
+      await saveNotesMutation.mutateAsync(payload);
+
+      toast({
+        title: "Completed tests saved",
+        description: `${docs.length} note${docs.length === 1 ? "" : "s"} generated for ${patient.name}.`,
+      });
+
+      return true;
+    } catch (e: any) {
+      toast({
+        title: "Failed to generate completed-test notes",
+        description: e?.message || "An unexpected error occurred while generating or saving notes.",
+        variant: "destructive",
+      });
+      return false;
     } finally {
-      setGeneratingNotesFor((prev) => { const s = new Set(prev); s.delete(patient.id); return s; });
+      setGeneratingNotesFor((prev) => {
+        const s = new Set(prev);
+        s.delete(patient.id);
+        return s;
+      });
     }
   };
 
@@ -3755,7 +3792,8 @@ function ResultsView({
         setCompleteModalPatient={setCompleteModalPatient}
         onConfirm={async () => {
           if (!completeModalPatient) return;
-          await completePatientWithSelectedTests(completeModalPatient, selectedCompletedTests);
+          const ok = await completePatientWithSelectedTests(completeModalPatient, selectedCompletedTests);
+          if (!ok) return;
           setCompleteModalPatient(null);
           setSelectedCompletedTests([]);
         }}
