@@ -3828,6 +3828,14 @@ function ResultsView({
           }}
         />
       )}
+
+      <PdfPatientSelectDialog
+        open={pdfMode !== null}
+        mode={pdfMode}
+        patients={patients}
+        onClose={() => setPdfMode(null)}
+        onGenerate={handlePdfGenerate}
+      />
     </div>
   );
 }
