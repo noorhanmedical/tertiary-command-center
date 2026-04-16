@@ -14,6 +14,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { categoryIcons, categoryLabels, categoryStyles, getAncillaryCategory, getBadgeColor, isImagingTest, type AncillaryCategory } from "@/features/schedule/ancillaryMeta";
 import {
   Sidebar,
   SidebarContent,
@@ -80,23 +81,8 @@ type ReasoningValue = string | { clinician_understanding: string; patient_talkin
 
 const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
 
-function getAncillaryCategory(test: string): "brainwave" | "vitalwave" | "ultrasound" | "other" {
-  const lower = test.toLowerCase();
-  if (lower.includes("brain")) return "brainwave";
-  if (lower.includes("vital")) return "vitalwave";
-  if (ULTRASOUND_TESTS.some((u) => lower.includes(u))) return "ultrasound";
-  return "other";
-}
 
-const categoryStyles: Record<string, { bg: string; border: string; accent: string; icon: string }> = {
-  brainwave: { bg: "bg-violet-50 dark:bg-violet-950/30", border: "border-violet-200 dark:border-violet-800", accent: "text-violet-700 dark:text-violet-300", icon: "text-violet-500 dark:text-violet-400" },
-  vitalwave: { bg: "bg-red-50 dark:bg-red-950/30", border: "border-red-200 dark:border-red-800", accent: "text-red-700 dark:text-red-300", icon: "text-red-500 dark:text-red-400" },
-  ultrasound: { bg: "bg-emerald-50 dark:bg-emerald-950/30", border: "border-emerald-200 dark:border-emerald-800", accent: "text-emerald-700 dark:text-emerald-300", icon: "text-emerald-500 dark:text-emerald-400" },
-  other: { bg: "bg-slate-50 dark:bg-slate-950/30", border: "border-slate-200 dark:border-slate-800", accent: "text-slate-700 dark:text-slate-300", icon: "text-slate-500 dark:text-slate-400" },
-};
 
-const categoryLabels: Record<string, string> = { brainwave: "BrainWave", vitalwave: "VitalWave", ultrasound: "Ultrasound Studies", other: "Other" };
-const categoryIcons: Record<string, typeof Brain> = { brainwave: Brain, vitalwave: Activity, ultrasound: Scan, other: Scan };
 
 const ALL_AVAILABLE_TESTS: string[] = [
   "BrainWave",
@@ -164,14 +150,6 @@ function StepTimeline({ current, onNavigate, canGoToResults }: { current: "home"
   );
 }
 
-function getBadgeColor(cat: string): string {
-  switch (cat) {
-    case "brainwave": return "bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-300";
-    case "vitalwave": return "bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300";
-    case "ultrasound": return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300";
-    default: return "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300";
-  }
-}
 
 const FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
 type Facility = typeof FACILITIES[number];
@@ -2314,10 +2292,6 @@ function PatientCard({
   );
 }
 
-function isImagingTest(test: string): boolean {
-  const cat = getAncillaryCategory(test);
-  return cat === "ultrasound";
-}
 
 // ─── PDF helpers ──────────────────────────────────────────────────────────────
 
@@ -3733,8 +3707,8 @@ function ResultsView({
                           }
                           return ["brainwave", "vitalwave", "ultrasound", "other"].filter((c) => grouped[c]).map((cat) => {
                             const tests = grouped[cat];
-                            const style = categoryStyles[cat];
-                            const IconComp = categoryIcons[cat];
+                            const style = categoryStyles[cat as AncillaryCategory];
+                            const IconComp = categoryIcons[cat as AncillaryCategory];
                             return (
                               <button
                                 key={cat}
@@ -3746,7 +3720,7 @@ function ResultsView({
                                 data-testid={`card-ancillary-${cat}-${patient.id}`}
                               >
                                 <IconComp className={`w-4 h-4 ${style.icon} shrink-0`} />
-                                <span className={`font-semibold text-sm ${style.accent}`}>{categoryLabels[cat]}</span>
+                                <span className={`font-semibold text-sm ${style.accent}`}>{categoryLabels[cat as AncillaryCategory]}</span>
                                 {tests.length > 1 && (
                                   <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${getBadgeColor(cat)}`}>{tests.length}</span>
                                 )}
@@ -3772,14 +3746,14 @@ function ResultsView({
         <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl max-h-[85vh] sm:max-h-[80vh] flex flex-col p-0 gap-0 rounded-2xl" data-testid="dialog-qualification-detail">
           {selectedTestDetail && (() => {
             const { category, tests, reasoning } = selectedTestDetail;
-            const style = categoryStyles[category];
-            const IconComp = categoryIcons[category];
+            const style = categoryStyles[category as AncillaryCategory];
+            const IconComp = categoryIcons[category as AncillaryCategory];
             return (
               <>
                 <DialogHeader className={`px-5 sm:px-6 py-4 border-b border-slate-100 ${style.bg} rounded-t-2xl shrink-0`}>
                   <DialogTitle className="flex items-center gap-2">
                     <IconComp className={`w-5 h-5 ${style.icon}`} />
-                    <span className={`font-semibold text-base ${style.accent}`}>{categoryLabels[category]}</span>
+                    <span className={`font-semibold text-base ${style.accent}`}>{categoryLabels[category as AncillaryCategory]}</span>
                   </DialogTitle>
                 </DialogHeader>
 
