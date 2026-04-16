@@ -1907,7 +1907,7 @@ function PatientCard({
     const updated = [...localTests, test];
     setLocalTests(updated);
     onUpdate("qualifyingTests", updated);
-    setGeneratingTests(prev => new Set([...prev, test]));
+    setGeneratingTests(prev => new Set([...Array.from(prev), test]));
     apiRequest("POST", `/api/patients/${patient.id}/analyze-test`, { testName: test })
       .then(r => r.json())
       .then((data: PatientScreening) => {
