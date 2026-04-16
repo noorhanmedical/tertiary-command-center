@@ -35,6 +35,7 @@ import {
   extractImagePatients,
 } from "./services/screening";
 import type { InsertBillingRecord } from "../shared/schema";
+import { registerTestHistoryRoutes } from "./routes/testHistory";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -44,6 +45,8 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  registerTestHistoryRoutes(app, { backgroundSyncPatients });
 
   // ─── Reset any batches stuck in "processing" from a previous server run ────
   // Analysis jobs are in-process async tasks that do not survive a server restart.
@@ -692,105 +695,7 @@ export async function registerRoutes(
   });
 
   // ─── Test History ──────────────────────────────────────────────────────────
-  app.get("/api/test-history", async (_req, res) => {
-    try {
-      const records = await storage.getAllTestHistory();
-      res.json(records);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
 
-  app.post("/api/test-history", async (req, res) => {
-    try {
-      const parsed = addTestHistorySchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      const record = await storage.createTestHistory(parsed.data);
-      res.json(record);
-      void backgroundSyncPatients();
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/test-history/import", upload.single("file"), async (req, res) => {
-    try {
-      let text = "";
-      const clinic = req.body.clinic || "NWPG";
-
-      if (req.file) {
-        const ext = req.file.originalname.toLowerCase();
-        if (ext.endsWith(".xlsx") || ext.endsWith(".xls")) {
-          const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-          for (const sheetName of workbook.SheetNames) {
-            const sheet = workbook.Sheets[sheetName];
-            text += sheetName + "\n" + XLSX.utils.sheet_to_csv(sheet) + "\n\n";
-          }
-        } else if (ext.endsWith(".csv")) {
-          text = req.file.buffer.toString("utf-8");
-        } else {
-          text = req.file.buffer.toString("utf-8");
-        }
-      } else if (req.body.text) {
-        text = req.body.text;
-      } else {
-        return res.status(400).json({ error: "No file or text provided" });
-      }
-
-      if (!text.trim()) return res.status(400).json({ error: "Empty data" });
-
-      const isCsvFile = req.file && req.file.originalname.toLowerCase().endsWith(".csv");
-      let records: { patientName: string; dob?: string; testName: string; dateOfService: string; insuranceType: string }[] | null = null;
-      if (isCsvFile) {
-        records = parseHistoryCsv(text);
-      }
-      if (!records) {
-        records = await parseHistoryImport(text);
-      }
-      if (records.length === 0) return res.json({ imported: 0, records: [] });
-
-      const validRecords = records
-        .filter((r) => r.patientName && r.testName && r.dateOfService)
-        .map((r) => ({
-          patientName: r.patientName,
-          dob: r.dob || undefined,
-          testName: r.testName,
-          dateOfService: r.dateOfService,
-          insuranceType: r.insuranceType || "ppo",
-          clinic,
-        }));
-
-      const created = await storage.createTestHistoryBulk(validRecords);
-      res.json({ imported: created.length, records: created });
-      void backgroundSyncPatients();
-    } catch (error: any) {
-      console.error("Test history import error:", error);
-      res.status(500).json({ error: error.message || "Import failed" });
-    }
-  });
-
-  app.delete("/api/test-history/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      await storage.deleteTestHistory(id);
-      res.status(204).send();
-      void backgroundSyncPatients();
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.delete("/api/test-history", async (_req, res) => {
-    try {
-      await storage.deleteAllTestHistory();
-      res.status(204).send();
-      void backgroundSyncPatients();
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // ─── Patient References ────────────────────────────────────────────────────
   app.get("/api/patient-references", async (req, res) => {
     try {
       const search = req.query.search as string | undefined;
