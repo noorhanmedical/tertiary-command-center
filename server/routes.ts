@@ -170,6 +170,7 @@ const updatePatientSchema = z.object({
   noPreviousTests: z.boolean().optional(),
   notes: z.string().nullable().optional(),
   qualifyingTests: z.array(z.string()).optional(),
+  selectedCompletedTests: z.array(z.string()).optional(),
   appointmentStatus: z.string().nullable().optional(),
   patientType: z.string().nullable().optional(),
 });
@@ -483,7 +484,9 @@ export async function registerRoutes(
       const wasAlreadyCompleted = previousPatient?.appointmentStatus?.toLowerCase() === "completed";
       if (data.appointmentStatus && data.appointmentStatus.toLowerCase() === "completed" && !wasAlreadyCompleted) {
         try {
-          const qualTests: string[] = patient.qualifyingTests || [];
+          const qualTests: string[] = (data.selectedCompletedTests && data.selectedCompletedTests.length > 0)
+            ? data.selectedCompletedTests
+            : (patient.qualifyingTests || []);
           if (qualTests.length > 0) {
             const batch = await storage.getScreeningBatch(patient.batchId);
             const _d = new Date();

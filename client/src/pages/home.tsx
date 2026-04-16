@@ -3370,6 +3370,8 @@ function ResultsView({
   const [generatingNotesFor, setGeneratingNotesFor] = useState<Set<number>>(new Set());
   const [patientNotes, setPatientNotes] = useState<Record<number, GeneratedDocument[]>>({});
   const [inlineScreeningFormDoc, setInlineScreeningFormDoc] = useState<{ doc: GeneratedDocument; patient: PatientScreening } | null>(null);
+  const [completeModalPatient, setCompleteModalPatient] = useState<PatientScreening | null>(null);
+  const [selectedCompletedTests, setSelectedCompletedTests] = useState<string[]>([]);
 
   const { data: batchNotes = [] } = useQuery<Array<{ id: number; patientId: number; service: string; docKind: string; title: string; sections: Array<{ heading: string; body: string }> }>>({
     queryKey: ["/api/generated-notes/batch", batch?.id],
@@ -3400,31 +3402,80 @@ function ResultsView({
     },
   });
 
-  const handleStatusChange = async (patient: PatientScreening, newStatus: string) => {
-    onUpdatePatient(patient.id, { appointmentStatus: newStatus });
-    if (newStatus.toLowerCase() === "completed" && (patient.qualifyingTests || []).length > 0) {
-      setGeneratingNotesFor((prev) => new Set(Array.from(prev).concat(patient.id)));
-      try {
-        const docs = await autoGeneratePatientNotes(patient, batch?.scheduleDate, batch?.facility, batch?.clinicianName);
-        if (docs.length > 0) {
-          setPatientNotes((prev) => ({ ...prev, [patient.id]: docs }));
-          const payload = docs.map((doc) => ({
-            patientId: patient.id,
-            batchId: batch!.id,
-            facility: batch?.facility ?? null,
-            scheduleDate: batch?.scheduleDate ?? null,
-            patientName: patient.name,
-            service: doc.service,
-            docKind: doc.kind,
-            title: doc.title,
-            sections: doc.sections,
-          }));
-          saveNotesMutation.mutate(payload);
-        }
-      } finally {
-        setGeneratingNotesFor((prev) => { const s = new Set(prev); s.delete(patient.id); return s; });
-      }
+  const completePatientWithSelectedTests = async (patient: PatientScreening, completedTests: string[]) => {
+    const uniqueCompletedTests = Array.from(new Set(completedTests)).filter(Boolean);
+
+    if (uniqueCompletedTests.length === 0) {
+      toast({
+        title: "Select completed tests",
+        description: "Choose at least one completed test before marking the patient complete.",
+        variant: "destructive",
+      });
+      return;
     }
+
+    onUpdatePatient(patient.id, {
+      appointmentStatus: "completed",
+      selectedCompletedTests: uniqueCompletedTests,
+    });
+
+    setGeneratingNotesFor((prev) => new Set(Array.from(prev).concat(patient.id)));
+    try {
+      const docs = await autoGeneratePatientNotes(
+        {
+          ...patient,
+          qualifyingTests: uniqueCompletedTests,
+          reasoning: (patient.reasoning ?? null) as Record<
+            string,
+            string | {
+              qualifying_factors?: string[];
+              icd10_codes?: string[];
+              clinician_understanding?: string;
+            }
+          > | null,
+        },
+        batch?.scheduleDate,
+        batch?.facility,
+        batch?.clinicianName
+      );
+
+      if (docs.length > 0) {
+        setPatientNotes((prev) => ({ ...prev, [patient.id]: docs }));
+        const payload = docs.map((doc) => ({
+          patientId: patient.id,
+          batchId: batch!.id,
+          facility: batch?.facility ?? null,
+          scheduleDate: batch?.scheduleDate ?? null,
+          patientName: patient.name,
+          service: doc.service,
+          docKind: doc.kind,
+          title: doc.title,
+          sections: doc.sections,
+        }));
+        saveNotesMutation.mutate(payload);
+      }
+    } finally {
+      setGeneratingNotesFor((prev) => { const s = new Set(prev); s.delete(patient.id); return s; });
+    }
+  };
+
+  const handleStatusChange = async (patient: PatientScreening, newStatus: string) => {
+    if (newStatus.toLowerCase() === "completed") {
+      const tests = patient.qualifyingTests || [];
+      if (tests.length === 0) {
+        toast({
+          title: "No qualifying tests",
+          description: "This patient has no qualifying tests to mark complete.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setCompleteModalPatient(patient);
+      setSelectedCompletedTests(tests);
+      return;
+    }
+
+    onUpdatePatient(patient.id, { appointmentStatus: newStatus });
   };
 
   const handlePdfGenerate = useCallback((selected: PatientScreening[]) => {
@@ -3714,6 +3765,79 @@ function ResultsView({
           </div>
         </div>
       </main>
+
+      <Dialog
+        open={!!completeModalPatient}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCompleteModalPatient(null);
+            setSelectedCompletedTests([]);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg" data-testid="dialog-complete-tests">
+          <DialogHeader>
+            <DialogTitle>Select completed tests</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">
+              Choose which tests were actually completed for {completeModalPatient?.name}.
+            </p>
+
+            <div className="space-y-2 max-h-[320px] overflow-auto rounded-xl border border-slate-200 p-3">
+              {(completeModalPatient?.qualifyingTests || []).map((test) => {
+                const checked = selectedCompletedTests.includes(test);
+                return (
+                  <label
+                    key={test}
+                    className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50 cursor-pointer"
+                    data-testid={`checkbox-complete-test-${test.replace(/\s+/g, "-")}`}
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(value) => {
+                        const isChecked = Boolean(value);
+                        setSelectedCompletedTests((prev) =>
+                          isChecked
+                            ? Array.from(new Set([...prev, test]))
+                            : prev.filter((t) => t !== test)
+                        );
+                      }}
+                    />
+                    <span className="text-sm text-slate-900">{test}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setCompleteModalPatient(null);
+                setSelectedCompletedTests([]);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!completeModalPatient) return;
+                const patient = completeModalPatient;
+                const tests = [...selectedCompletedTests];
+                setCompleteModalPatient(null);
+                await completePatientWithSelectedTests(patient, tests);
+                setSelectedCompletedTests([]);
+              }}
+              data-testid="button-confirm-complete-tests"
+            >
+              Save completed tests
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Sheet open={!!selectedTestDetail} onOpenChange={(open) => { if (!open) setSelectedTestDetail(null); }}>
         <SheetContent side="bottom" className="h-[70vh] flex flex-col rounded-t-2xl p-0" data-testid="sheet-test-detail">
