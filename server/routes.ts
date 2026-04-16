@@ -37,6 +37,7 @@ import {
 import type { InsertBillingRecord } from "../shared/schema";
 import { registerTestHistoryRoutes } from "./routes/testHistory";
 import { registerPatientReferenceRoutes } from "./routes/patientReferences";
+import { registerGeneratedNotesRoutes } from "./routes/generatedNotes";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -49,6 +50,7 @@ export async function registerRoutes(
 
   registerTestHistoryRoutes(app, { backgroundSyncPatients });
   registerPatientReferenceRoutes(app, { backgroundSyncPatients });
+  registerGeneratedNotesRoutes(app);
 
   // ─── Reset any batches stuck in "processing" from a previous server run ────
   // Analysis jobs are in-process async tasks that do not survive a server restart.
@@ -699,119 +701,6 @@ export async function registerRoutes(
   // ─── Test History ──────────────────────────────────────────────────────────
 
 
-  app.get("/api/generated-notes", async (_req, res) => {
-    try {
-      const notes = await storage.getAllGeneratedNotes();
-      res.json(notes);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/generated-notes/batch/:batchId", async (req, res) => {
-    try {
-      const batchId = parseInt(req.params.batchId);
-      if (isNaN(batchId)) return res.status(400).json({ error: "Invalid batchId" });
-      const notes = await storage.getGeneratedNotesByBatch(batchId);
-      res.json(notes);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/generated-notes", async (req, res) => {
-    try {
-      const body = req.body;
-      if (!Array.isArray(body)) return res.status(400).json({ error: "Expected array of note records" });
-      const records = body.map((r: any) => saveGeneratedNoteSchema.parse(r));
-      if (records.length === 0) return res.json([]);
-      const patientId = records[0].patientId;
-      await storage.deleteGeneratedNotesByPatient(patientId);
-      const saved = await storage.saveGeneratedNotes(records);
-      res.status(201).json(saved);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/generated-notes/service", async (req, res) => {
-    try {
-      const body = req.body;
-      if (!Array.isArray(body)) return res.status(400).json({ error: "Expected array of note records" });
-      const records = body.map((r: any) => saveGeneratedNoteSchema.parse(r));
-      if (records.length === 0) return res.json([]);
-      const patientId = records[0].patientId;
-      const service = records[0].service;
-      await storage.deleteGeneratedNotesByPatientAndService(patientId, service);
-      const saved = await storage.saveGeneratedNotes(records);
-      res.status(201).json(saved);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  });
-
-  app.delete("/api/generated-notes/patient/:patientId", async (req, res) => {
-    try {
-      const patientId = parseInt(req.params.patientId);
-      if (isNaN(patientId)) return res.status(400).json({ error: "Invalid patientId" });
-      await storage.deleteGeneratedNotesByPatient(patientId);
-      res.status(204).send();
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/generated-notes/patient/:patientId", async (req, res) => {
-    try {
-      const patientId = parseInt(req.params.patientId);
-      if (isNaN(patientId)) return res.status(400).json({ error: "Invalid patientId" });
-      const notes = await storage.getGeneratedNotesByPatient(patientId);
-      res.json(notes);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // ─── Billing Records ───────────────────────────────────────────────────────
-  const ULTRASOUND_TESTS = [
-    "Bilateral Carotid Duplex",
-    "Echocardiogram TTE",
-    "Renal Artery Doppler",
-    "Lower Extremity Arterial Doppler",
-    "Upper Extremity Arterial Doppler",
-    "Abdominal Aortic Aneurysm Duplex",
-    "Stress Echocardiogram",
-    "Lower Extremity Venous Duplex",
-    "Upper Extremity Venous Duplex",
-    "Carotid Duplex",
-    "Renal Artery Duplex",
-    "Aorta/Iliac Duplex",
-    "Mesenteric Artery Duplex",
-    "Lower Extremity Arterial Duplex",
-    "ABI (Ankle-Brachial Index)",
-    "TBI (Toe-Brachial Index)",
-  ];
-
-  const updateBillingRecordSchema = z.object({
-    dateOfService: z.string().nullable().optional(),
-    patientName: z.string().min(1).optional(),
-    service: z.string().nullable().optional(),
-    clinician: z.string().nullable().optional(),
-    facility: z.string().nullable().optional(),
-    insuranceInfo: z.string().nullable().optional(),
-    documentationStatus: z.string().nullable().optional(),
-    billingStatus: z.string().nullable().optional(),
-    response: z.string().nullable().optional(),
-    paidStatus: z.string().nullable().optional(),
-    balanceRemaining: z.string().nullable().optional(),
-    dateSubmitted: z.string().nullable().optional(),
-    followUpDate: z.string().nullable().optional(),
-    paidAmount: z.string().nullable().optional(),
-    totalCharges: z.string().nullable().optional(),
-    allowedAmount: z.string().nullable().optional(),
-    patientResponsibility: z.string().nullable().optional(),
-    adjustmentAmount: z.string().nullable().optional(),
-  });
 
   app.get("/api/billing-records", async (_req, res) => {
     try {
@@ -857,6 +746,27 @@ export async function registerRoutes(
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
+  });
+
+  const updateBillingRecordSchema = z.object({
+    dateOfService: z.string().nullable().optional(),
+    patientName: z.string().min(1).optional(),
+    service: z.string().nullable().optional(),
+    clinician: z.string().nullable().optional(),
+    facility: z.string().nullable().optional(),
+    insuranceInfo: z.string().nullable().optional(),
+    documentationStatus: z.string().nullable().optional(),
+    billingStatus: z.string().nullable().optional(),
+    response: z.string().nullable().optional(),
+    paidStatus: z.string().nullable().optional(),
+    balanceRemaining: z.string().nullable().optional(),
+    dateSubmitted: z.string().nullable().optional(),
+    followUpDate: z.string().nullable().optional(),
+    paidAmount: z.string().nullable().optional(),
+    totalCharges: z.string().nullable().optional(),
+    allowedAmount: z.string().nullable().optional(),
+    patientResponsibility: z.string().nullable().optional(),
+    adjustmentAmount: z.string().nullable().optional(),
   });
 
   const createBillingRecordSchema = z.object({
