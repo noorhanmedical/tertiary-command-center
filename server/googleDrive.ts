@@ -38,7 +38,7 @@ export function validateDriveCredentials(): void {
 }
 
 export async function getUncachableGoogleDriveClient() {
-  const auth = getAuthClient();
+  const auth = getAuthClient() as unknown as drive_v3.Options["auth"];
   return google.drive({ version: "v3", auth });
 }
 
@@ -147,6 +147,7 @@ export async function uploadTextAsGoogleDoc(
       body: stream,
     },
     fields: "id,webViewLink",
+    supportsAllDrives: true,
   });
 
   return {
@@ -173,9 +174,11 @@ export async function getOrCreateFolder(
     q: q.join(" and "),
     fields: "files(id)",
     spaces: "drive",
+    includeItemsFromAllDrives: true,
+    supportsAllDrives: true,
   });
 
-  const existing = listResp.data.files?.[0];
+  const existing = (listResp.data as drive_v3.Schema$FileList).files?.[0];
   if (existing?.id) {
     return existing.id;
   }
@@ -189,6 +192,7 @@ export async function getOrCreateFolder(
   const createResp = await drive.files.create({
     requestBody: createBody,
     fields: "id",
+    supportsAllDrives: true,
   });
 
   return createResp.data.id!;
@@ -199,6 +203,9 @@ export interface FolderTree {
   reportFolderId: string;
   informedConsentFolderId: string;
   screeningFormFolderId: string;
+  orderNoteFolderId: string;
+  procedureNoteFolderId: string;
+  billingDocFolderId: string;
   facilityFolderId: string;
   patientFolderId: string;
   ancillaryTypeFolderId: string;
@@ -305,11 +312,35 @@ export async function ensurePlexusFolderTree(
     await setSetting(screeningFormKey, screeningFormFolderId);
   }
 
+  const orderNoteKey = `DRIVE_FOLDER_order_note_${facilitySafeKey}_${patientSafeKey}_${ancillarySafeKey}`;
+  let orderNoteFolderId = await getSetting(orderNoteKey);
+  if (!orderNoteFolderId) {
+    orderNoteFolderId = await getOrCreateFolder(drive, "Order Note", ancillaryTypeFolderId);
+    await setSetting(orderNoteKey, orderNoteFolderId);
+  }
+
+  const procedureNoteKey = `DRIVE_FOLDER_procedure_note_${facilitySafeKey}_${patientSafeKey}_${ancillarySafeKey}`;
+  let procedureNoteFolderId = await getSetting(procedureNoteKey);
+  if (!procedureNoteFolderId) {
+    procedureNoteFolderId = await getOrCreateFolder(drive, "Procedure Note", ancillaryTypeFolderId);
+    await setSetting(procedureNoteKey, procedureNoteFolderId);
+  }
+
+  const billingDocKey = `DRIVE_FOLDER_billing_doc_${facilitySafeKey}_${patientSafeKey}_${ancillarySafeKey}`;
+  let billingDocFolderId = await getSetting(billingDocKey);
+  if (!billingDocFolderId) {
+    billingDocFolderId = await getOrCreateFolder(drive, "Billing Doc", ancillaryTypeFolderId);
+    await setSetting(billingDocKey, billingDocFolderId);
+  }
+
   return {
     clinicalDocsFolderId,
     reportFolderId,
     informedConsentFolderId,
     screeningFormFolderId,
+    orderNoteFolderId,
+    procedureNoteFolderId,
+    billingDocFolderId,
     facilityFolderId,
     patientFolderId,
     ancillaryTypeFolderId,
@@ -358,6 +389,7 @@ export async function uploadPdfToFolder(
       body: stream,
     },
     fields: "id,webViewLink",
+    supportsAllDrives: true,
   });
 
   return {
@@ -397,9 +429,11 @@ async function getOrCreatePreferredRootFolder(
       fields: "files(id,name)",
       spaces: "drive",
       pageSize: 10,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
     });
 
-    const existing = listResp.data.files?.[0];
+    const existing = (listResp.data as drive_v3.Schema$FileList).files?.[0];
     if (existing?.id) return existing.id;
   }
 
@@ -454,11 +488,32 @@ export async function ensureStructuredFacilityFolderTree(
     clinicalDocsFolderId
   );
 
+  const orderNoteFolderId = await getOrCreateFolder(
+    drive,
+    "Order Note",
+    clinicalDocsFolderId
+  );
+
+  const procedureNoteFolderId = await getOrCreateFolder(
+    drive,
+    "Procedure Note",
+    clinicalDocsFolderId
+  );
+
+  const billingDocFolderId = await getOrCreateFolder(
+    drive,
+    "Billing Doc",
+    clinicalDocsFolderId
+  );
+
   return {
     clinicalDocsFolderId,
     reportFolderId,
     informedConsentFolderId,
     screeningFormFolderId,
+    orderNoteFolderId,
+    procedureNoteFolderId,
+    billingDocFolderId,
     facilityFolderId: facilityClinicalDocumentsFolderId,
     patientFolderId: clinicalDocsFolderId,
     ancillaryTypeFolderId: clinicalDocsFolderId,

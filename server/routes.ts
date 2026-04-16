@@ -23,6 +23,33 @@ import {
 } from "./services/screening";
 import type { InsertBillingRecord } from "../shared/schema";
 
+function resolveGeneratedNoteFolderId(
+  tree: {
+    clinicalDocsFolderId: string;
+    screeningFormFolderId: string;
+    orderNoteFolderId: string;
+    procedureNoteFolderId: string;
+    billingDocFolderId: string;
+  },
+  note: { docKind?: string | null; title?: string | null }
+): string {
+  const docKind = (note.docKind || "").trim();
+  const title = (note.title || "").trim().toLowerCase();
+
+  if (docKind === "screening") return tree.screeningFormFolderId;
+  if (docKind === "billing") return tree.billingDocFolderId;
+  if (docKind === "postProcedureNote") return tree.procedureNoteFolderId;
+  if (docKind === "preProcedureOrder") return tree.orderNoteFolderId;
+
+  if (title.includes("billing")) return tree.billingDocFolderId;
+  if (title.includes("procedure")) return tree.procedureNoteFolderId;
+  if (title.includes("order")) return tree.orderNoteFolderId;
+  if (title.includes("screening")) return tree.screeningFormFolderId;
+
+  return tree.clinicalDocsFolderId;
+}
+
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
@@ -1419,14 +1446,20 @@ export async function registerRoutes(
         const filename = `${note.patientName} - ${note.title} (${note.scheduleDate || note.generatedAt.toISOString().split("T")[0]})`;
         let clinicalDocsFolderId: string | undefined;
         if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES_ALL.includes(note.service)) {
-          try {
-            const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
-            clinicalDocsFolderId = tree.clinicalDocsFolderId;
-          } catch (e) {
-            console.warn(`Could not resolve Drive folder for note ${note.id}, uploading to root:`, (e as Error).message);
-          }
+          const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
+          clinicalDocsFolderId = resolveGeneratedNoteFolderId(tree, note);
         }
-        const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content, clinicalDocsFolderId);
+        console.log("[Drive export-note debug]", {
+        noteId: note.id,
+        title: note.title,
+        docKind: note.docKind,
+        facility: note.facility,
+        patientName: note.patientName,
+        service: note.service,
+        clinicalDocsFolderId,
+      });
+
+      const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content, clinicalDocsFolderId);
         await storage.updateGeneratedNoteDriveInfo(note.id, driveFileId, webViewLink);
         results.push({ noteId: note.id, driveFileId, webViewLink });
       } catch (e: any) {
@@ -1560,12 +1593,8 @@ export async function registerRoutes(
       const DRIVE_ANCILLARY_TYPES: readonly string[] = ["BrainWave", "VitalWave", "Ultrasound"];
       let clinicalDocsFolderId: string | undefined;
       if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES.includes(note.service)) {
-        try {
-          const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
-          clinicalDocsFolderId = tree.clinicalDocsFolderId;
-        } catch (e) {
-          console.warn("Could not resolve Drive folder for note export, uploading to root:", (e as Error).message);
-        }
+        const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
+        clinicalDocsFolderId = resolveGeneratedNoteFolderId(tree, note);
       }
 
       const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content, clinicalDocsFolderId);
