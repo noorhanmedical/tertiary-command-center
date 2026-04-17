@@ -170,7 +170,8 @@ export default function SharedSchedule() {
                 variant="outline"
                 size="sm"
                 onClick={() => setPdfMode("clinician")}
-                className="gap-1.5 border-blue-300 text-blue-800 hover:bg-blue-200/60 rounded-xl text-xs px-3"
+                disabled={patients.length === 0}
+                className="gap-1.5 border-blue-300 text-blue-800 hover:bg-blue-200/60 rounded-xl text-xs px-3 disabled:opacity-50"
                 data-testid="button-clinician-pdf-shared"
               >
                 <FileText className="w-3.5 h-3.5" />
@@ -181,7 +182,8 @@ export default function SharedSchedule() {
                 variant="outline"
                 size="sm"
                 onClick={() => setPdfMode("plexus")}
-                className="gap-1.5 border-blue-300 text-blue-800 hover:bg-blue-200/60 rounded-xl text-xs px-3"
+                disabled={patients.length === 0}
+                className="gap-1.5 border-blue-300 text-blue-800 hover:bg-blue-200/60 rounded-xl text-xs px-3 disabled:opacity-50"
                 data-testid="button-plexus-pdf-shared"
               >
                 <FileText className="w-3.5 h-3.5" />
