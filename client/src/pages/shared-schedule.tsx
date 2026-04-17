@@ -27,6 +27,7 @@ import {
   getAncillaryCategory,
   getBadgeColor,
   isImagingTest,
+  type AncillaryCategory,
 } from "@/features/schedule/ancillaryMeta";
 import { generateClinicianPDF, generatePlexusPDF, type ReasoningValue } from "@/lib/pdfGeneration";
 import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
@@ -44,7 +45,7 @@ export default function SharedSchedule() {
   const batchId = params?.id ? parseInt(params.id) : null;
   const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
 
-  const [selectedTestDetail, setSelectedTestDetail] = useState<{ category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null>(null);
+  const [selectedTestDetail, setSelectedTestDetail] = useState<{ category: AncillaryCategory; tests: string[]; reasoning: Record<string, ReasoningValue> } | null>(null);
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
@@ -346,14 +347,15 @@ export default function SharedSchedule() {
 
                     <div className="flex flex-col sm:flex-row flex-wrap gap-2">
                       {(() => {
-                        const grouped: Record<string, string[]> = {};
+                        const grouped: Partial<Record<AncillaryCategory, string[]>> = {};
                         for (const test of allTests) {
                           const cat = getAncillaryCategory(test);
                           if (!grouped[cat]) grouped[cat] = [];
-                          grouped[cat].push(test);
+                          grouped[cat]!.push(test);
                         }
-                        return ["brainwave", "vitalwave", "ultrasound", "other"].filter((c) => grouped[c]).map((cat) => {
-                          const tests = grouped[cat];
+                        const orderedCats: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound", "other"];
+                        return orderedCats.filter((c) => grouped[c]).map((cat) => {
+                          const tests = grouped[cat]!;
                           const style = categoryStyles[cat];
                           const IconComp = categoryIcons[cat];
                           return (
