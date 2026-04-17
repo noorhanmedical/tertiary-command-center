@@ -35,6 +35,13 @@ A connected scheduling system with a single `ancillary_appointments` DB table sh
 - API: `GET /api/appointments`, `POST /api/appointments`, `PATCH /api/appointments/:id`, `GET /api/appointments/patient/:patientId`
 - Duplicate-slot check on create (409 if same facility+date+time+testType already scheduled)
 
+### Outreach Page
+A daily call-list workflow for clinic coverage teams, reading directly from the canonical schedule (no duplicate data):
+- **`/outreach` page**: Five metric cards (Clinic Coverage, Calls Worked, Scheduled, Pending, Avg Conversion) + a left-panel of clinic coverage cards grouped by facility + a right-panel call list with search.
+- **Server service** (`server/services/outreachService.ts`): `buildOutreachDashboard(storage, today)` — aggregates today's batches via `getAllScreeningBatches` + `getPatientScreeningsByBatch`, groups by `facility`, returns typed `OutreachDashboard`.
+- **API**: `GET /api/outreach/dashboard` — returns `{ today, metrics, coverageCards }`. No new DB table; reads existing `screeningBatches` + `patientScreenings`.
+- **Home tile** + **sidebar link** both wired up at `/outreach`.
+
 ## External Dependencies
 - **OpenAI GPT-5.2**: Used for AI-powered patient qualification and clinical note generation.
 - **Google Workspace (Google Sheets, Google Drive)**: Integrated for synchronizing patient and billing data, and for exporting generated clinical notes as Google Docs.

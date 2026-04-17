@@ -38,6 +38,7 @@ import type { InsertBillingRecord } from "../shared/schema";
 import { registerTestHistoryRoutes } from "./routes/testHistory";
 import { registerPatientReferenceRoutes } from "./routes/patientReferences";
 import { registerGeneratedNotesRoutes } from "./routes/generatedNotes";
+import { buildOutreachDashboard } from "./services/outreachService";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -614,6 +615,17 @@ export async function registerRoutes(
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/outreach/dashboard", async (_req, res) => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const dashboard = await buildOutreachDashboard(storage, today);
+      res.json(dashboard);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message || "Failed to build outreach dashboard" });
     }
   });
 

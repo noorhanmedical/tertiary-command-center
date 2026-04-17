@@ -1,0 +1,430 @@
+cd ~/workspace || exit 1
+
+mkdir -p client/src/lib client/src/pages scripts
+
+cat > client/src/lib/outreachSchedule.ts <<'EOF'
+import type { PatientScreening, ScreeningBatch } from "@shared/schema";
+
+export type OutreachBatchWithPatients = ScreeningBatch & {
+  patients: PatientScreening[];
+};
+
+export type OutreachCallItem = {
+  id: string;
+  patientId: number;
+  patientName: string;
+  facility: string;
+  phoneNumber: string;
+  insurance: string;
+  qualifyingTests: string[];
+  appointmentStatus: string;
+  patientType: string;
+  batchId: number;
+  scheduleDate: string;
+  time: string;
+};
+
+export type OutreachTeamMemberSummary = {
+  id: string;
+  name: string;
+  totalPatients: number;
+  touchedCount: number;
+  scheduledCount: number;
+  pendingCount: number;
+  conversionRate: number;
+  facilities: string[];
+  callList: OutreachCallItem[];
+};
+
+function safeString(value: unknown): string {
+  return value == null ? "" : String(value).trim();
+}
+
+export function canonicalDay(value?: string | null): string {
+  return safeString(value).slice(0, 10);
+}
+
+export function formatDisplayDate(value?: string | null): string {
+  const raw = safeString(value);
+  if (!raw) return "Unscheduled";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [y, m, d] = raw.split("-").map(Number);
+    const dt = new Date(y, (m || 1) - 1, d || 1);
+    return dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  }
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) return raw;
+  return dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+export function formatDisplayTime(value?: string | null): string {
+  const raw = safeString(value);
+  return raw || "No time";
+}
+
+export function buildOutreachSummaries(
+  batches: OutreachBatchWithPatients[],
+  today: string,
+): OutreachTeamMemberSummary[] {
+  const map = new Map<string, OutreachTeamMemberSummary>();
+
+  for (const batch of batches || []) {
+    const batchDay = canonicalDay(batch.scheduleDate);
+    if (batchDay && batchDay !== today) continue;
+
+    const memberName = safeString(batch.clinicianName) || "Unassigned Team Member";
+    const memberId = memberName.toLowerCase().replace(/\s+/g, "-");
+    const facility = safeString(batch.facility) || "Unassigned Facility";
+
+    if (!map.has(memberId)) {
+      map.set(memberId, {
+        id: memberId,
+        name: memberName,
+        totalPatients: 0,
+        touchedCount: 0,
+        scheduledCount: 0,
+        pendingCount: 0,
+        conversionRate: 0,
+        facilities: [],
+        callList: [],
+      });
+    }
+
+    const entry = map.get(memberId)!;
+    if (!entry.facilities.includes(facility)) {
+      entry.facilities.push(facility);
+    }
+
+    for (const patient of batch.patients || []) {
+      const appointmentStatus = safeString(patient.appointmentStatus) || "pending";
+      const normalizedStatus = appointmentStatus.toLowerCase();
+      const isTouched = normalizedStatus !== "pending";
+      const isScheduled = normalizedStatus.includes("scheduled") || normalizedStatus.includes("booked");
+
+      entry.totalPatients += 1;
+      if (isTouched) entry.touchedCount += 1;
+      if (isScheduled) entry.scheduledCount += 1;
+      if (!isTouched) entry.pendingCount += 1;
+
+      entry.callList.push({
+        id: `${batch.id}-${patient.id}`,
+        patientId: patient.id,
+        patientName: patient.name,
+        facility,
+        phoneNumber: safeString((patient as any).phoneNumber) || "No phone",
+        insurance: safeString((patient as any).insurance) || "No insurance",
+        qualifyingTests: Array.isArray((patient as any).qualifyingTests) ? (patient as any).qualifyingTests : [],
+        appointmentStatus,
+        patientType: safeString((patient as any).patientType) || "visit",
+        batchId: batch.id,
+        scheduleDate: safeString(batch.scheduleDate),
+        time: formatDisplayTime((patient as any).time),
+      });
+    }
+  }
+
+  return Array.from(map.values())
+    .map((entry) => ({
+      ...entry,
+      callList: entry.callList.sort(
+        (a, b) => a.time.localeCompare(b.time) || a.patientName.localeCompare(b.patientName),
+      ),
+      conversionRate: entry.totalPatients > 0
+        ? Math.round((entry.scheduledCount / entry.totalPatients) * 100)
+        : 0,
+    }))
+    .sort((a, b) => b.totalPatients - a.totalPatients || a.name.localeCompare(b.name));
+}
+EOF
+
+cat > client/src/pages/outreach.tsx <<'EOF'
+import { useMemo, useState } from "react";
+import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, Building2, CheckCircle2, Clock3, Phone, Search, Users2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import type { ScreeningBatch, PatientScreening } from "@shared/schema";
+import {
+  buildOutreachSummaries,
+  canonicalDay,
+  formatDisplayDate,
+  type OutreachBatchWithPatients,
+} from "@/lib/outreachSchedule";
+
+function shellClass(active = false) {
+  return [
+    "rounded-3xl border border-white/60 bg-white/75 backdrop-blur-xl shadow-[0_18px_60px_rgba(15,23,42,0.10)] transition-all",
+    active ? "ring-2 ring-blue-200/80 shadow-[0_24px_80px_rgba(59,130,246,0.16)]" : "hover:shadow-[0_24px_80px_rgba(15,23,42,0.14)]",
+  ].join(" ");
+}
+
+function statusBadgeClass(status?: string | null) {
+  const normalized = String(status || "pending").toLowerCase();
+  if (normalized.includes("scheduled") || normalized.includes("booked")) return "bg-green-100 text-green-700 border-green-200";
+  if (normalized.includes("complete")) return "bg-blue-100 text-blue-700 border-blue-200";
+  if (normalized.includes("cancel")) return "bg-red-100 text-red-700 border-red-200";
+  return "bg-amber-100 text-amber-700 border-amber-200";
+}
+
+export default function OutreachPage() {
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  const { data, isLoading } = useQuery<OutreachBatchWithPatients[]>({
+    queryKey: ["/api/outreach/canonical-schedule"],
+    queryFn: async () => {
+      const batchesRes = await fetch("/api/screening-batches");
+      if (!batchesRes.ok) throw new Error("Failed to load schedule batches");
+      const batches: ScreeningBatch[] = await batchesRes.json();
+
+      const details = await Promise.all(
+        batches.map(async (batch) => {
+          const res = await fetch(`/api/screening-batches/${batch.id}`);
+          if (!res.ok) return { ...batch, patients: [] as PatientScreening[] };
+          return res.json();
+        }),
+      );
+
+      return details as OutreachBatchWithPatients[];
+    },
+    refetchInterval: 60000,
+  });
+
+  const today = canonicalDay(new Date().toISOString());
+
+  const summaries = useMemo(() => buildOutreachSummaries(data || [], today), [data, today]);
+
+  const selectedMember = useMemo(() => {
+    if (!summaries.length) return null;
+    return summaries.find((m) => m.id === selectedMemberId) || summaries[0];
+  }, [summaries, selectedMemberId]);
+
+  const filteredCallList = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const list = selectedMember?.callList || [];
+    if (!q) return list;
+    return list.filter((item) =>
+      item.patientName.toLowerCase().includes(q) ||
+      item.facility.toLowerCase().includes(q) ||
+      item.qualifyingTests.join(" ").toLowerCase().includes(q),
+    );
+  }, [search, selectedMember]);
+
+  const topMetrics = useMemo(() => {
+    const teamCount = summaries.length;
+    const totalCalls = summaries.reduce((sum, m) => sum + m.touchedCount, 0);
+    const totalScheduled = summaries.reduce((sum, m) => sum + m.scheduledCount, 0);
+    const totalPending = summaries.reduce((sum, m) => sum + m.pendingCount, 0);
+    const totalPatients = summaries.reduce((sum, m) => sum + m.totalPatients, 0);
+    const avgConversion = totalPatients > 0 ? Math.round((totalScheduled / totalPatients) * 100) : 0;
+    return { teamCount, totalCalls, totalScheduled, totalPending, avgConversion };
+  }, [summaries]);
+
+  return (
+    <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
+      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6 px-6 py-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Button asChild variant="outline" className="rounded-2xl border-white/60 bg-white/80 backdrop-blur">
+              <Link href="/">
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back
+              </Link>
+            </Button>
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="rounded-2xl bg-blue-600/10 p-2 text-blue-700">
+                  <Phone className="h-5 w-5" />
+                </div>
+                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Outreach</h1>
+              </div>
+              <p className="mt-1 text-sm text-slate-600">
+                Team-member metrics and call lists projected directly from the canonical schedule.
+              </p>
+            </div>
+          </div>
+          <Badge variant="outline" className="rounded-full border-blue-200 bg-blue-50 px-3 py-1 text-blue-700">
+            {formatDisplayDate(today)}
+          </Badge>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <Card className={`${shellClass()} p-5`}><div className="flex items-center gap-3"><div className="rounded-2xl bg-slate-900/5 p-2 text-slate-700"><Users2 className="h-5 w-5" /></div><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Team Members</p><p className="mt-1 text-2xl font-semibold text-slate-900">{topMetrics.teamCount}</p></div></div></Card>
+          <Card className={`${shellClass()} p-5`}><div className="flex items-center gap-3"><div className="rounded-2xl bg-blue-600/10 p-2 text-blue-700"><Phone className="h-5 w-5" /></div><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Calls Worked</p><p className="mt-1 text-2xl font-semibold text-slate-900">{topMetrics.totalCalls}</p></div></div></Card>
+          <Card className={`${shellClass()} p-5`}><div className="flex items-center gap-3"><div className="rounded-2xl bg-green-600/10 p-2 text-green-700"><CheckCircle2 className="h-5 w-5" /></div><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Scheduled</p><p className="mt-1 text-2xl font-semibold text-slate-900">{topMetrics.totalScheduled}</p></div></div></Card>
+          <Card className={`${shellClass()} p-5`}><div className="flex items-center gap-3"><div className="rounded-2xl bg-amber-500/10 p-2 text-amber-700"><Clock3 className="h-5 w-5" /></div><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Pending</p><p className="mt-1 text-2xl font-semibold text-slate-900">{topMetrics.totalPending}</p></div></div></Card>
+          <Card className={`${shellClass()} p-5`}><div className="flex items-center gap-3"><div className="rounded-2xl bg-violet-600/10 p-2 text-violet-700"><Building2 className="h-5 w-5" /></div><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Avg Conversion</p><p className="mt-1 text-2xl font-semibold text-slate-900">{topMetrics.avgConversion}%</p></div></div></Card>
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[1.05fr_1.4fr]">
+          <Card className={`${shellClass()} p-5`}>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Team Member Cards</h2>
+                <p className="text-sm text-slate-500">Click a card to load that member’s call list.</p>
+              </div>
+              <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-700">
+                {summaries.length} active
+              </Badge>
+            </div>
+
+            {isLoading ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
+                Loading outreach metrics...
+              </div>
+            ) : summaries.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
+                No team-member schedule data found for today.
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2">
+                {summaries.map((member) => {
+                  const active = selectedMember?.id === member.id;
+                  return (
+                    <button
+                      key={member.id}
+                      type="button"
+                      onClick={() => setSelectedMemberId(member.id)}
+                      className={`text-left ${shellClass(active)} p-5`}
+                      data-testid={`outreach-member-card-${member.id}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-base font-semibold text-slate-900">{member.name}</h3>
+                          <p className="text-xs text-slate-500">{member.facilities.join(" • ") || "No facility"}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-3 gap-3">
+                        <div className="rounded-2xl bg-slate-50 p-3"><p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Calls</p><p className="mt-1 text-xl font-semibold text-slate-900">{member.touchedCount}</p></div>
+                        <div className="rounded-2xl bg-slate-50 p-3"><p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Scheduled</p><p className="mt-1 text-xl font-semibold text-slate-900">{member.scheduledCount}</p></div>
+                        <div className="rounded-2xl bg-slate-50 p-3"><p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Conversion</p><p className="mt-1 text-xl font-semibold text-slate-900">{member.conversionRate}%</p></div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+
+          <Card className={`${shellClass()} p-5`}>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {selectedMember ? `${selectedMember.name} Call List` : "Call List"}
+                </h2>
+                <p className="text-sm text-slate-500">Single-source list driven from the existing schedule records.</p>
+              </div>
+              <div className="relative w-full max-w-xs">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search patient, facility, or test"
+                  className="rounded-2xl border-white/60 bg-white/90 pl-9"
+                  data-testid="outreach-search-input"
+                />
+              </div>
+            </div>
+
+            {!selectedMember ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
+                Select a team member to view the call list.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filteredCallList.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
+                    No patients match this search.
+                  </div>
+                ) : (
+                  filteredCallList.map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md"
+                      data-testid={`outreach-call-item-${item.patientId}`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-base font-semibold text-slate-900">{item.patientName}</h3>
+                            <Badge className={`rounded-full border ${statusBadgeClass(item.appointmentStatus)}`}>
+                              {item.appointmentStatus || "pending"}
+                            </Badge>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
+                            <span>{item.time}</span>
+                            <span>{item.facility}</span>
+                            <span>{item.phoneNumber}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-700">
+                          {item.patientType}
+                        </Badge>
+                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-700">
+                          {item.insurance}
+                        </Badge>
+                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-700">
+                          Batch {item.batchId}
+                        </Badge>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {item.qualifyingTests.length > 0 ? (
+                          item.qualifyingTests.map((test) => (
+                            <Badge key={`${item.id}-${test}`} className="rounded-full bg-blue-50 text-blue-700 hover:bg-blue-50">
+                              {test}
+                            </Badge>
+                          ))
+                        ) : (
+                          <span className="text-sm text-slate-400">No qualifying tests yet</span>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+EOF
+
+cat > scripts/add-outreach-route.mjs <<'EOF'
+import fs from "fs";
+
+function patchApp() {
+  const path = "client/src/App.tsx";
+  let text = fs.readFileSync(path, "utf8");
+
+  if (!text.includes('import OutreachPage from "@/pages/outreach";')) {
+    const anchor = 'import AppointmentsPage from "@/pages/appointments";';
+    if (!text.includes(anchor)) throw new Error("Could not find AppointmentsPage import anchor");
+    text = text.replace(anchor, `${anchor}\nimport OutreachPage from "@/pages/outreach";`);
+  }
+
+  if (!text.includes('path="/outreach"')) {
+    const anchor = '                  <Route path="/appointments" component={AppointmentsPage} />';
+    if (!text.includes(anchor)) throw new Error("Could not find appointments route anchor");
+    text = text.replace(anchor, `${anchor}\n                  <Route path="/outreach" component={OutreachPage} />`);
+  }
+
+  fs.writeFileSync(path, text);
+}
+
+patchApp();
+console.log("patched client/src/App.tsx");
+EOF
+
+node scripts/add-outreach-route.mjs
+
+npm run check

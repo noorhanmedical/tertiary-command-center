@@ -1,0 +1,207 @@
+cd ~/workspace || exit 1
+
+mkdir -p client/src/lib client/src/pages scripts
+
+cat > client/src/lib/outreachSchedule.ts <<'EOF'
+import type { PatientScreening, ScreeningBatch } from "@shared/schema";
+
+export type OutreachBatchWithPatients = ScreeningBatch & {
+  patients: PatientScreening[];
+};
+
+export type OutreachCallItem = {
+  id: string;
+  patientId: number;
+  patientName: string;
+  facility: string;
+  phoneNumber: string;
+  insurance: string;
+  qualifyingTests: string[];
+  appointmentStatus: string;
+  patientType: string;
+  batchId: number;
+  scheduleDate: string;
+  time: string;
+};
+
+export type OutreachTeamMemberSummary = {
+  id: string;
+  name: string;
+  totalPatients: number;
+  touchedCount: number;
+  scheduledCount: number;
+  pendingCount: number;
+  conversionRate: number;
+  facilities: string[];
+  callList: OutreachCallItem[];
+};
+
+function safeString(value: unknown): string {
+  return value == null ? "" : String(value).trim();
+}
+
+export function canonicalDay(value?: string | null): string {
+  return safeString(value).slice(0, 10);
+}
+
+export function formatDisplayDate(value?: string | null): string {
+  const raw = safeString(value);
+  if (!raw) return "Unscheduled";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [y, m, d] = raw.split("-").map(Number);
+    const dt = new Date(y, (m || 1) - 1, d || 1);
+    return dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  }
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) return raw;
+  return dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+export function formatDisplayTime(value?: string | null): string {
+  const raw = safeString(value);
+  return raw || "No time";
+}
+
+export function buildOutreachSummaries(
+  batches: OutreachBatchWithPatients[],
+  today: string,
+): OutreachTeamMemberSummary[] {
+  const map = new Map<string, OutreachTeamMemberSummary>();
+
+  for (const batch of batches || []) {
+    const batchDay = canonicalDay(batch.scheduleDate);
+    if (batchDay && batchDay !== today) continue;
+
+    const memberName = safeString(batch.clinicianName) || "Unassigned Team Member";
+    const memberId = memberName.toLowerCase().replace(/\s+/g, "-");
+    const facility = safeString(batch.facility) || "Unassigned Facility";
+
+    if (!map.has(memberId)) {
+      map.set(memberId, {
+        id: memberId,
+        name: memberName,
+        totalPatients: 0,
+        touchedCount: 0,
+        scheduledCount: 0,
+        pendingCount: 0,
+        conversionRate: 0,
+        facilities: [],
+        callList: [],
+      });
+    }
+
+    const entry = map.get(memberId)!;
+    if (!entry.facilities.includes(facility)) {
+      entry.facilities.push(facility);
+    }
+
+    for (const patient of batch.patients || []) {
+      const appointmentStatus = safeString(patient.appointmentStatus) || "pending";
+      const normalizedStatus = appointmentStatus.toLowerCase();
+      const isTouched = normalizedStatus !== "pending";
+      const isScheduled = normalizedStatus.includes("scheduled") || normalizedStatus.includes("booked");
+
+      entry.totalPatients += 1;
+      if (isTouched) entry.touchedCount += 1;
+      if (isScheduled) entry.scheduledCount += 1;
+      if (!isTouched) entry.pendingCount += 1;
+
+      entry.callList.push({
+        id: `${batch.id}-${patient.id}`,
+        patientId: patient.id,
+        patientName: patient.name,
+        facility,
+        phoneNumber: safeString((patient as any).phoneNumber) || "No phone",
+        insurance: safeString((patient as any).insurance) || "No insurance",
+        qualifyingTests: Array.isArray((patient as any).qualifyingTests) ? (patient as any).qualifyingTests : [],
+        appointmentStatus,
+        patientType: safeString((patient as any).patientType) || "visit",
+        batchId: batch.id,
+        scheduleDate: safeString(batch.scheduleDate),
+        time: formatDisplayTime((patient as any).time),
+      });
+    }
+  }
+
+  return Array.from(map.values())
+    .map((entry) => ({
+      ...entry,
+      callList: entry.callList.sort(
+        (a, b) => a.time.localeCompare(b.time) || a.patientName.localeCompare(b.patientName),
+      ),
+      conversionRate: entry.totalPatients > 0
+        ? Math.round((entry.scheduledCount / entry.totalPatients) * 100)
+        : 0,
+    }))
+    .sort((a, b) => b.totalPatients - a.totalPatients || a.name.localeCompare(b.name));
+}
+EOF
+
+cat > client/src/pages/outreach.tsx <<'EOF'
+import { useMemo, useState } from "react";
+import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, Building2, CheckCircle2, Clock3, Phone, Search, Users2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import type { ScreeningBatch, PatientScreening } from "@shared/schema";
+import {
+  buildOutreachSummaries,
+  canonicalDay,
+  formatDisplayDate,
+  type OutreachBatchWithPatients,
+} from "@/lib/outreachSchedule";
+
+function shellClass(active = false) {
+  return [
+    "rounded-3xl border border-white/60 bg-white/75 backdrop-blur-xl shadow-[0_18px_60px_rgba(15,23,42,0.10)] transition-all",
+    active ? "ring-2 ring-blue-200/80 shadow-[0_24px_80px_rgba(59,130,246,0.16)]" : "hover:shadow-[0_24px_80px_rgba(15,23,42,0.14)]",
+  ].join(" ");
+}
+
+function statusBadgeClass(status?: string | null) {
+  const normalized = String(status || "pending").toLowerCase();
+  if (normalized.includes("scheduled") || normalized.includes("booked")) return "bg-green-100 text-green-700 border-green-200";
+  if (normalized.includes("complete")) return "bg-blue-100 text-blue-700 border-blue-200";
+  if (normalized.includes("cancel")) return "bg-red-100 text-red-700 border-red-200";
+  return "bg-amber-100 text-amber-700 border-amber-200";
+}
+
+export default function OutreachPage() {
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  const { data, isLoading } = useQuery<OutreachBatchWithPatients[]>({
+    queryKey: ["/api/outreach/canonical-schedule"],
+    queryFn: async () => {
+      const batchesRes = await fetch("/api/screening-batches");
+      if (!batchesRes.ok) throw new Error("Failed to load schedule batches");
+      const batches: ScreeningBatch[] = await batchesRes.json();
+
+      const details = await Promise.all(
+        batches.map(async (batch) => {
+          const res = await fetch(`/api/screening-batches/${batch.id}`);
+          if (!res.ok) return { ...batch, patients: [] as PatientScreening[] };
+          return res.json();
+        }),
+      );
+
+      return details as OutreachBatchWithPatients[];
+    },
+    refetchInterval: 60000,
+  });
+
+  const today = canonicalDay(new Date().toISOString());
+
+  const summaries = useMemo(() => buildOutreachSummaries(data || [], today), [data, today]);
+
+  const selectedMember = useMemo(() => {
+    if (!summaries.length) return null;
+    return summaries.find((m) => m.id === selectedMemberId) || summaries[0];
+  }, [summaries, selectedMemberId]);
+
+  const filteredCallList = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const list = selected
