@@ -1,0 +1,135 @@
+[1mdiff --git a/client/src/pages/home.tsx b/client/src/pages/home.tsx[m
+[1mindex fc0f8b6..97c6dd0 100644[m
+[1m--- a/client/src/pages/home.tsx[m
+[1m+++ b/client/src/pages/home.tsx[m
+[36m@@ -2907,6 +2907,53 @@[m [mfunction PdfPatientSelectDialog({[m
+   );[m
+ }[m
+ [m
+[32m+[m[32mfunction ResultsHeaderActions({[m
+[32m+[m[32m  patients,[m
+[32m+[m[32m  shareButtonText,[m
+[32m+[m[32m  onShare,[m
+[32m+[m[32m  onExport,[m
+[32m+[m[32m  onClinicianPdf,[m
+[32m+[m[32m  onPlexusPdf,[m
+[32m+[m[32m}: {[m
+[32m+[m[32m  patients: PatientScreening[];[m
+[32m+[m[32m  shareButtonText: string;[m
+[32m+[m[32m  onShare: () => void;[m
+[32m+[m[32m  onExport: () => void;[m
+[32m+[m[32m  onClinicianPdf: () => void;[m
+[32m+[m[32m  onPlexusPdf: () => void;[m
+[32m+[m[32m}) {[m
+[32m+[m[32m  return ([m
+[32m+[m[32m    <div className="flex items-center gap-2 flex-wrap">[m
+[32m+[m[32m      <Button variant="outline" size="sm" onClick={onShare} className="gap-1.5 rounded-xl" data-testid="button-share">[m
+[32m+[m[32m        {shareButtonText === "Copied!" ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />} {shareButtonText}[m
+[32m+[m[32m      </Button>[m
+[32m+[m[32m      <Button variant="outline" size="sm" onClick={onExport} className="gap-1.5 rounded-xl" data-testid="button-export">[m
+[32m+[m[32m        <Download className="w-3.5 h-3.5" /> Export CSV[m
+[32m+[m[32m      </Button>[m
+[32m+[m[32m      <Button[m
+[32m+[m[32m        variant="outline"[m
+[32m+[m[32m        size="sm"[m
+[32m+[m[32m        onClick={onClinicianPdf}[m
+[32m+[m[32m        className="gap-1.5 rounded-xl"[m
+[32m+[m[32m        data-testid="button-clinician-pdf"[m
+[32m+[m[32m        disabled={patients.length === 0}[m
+[32m+[m[32m      >[m
+[32m+[m[32m        <Printer className="w-3.5 h-3.5" /> Clinician PDF[m
+[32m+[m[32m      </Button>[m
+[32m+[m[32m      <Button[m
+[32m+[m[32m        variant="outline"[m
+[32m+[m[32m        size="sm"[m
+[32m+[m[32m        onClick={onPlexusPdf}[m
+[32m+[m[32m        className="gap-1.5 rounded-xl"[m
+[32m+[m[32m        data-testid="button-plexus-pdf"[m
+[32m+[m[32m        disabled={patients.length === 0}[m
+[32m+[m[32m      >[m
+[32m+[m[32m        <Users2 className="w-3.5 h-3.5" /> Plexus PDF[m
+[32m+[m[32m      </Button>[m
+[32m+[m[32m    </div>[m
+[32m+[m[32m  );[m
+[32m+[m[32m}[m
+[32m+[m
+ function computeNextEligible(dos: string, insuranceType: string): { date: Date; eligible: boolean } | null {[m
+   if (!dos) return null;[m
+   const dosDate = new Date(dos.includes("T") ? dos : dos + "T00:00:00");[m
+[36m@@ -3506,6 +3553,18 @@[m [mfunction ResultsView({[m
+     else if (pdfMode === "plexus") generatePlexusPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);[m
+   }, [batch, pdfMode]);[m
+ [m
+[32m+[m[32m  const handleCompletedTestsConfirm = useCallback(async () => {[m
+[32m+[m[32m    if (!completeModalPatient) return;[m
+[32m+[m[32m    const ok = await completePatientWithSelectedTests(completeModalPatient, selectedCompletedTests);[m
+[32m+[m[32m    if (!ok) return;[m
+[32m+[m[32m    setCompleteModalPatient(null);[m
+[32m+[m[32m    setSelectedCompletedTests([]);[m
+[32m+[m[32m  }, [[m
+[32m+[m[32m    completeModalPatient,[m
+[32m+[m[32m    completePatientWithSelectedTests,[m
+[32m+[m[32m    selectedCompletedTests,[m
+[32m+[m[32m  ]);[m
+[32m+[m
+   const handleShare = useCallback(() => {[m
+     if (!batch) return;[m
+     const url = `${window.location.origin}/schedule/${batch.id}`;[m
+[36m@@ -3547,34 +3606,14 @@[m [mfunction ResultsView({[m
+               <p className="text-xs text-slate-900">{patients.length} patients screened</p>[m
+             </div>[m
+           </div>[m
+[31m-          <div className="flex items-center gap-2 flex-wrap">[m
+[31m-            <Button variant="outline" size="sm" onClick={handleShare} className="gap-1.5 rounded-xl" data-testid="button-share">[m
+[31m-              {shareButtonText === "Copied!" ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />} {shareButtonText}[m
+[31m-            </Button>[m
+[31m-            <Button variant="outline" size="sm" onClick={onExport} className="gap-1.5 rounded-xl" data-testid="button-export">[m
+[31m-              <Download className="w-3.5 h-3.5" /> Export CSV[m
+[31m-            </Button>[m
+[31m-            <Button[m
+[31m-              variant="outline"[m
+[31m-              size="sm"[m
+[31m-              onClick={() => setPdfMode("clinician")}[m
+[31m-              className="gap-1.5 rounded-xl"[m
+[31m-              data-testid="button-clinician-pdf"[m
+[31m-              disabled={patients.length === 0}[m
+[31m-            >[m
+[31m-              <Printer className="w-3.5 h-3.5" /> Clinician PDF[m
+[31m-            </Button>[m
+[31m-            <Button[m
+[31m-              variant="outline"[m
+[31m-              size="sm"[m
+[31m-              onClick={() => setPdfMode("plexus")}[m
+[31m-              className="gap-1.5 rounded-xl"[m
+[31m-              data-testid="button-plexus-pdf"[m
+[31m-              disabled={patients.length === 0}[m
+[31m-            >[m
+[31m-              <Users2 className="w-3.5 h-3.5" /> Plexus PDF[m
+[31m-            </Button>[m
+[31m-          </div>[m
+[32m+[m[32m          <ResultsHeaderActions[m
+[32m+[m[32m            patients={patients}[m
+[32m+[m[32m            shareButtonText={shareButtonText}[m
+[32m+[m[32m            onShare={handleShare}[m
+[32m+[m[32m            onExport={onExport}[m
+[32m+[m[32m            onClinicianPdf={() => setPdfMode("clinician")}[m
+[32m+[m[32m            onPlexusPdf={() => setPdfMode("plexus")}[m
+[32m+[m[32m          />[m
+         </div>[m
+       </header>[m
+ [m
+[36m@@ -3799,13 +3838,7 @@[m [mfunction ResultsView({[m
+         setSelectedCompletedTests={setSelectedCompletedTests}[m
+         setCompleteModalPatient={setCompleteModalPatient}[m
+         isGenerating={isGeneratingCompletedDocs}[m
+[31m-        onConfirm={async () => {[m
+[31m-          if (!completeModalPatient) return;[m
+[31m-          const ok = await completePatientWithSelectedTests(completeModalPatient, selectedCompletedTests);[m
+[31m-          if (!ok) return;[m
+[31m-          setCompleteModalPatient(null);[m
+[31m-          setSelectedCompletedTests([]);[m
+[31m-        }}[m
+[32m+[m[32m        onConfirm={handleCompletedTestsConfirm}[m
+       />[m
+ [m
+ [m

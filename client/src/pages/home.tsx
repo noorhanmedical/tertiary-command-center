@@ -2907,6 +2907,57 @@ function PdfPatientSelectDialog({
   );
 }
 
+function ResultsHeaderActions({
+  patients,
+  shareButtonText,
+  onShare,
+  onExport,
+  onClinicianPdf,
+  onPlexusPdf,
+}: {
+  patients: PatientScreening[];
+  shareButtonText: string;
+  onShare: () => void;
+  onExport: () => void;
+  onClinicianPdf: () => void;
+  onPlexusPdf: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <Button variant="outline" size="sm" onClick={onShare} className="gap-1.5 rounded-xl" data-testid="button-share">
+        {shareButtonText === "Copied!" ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />} {shareButtonText}
+      </Button>
+      <Button variant="outline" size="sm" onClick={onExport} className="gap-1.5 rounded-xl" data-testid="button-export">
+        <Download className="w-3.5 h-3.5" /> Export CSV
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onClinicianPdf}
+        className="gap-1.5 rounded-xl"
+        data-testid="button-clinician-pdf"
+        disabled={patients.length === 0}
+      >
+        <Printer className="w-3.5 h-3.5" /> Clinician PDF
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onPlexusPdf}
+        className="gap-1.5 rounded-xl"
+        data-testid="button-plexus-pdf"
+        disabled={patients.length === 0}
+      >
+        <Users2 className="w-3.5 h-3.5" /> Plexus PDF
+      </Button>
+    </div>
+  );
+}
+
+function buildSharedScheduleUrl(batchId: number): string {
+  return `${window.location.origin}/schedule/${batchId}`;
+}
+
 function computeNextEligible(dos: string, insuranceType: string): { date: Date; eligible: boolean } | null {
   if (!dos) return null;
   const dosDate = new Date(dos.includes("T") ? dos : dos + "T00:00:00");
@@ -3506,9 +3557,29 @@ function ResultsView({
     else if (pdfMode === "plexus") generatePlexusPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
   }, [batch, pdfMode]);
 
+  const handleCompletedTestsConfirm = useCallback(async () => {
+    if (!completeModalPatient) return;
+    const ok = await completePatientWithSelectedTests(completeModalPatient, selectedCompletedTests);
+    if (!ok) return;
+    setCompleteModalPatient(null);
+    setSelectedCompletedTests([]);
+  }, [
+    completeModalPatient,
+    completePatientWithSelectedTests,
+    selectedCompletedTests,
+  ]);
+
+  const handleOpenClinicianPdf = useCallback(() => {
+    setPdfMode("clinician");
+  }, []);
+
+  const handleOpenPlexusPdf = useCallback(() => {
+    setPdfMode("plexus");
+  }, []);
+
   const handleShare = useCallback(() => {
     if (!batch) return;
-    const url = `${window.location.origin}/schedule/${batch.id}`;
+    const url = buildSharedScheduleUrl(batch.id);
     navigator.clipboard.writeText(url).then(() => {
       setShareButtonText("Copied!");
       toast({ title: "Link copied", description: "Share link copied to clipboard" });
@@ -3547,34 +3618,14 @@ function ResultsView({
               <p className="text-xs text-slate-900">{patients.length} patients screened</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button variant="outline" size="sm" onClick={handleShare} className="gap-1.5 rounded-xl" data-testid="button-share">
-              {shareButtonText === "Copied!" ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />} {shareButtonText}
-            </Button>
-            <Button variant="outline" size="sm" onClick={onExport} className="gap-1.5 rounded-xl" data-testid="button-export">
-              <Download className="w-3.5 h-3.5" /> Export CSV
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPdfMode("clinician")}
-              className="gap-1.5 rounded-xl"
-              data-testid="button-clinician-pdf"
-              disabled={patients.length === 0}
-            >
-              <Printer className="w-3.5 h-3.5" /> Clinician PDF
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPdfMode("plexus")}
-              className="gap-1.5 rounded-xl"
-              data-testid="button-plexus-pdf"
-              disabled={patients.length === 0}
-            >
-              <Users2 className="w-3.5 h-3.5" /> Plexus PDF
-            </Button>
-          </div>
+          <ResultsHeaderActions
+            patients={patients}
+            shareButtonText={shareButtonText}
+            onShare={handleShare}
+            onExport={onExport}
+            onClinicianPdf={handleOpenClinicianPdf}
+            onPlexusPdf={handleOpenPlexusPdf}
+          />
         </div>
       </header>
 
@@ -3792,6 +3843,13 @@ function ResultsView({
         setSelectedTestDetail={setSelectedTestDetail}
       />
 
+      <PdfPatientSelectDialog
+        open={pdfMode !== null}
+        mode={pdfMode}
+        patients={patients}
+        onClose={() => setPdfMode(null)}
+        onGenerate={handlePdfGenerate}
+      />
 
       <CompletedTestsDialog
         completeModalPatient={completeModalPatient}
@@ -3799,35 +3857,8 @@ function ResultsView({
         setSelectedCompletedTests={setSelectedCompletedTests}
         setCompleteModalPatient={setCompleteModalPatient}
         isGenerating={isGeneratingCompletedDocs}
-        onConfirm={async () => {
-          if (!completeModalPatient) return;
-          const ok = await completePatientWithSelectedTests(completeModalPatient, selectedCompletedTests);
-          if (!ok) return;
-          setCompleteModalPatient(null);
-          setSelectedCompletedTests([]);
-        }}
+        onConfirm={handleCompletedTestsConfirm}
       />
-
-
-      {inlineScreeningFormDoc && (
-        <EditableScreeningFormModal
-          note={{
-            service: inlineScreeningFormDoc.doc.service,
-            title: inlineScreeningFormDoc.doc.title,
-            sections: inlineScreeningFormDoc.doc.sections,
-            patientId: inlineScreeningFormDoc.patient.id,
-            batchId: batch?.id ?? 0,
-            facility: batch?.facility ?? null,
-            scheduleDate: batch?.scheduleDate ?? null,
-            patientName: inlineScreeningFormDoc.patient.name,
-            clinicianName: batch?.clinicianName ?? null,
-          }}
-          onClose={() => setInlineScreeningFormDoc(null)}
-          onSuccess={() => {
-            queryClient.invalidateQueries({ queryKey: ["/api/generated-notes/batch", batch?.id] });
-          }}
-        />
-      )}
 
       <PdfPatientSelectDialog
         open={pdfMode !== null}
