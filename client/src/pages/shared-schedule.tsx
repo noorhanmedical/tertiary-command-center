@@ -6,8 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   Loader2,
-  Brain,
-  Activity,
   Scan,
   ChevronDown,
   ChevronRight,
@@ -19,43 +17,19 @@ import {
   AlertTriangle,
   ShieldAlert,
   Calendar,
+  FileText,
 } from "lucide-react";
 import type { PatientScreening } from "@shared/schema";
-
-type ReasoningValue = string | { clinician_understanding: string; patient_talking_points: string; confidence?: "high" | "medium" | "low"; qualifying_factors?: string[] };
-
-const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
-
-function getAncillaryCategory(test: string): "brainwave" | "vitalwave" | "ultrasound" | "other" {
-  const lower = test.toLowerCase();
-  if (lower.includes("brain")) return "brainwave";
-  if (lower.includes("vital")) return "vitalwave";
-  if (ULTRASOUND_TESTS.some((u) => lower.includes(u))) return "ultrasound";
-  return "other";
-}
-
-function isImagingTest(test: string): boolean {
-  return getAncillaryCategory(test) === "ultrasound";
-}
-
-const categoryStyles: Record<string, { bg: string; border: string; accent: string; icon: string }> = {
-  brainwave: { bg: "bg-violet-50/80", border: "border-violet-200/60", accent: "text-violet-700", icon: "text-violet-500" },
-  vitalwave: { bg: "bg-red-50/80", border: "border-red-200/60", accent: "text-red-700", icon: "text-red-500" },
-  ultrasound: { bg: "bg-emerald-50/80", border: "border-emerald-200/60", accent: "text-emerald-700", icon: "text-emerald-500" },
-  other: { bg: "bg-slate-50/80", border: "border-slate-200/60", accent: "text-slate-700", icon: "text-slate-500" },
-};
-
-const categoryLabels: Record<string, string> = { brainwave: "BrainWave", vitalwave: "VitalWave", ultrasound: "Ultrasound Studies", other: "Other" };
-const categoryIcons: Record<string, typeof Brain> = { brainwave: Brain, vitalwave: Activity, ultrasound: Scan, other: Scan };
-
-function getBadgeColor(cat: string): string {
-  switch (cat) {
-    case "brainwave": return "bg-violet-100 text-violet-800";
-    case "vitalwave": return "bg-red-100 text-red-800";
-    case "ultrasound": return "bg-emerald-100 text-emerald-800";
-    default: return "bg-slate-100 text-slate-800";
-  }
-}
+import {
+  categoryIcons,
+  categoryLabels,
+  categoryStyles,
+  getAncillaryCategory,
+  getBadgeColor,
+  isImagingTest,
+} from "@/features/schedule/ancillaryMeta";
+import { generateClinicianPDF, generatePlexusPDF, type ReasoningValue } from "@/lib/pdfGeneration";
+import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
 
 const confidenceStyles: Record<string, string> = {
   high: "bg-emerald-100 text-emerald-700",
@@ -74,6 +48,7 @@ export default function SharedSchedule() {
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
+  const [pdfMode, setPdfMode] = useState<"clinician" | "plexus" | null>(null);
 
   const { data: batchData, isLoading } = useQuery<any>({
     queryKey: ["/api/screening-batches", batchId],
@@ -189,17 +164,41 @@ export default function SharedSchedule() {
               )}
               <p className="text-xs text-slate-600 mt-0.5" data-testid="text-shared-patient-count">{patients.length} patients screened</p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleExport}
-              className="gap-1.5 border-blue-300 text-blue-800 hover:bg-blue-200/60 rounded-xl shrink-0 text-xs px-3"
-              data-testid="button-export-shared"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Export CSV</span>
-              <span className="sm:hidden">CSV</span>
-            </Button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPdfMode("clinician")}
+                className="gap-1.5 border-blue-300 text-blue-800 hover:bg-blue-200/60 rounded-xl text-xs px-3"
+                data-testid="button-clinician-pdf-shared"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Clinician PDF</span>
+                <span className="sm:hidden">Clin</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPdfMode("plexus")}
+                className="gap-1.5 border-blue-300 text-blue-800 hover:bg-blue-200/60 rounded-xl text-xs px-3"
+                data-testid="button-plexus-pdf-shared"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Plexus PDF</span>
+                <span className="sm:hidden">Plx</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExport}
+                className="gap-1.5 border-blue-300 text-blue-800 hover:bg-blue-200/60 rounded-xl text-xs px-3"
+                data-testid="button-export-shared"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Export CSV</span>
+                <span className="sm:hidden">CSV</span>
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -476,6 +475,21 @@ export default function SharedSchedule() {
           })()}
         </DialogContent>
       </Dialog>
+
+      <PdfPatientSelectDialog
+        open={pdfMode !== null}
+        mode={pdfMode}
+        patients={patients}
+        onClose={() => setPdfMode(null)}
+        onGenerate={(selected) => {
+          if (pdfMode === "clinician") {
+            generateClinicianPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
+          } else {
+            generatePlexusPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
+          }
+          setPdfMode(null);
+        }}
+      />
     </div>
   );
 }

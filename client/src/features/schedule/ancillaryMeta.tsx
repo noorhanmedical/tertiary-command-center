@@ -28,16 +28,16 @@ export const categoryStyles: Record<
     icon: "text-violet-500",
   },
   vitalwave: {
+    bg: "bg-red-50/90",
+    border: "border-red-200/70",
+    accent: "text-red-700",
+    icon: "text-red-500",
+  },
+  ultrasound: {
     bg: "bg-emerald-50/90",
     border: "border-emerald-200/70",
     accent: "text-emerald-700",
     icon: "text-emerald-500",
-  },
-  ultrasound: {
-    bg: "bg-sky-50/90",
-    border: "border-sky-200/70",
-    accent: "text-sky-700",
-    icon: "text-sky-500",
   },
   other: {
     bg: "bg-slate-50/90",
@@ -89,9 +89,9 @@ export function getBadgeColor(category: string): string {
     case "brainwave":
       return "bg-violet-100 text-violet-700";
     case "vitalwave":
-      return "bg-emerald-100 text-emerald-700";
+      return "bg-red-100 text-red-700";
     case "ultrasound":
-      return "bg-sky-100 text-sky-700";
+      return "bg-emerald-100 text-emerald-700";
     default:
       return "bg-slate-100 text-slate-700";
   }
