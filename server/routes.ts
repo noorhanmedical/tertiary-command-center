@@ -1190,18 +1190,26 @@ export async function registerRoutes(
       const { isGoogleSheetsConnected } = await import("./googleSheets");
       const { getDriveStatus } = await import("./googleDrive");
       const { getSetting } = await import("./dbSettings");
-      const [sheets, driveStatus, dbPatientsAt, dbBillingAt, dbPatientsSid, dbBillingSid] = await Promise.all([
+      const KNOWN_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"];
+      const facilitySettingKeys = KNOWN_FACILITIES.map(f => `BILLING_SPREADSHEET_ID_${f.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`);
+      const [sheets, driveStatus, dbPatientsAt, dbBillingAt, dbPatientsSid, dbBillingSid, ...facilityIds] = await Promise.all([
         isGoogleSheetsConnected(),
         getDriveStatus(),
         getSetting("PATIENTS_LAST_SYNCED_AT"),
         getSetting("BILLING_LAST_SYNCED_AT"),
         getSetting("PATIENTS_SPREADSHEET_ID"),
         getSetting("BILLING_SPREADSHEET_ID"),
+        ...facilitySettingKeys.map(k => getSetting(k)),
       ]);
       const patientsAt = patientsSyncState.lastSyncedAt ?? dbPatientsAt;
       const billingAt = billingSyncState.lastSyncedAt ?? dbBillingAt;
       const patientsSid = dbPatientsSid ?? process.env.GOOGLE_SHEETS_PATIENTS_ID ?? null;
-      const billingSid = dbBillingSid ?? process.env.GOOGLE_SHEETS_BILLING_ID ?? null;
+      const masterSid = (await getSetting("GOOGLE_SHEETS_BILLING_ID")) || process.env.GOOGLE_SHEETS_BILLING_ID || null;
+      const billingSid = masterSid || dbBillingSid || null;
+      const facilitySpreadsheetUrls: Record<string, string> = {};
+      KNOWN_FACILITIES.forEach((fac, i) => {
+        if (facilityIds[i]) facilitySpreadsheetUrls[fac] = `https://docs.google.com/spreadsheets/d/${facilityIds[i]}`;
+      });
       res.json({
         sheets: {
           connected: sheets,
@@ -1209,6 +1217,8 @@ export async function registerRoutes(
           lastSyncedBilling: billingAt,
           patientsSpreadsheetUrl: patientsSid ? `https://docs.google.com/spreadsheets/d/${patientsSid}` : null,
           billingSpreadsheetUrl: billingSid ? `https://docs.google.com/spreadsheets/d/${billingSid}` : null,
+          masterBillingSpreadsheetUrl: masterSid ? `https://docs.google.com/spreadsheets/d/${masterSid}` : null,
+          facilityBillingSpreadsheetUrls: facilitySpreadsheetUrls,
         },
         drive: { connected: driveStatus.connected, email: driveStatus.email },
       });

@@ -725,7 +725,11 @@ export default function BillingPage() {
   useEffect(() => {
     if (!googleStatus?.sheets) return;
     setBillingSyncedAt(googleStatus.sheets.lastSyncedBilling ?? null);
-    setBillingSheetUrl(googleStatus.sheets.billingSpreadsheetUrl ?? null);
+    const master = (googleStatus.sheets as any).masterBillingSpreadsheetUrl ?? googleStatus.sheets.billingSpreadsheetUrl ?? null;
+    setBillingSheetUrl(master);
+    setMasterSheetUrl((googleStatus.sheets as any).masterBillingSpreadsheetUrl ?? null);
+    const facUrls = (googleStatus.sheets as any).facilityBillingSpreadsheetUrls;
+    if (facUrls && typeof facUrls === "object") setFacilitySheetUrls(facUrls);
   }, [googleStatus]);
 
   const updateMutation = useMutation({
