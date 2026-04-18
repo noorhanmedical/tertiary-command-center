@@ -996,6 +996,7 @@ export async function registerRoutes(
     facilitySpreadsheetIds: Record<string, string>;
     recordCount: number;
     syncedAt: string;
+    masterSyncError: string | null;
   }
 
   async function executeSyncBilling(): Promise<BillingSyncResult> {
@@ -1063,12 +1064,14 @@ export async function registerRoutes(
     }
 
     const masterSid = (await getSetting("GOOGLE_SHEETS_BILLING_ID")) || process.env.GOOGLE_SHEETS_BILLING_ID || null;
+    let masterSyncError: string | null = null;
     if (masterSid) {
       try {
         await upsertSheetData(masterSid, "Billing Records", BILLING_HEADERS, records.map(toRow));
         await setSetting("GOOGLE_SHEETS_BILLING_ID", masterSid);
       } catch (e) {
-        console.warn("Could not sync master billing tracker:", (e as Error).message);
+        masterSyncError = (e as Error).message;
+        console.error("Master billing tracker sync failed:", masterSyncError);
       }
     }
 
@@ -1079,7 +1082,7 @@ export async function registerRoutes(
     if (primaryId) {
       await setSetting("BILLING_SPREADSHEET_ID", primaryId);
     }
-    return { spreadsheetId: primaryId, masterSpreadsheetId: masterSid, facilitySpreadsheetIds, recordCount: totalSynced, syncedAt };
+    return { spreadsheetId: primaryId, masterSpreadsheetId: masterSid, facilitySpreadsheetIds, recordCount: totalSynced, syncedAt, masterSyncError };
   }
 
   async function runBillingSyncWithLock(throwOnError: boolean): Promise<BillingSyncResult | null> {
@@ -1268,6 +1271,7 @@ export async function registerRoutes(
         facilitySpreadsheetUrls: facilityUrls,
         syncedAt: result.syncedAt,
         recordCount: result.recordCount,
+        masterSyncError: result.masterSyncError ?? null,
       });
     } catch (error: any) {
       console.error("Billing sync error:", error);

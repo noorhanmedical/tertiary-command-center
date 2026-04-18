@@ -718,17 +718,23 @@ export default function BillingPage() {
   const { data: allNotes = [] } = useQuery<GeneratedNote[]>({ queryKey: ["/api/generated-notes"] });
 
   const { data: googleStatus } = useQuery<{
-    sheets: { connected: boolean; lastSyncedBilling: string | null; billingSpreadsheetUrl: string | null };
+    sheets: {
+      connected: boolean;
+      lastSyncedBilling: string | null;
+      billingSpreadsheetUrl: string | null;
+      masterBillingSpreadsheetUrl: string | null;
+      facilityBillingSpreadsheetUrls: Record<string, string>;
+    };
     drive: { connected: boolean; email: string | null };
   }>({ queryKey: ["/api/google/status"], refetchInterval: 30000 });
 
   useEffect(() => {
     if (!googleStatus?.sheets) return;
     setBillingSyncedAt(googleStatus.sheets.lastSyncedBilling ?? null);
-    const master = (googleStatus.sheets as any).masterBillingSpreadsheetUrl ?? googleStatus.sheets.billingSpreadsheetUrl ?? null;
+    const master = googleStatus.sheets.masterBillingSpreadsheetUrl ?? googleStatus.sheets.billingSpreadsheetUrl ?? null;
     setBillingSheetUrl(master);
-    setMasterSheetUrl((googleStatus.sheets as any).masterBillingSpreadsheetUrl ?? null);
-    const facUrls = (googleStatus.sheets as any).facilityBillingSpreadsheetUrls;
+    setMasterSheetUrl(googleStatus.sheets.masterBillingSpreadsheetUrl ?? null);
+    const facUrls = googleStatus.sheets.facilityBillingSpreadsheetUrls;
     if (facUrls && typeof facUrls === "object") setFacilitySheetUrls(facUrls);
   }, [googleStatus]);
 
@@ -780,7 +786,11 @@ export default function BillingPage() {
           setBillingSheetUrl(data.spreadsheetUrl);
         }
         if (data.facilitySpreadsheetUrls) setFacilitySheetUrls(data.facilitySpreadsheetUrls);
-        toast({ title: "Synced to Google Sheets", description: `${data.recordCount} records pushed` });
+        if (data.masterSyncError) {
+          toast({ title: "Synced (master tracker error)", description: `Facility sheets updated but master tracker failed: ${data.masterSyncError}`, variant: "destructive" });
+        } else {
+          toast({ title: "Synced to Google Sheets", description: `${data.recordCount} records pushed` });
+        }
       } else {
         toast({ title: "Sync queued" });
       }
