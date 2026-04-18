@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Brain, Activity, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -137,6 +138,7 @@ export type SlotGridProps = {
   bwBadgeLabel?: string;
   vwBadgeLabel?: string;
   truncateWidth?: string;
+  scrollToSlot?: { time: string; testType: string } | null;
 };
 
 export function SlotGrid({
@@ -149,7 +151,16 @@ export function SlotGrid({
   bwBadgeLabel = "1 hr slots",
   vwBadgeLabel = "30 min slots",
   truncateWidth = "max-w-[100px]",
+  scrollToSlot = null,
 }: SlotGridProps) {
+  useEffect(() => {
+    if (!scrollToSlot) return;
+    const prefix = testIdPrefix ? `${testIdPrefix}-` : "";
+    const slotType = isBrainWave(scrollToSlot.testType) ? "brainwave" : "vitalwave";
+    const testId = `${prefix}slot-${slotType}-${scrollToSlot.time}`;
+    const el = document.querySelector(`[data-testid="${testId}"]`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [scrollToSlot, testIdPrefix]);
   const bookedBW = new Map<string, AncillaryAppointment>();
   const bookedVW = new Map<string, AncillaryAppointment>();
   for (const a of appointments) {

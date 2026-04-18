@@ -151,6 +151,7 @@ export default function OutreachSchedulerPortalPage() {
   const [callListBookPatient, setCallListBookPatient] = useState<OutreachCallItem | null>(null);
   const [callListBookTestType, setCallListBookTestType] = useState<"BrainWave" | "VitalWave">("BrainWave");
   const [callListBookTime, setCallListBookTime] = useState<string>("");
+  const [scrollToSlot, setScrollToSlot] = useState<{ time: string; testType: string } | null>(null);
 
   // Call list state
   const [search, setSearch] = useState("");
@@ -433,6 +434,7 @@ export default function OutreachSchedulerPortalPage() {
                     bwBadgeLabel="1 hr"
                     vwBadgeLabel="30 min"
                     truncateWidth="max-w-[80px]"
+                    scrollToSlot={scrollToSlot}
                   />
                 </>
               )}
@@ -484,13 +486,21 @@ export default function OutreachSchedulerPortalPage() {
                               {statusLabel(item.appointmentStatus)}
                             </Badge>
                             {bookedAppt && (
-                              <Badge
-                                className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+                              <button
+                                className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
                                 data-testid={`portal-appt-badge-${item.patientId}`}
+                                aria-label={`Jump to booked appointment: ${formatAppointmentBadge(bookedAppt.scheduledDate, bookedAppt.scheduledTime, bookedAppt.testType)}`}
+                                onClick={() => {
+                                  const [y, mo, d] = bookedAppt.scheduledDate.split("-").map(Number);
+                                  setCalYear(y);
+                                  setCalMonth(mo - 1);
+                                  setSelectedDay(d);
+                                  setScrollToSlot({ time: bookedAppt.scheduledTime, testType: bookedAppt.testType });
+                                }}
                               >
                                 <CalendarCheck className="h-3 w-3 shrink-0" />
                                 Booked: {formatAppointmentBadge(bookedAppt.scheduledDate, bookedAppt.scheduledTime, bookedAppt.testType)}
-                              </Badge>
+                              </button>
                             )}
                           </div>
                           <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
