@@ -955,6 +955,11 @@ export async function registerRoutes(
       };
 
       const existingRecords = await storage.getAllBillingRecords();
+      const seenKeys = new Set<string>(
+        existingRecords.map((r) =>
+          `${r.patientName.toLowerCase()}|${r.dateOfService ?? ""}|${r.service}|${r.facility ?? ""}`
+        )
+      );
       let created = 0;
       let updated = 0;
       let skipped = 0;
@@ -983,6 +988,7 @@ export async function registerRoutes(
 
           const dateOfService = row[0]?.trim() || null;
           const rowFacility = row[2]?.trim() || facility;
+          const rowKey = `${patientName.toLowerCase()}|${dateOfService ?? ""}|${service}|${rowFacility}`;
 
           const existing = existingRecords.find((r) =>
             r.patientName.toLowerCase() === patientName.toLowerCase() &&
@@ -1000,7 +1006,8 @@ export async function registerRoutes(
           if (existing) {
             await storage.updateBillingRecord(existing.id, updates);
             updated++;
-          } else {
+          } else if (!seenKeys.has(rowKey)) {
+            seenKeys.add(rowKey);
             await storage.createBillingRecord({
               patientId: null,
               batchId: null,
@@ -1024,6 +1031,8 @@ export async function registerRoutes(
               balanceRemaining: updates.balanceRemaining ?? null,
             });
             created++;
+          } else {
+            skipped++;
           }
         }
       }
