@@ -168,22 +168,37 @@ export async function upsertSheetData(
   const sheets = await getUncachableGoogleSheetClient();
 
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
-  const existingSheet = spreadsheet.data.sheets?.find(
+  const existingSheets = spreadsheet.data.sheets ?? [];
+  const existingSheet = existingSheets.find(
     (s) => s.properties?.title === sheetTitle
   );
+  const sheet1 = existingSheets.find(
+    (s) => s.properties?.title === "Sheet1" && s.properties?.sheetId !== undefined
+  );
+
+  const batchRequests: object[] = [];
 
   if (!existingSheet) {
+    batchRequests.push({
+      addSheet: {
+        properties: { title: sheetTitle },
+      },
+    });
+  }
+
+  if (sheet1 && sheet1.properties?.sheetId !== undefined) {
+    const willHaveOtherSheets = existingSheets.length > 1 || !existingSheet;
+    if (willHaveOtherSheets) {
+      batchRequests.push({
+        deleteSheet: { sheetId: sheet1.properties.sheetId },
+      });
+    }
+  }
+
+  if (batchRequests.length > 0) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
-      requestBody: {
-        requests: [
-          {
-            addSheet: {
-              properties: { title: sheetTitle },
-            },
-          },
-        ],
-      },
+      requestBody: { requests: batchRequests },
     });
   }
 

@@ -999,10 +999,26 @@ export async function registerRoutes(
   async function executeSyncBilling(): Promise<BillingSyncResult> {
     const { getOrCreateSpreadsheetInFolder, upsertSheetData } = await import("./googleSheets");
     const { getFacilityFolderId } = await import("./googleDrive");
-    const { setSetting } = await import("./dbSettings");
+    const { getSetting, setSetting } = await import("./dbSettings");
     const records = await storage.getAllBillingRecords();
 
     const BILLING_HEADERS = ["Date of Service", "Patient Name", "Facility", "Rendering Provider", "Service Type", "Primary Insurance", "Documentation Status", "Claim Status", "Payer Status", "Date Submitted", "Days in A/R", "Follow-Up Date", "Payment Status", "Paid Amount", "Total Charges", "Allowed Amount", "Patient Responsibility", "Adjustment Amount", "Balance Remaining"];
+
+    function toRow(r: typeof records[0]): (string | number)[] {
+      const daysInAR = (() => {
+        if (!r.dateSubmitted) return "";
+        const start = new Date(r.dateSubmitted);
+        if (isNaN(start.getTime())) return "";
+        return Math.max(0, Math.round((Date.now() - start.getTime()) / 86400000)).toString();
+      })();
+      return [
+        r.dateOfService ?? "", r.patientName, r.facility ?? "", r.clinician ?? "",
+        r.service, r.insuranceInfo ?? "", r.documentationStatus ?? "", r.billingStatus ?? "",
+        r.response ?? "", r.dateSubmitted ?? "", daysInAR, r.followUpDate ?? "",
+        r.paidStatus ?? "", r.paidAmount ?? "", r.totalCharges ?? "", r.allowedAmount ?? "",
+        r.patientResponsibility ?? "", r.adjustmentAmount ?? "", r.balanceRemaining ?? ""
+      ];
+    }
 
     const facilityGroups = new Map<string, typeof records>();
     for (const r of records) {
@@ -1035,29 +1051,20 @@ export async function registerRoutes(
         spreadsheetId = await getOrCreateSpreadsheet(billingSettingKey, `Plexus Billing Tracker — ${facility}`);
       }
 
-      await upsertSheetData(
-        spreadsheetId, "Billing Records",
-        BILLING_HEADERS,
-        facRecords.map((r) => {
-          const daysInAR = (() => {
-            if (!r.dateSubmitted) return "";
-            const start = new Date(r.dateSubmitted);
-            if (isNaN(start.getTime())) return "";
-            return Math.max(0, Math.round((Date.now() - start.getTime()) / 86400000)).toString();
-          })();
-          return [
-            r.dateOfService ?? "", r.patientName, r.facility ?? "", r.clinician ?? "",
-            r.service, r.insuranceInfo ?? "", r.documentationStatus ?? "", r.billingStatus ?? "",
-            r.response ?? "", r.dateSubmitted ?? "", daysInAR, r.followUpDate ?? "",
-            r.paidStatus ?? "", r.paidAmount ?? "", r.totalCharges ?? "", r.allowedAmount ?? "",
-            r.patientResponsibility ?? "", r.adjustmentAmount ?? "", r.balanceRemaining ?? ""
-          ];
-        })
-      );
+      await upsertSheetData(spreadsheetId, "Billing Records", BILLING_HEADERS, facRecords.map(toRow));
 
       totalSynced += facRecords.length;
       lastSpreadsheetId = spreadsheetId;
       await setSetting(`BILLING_SPREADSHEET_ID_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`, spreadsheetId);
+    }
+
+    const masterSid = await getSetting("GOOGLE_SHEETS_BILLING_ID");
+    if (masterSid) {
+      try {
+        await upsertSheetData(masterSid, "Billing Records", BILLING_HEADERS, records.map(toRow));
+      } catch (e) {
+        console.warn("Could not sync master billing tracker:", (e as Error).message);
+      }
     }
 
     const syncedAt = new Date().toISOString();
@@ -1066,7 +1073,7 @@ export async function registerRoutes(
     if (lastSpreadsheetId) {
       await setSetting("BILLING_SPREADSHEET_ID", lastSpreadsheetId);
     }
-    return { spreadsheetId: lastSpreadsheetId || "", recordCount: totalSynced, syncedAt };
+    return { spreadsheetId: masterSid || lastSpreadsheetId || "", recordCount: totalSynced, syncedAt };
   }
 
   async function runBillingSyncWithLock(throwOnError: boolean): Promise<BillingSyncResult | null> {
