@@ -45,7 +45,7 @@ import { ExternalLink } from "lucide-react";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
 import { PlexusDrive } from "@/components/PlexusDrive";
 import { QualificationModeSettings } from "@/components/QualificationModeSettings";
-import { type GeneratedDocument, VALID_FACILITIES } from "@shared/plexus";
+import { type GeneratedDocument, VALID_FACILITIES, ANCILLARY_TESTS } from "@shared/plexus";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
@@ -84,19 +84,7 @@ const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "rena
 
 
 
-const ALL_AVAILABLE_TESTS: string[] = [
-  "BrainWave",
-  "VitalWave",
-  "Bilateral Carotid Duplex",
-  "Echocardiogram TTE",
-  "Stress Echocardiogram",
-  "Lower Extremity Venous Duplex",
-  "Upper Extremity Venous Duplex",
-  "Renal Artery Doppler",
-  "Lower Extremity Arterial Doppler",
-  "Upper Extremity Arterial Doppler",
-  "Abdominal Aortic Aneurysm Duplex",
-];
+const ALL_AVAILABLE_TESTS: string[] = [...ANCILLARY_TESTS];
 
 function StepTimeline({ current, onNavigate, canGoToResults }: { current: "home" | "build" | "results"; onNavigate: (step: "home" | "build" | "results") => void; canGoToResults: boolean }) {
   const steps = [

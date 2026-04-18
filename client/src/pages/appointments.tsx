@@ -27,24 +27,12 @@ import {
   isBrainWave,
 } from "@/components/clinic-calendar";
 import type { BookingSlot } from "@/components/clinic-calendar";
-import { VALID_FACILITIES } from "@shared/plexus";
+import { VALID_FACILITIES, ANCILLARY_TESTS } from "@shared/plexus";
 
 const FACILITIES = VALID_FACILITIES;
 type Facility = typeof VALID_FACILITIES[number];
 
-const ALL_TESTS = [
-  "BrainWave",
-  "VitalWave",
-  "Bilateral Carotid Duplex",
-  "Echocardiogram TTE",
-  "Stress Echocardiogram",
-  "Lower Extremity Venous Duplex",
-  "Upper Extremity Venous Duplex",
-  "Renal Artery Doppler",
-  "Lower Extremity Arterial Doppler",
-  "Upper Extremity Arterial Doppler",
-  "Abdominal Aortic Aneurysm Duplex",
-];
+const ALL_TESTS = [...ANCILLARY_TESTS];
 
 function ClinicTab({ facility }: { facility: Facility }) {
   const today = new Date();

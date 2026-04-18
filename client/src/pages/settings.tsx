@@ -26,14 +26,10 @@ import {
 } from "@/components/ui/select";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { VALID_FACILITIES } from "@shared/plexus";
 
-const FACILITIES = [
-  "Taylor Family Practice",
-  "NWPG - Spring",
-  "NWPG - Veterans",
-] as const;
-
-type Facility = (typeof FACILITIES)[number];
+const FACILITIES = VALID_FACILITIES;
+type Facility = (typeof VALID_FACILITIES)[number];
 
 const DEFAULT_SCHEDULERS: { name: string; facility: Facility }[] = [
   { name: "Callista", facility: "Taylor Family Practice" },
