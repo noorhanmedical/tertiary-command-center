@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, type CSSProperties } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card } from "@/components/ui/card";
@@ -1019,14 +1019,21 @@ export default function BillingPage() {
           <div className="min-w-max">
             <table className="border-collapse w-full" style={{ fontSize: 11 }} data-testid="billing-table">
               <thead>
-                <tr className="bg-white border-b-2 border-slate-200 sticky top-0 z-10" style={{ boxShadow: "0 2px 4px rgba(0,0,0,0.06)" }}>
-                  {columns.map((col) => {
+                <tr className="bg-white border-b-2 border-slate-200 sticky top-0 z-20" style={{ boxShadow: "0 2px 4px rgba(0,0,0,0.06)" }}>
+                  {columns.map((col, ci) => {
                     const sortable = isSortable(col.label);
                     const sf = getSortField(col.label);
+                    const isSticky0 = ci === 0;
+                    const isSticky1 = ci === 1;
+                    const stickyStyle: CSSProperties = isSticky0
+                      ? { minWidth: col.w, position: "sticky", left: 0, zIndex: 30, background: "white", boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }
+                      : isSticky1
+                      ? { minWidth: col.w, position: "sticky", left: 120, zIndex: 30, background: "white", boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }
+                      : { minWidth: col.w };
                     return (
                       <th key={col.label || "_actions"}
                         className={`px-3 py-3 text-left font-semibold text-slate-500 uppercase tracking-wider border-r border-slate-100 whitespace-nowrap last:border-r-0 text-[10px] ${sortable ? "cursor-pointer hover:bg-slate-50 select-none" : ""}`}
-                        style={{ minWidth: col.w }}
+                        style={stickyStyle}
                         onClick={sortable && sf ? () => toggleSort(sf as SortableField) : undefined}
                         data-testid={col.label ? `th-billing-${col.label.replace(/\s+/g, "-").toLowerCase()}` : "th-billing-actions"}
                       >
@@ -1049,12 +1056,14 @@ export default function BillingPage() {
                     <tr key={record.id}
                       className={`border-b border-slate-100 hover:bg-blue-50/30 transition-colors ${rowBg}`}
                       data-testid={`billing-row-${record.id}`}>
-                      {/* Date of Service */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                      {/* Date of Service — sticky col 0 */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle"
+                        style={{ position: "sticky", left: 0, zIndex: 1, background: isEven ? "white" : "rgb(248 250 252 / 0.6)" }}>
                         <DateCell value={record.dateOfService} recordId={record.id} field="dateOfService" onSave={handleSave} record={record} />
                       </td>
-                      {/* Patient Name */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle font-medium text-slate-800">
+                      {/* Patient Name — sticky col 1 */}
+                      <td className="px-3 py-2 border-r border-slate-200 align-middle font-medium text-slate-800"
+                        style={{ position: "sticky", left: 120, zIndex: 1, background: isEven ? "white" : "rgb(248 250 252 / 0.6)", boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>
                         <EditableCell value={record.patientName} recordId={record.id} field="patientName" onSave={handleSave} record={record} />
                       </td>
                       {/* Facility */}

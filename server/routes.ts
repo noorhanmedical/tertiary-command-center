@@ -1058,10 +1058,11 @@ export async function registerRoutes(
       await setSetting(`BILLING_SPREADSHEET_ID_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`, spreadsheetId);
     }
 
-    const masterSid = await getSetting("GOOGLE_SHEETS_BILLING_ID");
+    const masterSid = (await getSetting("GOOGLE_SHEETS_BILLING_ID")) || process.env.GOOGLE_SHEETS_BILLING_ID || null;
     if (masterSid) {
       try {
         await upsertSheetData(masterSid, "Billing Records", BILLING_HEADERS, records.map(toRow));
+        await setSetting("GOOGLE_SHEETS_BILLING_ID", masterSid);
       } catch (e) {
         console.warn("Could not sync master billing tracker:", (e as Error).message);
       }
