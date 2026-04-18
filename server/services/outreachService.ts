@@ -1,5 +1,5 @@
 import type { IStorage } from "../storage";
-import type { ScreeningBatch, PatientScreening, OutreachScheduler } from "@shared/schema";
+import type { PatientScreening, OutreachScheduler } from "@shared/schema";
 
 type OutreachCallItem = {
   id: string;
@@ -68,7 +68,7 @@ export async function buildOutreachDashboard(
 
   const map = new Map<string, SchedulerCardEntry>();
 
-  for (const batch of batches as ScreeningBatch[]) {
+  for (const batch of batches) {
     const batchDay = canonicalDay(batch.scheduleDate);
     if (batchDay && batchDay !== today) continue;
 

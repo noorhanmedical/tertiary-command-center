@@ -667,6 +667,7 @@ export async function registerRoutes(
       });
       const parsed = patchSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      if (Object.keys(parsed.data).length === 0) return res.status(400).json({ error: "No fields provided to update" });
       const updated = await storage.updateOutreachScheduler(id, parsed.data);
       if (!updated) return res.status(404).json({ error: "Scheduler not found" });
       res.json(updated);
