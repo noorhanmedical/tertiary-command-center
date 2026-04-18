@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Building2,
@@ -11,11 +11,18 @@ import {
   Search,
   Stethoscope,
   Users2,
+  PhoneMissed,
+  PhoneCall,
+  CalendarCheck,
+  XCircle,
+  RotateCcw,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 type OutreachCallItem = {
   id: string;
@@ -57,6 +64,33 @@ type OutreachDashboard = {
   schedulerCards: OutreachSchedulerCard[];
 };
 
+const CALL_OUTCOMES = [
+  {
+    value: "no_answer",
+    label: "No Answer",
+    Icon: PhoneMissed,
+    color: "bg-slate-100 text-slate-600 hover:bg-slate-200 border-slate-200",
+  },
+  {
+    value: "callback",
+    label: "Callback",
+    Icon: PhoneCall,
+    color: "bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200",
+  },
+  {
+    value: "scheduled",
+    label: "Scheduled",
+    Icon: CalendarCheck,
+    color: "bg-green-50 text-green-700 hover:bg-green-100 border-green-200",
+  },
+  {
+    value: "declined",
+    label: "Declined",
+    Icon: XCircle,
+    color: "bg-red-50 text-red-600 hover:bg-red-100 border-red-200",
+  },
+] as const;
+
 function shellClass(active = false) {
   return [
     "rounded-3xl border border-white/60 bg-white/75 backdrop-blur-xl shadow-[0_18px_60px_rgba(15,23,42,0.10)] transition-all",
@@ -71,8 +105,17 @@ function statusBadgeClass(status?: string | null) {
   if (n.includes("scheduled") || n.includes("booked"))
     return "bg-green-100 text-green-700 border-green-200";
   if (n.includes("complete")) return "bg-blue-100 text-blue-700 border-blue-200";
-  if (n.includes("cancel")) return "bg-red-100 text-red-700 border-red-200";
+  if (n.includes("cancel") || n.includes("declined")) return "bg-red-100 text-red-700 border-red-200";
+  if (n === "no_answer") return "bg-slate-100 text-slate-600 border-slate-200";
+  if (n === "callback") return "bg-amber-100 text-amber-700 border-amber-200";
   return "bg-amber-100 text-amber-700 border-amber-200";
+}
+
+function statusLabel(status?: string | null) {
+  const n = String(status || "pending").toLowerCase();
+  if (n === "no_answer") return "No Answer";
+  if (n === "callback") return "Callback";
+  return status || "pending";
 }
 
 function formatDisplayDate(value?: string | null) {
@@ -91,10 +134,31 @@ function formatDisplayDate(value?: string | null) {
 export default function OutreachPage() {
   const [selectedSchedulerId, setSelectedSchedulerId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [pendingPatientId, setPendingPatientId] = useState<number | null>(null);
+  const { toast } = useToast();
 
   const { data, isLoading } = useQuery<OutreachDashboard>({
     queryKey: ["/api/outreach/dashboard"],
     refetchInterval: 60_000,
+  });
+
+  const updateStatusMutation = useMutation({
+    mutationFn: ({ patientId, appointmentStatus }: { patientId: number; appointmentStatus: string }) =>
+      apiRequest("PATCH", `/api/patients/${patientId}`, { appointmentStatus }),
+    onMutate: ({ patientId }) => {
+      setPendingPatientId(patientId);
+    },
+    onError: () => {
+      toast({
+        title: "Update failed",
+        description: "Could not save the call outcome. Please try again.",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setPendingPatientId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
+    },
   });
 
   const schedulerCards = data?.schedulerCards ?? [];
@@ -277,53 +341,110 @@ export default function OutreachPage() {
               </div>
             ) : (
               <div className="max-h-[680px] space-y-3 overflow-y-auto pr-1">
-                {filteredCallList.map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md"
-                    data-testid={`outreach-call-item-${item.patientId}`}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-base font-semibold text-slate-900">{item.patientName}</h3>
-                          <Badge className={`rounded-full border text-xs ${statusBadgeClass(item.appointmentStatus)}`}>
-                            {item.appointmentStatus}
-                          </Badge>
-                        </div>
-                        <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
-                          <span className="inline-flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />{item.time}</span>
-                          <span className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5" />{item.facility}</span>
-                          <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{item.phoneNumber}</span>
+                {filteredCallList.map((item) => {
+                  const isBusy = pendingPatientId === item.patientId && updateStatusMutation.isPending;
+                  const currentStatus = item.appointmentStatus.toLowerCase();
+                  return (
+                    <div
+                      key={item.id}
+                      className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md"
+                      data-testid={`outreach-call-item-${item.patientId}`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-base font-semibold text-slate-900">{item.patientName}</h3>
+                            <Badge
+                              className={`rounded-full border text-xs ${statusBadgeClass(item.appointmentStatus)}`}
+                              data-testid={`status-badge-${item.patientId}`}
+                            >
+                              {statusLabel(item.appointmentStatus)}
+                            </Badge>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
+                            <span className="inline-flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />{item.time}</span>
+                            <span className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5" />{item.facility}</span>
+                            <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{item.phoneNumber}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="mt-3 rounded-2xl bg-slate-50 p-3">
-                      <div className="inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
-                        <Stethoscope className="h-3.5 w-3.5" />
-                        Provider
+                      <div className="mt-3 rounded-2xl bg-slate-50 p-3">
+                        <div className="inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
+                          <Stethoscope className="h-3.5 w-3.5" />
+                          Provider
+                        </div>
+                        <p className="mt-1 text-sm font-medium text-slate-800">{item.providerName}</p>
                       </div>
-                      <p className="mt-1 text-sm font-medium text-slate-800">{item.providerName}</p>
-                    </div>
 
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">{item.patientType}</Badge>
-                      <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">{item.insurance}</Badge>
-                      <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">Batch {item.batchId}</Badge>
-                    </div>
-
-                    {item.qualifyingTests.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {item.qualifyingTests.map((test) => (
-                          <Badge key={`${item.id}-${test}`} className="rounded-full bg-blue-50 text-blue-700 text-xs hover:bg-blue-50">
-                            {test}
-                          </Badge>
-                        ))}
+                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">{item.patientType}</Badge>
+                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">{item.insurance}</Badge>
+                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">Batch {item.batchId}</Badge>
                       </div>
-                    )}
-                  </div>
-                ))}
+
+                      {item.qualifyingTests.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {item.qualifyingTests.map((test) => (
+                            <Badge key={`${item.id}-${test}`} className="rounded-full bg-blue-50 text-blue-700 text-xs hover:bg-blue-50">
+                              {test}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Call outcome actions */}
+                      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                        <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">Outcome</span>
+                        {CALL_OUTCOMES.map(({ value, label, Icon, color }) => {
+                          const isActive = currentStatus === value;
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() =>
+                                updateStatusMutation.mutate({
+                                  patientId: item.patientId,
+                                  appointmentStatus: isActive ? "pending" : value,
+                                })
+                              }
+                              className={[
+                                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition",
+                                color,
+                                isActive
+                                  ? "ring-2 ring-offset-1 ring-current opacity-100"
+                                  : "opacity-80",
+                                isBusy ? "cursor-not-allowed opacity-50" : "cursor-pointer",
+                              ].join(" ")}
+                              data-testid={`outcome-btn-${value}-${item.patientId}`}
+                            >
+                              <Icon className="h-3.5 w-3.5" />
+                              {label}
+                            </button>
+                          );
+                        })}
+                        {currentStatus !== "pending" && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() =>
+                              updateStatusMutation.mutate({
+                                patientId: item.patientId,
+                                appointmentStatus: "pending",
+                              })
+                            }
+                            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500 opacity-70 transition hover:bg-slate-50 hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+                            data-testid={`outcome-reset-${item.patientId}`}
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </Card>
