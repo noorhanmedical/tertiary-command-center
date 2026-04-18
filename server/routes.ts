@@ -680,8 +680,9 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      await storage.deleteOutreachScheduler(id);
-      res.json({ success: true });
+      const deleted = await storage.deleteOutreachScheduler(id);
+      if (!deleted) return res.status(404).json({ error: "Scheduler not found" });
+      res.json({ success: true, deleted });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

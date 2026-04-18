@@ -111,7 +111,7 @@ export interface IStorage {
   getOutreachSchedulers(): Promise<OutreachScheduler[]>;
   createOutreachScheduler(record: InsertOutreachScheduler): Promise<OutreachScheduler>;
   updateOutreachScheduler(id: number, updates: Partial<InsertOutreachScheduler>): Promise<OutreachScheduler | undefined>;
-  deleteOutreachScheduler(id: number): Promise<void>;
+  deleteOutreachScheduler(id: number): Promise<OutreachScheduler | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -396,8 +396,9 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async deleteOutreachScheduler(id: number): Promise<void> {
-    await db.delete(outreachSchedulers).where(eq(outreachSchedulers.id, id));
+  async deleteOutreachScheduler(id: number): Promise<OutreachScheduler | undefined> {
+    const [deleted] = await db.delete(outreachSchedulers).where(eq(outreachSchedulers.id, id)).returning();
+    return deleted;
   }
 }
 
