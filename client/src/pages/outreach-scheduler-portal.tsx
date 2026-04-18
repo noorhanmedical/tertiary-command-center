@@ -98,6 +98,15 @@ type OutreachDashboard = {
   schedulerCards: OutreachSchedulerCard[];
 };
 
+function formatAppointmentBadge(scheduledDate: string, scheduledTime: string, testType: string): string {
+  const [y, m, d] = scheduledDate.split("-").map(Number);
+  const dateLabel = new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const timeLabel = formatTime12(scheduledTime);
+  const typeLabel = isBrainWave(testType) ? "BrainWave" : "VitalWave";
+  return `${dateLabel} · ${timeLabel} · ${typeLabel}`;
+}
+
+
 // ─── Outcome helpers ───────────────────────────────────────────────────────────
 
 const CALL_OUTCOMES = [
@@ -286,6 +295,16 @@ export default function OutreachSchedulerPortalPage() {
     );
   }, [search, card]);
 
+  const appointmentByPatientName = useMemo(() => {
+    const map = new Map<string, AncillaryAppointment>();
+    for (const a of appointments) {
+      if (a.status !== "scheduled") continue;
+      const key = a.patientName.trim().toLowerCase();
+      if (!map.has(key)) map.set(key, a);
+    }
+    return map;
+  }, [appointments]);
+
   // Loading / not found states
   if (isLoading) {
     return (
@@ -449,6 +468,7 @@ export default function OutreachSchedulerPortalPage() {
                 {filteredCallList.map((item) => {
                   const isBusy = pendingPatientId === item.patientId && updateStatusMutation.isPending;
                   const currentStatus = item.appointmentStatus.toLowerCase();
+                  const bookedAppt = appointmentByPatientName.get(item.patientName.trim().toLowerCase()) ?? null;
                   return (
                     <div
                       key={item.id}
@@ -462,6 +482,15 @@ export default function OutreachSchedulerPortalPage() {
                             <Badge className={`rounded-full border text-xs ${statusBadgeClass(item.appointmentStatus)}`} data-testid={`portal-status-badge-${item.patientId}`}>
                               {statusLabel(item.appointmentStatus)}
                             </Badge>
+                            {bookedAppt && (
+                              <Badge
+                                className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+                                data-testid={`portal-appt-badge-${item.patientId}`}
+                              >
+                                <CalendarCheck className="h-3 w-3 shrink-0" />
+                                Booked: {formatAppointmentBadge(bookedAppt.scheduledDate, bookedAppt.scheduledTime, bookedAppt.testType)}
+                              </Badge>
+                            )}
                           </div>
                           <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
                             <span className="inline-flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />{item.time}</span>
