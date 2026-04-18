@@ -1305,13 +1305,14 @@ export async function registerRoutes(
       const { getSetting } = await import("./dbSettings");
       const KNOWN_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"];
       const facilitySettingKeys = KNOWN_FACILITIES.map(f => `BILLING_SPREADSHEET_ID_${f.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`);
-      const [sheets, driveStatus, dbPatientsAt, dbBillingAt, dbPatientsSid, dbBillingSid, ...facilityIds] = await Promise.all([
+      const [sheets, driveStatus, dbPatientsAt, dbBillingAt, dbPatientsSid, dbBillingSid, driveRootFolderId, ...facilityIds] = await Promise.all([
         isGoogleSheetsConnected(),
         getDriveStatus(),
         getSetting("PATIENTS_LAST_SYNCED_AT"),
         getSetting("BILLING_LAST_SYNCED_AT"),
         getSetting("PATIENTS_SPREADSHEET_ID"),
         getSetting("BILLING_SPREADSHEET_ID"),
+        getSetting("DRIVE_FOLDER_plexus_ancillary_platform"),
         ...facilitySettingKeys.map(k => getSetting(k)),
       ]);
       const patientsAt = patientsSyncState.lastSyncedAt ?? dbPatientsAt;
@@ -1331,6 +1332,7 @@ export async function registerRoutes(
           patientsSpreadsheetUrl: patientsSid ? `https://docs.google.com/spreadsheets/d/${patientsSid}` : null,
           billingSpreadsheetUrl: billingSid ? `https://docs.google.com/spreadsheets/d/${billingSid}` : null,
           masterBillingSpreadsheetUrl: masterSid ? `https://docs.google.com/spreadsheets/d/${masterSid}` : null,
+          billingDriveFolderUrl: driveRootFolderId ? `https://drive.google.com/drive/folders/${driveRootFolderId}` : null,
           facilityBillingSpreadsheetUrls: facilitySpreadsheetUrls,
         },
         drive: { connected: driveStatus.connected, email: driveStatus.email },

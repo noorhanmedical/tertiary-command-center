@@ -724,6 +724,7 @@ export default function BillingPage() {
       lastSyncedBilling: string | null;
       billingSpreadsheetUrl: string | null;
       masterBillingSpreadsheetUrl: string | null;
+      billingDriveFolderUrl: string | null;
       facilityBillingSpreadsheetUrls: Record<string, string>;
     };
     drive: { connected: boolean; email: string | null };
@@ -965,19 +966,27 @@ export default function BillingPage() {
             </Button>
             <div className="h-4 w-px bg-slate-200" />
             {(() => {
-              const activeFacilityUrl = facilityTab !== "All" ? facilitySheetUrls[facilityTab] : null;
-              const openUrl = activeFacilityUrl ?? masterSheetUrl ?? billingSheetUrl;
-              const label = activeFacilityUrl ? `Open ${facilityTab} Sheet` : "Open Billing Sheet";
-              const title = activeFacilityUrl
-                ? `Open ${facilityTab} billing sheet in Google Sheets`
-                : "Open Plexus Billing Tracker in Google Sheets";
+              if (facilityTab !== "All") {
+                const facilityUrl = facilitySheetUrls[facilityTab];
+                if (!facilityUrl) return null;
+                return (
+                  <a href={facilityUrl} target="_blank" rel="noopener noreferrer"
+                    className="text-[10px] text-emerald-600 hover:underline inline-flex items-center gap-1"
+                    title={`Open ${facilityTab} billing sheet in Google Sheets`}
+                    data-testid="link-active-billing-sheet">
+                    <SiGooglesheets className="w-3 h-3" />Open {facilityTab} Sheet
+                  </a>
+                );
+              }
+              const driveFolderUrl = googleStatus?.sheets?.billingDriveFolderUrl ?? null;
+              const openUrl = driveFolderUrl ?? masterSheetUrl ?? billingSheetUrl;
               if (!openUrl) return null;
               return (
                 <a href={openUrl} target="_blank" rel="noopener noreferrer"
                   className="text-[10px] text-emerald-600 hover:underline inline-flex items-center gap-1"
-                  title={title}
+                  title="Open Plexus Billing Tracker folder in Google Drive"
                   data-testid="link-active-billing-sheet">
-                  <SiGooglesheets className="w-3 h-3" />{label}
+                  <SiGooglesheets className="w-3 h-3" />Open Billing Sheet
                 </a>
               );
             })()}
