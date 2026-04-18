@@ -35,47 +35,8 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import {
-  Upload,
-  FileText,
-  Brain,
-  Activity,
-  Scan,
-  Loader2,
-  ChevronDown, // used in sidebar/results
-  ChevronRight,
-  ChevronLeft,
-  Download,
-  Stethoscope,
-  Pill,
-  Zap,
-  Check,
-  Trash2,
-  MessageCircle,
-  GraduationCap,
-  Plus,
-  Sparkles,
-  Calendar,
-  X,
-  Clock,
-  PanelLeft,
-  Database,
-  AlertTriangle,
-  Search,
-  Users,
-  DollarSign,
-  Building2,
-  Share2,
-  Copy,
-  Printer,
-  Users2,
-  Archive,
-  Lock,
-  Phone,
-  ClipboardList,
-  RefreshCw,
-  Settings,
-} from "lucide-react";
+import { // used in sidebar/results
+  ChevronRight, Activity, AlertTriangle, Archive, Brain, Building2, Calendar, CalendarDays, Check, ChevronDown, ChevronLeft, ClipboardList, Clock, Copy, Database, DollarSign, Download, FileText, GraduationCap, Loader2, Lock, MessageCircle, PanelLeft, Phone, Pill, Plus, Printer, RefreshCw, Scan, Search, Settings, Share2, Shield, Sparkles, Stethoscope, Trash2, Upload, Users, Users2, X, Zap } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ScreeningBatch, PatientScreening, PatientTestHistory, AncillaryAppointment } from "@shared/schema";
@@ -774,6 +735,14 @@ export default function Home() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
+                  <SidebarMenuButton asChild data-testid="sidebar-schedule-dashboard">
+                    <Link href="/schedule-dashboard" onClick={() => setSidebarOpen(false)}>
+                      <CalendarDays className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium">Schedule Dashboard</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
                   <SidebarMenuButton asChild data-testid="sidebar-outreach">
                     <Link href="/outreach" onClick={() => setSidebarOpen(false)}>
                       <Phone className="w-4 h-4 shrink-0" />
@@ -782,10 +751,10 @@ export default function Home() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild data-testid="sidebar-billing">
-                    <Link href="/billing" onClick={() => setSidebarOpen(false)}>
-                      <DollarSign className="w-4 h-4 shrink-0" />
-                      <span className="text-sm font-medium">Billing</span>
+                  <SidebarMenuButton asChild data-testid="sidebar-admin-ops">
+                    <Link href="/admin-ops" onClick={() => setSidebarOpen(false)}>
+                      <Shield className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium">Admin</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -1497,18 +1466,6 @@ export default function Home() {
                     </Card>
                   </Link>
 
-                  <Link href="/billing">
-                    <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                      data-testid="tile-billing"
-                    >
-                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                        <DollarSign className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-billing">Billing</span>
-                      </div>
-                    </Card>
-                  </Link>
-
                   <Card
                     className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
                     onClick={openReferencesTab}
@@ -1520,7 +1477,21 @@ export default function Home() {
                     </div>
                   </Card>
 
-                  <Link href="/outreach">
+                  <Link href="/admin-ops">
+                  <Card
+                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
+                    data-testid="tile-admin-ops"
+                  >
+                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
+                      <Shield className="w-14 h-14 text-slate-700" strokeWidth={1.75} />
+                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight">
+                        Admin
+                      </span>
+                    </div>
+                  </Card>
+                </Link>
+
+                <Link href="/outreach">
                     <Card
                       className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
                       data-testid="tile-outreach"
@@ -1544,6 +1515,20 @@ export default function Home() {
                     </Card>
                   </Link>
                 </div>
+
+                <Link href="/schedule-dashboard">
+                  <Card
+                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
+                    data-testid="tile-schedule-dashboard"
+                  >
+                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
+                      <CalendarDays className="w-14 h-14 text-blue-500" strokeWidth={1.75} />
+                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight">
+                        Schedule Dashboard
+                      </span>
+                    </div>
+                  </Card>
+                </Link>
 
                 <Link href="/appointments">
                   <Card

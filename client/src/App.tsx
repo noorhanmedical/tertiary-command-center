@@ -14,6 +14,8 @@ import BillingPage from "@/pages/billing";
 import DocumentUploadPage from "@/pages/document-upload";
 import AppointmentsPage from "@/pages/appointments";
 import OutreachPage from "@/pages/outreach";
+import AdminOpsPage from "@/pages/admin-ops";
+import ScheduleDashboardPage from "@/pages/schedule-dashboard";
 import SettingsPage from "@/pages/settings";
 
 function App() {
@@ -42,6 +44,8 @@ function App() {
                   <Route path="/billing" component={BillingPage} />
                   <Route path="/document-upload" component={DocumentUploadPage} />
                   <Route path="/appointments" component={AppointmentsPage} />
+                  <Route path="/admin-ops" component={AdminOpsPage} />
+                  <Route path="/schedule-dashboard" component={ScheduleDashboardPage} />
                   <Route path="/outreach" component={OutreachPage} />
                   <Route path="/settings" component={SettingsPage} />
                   <Route>

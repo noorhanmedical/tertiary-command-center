@@ -40,6 +40,8 @@ import { registerTestHistoryRoutes } from "./routes/testHistory";
 import { registerPatientReferenceRoutes } from "./routes/patientReferences";
 import { registerGeneratedNotesRoutes } from "./routes/generatedNotes";
 import { buildOutreachDashboard } from "./services/outreachService";
+import { buildScheduleDashboard } from "./services/scheduleDashboardService";
+import { getPlatformSettingsSnapshot } from "./services/platformSettingsService";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -685,6 +687,28 @@ export async function registerRoutes(
       res.json({ success: true, deleted });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+
+  app.get("/api/settings/platform", async (_req, res) => {
+    try {
+      res.json(getPlatformSettingsSnapshot());
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to load platform settings" });
+    }
+  });
+
+  app.get("/api/schedule/dashboard", async (req, res) => {
+    try {
+      const weekStart =
+        typeof req.query.weekStart === "string" && req.query.weekStart.trim().length > 0
+          ? req.query.weekStart.trim()
+          : undefined;
+      const payload = await buildScheduleDashboard(storage, weekStart);
+      res.json(payload);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to load schedule dashboard" });
     }
   });
 
