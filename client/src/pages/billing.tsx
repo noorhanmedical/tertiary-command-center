@@ -964,14 +964,21 @@ export default function BillingPage() {
               Import from Sheet
             </Button>
             <div className="h-4 w-px bg-slate-200" />
-            {(masterSheetUrl || billingSheetUrl) && (
-              <a href={masterSheetUrl ?? billingSheetUrl!} target="_blank" rel="noopener noreferrer"
-                className="text-[10px] text-emerald-600 hover:underline inline-flex items-center gap-1"
-                title="Open master Plexus Billing Tracker"
-                data-testid="link-master-billing-sheet">
-                <SiGooglesheets className="w-3 h-3" />Master Sheet
-              </a>
-            )}
+            {(() => {
+              const activeFacilityUrl = facilityTab !== "All" ? facilitySheetUrls[facilityTab] : null;
+              const openUrl = activeFacilityUrl ?? masterSheetUrl ?? billingSheetUrl;
+              const label = activeFacilityUrl ? `${facilityTab} Sheet` : "Master Sheet";
+              const title = activeFacilityUrl ? `Open ${facilityTab} billing sheet` : "Open master Plexus Billing Tracker";
+              if (!openUrl) return null;
+              return (
+                <a href={openUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-[10px] text-emerald-600 hover:underline inline-flex items-center gap-1"
+                  title={title}
+                  data-testid="link-active-billing-sheet">
+                  <SiGooglesheets className="w-3 h-3" />{label}
+                </a>
+              );
+            })()}
             {billingSyncedAt && (
               <span className="text-[10px] text-slate-400 whitespace-nowrap">
                 Synced {new Date(billingSyncedAt).toLocaleTimeString()}
