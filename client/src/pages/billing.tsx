@@ -40,6 +40,7 @@ import {
   Receipt,
   Wallet,
   Timer,
+  Download,
 } from "lucide-react";
 import { SiGooglesheets, SiGoogledrive } from "react-icons/si";
 
@@ -798,6 +799,19 @@ export default function BillingPage() {
     onError: (err: Error) => { toast({ title: "Sync failed", description: err.message, variant: "destructive" }); },
   });
 
+  const importFromSheetMutation = useMutation({
+    mutationFn: async () => { const res = await apiRequest("POST", "/api/billing-records/import-from-sheet"); return res.json(); },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/billing-records"] });
+      if (data.total === 0) {
+        toast({ title: "Nothing to import", description: "No records found in connected sheets." });
+      } else {
+        toast({ title: "Import complete", description: `${data.created} created, ${data.updated} updated from Google Sheets.` });
+      }
+    },
+    onError: (err: Error) => { toast({ title: "Import failed", description: err.message, variant: "destructive" }); },
+  });
+
   function handleSave(id: number, field: keyof BillingRecord, value: string | null, record: BillingRecord) {
     const updates = applySmartStatus(record, field, value);
     updateMutation.mutate({ id, updates });
@@ -938,12 +952,18 @@ export default function BillingPage() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => syncBillingMutation.mutate()} disabled={syncBillingMutation.isPending}
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <Button size="sm" variant="outline" onClick={() => syncBillingMutation.mutate()} disabled={syncBillingMutation.isPending || importFromSheetMutation.isPending}
               className="gap-1.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50 h-8 text-xs" data-testid="button-sync-billing-sheets">
               {syncBillingMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <SiGooglesheets className="w-3.5 h-3.5" />}
               Sync to Sheets
             </Button>
+            <Button size="sm" variant="outline" onClick={() => importFromSheetMutation.mutate()} disabled={importFromSheetMutation.isPending || syncBillingMutation.isPending}
+              className="gap-1.5 text-blue-700 border-blue-200 hover:bg-blue-50 h-8 text-xs" data-testid="button-import-from-sheet">
+              {importFromSheetMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              Import from Sheet
+            </Button>
+            <div className="h-4 w-px bg-slate-200" />
             {(masterSheetUrl || billingSheetUrl) && (
               <a href={masterSheetUrl ?? billingSheetUrl!} target="_blank" rel="noopener noreferrer"
                 className="text-[10px] text-emerald-600 hover:underline inline-flex items-center gap-1"

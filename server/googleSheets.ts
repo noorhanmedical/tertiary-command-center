@@ -159,6 +159,21 @@ export async function getOrCreateSpreadsheetInFolder(
   return spreadsheetId;
 }
 
+export async function readSheetData(
+  spreadsheetId: string,
+  sheetTitle: string
+): Promise<string[][]> {
+  const sheets = await getUncachableGoogleSheetClient();
+  const quotedTitle = `'${sheetTitle.replace(/'/g, "''")}'`;
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: quotedTitle,
+  });
+  return ((response.data.values ?? []) as unknown[][]).map((row) =>
+    (row as unknown[]).map((cell) => (cell == null ? "" : String(cell)))
+  );
+}
+
 export async function upsertSheetData(
   spreadsheetId: string,
   sheetTitle: string,

@@ -925,6 +925,116 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/billing-records/import-from-sheet", async (_req, res) => {
+    try {
+      const { readSheetData } = await import("./googleSheets");
+      const { getSetting } = await import("./dbSettings");
+
+      const KNOWN_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"];
+
+      const COL_MAP: Record<number, keyof import("../shared/schema").InsertBillingRecord> = {
+        0: "dateOfService",
+        1: "patientName",
+        2: "facility",
+        3: "clinician",
+        4: "service",
+        5: "insuranceInfo",
+        6: "documentationStatus",
+        7: "billingStatus",
+        8: "response",
+        9: "dateSubmitted",
+        // 10 = "Days in A/R" (computed, skip)
+        11: "followUpDate",
+        12: "paidStatus",
+        13: "paidAmount",
+        14: "totalCharges",
+        15: "allowedAmount",
+        16: "patientResponsibility",
+        17: "adjustmentAmount",
+        18: "balanceRemaining",
+      };
+
+      const existingRecords = await storage.getAllBillingRecords();
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      for (const facility of KNOWN_FACILITIES) {
+        const settingKey = `BILLING_SPREADSHEET_ID_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`;
+        const spreadsheetId = await getSetting(settingKey);
+        if (!spreadsheetId) continue;
+
+        let rows: string[][];
+        try {
+          rows = await readSheetData(spreadsheetId, "Billing Records");
+        } catch (e) {
+          console.warn(`Could not read sheet for ${facility}:`, (e as Error).message);
+          continue;
+        }
+
+        if (rows.length < 2) continue;
+
+        const dataRows = rows.slice(1);
+
+        for (const row of dataRows) {
+          const patientName = row[1]?.trim() || "";
+          const service = row[4]?.trim() || "";
+          if (!patientName || !service) { skipped++; continue; }
+
+          const dateOfService = row[0]?.trim() || null;
+          const rowFacility = row[2]?.trim() || facility;
+
+          const existing = existingRecords.find((r) =>
+            r.patientName.toLowerCase() === patientName.toLowerCase() &&
+            (r.dateOfService ?? "") === (dateOfService ?? "") &&
+            r.service === service &&
+            (r.facility ?? "") === rowFacility
+          );
+
+          const updates: Partial<import("../shared/schema").InsertBillingRecord> = {};
+          for (const [colStr, field] of Object.entries(COL_MAP)) {
+            const val = row[parseInt(colStr)]?.trim() || null;
+            (updates as Record<string, string | null>)[field as string] = val;
+          }
+
+          if (existing) {
+            await storage.updateBillingRecord(existing.id, updates);
+            updated++;
+          } else {
+            await storage.createBillingRecord({
+              patientId: null,
+              batchId: null,
+              patientName,
+              service,
+              facility: rowFacility,
+              dateOfService: updates.dateOfService ?? null,
+              clinician: updates.clinician ?? null,
+              insuranceInfo: updates.insuranceInfo ?? null,
+              documentationStatus: updates.documentationStatus ?? null,
+              billingStatus: updates.billingStatus ?? null,
+              response: updates.response ?? null,
+              dateSubmitted: updates.dateSubmitted ?? null,
+              followUpDate: updates.followUpDate ?? null,
+              paidStatus: updates.paidStatus ?? null,
+              paidAmount: updates.paidAmount ?? null,
+              totalCharges: updates.totalCharges ?? null,
+              allowedAmount: updates.allowedAmount ?? null,
+              patientResponsibility: updates.patientResponsibility ?? null,
+              adjustmentAmount: updates.adjustmentAmount ?? null,
+              balanceRemaining: updates.balanceRemaining ?? null,
+            });
+            created++;
+          }
+        }
+      }
+
+      res.json({ success: true, created, updated, skipped, total: created + updated });
+    } catch (error: any) {
+      console.error("Import from sheet error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ─── Google Workspace Integration ──────────────────────────────────────────
 
   const patientsSyncState = { lastSyncedAt: null as string | null };
