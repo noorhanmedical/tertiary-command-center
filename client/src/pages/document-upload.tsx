@@ -6,14 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Upload, FileText, CheckCircle, ExternalLink, Loader2, ScanText, ClipboardList } from "lucide-react";
+import { VALID_FACILITIES } from "@shared/plexus";
 
 const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
 function authHeaders(): Record<string, string> {
   if (API_KEY) return { Authorization: `Bearer ${API_KEY}` };
   return {};
 }
-
-const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
 const ANCILLARY_TYPES = ["BrainWave", "VitalWave", "Ultrasound"] as const;
 
 type DocType = "report" | "informed_consent" | "screening_form";

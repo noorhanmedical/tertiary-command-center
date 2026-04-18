@@ -6,8 +6,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
+import { VALID_FACILITIES } from "@shared/plexus";
 
-const FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
+const FACILITIES = VALID_FACILITIES;
 
 type QualMode = "permissive" | "standard" | "conservative";
 

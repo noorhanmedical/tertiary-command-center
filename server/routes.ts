@@ -155,7 +155,12 @@ export async function registerRoutes(
 
       const parsed = addPatientSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      const { name, time, age, gender, dob, phoneNumber, diagnoses, history, medications, notes } = parsed.data;
+      const {
+        name, time, age, gender, dob, phoneNumber,
+        insurance, diagnoses, history, medications,
+        previousTests, previousTestsDate, noPreviousTests,
+        patientType, notes,
+      } = parsed.data;
 
       const patient = await storage.createPatientScreening({
         batchId,
@@ -165,16 +170,20 @@ export async function registerRoutes(
         gender: gender || null,
         dob: dob || null,
         phoneNumber: phoneNumber || null,
+        insurance: insurance || null,
         facility: batch.facility || null,
         diagnoses: diagnoses || null,
         history: history || null,
         medications: medications || null,
+        previousTests: previousTests || null,
+        previousTestsDate: previousTestsDate || extractDateFromPrevTests(previousTests) || null,
+        noPreviousTests: noPreviousTests ?? false,
         notes: notes || null,
         qualifyingTests: [],
         reasoning: {},
         status: "draft",
         appointmentStatus: "pending",
-        patientType: time ? "visit" : "outreach",
+        patientType: patientType || (time ? "visit" : "outreach"),
       });
 
       await storage.updateScreeningBatch(batchId, {

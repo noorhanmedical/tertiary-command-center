@@ -51,11 +51,12 @@ import {
   VITALWAVE_SLOTS as VW_SLOTS,
 } from "@/components/clinic-calendar";
 import type { BookingSlot } from "@/components/clinic-calendar";
+import { VALID_FACILITIES } from "@shared/plexus";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-const FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
-type Facility = (typeof FACILITIES)[number];
+const FACILITIES = VALID_FACILITIES;
+type Facility = (typeof VALID_FACILITIES)[number];
 
 type OutreachCallItem = {
   id: string;

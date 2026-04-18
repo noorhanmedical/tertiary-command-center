@@ -1,3 +1,6 @@
+export const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
+export type ValidFacility = typeof VALID_FACILITIES[number];
+
 export type PlexusService = 'VitalWave' | 'Ultrasound' | 'BrainWave' | 'PGx';
 export type PlexusDocumentKind = 'screening' | 'preProcedureOrder' | 'postProcedureNote' | 'billing';
 

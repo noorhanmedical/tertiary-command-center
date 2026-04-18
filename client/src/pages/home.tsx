@@ -45,7 +45,7 @@ import { ExternalLink } from "lucide-react";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
 import { PlexusDrive } from "@/components/PlexusDrive";
 import { QualificationModeSettings } from "@/components/QualificationModeSettings";
-import { type GeneratedDocument } from "@shared/plexus";
+import { type GeneratedDocument, VALID_FACILITIES } from "@shared/plexus";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
@@ -151,8 +151,8 @@ function StepTimeline({ current, onNavigate, canGoToResults }: { current: "home"
 }
 
 
-const FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
-type Facility = typeof FACILITIES[number];
+const FACILITIES = VALID_FACILITIES;
+type Facility = typeof VALID_FACILITIES[number];
 
 const APPOINTMENT_STATUSES = ["Completed", "No Show", "Rescheduled", "Scheduled Different Day", "Cancelled", "Pending"] as const;
 type AppointmentStatus = typeof APPOINTMENT_STATUSES[number];

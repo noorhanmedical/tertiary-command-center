@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo, type CSSProperties } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { VALID_FACILITIES } from "@shared/plexus";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -90,7 +91,7 @@ type GeneratedNote = {
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
-const FACILITY_OPTIONS = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"];
+const FACILITY_OPTIONS = [...VALID_FACILITIES];
 
 const SERVICE_TYPE_OPTIONS = [
   "BrainWave",
