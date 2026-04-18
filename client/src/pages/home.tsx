@@ -56,11 +56,18 @@ type ClinicWeekDay = {
   providerNames: string[];
 };
 
+type ClinicMonthCell = {
+  isoDate: string;
+  patientCount: number;
+  ancillaryCount: number;
+};
+
 type ClinicTab = {
   clinicKey: string;
   clinicLabel: string;
   scheduler: { id: string; name: string; initials: string } | null;
   weekDays: ClinicWeekDay[];
+  monthCells: ClinicMonthCell[];
 };
 
 type ScheduleDashboardResponse = {
@@ -1528,20 +1535,6 @@ export default function Home() {
                     </div>
                   </Card>
 
-                  <Link href="/admin-ops">
-                  <Card
-                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                    data-testid="tile-admin-ops"
-                  >
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                      <Shield className="w-14 h-14 text-slate-700" strokeWidth={1.75} />
-                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight">
-                        Admin
-                      </span>
-                    </div>
-                  </Card>
-                </Link>
-
                 <Link href="/outreach">
                     <Card
                       className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
@@ -1553,64 +1546,68 @@ export default function Home() {
                       </div>
                     </Card>
                   </Link>
-
-                  <Link href="/settings">
-                    <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                      data-testid="tile-settings"
-                    >
-                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                        <Settings className="w-14 h-14 text-slate-500" strokeWidth={1.75} />
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-settings">Settings</span>
-                      </div>
-                    </Card>
-                  </Link>
                 </div>
 
                 <Card className="rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm mt-4" data-testid="tile-schedule-dashboard-inline">
                   <div className="p-5">
-                    <div className="flex items-center justify-between mb-3">
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
                           <CalendarDays className="w-5 h-5 text-blue-600" strokeWidth={1.75} />
                         </div>
                         <div>
                           <span className="text-base font-bold text-slate-800 dark:text-foreground">Schedule Dashboard</span>
-                          <p className="text-xs text-slate-500">Canonical clinic schedule · live data</p>
+                          <p className="text-xs text-slate-500">Live clinic schedule</p>
                         </div>
                       </div>
-                      <Link href="/appointments">
-                        <span className="text-xs text-primary font-medium hover:underline cursor-pointer shrink-0" data-testid="link-view-full-schedule">View Full Schedule →</span>
+                      <Link href="/schedule-dashboard">
+                        <span className="text-xs text-primary font-medium hover:underline cursor-pointer shrink-0" data-testid="link-view-full-schedule">Full Dashboard →</span>
                       </Link>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2 mb-3">
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setDashboardWeekOverride(dashboardData?.previousWeekStart || null); }}
-                        className="p-1 rounded-lg hover:bg-slate-100 transition-colors text-slate-500"
-                        data-testid="button-dashboard-prev-week"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
-                      <span className="text-xs font-semibold text-slate-600 tabular-nums">
-                        Week of {dashboardData?.weekStart ? fmtDashDay(dashboardData.weekStart) : "—"}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setDashboardWeekOverride(dashboardData?.nextWeekStart || null); }}
-                        className="p-1 rounded-lg hover:bg-slate-100 transition-colors text-slate-500"
-                        data-testid="button-dashboard-next-week"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
+                    {/* Month nav + clinic pills */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const base = dashboardWeekOverride || dashboardData?.weekStart || new Date().toISOString().slice(0, 10);
+                            const [y, m] = base.split("-").map(Number);
+                            const prev = new Date(y, (m || 1) - 2, 1);
+                            setDashboardWeekOverride(`${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-01`);
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-500"
+                          data-testid="button-dashboard-prev-month"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <span className="text-sm font-semibold text-slate-700 w-28 text-center tabular-nums" data-testid="text-dashboard-month-label">
+                          {dashboardData?.weekStart
+                            ? new Date(dashboardData.weekStart + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" })
+                            : "—"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const base = dashboardWeekOverride || dashboardData?.weekStart || new Date().toISOString().slice(0, 10);
+                            const [y, m] = base.split("-").map(Number);
+                            const next = new Date(y, (m || 1), 1);
+                            setDashboardWeekOverride(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-01`);
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-500"
+                          data-testid="button-dashboard-next-month"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
                       {dashboardClinicTabs.length > 1 && (
-                        <div className="flex flex-wrap gap-1 ml-1">
+                        <div className="flex flex-wrap gap-1">
                           {dashboardClinicTabs.map((tab) => (
                             <button
                               key={tab.clinicKey}
                               type="button"
-                              onClick={(e) => { e.stopPropagation(); setDashboardClinicKey(tab.clinicKey); }}
+                              onClick={() => setDashboardClinicKey(tab.clinicKey)}
                               className={`rounded-xl border px-2.5 py-0.5 text-xs font-medium transition ${
                                 activeDashboardClinic?.clinicKey === tab.clinicKey
                                   ? "border-blue-200 bg-blue-50 text-blue-700"
@@ -1625,37 +1622,78 @@ export default function Home() {
                       )}
                     </div>
 
+                    {/* Calendar grid */}
                     {dashboardLoading ? (
-                      <div className="space-y-2 animate-pulse mb-4">
-                        {[...Array(3)].map((_, i) => <div key={i} className="h-14 bg-slate-100 rounded-xl" />)}
+                      <div className="grid grid-cols-7 gap-1 mb-4">
+                        {[...Array(35)].map((_, i) => (
+                          <div key={i} className="h-16 bg-slate-100 rounded-xl animate-pulse" />
+                        ))}
                       </div>
                     ) : !activeDashboardClinic ? (
-                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 py-5 text-center text-xs text-slate-400 mb-4">
+                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 py-8 text-center text-xs text-slate-400 mb-4">
                         No schedule data — create a schedule to get started
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
-                        {activeDashboardClinic.weekDays.map((day) => {
-                          const isToday = day.isoDate === dashboardData?.today;
-                          return (
-                            <div
-                              key={day.isoDate}
-                              className={`rounded-xl border p-2.5 ${isToday ? "border-blue-300 bg-blue-50" : "border-slate-200 bg-slate-50"}`}
-                              data-testid={`dashboard-day-${day.isoDate}`}
-                            >
-                              <p className={`text-[11px] font-semibold truncate ${isToday ? "text-blue-700" : "text-slate-700"}`}>
-                                {fmtDashDay(day.isoDate)}
-                              </p>
-                              <div className="mt-1.5 space-y-0.5">
-                                <p className="text-xs text-slate-500">Pts: <span className="font-semibold text-slate-800">{day.patientCount}</span></p>
-                                <p className="text-xs text-slate-500">Anc: <span className={`font-semibold ${day.ancillaryCount > 0 ? "text-blue-600" : "text-slate-800"}`}>{day.ancillaryCount}</span></p>
+                      <>
+                        {/* Day-of-week header */}
+                        <div className="grid grid-cols-7 mb-1">
+                          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+                            <div key={d} className="text-center text-[10px] font-semibold uppercase tracking-wider text-slate-400 py-1">{d}</div>
+                          ))}
+                        </div>
+                        {/* Month cells */}
+                        <div className="grid grid-cols-7 gap-1 mb-4">
+                          {activeDashboardClinic.monthCells.map((cell) => {
+                            const isToday = cell.isoDate === dashboardData?.today;
+                            const cellMonth = cell.isoDate.slice(0, 7);
+                            const displayMonth = dashboardData?.weekStart?.slice(0, 7);
+                            const isCurrentMonth = cellMonth === displayMonth;
+                            const dayNum = parseInt(cell.isoDate.split("-")[2], 10);
+                            const hasData = cell.patientCount > 0;
+                            return (
+                              <div
+                                key={cell.isoDate}
+                                className={`rounded-xl border p-1.5 min-h-[72px] flex flex-col ${
+                                  isToday
+                                    ? "border-blue-400 bg-blue-50"
+                                    : isCurrentMonth
+                                    ? "border-slate-200 bg-white"
+                                    : "border-slate-100 bg-slate-50/50"
+                                }`}
+                                data-testid={`dashboard-month-cell-${cell.isoDate}`}
+                              >
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className={`text-[11px] font-bold w-5 h-5 flex items-center justify-center rounded-full ${
+                                    isToday
+                                      ? "bg-blue-600 text-white"
+                                      : isCurrentMonth
+                                      ? "text-slate-700"
+                                      : "text-slate-300"
+                                  }`}>
+                                    {dayNum}
+                                  </span>
+                                </div>
+                                {hasData && (
+                                  <div className="flex flex-col gap-0.5 mt-auto">
+                                    <span className="text-[10px] text-slate-500 leading-tight">
+                                      <span className="font-semibold text-slate-700">{cell.patientCount}</span> pt{cell.patientCount !== 1 ? "s" : ""}
+                                    </span>
+                                    {cell.ancillaryCount > 0 && (
+                                      <span className="text-[10px] leading-tight">
+                                        <span className="font-semibold text-blue-600">{cell.ancillaryCount}</span>
+                                        <span className="text-slate-400"> anc</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                               </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                            );
+                          })}
+                        </div>
+                      </>
                     )}
 
+                    {/* Upcoming appointments */}
                     <div className="border-t border-slate-100 pt-3">
                       <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Upcoming Appointments</p>
                       <ScheduleTile />
