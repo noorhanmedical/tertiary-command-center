@@ -992,6 +992,8 @@ export async function registerRoutes(
 
   interface BillingSyncResult {
     spreadsheetId: string;
+    masterSpreadsheetId: string | null;
+    facilitySpreadsheetIds: Record<string, string>;
     recordCount: number;
     syncedAt: string;
   }
@@ -1029,6 +1031,7 @@ export async function registerRoutes(
 
     let totalSynced = 0;
     let lastSpreadsheetId = "";
+    const facilitySpreadsheetIds: Record<string, string> = {};
 
     for (const [facility, facRecords] of Array.from(facilityGroups.entries())) {
       let folderId: string | null = null;
@@ -1055,6 +1058,7 @@ export async function registerRoutes(
 
       totalSynced += facRecords.length;
       lastSpreadsheetId = spreadsheetId;
+      facilitySpreadsheetIds[facility] = spreadsheetId;
       await setSetting(`BILLING_SPREADSHEET_ID_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`, spreadsheetId);
     }
 
@@ -1071,10 +1075,11 @@ export async function registerRoutes(
     const syncedAt = new Date().toISOString();
     billingSyncState.lastSyncedAt = syncedAt;
     await setSetting("BILLING_LAST_SYNCED_AT", syncedAt);
-    if (lastSpreadsheetId) {
-      await setSetting("BILLING_SPREADSHEET_ID", lastSpreadsheetId);
+    const primaryId = masterSid || lastSpreadsheetId || "";
+    if (primaryId) {
+      await setSetting("BILLING_SPREADSHEET_ID", primaryId);
     }
-    return { spreadsheetId: masterSid || lastSpreadsheetId || "", recordCount: totalSynced, syncedAt };
+    return { spreadsheetId: primaryId, masterSpreadsheetId: masterSid, facilitySpreadsheetIds, recordCount: totalSynced, syncedAt };
   }
 
   async function runBillingSyncWithLock(throwOnError: boolean): Promise<BillingSyncResult | null> {
@@ -1240,10 +1245,17 @@ export async function registerRoutes(
         res.json({ success: true, message: "Sync already in progress, queued" });
         return;
       }
+      const toUrl = (sid: string | null) => sid ? `https://docs.google.com/spreadsheets/d/${sid}` : null;
+      const facilityUrls: Record<string, string> = {};
+      for (const [fac, sid] of Object.entries(result.facilitySpreadsheetIds)) {
+        facilityUrls[fac] = `https://docs.google.com/spreadsheets/d/${sid}`;
+      }
       res.json({
         success: true,
         spreadsheetId: result.spreadsheetId,
-        spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${result.spreadsheetId}`,
+        spreadsheetUrl: toUrl(result.spreadsheetId),
+        masterSpreadsheetUrl: toUrl(result.masterSpreadsheetId),
+        facilitySpreadsheetUrls: facilityUrls,
         syncedAt: result.syncedAt,
         recordCount: result.recordCount,
       });

@@ -700,6 +700,8 @@ export default function BillingPage() {
   const [showAddRow, setShowAddRow] = useState(false);
   const [billingSyncedAt, setBillingSyncedAt] = useState<string | null>(null);
   const [billingSheetUrl, setBillingSheetUrl] = useState<string | null>(null);
+  const [masterSheetUrl, setMasterSheetUrl] = useState<string | null>(null);
+  const [facilitySheetUrls, setFacilitySheetUrls] = useState<Record<string, string>>({});
   const [exportingNoteIds, setExportingNoteIds] = useState<Set<number>>(new Set());
 
   const [facilityTab, setFacilityTab] = useState<string>("All");
@@ -767,7 +769,13 @@ export default function BillingPage() {
     onSuccess: (data) => {
       if (data.syncedAt) {
         setBillingSyncedAt(data.syncedAt);
-        if (data.spreadsheetUrl) setBillingSheetUrl(data.spreadsheetUrl);
+        if (data.masterSpreadsheetUrl) {
+          setMasterSheetUrl(data.masterSpreadsheetUrl);
+          setBillingSheetUrl(data.masterSpreadsheetUrl);
+        } else if (data.spreadsheetUrl) {
+          setBillingSheetUrl(data.spreadsheetUrl);
+        }
+        if (data.facilitySpreadsheetUrls) setFacilitySheetUrls(data.facilitySpreadsheetUrls);
         toast({ title: "Synced to Google Sheets", description: `${data.recordCount} records pushed` });
       } else {
         toast({ title: "Sync queued" });
@@ -925,9 +933,11 @@ export default function BillingPage() {
             {billingSyncedAt && (
               <span className="text-[10px] text-slate-400 whitespace-nowrap flex items-center gap-1">
                 Synced {new Date(billingSyncedAt).toLocaleTimeString()}
-                {billingSheetUrl && (
-                  <a href={billingSheetUrl} target="_blank" rel="noopener noreferrer" className="text-emerald-600 hover:underline inline-flex items-center gap-0.5">
-                    <ExternalLink className="w-2.5 h-2.5" />Open
+                {(masterSheetUrl || billingSheetUrl) && (
+                  <a href={masterSheetUrl ?? billingSheetUrl!} target="_blank" rel="noopener noreferrer"
+                    className="text-emerald-600 hover:underline inline-flex items-center gap-0.5 ml-1"
+                    title="Open master Plexus Billing Tracker">
+                    <ExternalLink className="w-2.5 h-2.5" />Master
                   </a>
                 )}
               </span>
@@ -959,30 +969,36 @@ export default function BillingPage() {
 
         {/* Facility tabs */}
         <div className="px-5 flex items-center gap-1 border-t border-slate-100 pt-2 pb-0" data-testid="facility-tabs">
-          {["All", ...FACILITY_OPTIONS].map((fac) => (
-            <button
-              key={fac}
-              onClick={() => setFacilityTab(fac)}
-              data-testid={`tab-facility-${fac.replace(/\s+/g, "-").toLowerCase()}`}
-              className={`px-3.5 py-2 text-[12px] font-medium rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
-                facilityTab === fac
-                  ? "border-emerald-500 text-emerald-700 bg-emerald-50/50"
-                  : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50"
-              }`}
-            >
-              {fac}
-              {fac !== "All" && (
-                <span className="ml-1.5 text-[10px] bg-slate-200 text-slate-500 rounded-full px-1.5 py-0.5">
-                  {records.filter(r => r.facility === fac).length}
-                </span>
-              )}
-              {fac === "All" && (
-                <span className="ml-1.5 text-[10px] bg-slate-200 text-slate-500 rounded-full px-1.5 py-0.5">
-                  {records.length}
-                </span>
-              )}
-            </button>
-          ))}
+          {["All", ...FACILITY_OPTIONS].map((fac) => {
+            const facUrl = fac !== "All" ? facilitySheetUrls[fac] : null;
+            return (
+              <div key={fac} className="flex items-center gap-0">
+                <button
+                  onClick={() => setFacilityTab(fac)}
+                  data-testid={`tab-facility-${fac.replace(/\s+/g, "-").toLowerCase()}`}
+                  className={`px-3.5 py-2 text-[12px] font-medium rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
+                    facilityTab === fac
+                      ? "border-emerald-500 text-emerald-700 bg-emerald-50/50"
+                      : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  {fac}
+                  <span className="ml-1.5 text-[10px] bg-slate-200 text-slate-500 rounded-full px-1.5 py-0.5">
+                    {fac === "All" ? records.length : records.filter(r => r.facility === fac).length}
+                  </span>
+                </button>
+                {facUrl && (
+                  <a href={facUrl} target="_blank" rel="noopener noreferrer"
+                    className="ml-0.5 p-1 text-slate-300 hover:text-emerald-500 transition-colors"
+                    title={`Open ${fac} billing sheet`}
+                    data-testid={`link-sheet-${fac.replace(/\s+/g, "-").toLowerCase()}`}
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Secondary filter bar */}
