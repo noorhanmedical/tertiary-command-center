@@ -59,7 +59,6 @@ export async function registerRoutes(
   registerTestHistoryRoutes(app, { backgroundSyncPatients });
   registerPatientReferenceRoutes(app, { backgroundSyncPatients });
   registerGeneratedNotesRoutes(app);
-  registerGoogleRoutes(app);
 
   // ─── Reset any batches stuck in "processing" from a previous server run ────
   // Analysis jobs are in-process async tasks that do not survive a server restart.
@@ -113,6 +112,9 @@ export async function registerRoutes(
 
     return next();
   });
+
+  // Register Google / Drive / Document routes (protected by auth middleware above)
+  registerGoogleRoutes(app);
 
   // ─── Health check (exempt from auth) ──────────────────────────────────────
   app.get("/healthz", async (_req, res) => {
