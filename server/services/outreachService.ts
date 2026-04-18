@@ -15,6 +15,7 @@ type OutreachCallItem = {
   scheduleDate: string;
   time: string;
   providerName: string;
+  notes: string | null;
 };
 
 type SchedulerCardEntry = {
@@ -121,6 +122,7 @@ export async function buildOutreachDashboard(
         scheduleDate: s(batch.scheduleDate),
         time: s(patient.time) || "No time",
         providerName,
+        notes: patient.notes ?? null,
       });
     }
   }

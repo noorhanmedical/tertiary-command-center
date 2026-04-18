@@ -16,11 +16,14 @@ import {
   CalendarCheck,
   XCircle,
   RotateCcw,
+  MessageSquare,
+  Save,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -38,6 +41,7 @@ type OutreachCallItem = {
   scheduleDate: string;
   time: string;
   providerName: string;
+  notes: string | null;
 };
 
 type OutreachSchedulerCard = {
@@ -135,6 +139,8 @@ export default function OutreachPage() {
   const [selectedSchedulerId, setSelectedSchedulerId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [pendingPatientId, setPendingPatientId] = useState<number | null>(null);
+  const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
+  const [noteDrafts, setNoteDrafts] = useState<Map<number, string>>(new Map());
   const { toast } = useToast();
 
   const { data, isLoading } = useQuery<OutreachDashboard>({
@@ -160,6 +166,49 @@ export default function OutreachPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
     },
   });
+
+  const saveNoteMutation = useMutation({
+    mutationFn: ({ patientId, notes }: { patientId: number; notes: string }) =>
+      apiRequest("PATCH", `/api/patients/${patientId}`, { notes }),
+    onSuccess: (_data, { patientId }) => {
+      toast({ title: "Note saved", description: "Call note has been recorded." });
+      setExpandedNotes((prev) => {
+        const next = new Set(prev);
+        next.delete(patientId);
+        return next;
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
+    },
+    onError: () => {
+      toast({
+        title: "Save failed",
+        description: "Could not save the note. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  function toggleNotes(patientId: number, existingNote: string | null) {
+    setExpandedNotes((prev) => {
+      const next = new Set(prev);
+      if (next.has(patientId)) {
+        next.delete(patientId);
+        setNoteDrafts((d) => {
+          const nd = new Map(d);
+          nd.delete(patientId);
+          return nd;
+        });
+      } else {
+        next.add(patientId);
+        setNoteDrafts((d) => {
+          const nd = new Map(d);
+          nd.set(patientId, existingNote ?? "");
+          return nd;
+        });
+      }
+      return next;
+    });
+  }
 
   const schedulerCards = data?.schedulerCards ?? [];
   const metrics = data?.metrics ?? {
@@ -441,7 +490,79 @@ export default function OutreachPage() {
                             Reset
                           </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => toggleNotes(item.patientId, item.notes)}
+                          className={[
+                            "ml-auto inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition",
+                            expandedNotes.has(item.patientId)
+                              ? "border-blue-200 bg-blue-50 text-blue-700"
+                              : item.notes
+                              ? "border-violet-200 bg-violet-50 text-violet-700"
+                              : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
+                          ].join(" ")}
+                          data-testid={`notes-toggle-${item.patientId}`}
+                        >
+                          <MessageSquare className="h-3.5 w-3.5" />
+                          {item.notes && !expandedNotes.has(item.patientId) ? "Note" : "Add note"}
+                        </button>
                       </div>
+
+                      {/* Inline notes area */}
+                      {expandedNotes.has(item.patientId) && (
+                        <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-3">
+                          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Call Note</p>
+                          <Textarea
+                            value={noteDrafts.get(item.patientId) ?? item.notes ?? ""}
+                            onChange={(e) =>
+                              setNoteDrafts((prev) => {
+                                const next = new Map(prev);
+                                next.set(item.patientId, e.target.value);
+                                return next;
+                              })
+                            }
+                            placeholder="e.g. Left voicemail, patient asked to call back Tuesday…"
+                            rows={3}
+                            className="resize-none rounded-xl border-blue-200 bg-white text-sm focus-visible:ring-blue-300"
+                            data-testid={`notes-textarea-${item.patientId}`}
+                          />
+                          <div className="mt-2 flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => toggleNotes(item.patientId, item.notes)}
+                              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50"
+                              data-testid={`notes-cancel-${item.patientId}`}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              disabled={saveNoteMutation.isPending}
+                              onClick={() =>
+                                saveNoteMutation.mutate({
+                                  patientId: item.patientId,
+                                  notes: (noteDrafts.get(item.patientId) ?? "").trim(),
+                                })
+                              }
+                              className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              data-testid={`notes-save-${item.patientId}`}
+                            >
+                              <Save className="h-3 w-3" />
+                              Save note
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Collapsed note preview */}
+                      {!expandedNotes.has(item.patientId) && item.notes && (
+                        <div className="mt-2 rounded-xl border border-violet-100 bg-violet-50/60 px-3 py-2 text-xs text-violet-800"
+                          data-testid={`notes-preview-${item.patientId}`}
+                        >
+                          <span className="mr-1 font-medium text-violet-500">Note:</span>
+                          {item.notes}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
