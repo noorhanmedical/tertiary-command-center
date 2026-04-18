@@ -127,6 +127,23 @@ export async function buildOutreachDashboard(
     }
   }
 
+  for (const scheduler of schedulers) {
+    const cardId = `${scheduler.name.toLowerCase().replace(/\s+/g, "-")}__${scheduler.facility.toLowerCase().replace(/\s+/g, "-")}`;
+    if (!map.has(cardId)) {
+      map.set(cardId, {
+        id: cardId,
+        name: scheduler.name,
+        facility: scheduler.facility,
+        totalPatients: 0,
+        touchedCount: 0,
+        scheduledCount: 0,
+        pendingCount: 0,
+        conversionRate: 0,
+        callList: [],
+      });
+    }
+  }
+
   const schedulerCards: SchedulerCardEntry[] = Array.from(map.values())
     .map((entry) => ({
       ...entry,

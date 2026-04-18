@@ -386,7 +386,9 @@ export default function OutreachPage() {
               </div>
             ) : filteredCallList.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
-                No patients match this search.
+                {search.trim()
+                  ? "No patients match this search."
+                  : `No patients scheduled for ${selectedScheduler.name} today.`}
               </div>
             ) : (
               <div className="max-h-[680px] space-y-3 overflow-y-auto pr-1">
