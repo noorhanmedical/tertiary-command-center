@@ -659,7 +659,13 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const parsed = insertOutreachSchedulerSchema.partial().safeParse(req.body);
+      const patchSchema = insertOutreachSchedulerSchema.partial().extend({
+        facility: insertOutreachSchedulerSchema.shape.facility.refine(
+          (f) => (VALID_FACILITIES as readonly string[]).includes(f),
+          { message: "facility must be one of the three valid clinics" },
+        ).optional(),
+      });
+      const parsed = patchSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       const updated = await storage.updateOutreachScheduler(id, parsed.data);
       if (!updated) return res.status(404).json({ error: "Scheduler not found" });

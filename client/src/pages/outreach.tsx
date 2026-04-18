@@ -94,11 +94,6 @@ export default function OutreachPage() {
 
   const { data, isLoading } = useQuery<OutreachDashboard>({
     queryKey: ["/api/outreach/dashboard"],
-    queryFn: async () => {
-      const res = await fetch("/api/outreach/dashboard");
-      if (!res.ok) throw new Error("Failed to load outreach dashboard");
-      return res.json();
-    },
     refetchInterval: 60_000,
   });
 

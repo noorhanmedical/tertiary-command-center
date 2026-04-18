@@ -75,7 +75,7 @@ export async function buildOutreachDashboard(
     const patients: PatientScreening[] = await storage.getPatientScreeningsByBatch(batch.id);
     const facility = s(batch.facility) || "Unassigned Facility";
     const schedulerName = resolveSchedulerName(facility, schedulers);
-    const cardId = schedulerName.toLowerCase().replace(/\s+/g, "-");
+    const cardId = `${schedulerName.toLowerCase().replace(/\s+/g, "-")}__${facility.toLowerCase().replace(/\s+/g, "-")}`;
     const providerName = s(batch.clinicianName) || "No provider";
 
     if (!map.has(cardId)) {

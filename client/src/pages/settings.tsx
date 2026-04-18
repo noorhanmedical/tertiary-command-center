@@ -50,11 +50,6 @@ export default function SettingsPage() {
 
   const { data: schedulers = [], isLoading } = useQuery<OutreachScheduler[]>({
     queryKey: ["/api/outreach/schedulers"],
-    queryFn: async () => {
-      const res = await fetch("/api/outreach/schedulers");
-      if (!res.ok) throw new Error("Failed to load schedulers");
-      return res.json();
-    },
   });
 
   const createMutation = useMutation({
