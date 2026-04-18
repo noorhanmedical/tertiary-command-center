@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
@@ -18,6 +18,7 @@ import {
   RotateCcw,
   MessageSquare,
   Save,
+  ExternalLink,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -69,45 +70,19 @@ type OutreachDashboard = {
 };
 
 const CALL_OUTCOMES = [
-  {
-    value: "no_answer",
-    label: "No Answer",
-    Icon: PhoneMissed,
-    color: "bg-slate-100 text-slate-600 hover:bg-slate-200 border-slate-200",
-  },
-  {
-    value: "callback",
-    label: "Callback",
-    Icon: PhoneCall,
-    color: "bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200",
-  },
-  {
-    value: "scheduled",
-    label: "Scheduled",
-    Icon: CalendarCheck,
-    color: "bg-green-50 text-green-700 hover:bg-green-100 border-green-200",
-  },
-  {
-    value: "declined",
-    label: "Declined",
-    Icon: XCircle,
-    color: "bg-red-50 text-red-600 hover:bg-red-100 border-red-200",
-  },
+  { value: "no_answer",  label: "No Answer", Icon: PhoneMissed,  color: "bg-slate-100 text-slate-600 hover:bg-slate-200 border-slate-200" },
+  { value: "callback",   label: "Callback",  Icon: PhoneCall,    color: "bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200" },
+  { value: "scheduled",  label: "Scheduled", Icon: CalendarCheck, color: "bg-green-50 text-green-700 hover:bg-green-100 border-green-200" },
+  { value: "declined",   label: "Declined",  Icon: XCircle,      color: "bg-red-50 text-red-600 hover:bg-red-100 border-red-200" },
 ] as const;
 
-function shellClass(active = false) {
-  return [
-    "rounded-3xl border border-white/60 bg-white/75 backdrop-blur-xl shadow-[0_18px_60px_rgba(15,23,42,0.10)] transition-all",
-    active
-      ? "ring-2 ring-blue-200/80 shadow-[0_24px_80px_rgba(59,130,246,0.16)]"
-      : "hover:shadow-[0_24px_80px_rgba(15,23,42,0.14)]",
-  ].join(" ");
+function shellClass() {
+  return "rounded-3xl border border-white/60 bg-white/75 backdrop-blur-xl shadow-[0_18px_60px_rgba(15,23,42,0.10)]";
 }
 
 function statusBadgeClass(status?: string | null) {
   const n = String(status || "pending").toLowerCase();
-  if (n.includes("scheduled") || n.includes("booked"))
-    return "bg-green-100 text-green-700 border-green-200";
+  if (n.includes("scheduled") || n.includes("booked")) return "bg-green-100 text-green-700 border-green-200";
   if (n.includes("complete")) return "bg-blue-100 text-blue-700 border-blue-200";
   if (n.includes("cancel") || n.includes("declined")) return "bg-red-100 text-red-700 border-red-200";
   if (n === "no_answer") return "bg-slate-100 text-slate-600 border-slate-200";
@@ -119,7 +94,7 @@ function statusLabel(status?: string | null) {
   const n = String(status || "pending").toLowerCase();
   if (n === "no_answer") return "No Answer";
   if (n === "callback") return "Callback";
-  return status || "pending";
+  return status || "Pending";
 }
 
 function formatDisplayDate(value?: string | null) {
@@ -127,16 +102,26 @@ function formatDisplayDate(value?: string | null) {
   if (!raw) return "Unscheduled";
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
     const [y, m, d] = raw.split("-").map(Number);
-    const dt = new Date(y, (m || 1) - 1, d || 1);
-    return dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    return new Date(y, (m || 1) - 1, d || 1).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   }
   const dt = new Date(raw);
   if (Number.isNaN(dt.getTime())) return raw;
   return dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+function filterList(list: OutreachCallItem[], q: string): OutreachCallItem[] {
+  if (!q) return list;
+  const lq = q.toLowerCase();
+  return list.filter(
+    (item) =>
+      item.patientName.toLowerCase().includes(lq) ||
+      item.facility.toLowerCase().includes(lq) ||
+      item.providerName.toLowerCase().includes(lq) ||
+      item.qualifyingTests.join(" ").toLowerCase().includes(lq),
+  );
+}
+
 export default function OutreachPage() {
-  const [selectedSchedulerId, setSelectedSchedulerId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [pendingPatientId, setPendingPatientId] = useState<number | null>(null);
   const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
@@ -151,15 +136,9 @@ export default function OutreachPage() {
   const updateStatusMutation = useMutation({
     mutationFn: ({ patientId, appointmentStatus }: { patientId: number; appointmentStatus: string }) =>
       apiRequest("PATCH", `/api/patients/${patientId}`, { appointmentStatus }),
-    onMutate: ({ patientId }) => {
-      setPendingPatientId(patientId);
-    },
+    onMutate: ({ patientId }) => { setPendingPatientId(patientId); },
     onError: () => {
-      toast({
-        title: "Update failed",
-        description: "Could not save the call outcome. Please try again.",
-        variant: "destructive",
-      });
+      toast({ title: "Update failed", description: "Could not save the call outcome. Please try again.", variant: "destructive" });
     },
     onSettled: () => {
       setPendingPatientId(null);
@@ -172,19 +151,11 @@ export default function OutreachPage() {
       apiRequest("PATCH", `/api/patients/${patientId}`, { notes }),
     onSuccess: (_data, { patientId }) => {
       toast({ title: "Note saved", description: "Call note has been recorded." });
-      setExpandedNotes((prev) => {
-        const next = new Set(prev);
-        next.delete(patientId);
-        return next;
-      });
+      setExpandedNotes((prev) => { const n = new Set(prev); n.delete(patientId); return n; });
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
     },
     onError: () => {
-      toast({
-        title: "Save failed",
-        description: "Could not save the note. Please try again.",
-        variant: "destructive",
-      });
+      toast({ title: "Save failed", description: "Could not save the note. Please try again.", variant: "destructive" });
     },
   });
 
@@ -193,58 +164,23 @@ export default function OutreachPage() {
       const next = new Set(prev);
       if (next.has(patientId)) {
         next.delete(patientId);
-        setNoteDrafts((d) => {
-          const nd = new Map(d);
-          nd.delete(patientId);
-          return nd;
-        });
+        setNoteDrafts((d) => { const nd = new Map(d); nd.delete(patientId); return nd; });
       } else {
         next.add(patientId);
-        setNoteDrafts((d) => {
-          const nd = new Map(d);
-          nd.set(patientId, existingNote ?? "");
-          return nd;
-        });
+        setNoteDrafts((d) => { const nd = new Map(d); nd.set(patientId, existingNote ?? ""); return nd; });
       }
       return next;
     });
   }
 
   const schedulerCards = data?.schedulerCards ?? [];
-  const metrics = data?.metrics ?? {
-    schedulerCount: 0,
-    totalCalls: 0,
-    totalScheduled: 0,
-    totalPending: 0,
-    avgConversion: 0,
-  };
-
-  const selectedScheduler = useMemo(
-    () =>
-      schedulerCards.length
-        ? (schedulerCards.find((c) => c.id === selectedSchedulerId) ?? schedulerCards[0])
-        : null,
-    [schedulerCards, selectedSchedulerId],
-  );
-
-  const filteredCallList = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const list = selectedScheduler?.callList ?? [];
-    if (!q) return list;
-    return list.filter(
-      (item) =>
-        item.patientName.toLowerCase().includes(q) ||
-        item.facility.toLowerCase().includes(q) ||
-        item.providerName.toLowerCase().includes(q) ||
-        item.qualifyingTests.join(" ").toLowerCase().includes(q),
-    );
-  }, [search, selectedScheduler]);
+  const metrics = data?.metrics ?? { schedulerCount: 0, totalCalls: 0, totalScheduled: 0, totalPending: 0, avgConversion: 0 };
 
   const METRIC_CARDS = [
-    { label: "Schedulers",     value: metrics.schedulerCount,  Icon: Users2,       color: "bg-slate-900/5 text-slate-700"   },
-    { label: "Calls Worked",   value: metrics.totalCalls,      Icon: Phone,        color: "bg-blue-600/10 text-blue-700"    },
-    { label: "Scheduled",      value: metrics.totalScheduled,  Icon: CheckCircle2, color: "bg-green-600/10 text-green-700"  },
-    { label: "Pending",        value: metrics.totalPending,    Icon: Clock3,       color: "bg-amber-500/10 text-amber-700"  },
+    { label: "Schedulers",     value: metrics.schedulerCount,      Icon: Users2,       color: "bg-slate-900/5 text-slate-700"   },
+    { label: "Calls Worked",   value: metrics.totalCalls,          Icon: Phone,        color: "bg-blue-600/10 text-blue-700"    },
+    { label: "Scheduled",      value: metrics.totalScheduled,      Icon: CheckCircle2, color: "bg-green-600/10 text-green-700"  },
+    { label: "Pending",        value: metrics.totalPending,        Icon: Clock3,       color: "bg-amber-500/10 text-amber-700"  },
     { label: "Avg Conversion", value: `${metrics.avgConversion}%`, Icon: CalendarDays, color: "bg-violet-600/10 text-violet-700" },
   ] as const;
 
@@ -290,288 +226,226 @@ export default function OutreachPage() {
           ))}
         </div>
 
-        {/* Main grid */}
-        <div className="grid gap-6 xl:grid-cols-[1.05fr_1.4fr]">
-
-          {/* Scheduler cards */}
-          <Card className={`${shellClass()} p-5`}>
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Scheduler Team Members</h2>
-                <p className="text-sm text-slate-500">Each card owns the call list for their assigned clinic.</p>
-              </div>
-              <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-700">
-                {schedulerCards.length} active
-              </Badge>
-            </div>
-
-            {isLoading ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
-                Loading outreach data…
-              </div>
-            ) : schedulerCards.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
-                No schedule data for today. Add schedulers in{" "}
-                <Link href="/settings" className="text-blue-600 underline underline-offset-2">Settings</Link>.
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-2">
-                {schedulerCards.map((card) => {
-                  const active = selectedScheduler?.id === card.id;
-                  return (
-                    <button
-                      key={card.id}
-                      type="button"
-                      onClick={() => setSelectedSchedulerId(card.id)}
-                      className={`text-left ${shellClass(active)} p-5`}
-                      data-testid={`outreach-scheduler-card-${card.id}`}
-                    >
-                      <div>
-                        <h3 className="text-base font-semibold text-slate-900">{card.name}</h3>
-                        <p className="mt-0.5 text-xs text-slate-500">{card.facility}</p>
-                      </div>
-                      <div className="mt-4 grid grid-cols-3 gap-3">
-                        <div className="rounded-2xl bg-slate-50 p-3">
-                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Calls</p>
-                          <p className="mt-1 text-xl font-semibold text-slate-900">{card.touchedCount}</p>
-                        </div>
-                        <div className="rounded-2xl bg-slate-50 p-3">
-                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Scheduled</p>
-                          <p className="mt-1 text-xl font-semibold text-slate-900">{card.scheduledCount}</p>
-                        </div>
-                        <div className="rounded-2xl bg-slate-50 p-3">
-                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Conv.</p>
-                          <p className="mt-1 text-xl font-semibold text-slate-900">{card.conversionRate}%</p>
-                        </div>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Badge className="rounded-full bg-blue-50 text-blue-700 hover:bg-blue-50">
-                          {card.totalPatients} patients
-                        </Badge>
-                        <Badge className="rounded-full bg-amber-50 text-amber-700 hover:bg-amber-50">
-                          {card.pendingCount} pending
-                        </Badge>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </Card>
-
-          {/* Call list */}
-          <Card className={`${shellClass()} p-5`}>
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">
-                  {selectedScheduler ? `${selectedScheduler.name} — Call List` : "Call List"}
-                </h2>
-                <p className="text-sm text-slate-500">Provider shown for ancillary order context.</p>
-              </div>
-              <div className="relative w-full max-w-xs">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search patient, clinic, provider, or test"
-                  className="rounded-2xl border-white/60 bg-white/90 pl-9"
-                  data-testid="outreach-search-input"
-                />
-              </div>
-            </div>
-
-            {!selectedScheduler ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
-                Select a scheduler card to view the call list.
-              </div>
-            ) : filteredCallList.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
-                {search.trim()
-                  ? "No patients match this search."
-                  : `No patients scheduled for ${selectedScheduler.name} today.`}
-              </div>
-            ) : (
-              <div className="max-h-[680px] space-y-3 overflow-y-auto pr-1">
-                {filteredCallList.map((item) => {
-                  const isBusy = pendingPatientId === item.patientId && updateStatusMutation.isPending;
-                  const currentStatus = item.appointmentStatus.toLowerCase();
-                  return (
-                    <div
-                      key={item.id}
-                      className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md"
-                      data-testid={`outreach-call-item-${item.patientId}`}
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-base font-semibold text-slate-900">{item.patientName}</h3>
-                            <Badge
-                              className={`rounded-full border text-xs ${statusBadgeClass(item.appointmentStatus)}`}
-                              data-testid={`status-badge-${item.patientId}`}
-                            >
-                              {statusLabel(item.appointmentStatus)}
-                            </Badge>
-                          </div>
-                          <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
-                            <span className="inline-flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />{item.time}</span>
-                            <span className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5" />{item.facility}</span>
-                            <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{item.phoneNumber}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 rounded-2xl bg-slate-50 p-3">
-                        <div className="inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
-                          <Stethoscope className="h-3.5 w-3.5" />
-                          Provider
-                        </div>
-                        <p className="mt-1 text-sm font-medium text-slate-800">{item.providerName}</p>
-                      </div>
-
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">{item.patientType}</Badge>
-                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">{item.insurance}</Badge>
-                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">Batch {item.batchId}</Badge>
-                      </div>
-
-                      {item.qualifyingTests.length > 0 && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {item.qualifyingTests.map((test) => (
-                            <Badge key={`${item.id}-${test}`} className="rounded-full bg-blue-50 text-blue-700 text-xs hover:bg-blue-50">
-                              {test}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Call outcome actions */}
-                      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                        <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">Outcome</span>
-                        {CALL_OUTCOMES.map(({ value, label, Icon, color }) => {
-                          const isActive = currentStatus === value;
-                          return (
-                            <button
-                              key={value}
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() =>
-                                updateStatusMutation.mutate({
-                                  patientId: item.patientId,
-                                  appointmentStatus: isActive ? "pending" : value,
-                                })
-                              }
-                              className={[
-                                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition",
-                                color,
-                                isActive
-                                  ? "ring-2 ring-offset-1 ring-current opacity-100"
-                                  : "opacity-80",
-                                isBusy ? "cursor-not-allowed opacity-50" : "cursor-pointer",
-                              ].join(" ")}
-                              data-testid={`outcome-btn-${value}-${item.patientId}`}
-                            >
-                              <Icon className="h-3.5 w-3.5" />
-                              {label}
-                            </button>
-                          );
-                        })}
-                        {currentStatus !== "pending" && (
-                          <button
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() =>
-                              updateStatusMutation.mutate({
-                                patientId: item.patientId,
-                                appointmentStatus: "pending",
-                              })
-                            }
-                            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500 opacity-70 transition hover:bg-slate-50 hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
-                            data-testid={`outcome-reset-${item.patientId}`}
-                          >
-                            <RotateCcw className="h-3 w-3" />
-                            Reset
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => toggleNotes(item.patientId, item.notes)}
-                          className={[
-                            "ml-auto inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition",
-                            expandedNotes.has(item.patientId)
-                              ? "border-blue-200 bg-blue-50 text-blue-700"
-                              : item.notes
-                              ? "border-violet-200 bg-violet-50 text-violet-700"
-                              : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
-                          ].join(" ")}
-                          data-testid={`notes-toggle-${item.patientId}`}
-                        >
-                          <MessageSquare className="h-3.5 w-3.5" />
-                          {item.notes && !expandedNotes.has(item.patientId) ? "Note" : "Add note"}
-                        </button>
-                      </div>
-
-                      {/* Inline notes area */}
-                      {expandedNotes.has(item.patientId) && (
-                        <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-3">
-                          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Call Note</p>
-                          <Textarea
-                            value={noteDrafts.get(item.patientId) ?? item.notes ?? ""}
-                            onChange={(e) =>
-                              setNoteDrafts((prev) => {
-                                const next = new Map(prev);
-                                next.set(item.patientId, e.target.value);
-                                return next;
-                              })
-                            }
-                            placeholder="e.g. Left voicemail, patient asked to call back Tuesday…"
-                            rows={3}
-                            className="resize-none rounded-xl border-blue-200 bg-white text-sm focus-visible:ring-blue-300"
-                            data-testid={`notes-textarea-${item.patientId}`}
-                          />
-                          <div className="mt-2 flex items-center justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => toggleNotes(item.patientId, item.notes)}
-                              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50"
-                              data-testid={`notes-cancel-${item.patientId}`}
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              disabled={saveNoteMutation.isPending}
-                              onClick={() =>
-                                saveNoteMutation.mutate({
-                                  patientId: item.patientId,
-                                  notes: (noteDrafts.get(item.patientId) ?? "").trim(),
-                                })
-                              }
-                              className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                              data-testid={`notes-save-${item.patientId}`}
-                            >
-                              <Save className="h-3 w-3" />
-                              Save note
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Collapsed note preview */}
-                      {!expandedNotes.has(item.patientId) && item.notes && (
-                        <div className="mt-2 rounded-xl border border-violet-100 bg-violet-50/60 px-3 py-2 text-xs text-violet-800"
-                          data-testid={`notes-preview-${item.patientId}`}
-                        >
-                          <span className="mr-1 font-medium text-violet-500">Note:</span>
-                          {item.notes}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Card>
+        {/* Global search */}
+        <div className="relative max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search patient, clinic, provider, or test…"
+            className="rounded-2xl border-white/60 bg-white/90 pl-9 shadow-sm"
+            data-testid="outreach-search-input"
+          />
         </div>
+
+        {/* Stacked scheduler cards */}
+        {isLoading ? (
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-32 animate-pulse rounded-3xl bg-white/60" />
+            ))}
+          </div>
+        ) : schedulerCards.length === 0 ? (
+          <div className={`${shellClass()} px-6 py-12 text-center text-sm text-slate-500`}>
+            No schedule data for today. Add schedulers in{" "}
+            <Link href="/settings" className="text-blue-600 underline underline-offset-2">Settings</Link>.
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {schedulerCards.map((card) => {
+              const filteredList = filterList(card.callList, search);
+              return (
+                <Card
+                  key={card.id}
+                  className={`${shellClass()} p-5`}
+                  data-testid={`outreach-scheduler-section-${card.id}`}
+                >
+                  {/* Card header */}
+                  <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-xl font-semibold text-slate-900">{card.name}</h2>
+                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600">
+                          {card.facility}
+                        </Badge>
+                      </div>
+                      {/* Metrics strip */}
+                      <div className="mt-3 flex flex-wrap gap-3">
+                        <div className="flex items-center gap-1.5 rounded-2xl bg-slate-50 px-3 py-1.5">
+                          <Phone className="h-3.5 w-3.5 text-blue-600" />
+                          <span className="text-xs text-slate-500">Calls</span>
+                          <span className="text-sm font-semibold text-slate-800">{card.touchedCount}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 rounded-2xl bg-green-50 px-3 py-1.5">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                          <span className="text-xs text-slate-500">Scheduled</span>
+                          <span className="text-sm font-semibold text-slate-800">{card.scheduledCount}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 rounded-2xl bg-amber-50 px-3 py-1.5">
+                          <Clock3 className="h-3.5 w-3.5 text-amber-600" />
+                          <span className="text-xs text-slate-500">Pending</span>
+                          <span className="text-sm font-semibold text-slate-800">{card.pendingCount}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 rounded-2xl bg-violet-50 px-3 py-1.5">
+                          <CalendarDays className="h-3.5 w-3.5 text-violet-600" />
+                          <span className="text-xs text-slate-500">Conv.</span>
+                          <span className="text-sm font-semibold text-slate-800">{card.conversionRate}%</span>
+                        </div>
+                      </div>
+                    </div>
+                    <Button
+                      asChild
+                      variant="outline"
+                      size="sm"
+                      className="rounded-2xl border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                      data-testid={`outreach-open-portal-${card.id}`}
+                    >
+                      <Link href={`/outreach/scheduler/${encodeURIComponent(card.id)}`}>
+                        <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                        Open Portal
+                      </Link>
+                    </Button>
+                  </div>
+
+                  {/* Inline call list */}
+                  {filteredList.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-center text-sm text-slate-500">
+                      {search.trim()
+                        ? "No patients match this search."
+                        : `No patients scheduled for ${card.name} today.`}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {filteredList.map((item) => {
+                        const isBusy = pendingPatientId === item.patientId && updateStatusMutation.isPending;
+                        const currentStatus = item.appointmentStatus.toLowerCase();
+                        return (
+                          <div
+                            key={item.id}
+                            className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md"
+                            data-testid={`outreach-call-item-${item.patientId}`}
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h3 className="text-base font-semibold text-slate-900">{item.patientName}</h3>
+                                  <Badge
+                                    className={`rounded-full border text-xs ${statusBadgeClass(item.appointmentStatus)}`}
+                                    data-testid={`status-badge-${item.patientId}`}
+                                  >
+                                    {statusLabel(item.appointmentStatus)}
+                                  </Badge>
+                                </div>
+                                <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
+                                  <span className="inline-flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />{item.time}</span>
+                                  <span className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5" />{item.facility}</span>
+                                  <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{item.phoneNumber}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 rounded-2xl bg-slate-50 p-3">
+                              <div className="inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
+                                <Stethoscope className="h-3.5 w-3.5" />Provider
+                              </div>
+                              <p className="mt-1 text-sm font-medium text-slate-800">{item.providerName}</p>
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-xs text-slate-600">{item.patientType}</Badge>
+                              <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-xs text-slate-600">{item.insurance}</Badge>
+                              <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-xs text-slate-600">Batch {item.batchId}</Badge>
+                            </div>
+
+                            {item.qualifyingTests.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {item.qualifyingTests.map((test) => (
+                                  <Badge key={`${item.id}-${test}`} className="rounded-full bg-blue-50 text-xs text-blue-700 hover:bg-blue-50">{test}</Badge>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Call outcome actions */}
+                            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                              <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">Outcome</span>
+                              {CALL_OUTCOMES.map(({ value, label, Icon, color }) => {
+                                const isActive = currentStatus === value;
+                                return (
+                                  <button
+                                    key={value}
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() => updateStatusMutation.mutate({ patientId: item.patientId, appointmentStatus: isActive ? "pending" : value })}
+                                    className={["inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition", color, isActive ? "ring-2 ring-offset-1 ring-current opacity-100" : "opacity-80", isBusy ? "cursor-not-allowed opacity-50" : "cursor-pointer"].join(" ")}
+                                    data-testid={`outcome-btn-${value}-${item.patientId}`}
+                                  >
+                                    <Icon className="h-3.5 w-3.5" />{label}
+                                  </button>
+                                );
+                              })}
+                              {currentStatus !== "pending" && (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => updateStatusMutation.mutate({ patientId: item.patientId, appointmentStatus: "pending" })}
+                                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500 opacity-70 transition hover:bg-slate-50 hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+                                  data-testid={`outcome-reset-${item.patientId}`}
+                                >
+                                  <RotateCcw className="h-3 w-3" />Reset
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => toggleNotes(item.patientId, item.notes)}
+                                className={["ml-auto inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition", expandedNotes.has(item.patientId) ? "border-blue-200 bg-blue-50 text-blue-700" : item.notes ? "border-violet-200 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"].join(" ")}
+                                data-testid={`notes-toggle-${item.patientId}`}
+                              >
+                                <MessageSquare className="h-3.5 w-3.5" />
+                                {item.notes && !expandedNotes.has(item.patientId) ? "Note" : "Add note"}
+                              </button>
+                            </div>
+
+                            {expandedNotes.has(item.patientId) && (
+                              <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-3">
+                                <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Call Note</p>
+                                <Textarea
+                                  value={noteDrafts.get(item.patientId) ?? item.notes ?? ""}
+                                  onChange={(e) => setNoteDrafts((prev) => { const next = new Map(prev); next.set(item.patientId, e.target.value); return next; })}
+                                  placeholder="e.g. Left voicemail, patient asked to call back Tuesday…"
+                                  rows={3}
+                                  className="resize-none rounded-xl border-blue-200 bg-white text-sm focus-visible:ring-blue-300"
+                                  data-testid={`notes-textarea-${item.patientId}`}
+                                />
+                                <div className="mt-2 flex items-center justify-end gap-2">
+                                  <button type="button" onClick={() => toggleNotes(item.patientId, item.notes)} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50" data-testid={`notes-cancel-${item.patientId}`}>Cancel</button>
+                                  <button
+                                    type="button"
+                                    disabled={saveNoteMutation.isPending}
+                                    onClick={() => saveNoteMutation.mutate({ patientId: item.patientId, notes: (noteDrafts.get(item.patientId) ?? "").trim() })}
+                                    className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+                                    data-testid={`notes-save-${item.patientId}`}
+                                  >
+                                    <Save className="h-3 w-3" />Save note
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {!expandedNotes.has(item.patientId) && item.notes && (
+                              <div className="mt-2 rounded-xl border border-violet-100 bg-violet-50/60 px-3 py-2 text-xs text-violet-800" data-testid={`notes-preview-${item.patientId}`}>
+                                <span className="mr-1 font-medium text-violet-500">Note:</span>{item.notes}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

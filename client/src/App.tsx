@@ -15,6 +15,7 @@ import BillingPage from "@/pages/billing";
 import DocumentUploadPage from "@/pages/document-upload";
 import AppointmentsPage from "@/pages/appointments";
 import OutreachPage from "@/pages/outreach";
+import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
 import AdminOpsPage from "@/pages/admin-ops";
 import ScheduleDashboardPage from "@/pages/schedule-dashboard";
 import SettingsPage from "@/pages/settings";
@@ -63,6 +64,7 @@ function App() {
                   <Route path="/appointments" component={AppointmentsPage} />
                   <Route path="/admin-ops" component={AdminOpsPage} />
                   <Route path="/schedule-dashboard" component={ScheduleDashboardPage} />
+                  <Route path="/outreach/scheduler/:id" component={OutreachSchedulerPortalPage} />
                   <Route path="/outreach" component={OutreachPage} />
                   <Route path="/settings" component={SettingsPage} />
                   <Route>
