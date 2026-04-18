@@ -948,7 +948,7 @@ export async function registerRoutes(
       const { readSheetData } = await import("./googleSheets");
       const { getSetting } = await import("./dbSettings");
 
-      const KNOWN_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"];
+      const KNOWN_FACILITIES = [...VALID_FACILITIES];
 
       const COL_MAP: Record<number, keyof import("../shared/schema").InsertBillingRecord> = {
         0: "dateOfService",

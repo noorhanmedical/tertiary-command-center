@@ -79,7 +79,7 @@ export function registerGoogleRoutes(app: Express) {
       const { isGoogleSheetsConnected } = await import("../googleSheets");
       const { getDriveStatus } = await import("../googleDrive");
       const { getSetting } = await import("../dbSettings");
-      const KNOWN_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"];
+      const KNOWN_FACILITIES = [...VALID_FACILITIES];
       const facilitySettingKeys = KNOWN_FACILITIES.map(f => `BILLING_SPREADSHEET_ID_${f.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`);
       const [sheets, driveStatus, dbPatientsAt, dbBillingAt, dbPatientsSid, dbBillingSid, driveRootFolderId, ...facilityIds] = await Promise.all([
         isGoogleSheetsConnected(),
