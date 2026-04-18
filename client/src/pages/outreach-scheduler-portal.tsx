@@ -307,6 +307,11 @@ export default function OutreachSchedulerPortalPage() {
     return map;
   }, [appointments]);
 
+  const bookedCount = useMemo(
+    () => filteredCallList.filter((item) => appointmentByPatientName.has(item.patientName.trim().toLowerCase())).length,
+    [filteredCallList, appointmentByPatientName],
+  );
+
   // Loading / not found states
   if (isLoading) {
     return (
@@ -445,7 +450,17 @@ export default function OutreachSchedulerPortalPage() {
           <Card className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Call List</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold text-slate-900">Call List</h2>
+                  {bookedCount > 0 && (
+                    <span
+                      className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200"
+                      data-testid="call-list-booked-count"
+                    >
+                      {bookedCount} booked
+                    </span>
+                  )}
+                </div>
                 <p className="text-sm text-slate-500">Provider shown for ancillary order context.</p>
               </div>
               <div className="relative w-full max-w-xs">
