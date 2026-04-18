@@ -32,7 +32,7 @@ const patientsSyncLock = { running: false, pending: false };
 const billingSyncLock = { running: false, pending: false };
 const exportNotesLock = { running: false, pending: false };
 
-async function executeSyncPatients(): Promise<PatientsSyncResult> {
+export async function executeSyncPatients(): Promise<PatientsSyncResult> {
   const { getOrCreateSpreadsheet, upsertSheetData } = await import("../googleSheets");
   const { setSetting } = await import("../dbSettings");
   const spreadsheetId = await getOrCreateSpreadsheet("GOOGLE_SHEETS_PATIENTS_ID", "Plexus Patient Directory");
@@ -82,7 +82,7 @@ export function backgroundSyncPatients(): void {
   void runPatientsSyncWithLock(false);
 }
 
-async function executeSyncBilling(): Promise<BillingSyncResult> {
+export async function executeSyncBilling(): Promise<BillingSyncResult> {
   const { getOrCreateSpreadsheetInFolder, upsertSheetData } = await import("../googleSheets");
   const { getFacilityFolderId } = await import("../googleDrive");
   const { getSetting, setSetting } = await import("../dbSettings");
@@ -193,7 +193,7 @@ export function backgroundSyncBilling(): void {
   void runBillingSyncWithLock(false);
 }
 
-async function executeExportNotes(): Promise<ExportNotesResult> {
+export async function executeExportNotes(): Promise<ExportNotesResult> {
   const { uploadTextAsGoogleDoc, ensureStructuredFacilityFolderTree } = await import("../googleDrive");
   const BATCH_LIMIT = 50;
   const allNotes = await storage.getAllGeneratedNotes();
