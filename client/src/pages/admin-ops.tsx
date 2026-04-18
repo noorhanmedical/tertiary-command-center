@@ -1,7 +1,8 @@
 import { Link } from "wouter";
-import { ArrowLeft, CreditCard, Settings as SettingsIcon, Shield } from "lucide-react";
+import { ArrowLeft, CreditCard, Settings as SettingsIcon, Shield, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { QualificationModeSettings } from "@/components/QualificationModeSettings";
 
 export default function AdminOpsPage() {
   return (
@@ -54,6 +55,19 @@ export default function AdminOpsPage() {
             </Card>
           </Link>
         </div>
+
+        <Card className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="rounded-2xl bg-violet-100 p-3 text-violet-700">
+              <Sparkles className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Qualification Mode</h2>
+              <p className="text-sm text-slate-600">Control how aggressively the AI qualifies patients per facility.</p>
+            </div>
+          </div>
+          <QualificationModeSettings />
+        </Card>
       </div>
     </div>
   );
