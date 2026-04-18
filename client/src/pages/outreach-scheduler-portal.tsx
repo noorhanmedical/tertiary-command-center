@@ -6,6 +6,7 @@ import {
   Brain,
   Activity,
   Calendar,
+  CalendarPlus,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -319,6 +320,9 @@ export default function OutreachSchedulerPortalPage() {
   const [bookSlot, setBookSlot] = useState<BookingSlot | null>(null);
   const [bookName, setBookName] = useState("");
   const [cancelTarget, setCancelTarget] = useState<AncillaryAppointment | null>(null);
+  const [callListBookPatient, setCallListBookPatient] = useState<OutreachCallItem | null>(null);
+  const [callListBookTestType, setCallListBookTestType] = useState<"BrainWave" | "VitalWave">("BrainWave");
+  const [callListBookTime, setCallListBookTime] = useState<string>("");
 
   // Call list state
   const [search, setSearch] = useState("");
@@ -359,17 +363,33 @@ export default function OutreachSchedulerPortalPage() {
 
   // Book appointment
   const bookMutation = useMutation({
-    mutationFn: async ({ patientName, testType, scheduledTime }: { patientName: string; testType: string; scheduledTime: string }) => {
+    mutationFn: async ({ patientName, testType, scheduledTime, patientId }: { patientName: string; testType: string; scheduledTime: string; patientId?: number }) => {
       const scheduledDate = toDateKey(calYear, calMonth, selectedDay!);
       const res = await apiRequest("POST", "/api/appointments", { patientName, facility, scheduledDate, scheduledTime, testType });
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed to book"); }
-      return res.json();
+      const appt = await res.json();
+      let statusUpdateFailed = false;
+      if (patientId != null) {
+        try {
+          await apiRequest("PATCH", `/api/patients/${patientId}`, { appointmentStatus: "scheduled" });
+        } catch {
+          statusUpdateFailed = true;
+        }
+      }
+      return { appt, statusUpdateFailed };
     },
-    onSuccess: () => {
+    onSuccess: ({ statusUpdateFailed }) => {
       queryClientLocal.invalidateQueries({ queryKey: ["/api/appointments"] });
-      toast({ title: "Appointment booked" });
+      globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
+      if (statusUpdateFailed) {
+        toast({ title: "Appointment booked", description: "Could not auto-update call-list status — please mark manually.", variant: "destructive" });
+      } else {
+        toast({ title: "Appointment booked" });
+      }
       setBookSlot(null);
       setBookName("");
+      setCallListBookPatient(null);
+      setCallListBookTime("");
     },
     onError: (e: Error) => toast({ title: "Booking failed", description: e.message, variant: "destructive" }),
   });
@@ -677,15 +697,33 @@ export default function OutreachSchedulerPortalPage() {
                             <RotateCcw className="h-3 w-3" />Reset
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => toggleNotes(item.patientId, item.notes)}
-                          className={["ml-auto inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition", expandedNotes.has(item.patientId) ? "border-blue-200 bg-blue-50 text-blue-700" : item.notes ? "border-violet-200 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"].join(" ")}
-                          data-testid={`portal-notes-toggle-${item.patientId}`}
-                        >
-                          <MessageSquare className="h-3.5 w-3.5" />
-                          {item.notes && !expandedNotes.has(item.patientId) ? "Note" : "Add note"}
-                        </button>
+                        <div className="ml-auto flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={!selectedDay}
+                            title={selectedDay ? "Book this patient into a slot" : "Select a day on the calendar first"}
+                            onClick={() => {
+                              setCallListBookPatient(item);
+                              setCallListBookTestType(
+                                item.qualifyingTests.some((t) => isBrainWave(t)) ? "BrainWave" : "VitalWave"
+                              );
+                              setCallListBookTime("");
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            data-testid={`portal-book-patient-${item.patientId}`}
+                          >
+                            <CalendarPlus className="h-3.5 w-3.5" />Book
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleNotes(item.patientId, item.notes)}
+                            className={["inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition", expandedNotes.has(item.patientId) ? "border-blue-200 bg-blue-50 text-blue-700" : item.notes ? "border-violet-200 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"].join(" ")}
+                            data-testid={`portal-notes-toggle-${item.patientId}`}
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
+                            {item.notes && !expandedNotes.has(item.patientId) ? "Note" : "Add note"}
+                          </button>
+                        </div>
                       </div>
 
                       {expandedNotes.has(item.patientId) && (
@@ -787,6 +825,112 @@ export default function OutreachSchedulerPortalPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Call-list quick-book dialog */}
+      {callListBookPatient && (() => {
+        const slots = callListBookTestType === "BrainWave" ? BW_SLOTS : VW_SLOTS;
+        const bookedTimes = new Set(
+          appointments
+            .filter((a) => a.scheduledDate === selectedDateStr && a.status === "scheduled" && (callListBookTestType === "BrainWave" ? !isVitalWave(a.testType) : isVitalWave(a.testType)))
+            .map((a) => a.scheduledTime)
+        );
+        return (
+          <Dialog open onOpenChange={(open) => !open && setCallListBookPatient(null)}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-base flex items-center gap-2">
+                  <CalendarPlus className="h-4 w-4 text-blue-600" />
+                  Book Appointment
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-1">
+                {/* Patient name (pre-filled, read-only) */}
+                <div>
+                  <Label className="text-xs font-medium text-slate-700">Patient</Label>
+                  <div className="mt-1 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800" data-testid="portal-callbook-patient-name">
+                    {callListBookPatient.patientName}
+                  </div>
+                </div>
+
+                {/* Date */}
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <Calendar className="h-3.5 w-3.5" />
+                  <span data-testid="portal-callbook-date">
+                    {selectedDay
+                      ? new Date(calYear, calMonth, selectedDay).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+                      : "No date selected"}
+                  </span>
+                  <span className="text-slate-300">·</span>
+                  <MapPin className="h-3.5 w-3.5" />
+                  <span>{facility}</span>
+                </div>
+
+                {/* Test type toggle */}
+                <div>
+                  <Label className="text-xs font-medium text-slate-700">Test Type</Label>
+                  <div className="mt-1.5 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setCallListBookTestType("BrainWave"); setCallListBookTime(""); }}
+                      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${callListBookTestType === "BrainWave" ? "border-violet-300 bg-violet-100 text-violet-700 ring-2 ring-violet-300 ring-offset-1" : "border-slate-200 bg-white text-slate-500 hover:bg-violet-50"}`}
+                      data-testid="portal-callbook-type-brainwave"
+                    >
+                      <Brain className="h-3.5 w-3.5" />BrainWave
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setCallListBookTestType("VitalWave"); setCallListBookTime(""); }}
+                      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${callListBookTestType === "VitalWave" ? "border-red-300 bg-red-100 text-red-600 ring-2 ring-red-300 ring-offset-1" : "border-slate-200 bg-white text-slate-500 hover:bg-red-50"}`}
+                      data-testid="portal-callbook-type-vitalwave"
+                    >
+                      <Activity className="h-3.5 w-3.5" />VitalWave
+                    </button>
+                  </div>
+                </div>
+
+                {/* Time slot picker */}
+                <div>
+                  <Label className="text-xs font-medium text-slate-700">Time Slot</Label>
+                  <div className="mt-1.5 grid grid-cols-4 gap-1.5 max-h-48 overflow-y-auto pr-1">
+                    {slots.map((slot) => {
+                      const isBooked = bookedTimes.has(slot);
+                      const isSelected = callListBookTime === slot;
+                      return (
+                        <button
+                          key={slot}
+                          type="button"
+                          disabled={isBooked}
+                          onClick={() => setCallListBookTime(slot)}
+                          className={`rounded-lg border py-1.5 text-xs font-medium transition ${isBooked ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300" : isSelected ? "border-blue-400 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:bg-blue-50"}`}
+                          data-testid={`portal-callbook-slot-${slot}`}
+                        >
+                          {formatTime12(slot)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" size="sm" onClick={() => setCallListBookPatient(null)}>Cancel</Button>
+                <Button
+                  size="sm"
+                  disabled={!callListBookTime || !selectedDay || bookMutation.isPending}
+                  onClick={() => bookMutation.mutate({
+                    patientName: callListBookPatient.patientName,
+                    testType: callListBookTestType,
+                    scheduledTime: callListBookTime,
+                    patientId: callListBookPatient.patientId,
+                  })}
+                  data-testid="portal-callbook-confirm"
+                >
+                  {bookMutation.isPending ? "Booking…" : "Confirm Booking"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
     </div>
   );
 }
