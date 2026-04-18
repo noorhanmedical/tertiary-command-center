@@ -551,22 +551,32 @@ export default function OutreachSchedulerPortalPage() {
                           </button>
                         )}
                         <div className="ml-auto flex items-center gap-2">
-                          <button
-                            type="button"
-                            disabled={!selectedDay}
-                            title={selectedDay ? "Book this patient into a slot" : "Select a day on the calendar first"}
-                            onClick={() => {
-                              setCallListBookPatient(item);
-                              setCallListBookTestType(
-                                item.qualifyingTests.some((t) => isBrainWave(t)) ? "BrainWave" : "VitalWave"
-                              );
-                              setCallListBookTime("");
-                            }}
-                            className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
-                            data-testid={`portal-book-patient-${item.patientId}`}
-                          >
-                            <CalendarPlus className="h-3.5 w-3.5" />Book
-                          </button>
+                          {currentStatus === "scheduled" ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-medium text-green-700 cursor-default"
+                              title="Already scheduled"
+                              data-testid={`portal-book-patient-${item.patientId}`}
+                            >
+                              <CalendarPlus className="h-3.5 w-3.5" />Already Scheduled
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={!selectedDay}
+                              title={selectedDay ? "Book this patient into a slot" : "Select a day on the calendar first"}
+                              onClick={() => {
+                                setCallListBookPatient(item);
+                                setCallListBookTestType(
+                                  item.qualifyingTests.some((t) => isBrainWave(t)) ? "BrainWave" : "VitalWave"
+                                );
+                                setCallListBookTime("");
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              data-testid={`portal-book-patient-${item.patientId}`}
+                            >
+                              <CalendarPlus className="h-3.5 w-3.5" />Book
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => toggleNotes(item.patientId, item.notes)}
