@@ -48,6 +48,29 @@ import { type GeneratedDocument } from "@shared/plexus";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
+type ClinicWeekDay = {
+  isoDate: string;
+  patientCount: number;
+  ancillaryCount: number;
+  ancillaryBreakdown: Record<string, number>;
+  providerNames: string[];
+};
+
+type ClinicTab = {
+  clinicKey: string;
+  clinicLabel: string;
+  scheduler: { id: string; name: string; initials: string } | null;
+  weekDays: ClinicWeekDay[];
+};
+
+type ScheduleDashboardResponse = {
+  today: string;
+  weekStart: string;
+  previousWeekStart: string;
+  nextWeekStart: string;
+  clinicTabs: ClinicTab[];
+};
+
 const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
 
 
@@ -262,6 +285,8 @@ export default function Home() {
   const [importCodeInput, setImportCodeInput] = useState("");
   const [importCodeError, setImportCodeError] = useState(false);
   const [scheduleModalPatient, setScheduleModalPatient] = useState<PatientScreening | null>(null);
+  const [dashboardWeekOverride, setDashboardWeekOverride] = useState<string | null>(null);
+  const [dashboardClinicKey, setDashboardClinicKey] = useState<string | null>(null);
 
   const { data: batches = [], isLoading: batchesLoading } = useQuery<ScreeningBatchWithPatients[]>({
     queryKey: ["/api/screening-batches"],
@@ -277,6 +302,32 @@ export default function Home() {
     queryKey: ["/api/test-history"],
     enabled: view === "history" || view === "references" || tabs.some((t) => t.type === "history" || t.type === "references"),
   });
+
+  const { data: dashboardData, isLoading: dashboardLoading } = useQuery<ScheduleDashboardResponse>({
+    queryKey: ["/api/schedule/dashboard", dashboardWeekOverride || "current"],
+    queryFn: async () => {
+      const url = dashboardWeekOverride
+        ? `/api/schedule/dashboard?weekStart=${encodeURIComponent(dashboardWeekOverride)}`
+        : "/api/schedule/dashboard";
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    enabled: view === "home",
+    refetchInterval: 120000,
+  });
+
+  const dashboardClinicTabs = dashboardData?.clinicTabs || [];
+  const activeDashboardClinic =
+    dashboardClinicTabs.find((t) => t.clinicKey === dashboardClinicKey) ||
+    dashboardClinicTabs[0] ||
+    null;
+
+  function fmtDashDay(iso: string) {
+    const [y, m, d] = iso.split("-").map(Number);
+    const dt = new Date(y, (m || 1) - 1, d || 1);
+    return dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  }
 
   const importHistoryMutation = useMutation({
     mutationFn: async (text: string) => {
@@ -1516,42 +1567,101 @@ export default function Home() {
                   </Link>
                 </div>
 
-                <Link href="/schedule-dashboard">
-                  <Card
-                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                    data-testid="tile-schedule-dashboard"
-                  >
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                      <CalendarDays className="w-14 h-14 text-blue-500" strokeWidth={1.75} />
-                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight">
-                        Schedule Dashboard
-                      </span>
-                    </div>
-                  </Card>
-                </Link>
-
-                <Link href="/appointments">
-                  <Card
-                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-shadow hover:shadow-md mt-4"
-                    data-testid="tile-appointments"
-                  >
-                    <div className="p-5">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                            <Calendar className="w-5 h-5 text-primary" strokeWidth={1.75} />
-                          </div>
-                          <div>
-                            <span className="text-base font-bold text-slate-800 dark:text-foreground" data-testid="text-tile-appointments">Schedule</span>
-                            <p className="text-xs text-slate-500">Ancillary appointment schedule</p>
-                          </div>
+                <Card className="rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm mt-4" data-testid="tile-schedule-dashboard-inline">
+                  <div className="p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
+                          <CalendarDays className="w-5 h-5 text-blue-600" strokeWidth={1.75} />
                         </div>
-                        <span className="text-xs text-primary font-medium group-hover:underline shrink-0">View Full Schedule →</span>
+                        <div>
+                          <span className="text-base font-bold text-slate-800 dark:text-foreground">Schedule Dashboard</span>
+                          <p className="text-xs text-slate-500">Canonical clinic schedule · live data</p>
+                        </div>
                       </div>
+                      <Link href="/appointments">
+                        <span className="text-xs text-primary font-medium hover:underline cursor-pointer shrink-0" data-testid="link-view-full-schedule">View Full Schedule →</span>
+                      </Link>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 mb-3">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setDashboardWeekOverride(dashboardData?.previousWeekStart || null); }}
+                        className="p-1 rounded-lg hover:bg-slate-100 transition-colors text-slate-500"
+                        data-testid="button-dashboard-prev-week"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <span className="text-xs font-semibold text-slate-600 tabular-nums">
+                        Week of {dashboardData?.weekStart ? fmtDashDay(dashboardData.weekStart) : "—"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setDashboardWeekOverride(dashboardData?.nextWeekStart || null); }}
+                        className="p-1 rounded-lg hover:bg-slate-100 transition-colors text-slate-500"
+                        data-testid="button-dashboard-next-week"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                      {dashboardClinicTabs.length > 1 && (
+                        <div className="flex flex-wrap gap-1 ml-1">
+                          {dashboardClinicTabs.map((tab) => (
+                            <button
+                              key={tab.clinicKey}
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setDashboardClinicKey(tab.clinicKey); }}
+                              className={`rounded-xl border px-2.5 py-0.5 text-xs font-medium transition ${
+                                activeDashboardClinic?.clinicKey === tab.clinicKey
+                                  ? "border-blue-200 bg-blue-50 text-blue-700"
+                                  : "border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:text-blue-700"
+                              }`}
+                              data-testid={`button-dashboard-clinic-${tab.clinicKey}`}
+                            >
+                              {tab.clinicLabel}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {dashboardLoading ? (
+                      <div className="space-y-2 animate-pulse mb-4">
+                        {[...Array(3)].map((_, i) => <div key={i} className="h-14 bg-slate-100 rounded-xl" />)}
+                      </div>
+                    ) : !activeDashboardClinic ? (
+                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 py-5 text-center text-xs text-slate-400 mb-4">
+                        No schedule data — create a schedule to get started
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
+                        {activeDashboardClinic.weekDays.map((day) => {
+                          const isToday = day.isoDate === dashboardData?.today;
+                          return (
+                            <div
+                              key={day.isoDate}
+                              className={`rounded-xl border p-2.5 ${isToday ? "border-blue-300 bg-blue-50" : "border-slate-200 bg-slate-50"}`}
+                              data-testid={`dashboard-day-${day.isoDate}`}
+                            >
+                              <p className={`text-[11px] font-semibold truncate ${isToday ? "text-blue-700" : "text-slate-700"}`}>
+                                {fmtDashDay(day.isoDate)}
+                              </p>
+                              <div className="mt-1.5 space-y-0.5">
+                                <p className="text-xs text-slate-500">Pts: <span className="font-semibold text-slate-800">{day.patientCount}</span></p>
+                                <p className="text-xs text-slate-500">Anc: <span className={`font-semibold ${day.ancillaryCount > 0 ? "text-blue-600" : "text-slate-800"}`}>{day.ancillaryCount}</span></p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="border-t border-slate-100 pt-3">
+                      <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Upcoming Appointments</p>
                       <ScheduleTile />
                     </div>
-                  </Card>
-                </Link>
+                  </div>
+                </Card>
 
                 {batches.length > 0 && (
                   <div className="mt-10">
