@@ -74,6 +74,7 @@ import {
   Phone,
   ClipboardList,
   RefreshCw,
+  Settings,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -785,6 +786,14 @@ export default function Home() {
                     <Link href="/billing" onClick={() => setSidebarOpen(false)}>
                       <DollarSign className="w-4 h-4 shrink-0" />
                       <span className="text-sm font-medium">Billing</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild data-testid="sidebar-settings">
+                    <Link href="/settings" onClick={() => setSidebarOpen(false)}>
+                      <Settings className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium">Settings</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -1519,6 +1528,18 @@ export default function Home() {
                       <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
                         <Phone className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
                         <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach">Outreach</span>
+                      </div>
+                    </Card>
+                  </Link>
+
+                  <Link href="/settings">
+                    <Card
+                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
+                      data-testid="tile-settings"
+                    >
+                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
+                        <Settings className="w-14 h-14 text-slate-500" strokeWidth={1.75} />
+                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-settings">Settings</span>
                       </div>
                     </Card>
                   </Link>

@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+
 type OutreachCallItem = {
   id: string;
   patientId: number;
@@ -32,9 +33,10 @@ type OutreachCallItem = {
   providerName: string;
 };
 
-type OutreachCoverageCard = {
+type OutreachSchedulerCard = {
   id: string;
   name: string;
+  facility: string;
   totalPatients: number;
   touchedCount: number;
   scheduledCount: number;
@@ -46,13 +48,13 @@ type OutreachCoverageCard = {
 type OutreachDashboard = {
   today: string;
   metrics: {
-    coverageCount: number;
+    schedulerCount: number;
     totalCalls: number;
     totalScheduled: number;
     totalPending: number;
     avgConversion: number;
   };
-  coverageCards: OutreachCoverageCard[];
+  schedulerCards: OutreachSchedulerCard[];
 };
 
 function shellClass(active = false) {
@@ -68,10 +70,8 @@ function statusBadgeClass(status?: string | null) {
   const n = String(status || "pending").toLowerCase();
   if (n.includes("scheduled") || n.includes("booked"))
     return "bg-green-100 text-green-700 border-green-200";
-  if (n.includes("complete"))
-    return "bg-blue-100 text-blue-700 border-blue-200";
-  if (n.includes("cancel"))
-    return "bg-red-100 text-red-700 border-red-200";
+  if (n.includes("complete")) return "bg-blue-100 text-blue-700 border-blue-200";
+  if (n.includes("cancel")) return "bg-red-100 text-red-700 border-red-200";
   return "bg-amber-100 text-amber-700 border-amber-200";
 }
 
@@ -81,23 +81,15 @@ function formatDisplayDate(value?: string | null) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
     const [y, m, d] = raw.split("-").map(Number);
     const dt = new Date(y, (m || 1) - 1, d || 1);
-    return dt.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    return dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   }
   const dt = new Date(raw);
   if (Number.isNaN(dt.getTime())) return raw;
-  return dt.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 export default function OutreachPage() {
-  const [selectedCoverageId, setSelectedCoverageId] = useState<string | null>(null);
+  const [selectedSchedulerId, setSelectedSchedulerId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   const { data, isLoading } = useQuery<OutreachDashboard>({
@@ -110,26 +102,26 @@ export default function OutreachPage() {
     refetchInterval: 60_000,
   });
 
-  const coverageCards = data?.coverageCards ?? [];
+  const schedulerCards = data?.schedulerCards ?? [];
   const metrics = data?.metrics ?? {
-    coverageCount: 0,
+    schedulerCount: 0,
     totalCalls: 0,
     totalScheduled: 0,
     totalPending: 0,
     avgConversion: 0,
   };
 
-  const selectedCoverage = useMemo(
+  const selectedScheduler = useMemo(
     () =>
-      coverageCards.length
-        ? (coverageCards.find((c) => c.id === selectedCoverageId) ?? coverageCards[0])
+      schedulerCards.length
+        ? (schedulerCards.find((c) => c.id === selectedSchedulerId) ?? schedulerCards[0])
         : null,
-    [coverageCards, selectedCoverageId],
+    [schedulerCards, selectedSchedulerId],
   );
 
   const filteredCallList = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const list = selectedCoverage?.callList ?? [];
+    const list = selectedScheduler?.callList ?? [];
     if (!q) return list;
     return list.filter(
       (item) =>
@@ -138,39 +130,14 @@ export default function OutreachPage() {
         item.providerName.toLowerCase().includes(q) ||
         item.qualifyingTests.join(" ").toLowerCase().includes(q),
     );
-  }, [search, selectedCoverage]);
+  }, [search, selectedScheduler]);
 
   const METRIC_CARDS = [
-    {
-      label: "Clinic Coverage",
-      value: metrics.coverageCount,
-      Icon: Users2,
-      color: "bg-slate-900/5 text-slate-700",
-    },
-    {
-      label: "Calls Worked",
-      value: metrics.totalCalls,
-      Icon: Phone,
-      color: "bg-blue-600/10 text-blue-700",
-    },
-    {
-      label: "Scheduled",
-      value: metrics.totalScheduled,
-      Icon: CheckCircle2,
-      color: "bg-green-600/10 text-green-700",
-    },
-    {
-      label: "Pending",
-      value: metrics.totalPending,
-      Icon: Clock3,
-      color: "bg-amber-500/10 text-amber-700",
-    },
-    {
-      label: "Avg Conversion",
-      value: `${metrics.avgConversion}%`,
-      Icon: CalendarDays,
-      color: "bg-violet-600/10 text-violet-700",
-    },
+    { label: "Schedulers",     value: metrics.schedulerCount,  Icon: Users2,       color: "bg-slate-900/5 text-slate-700"   },
+    { label: "Calls Worked",   value: metrics.totalCalls,      Icon: Phone,        color: "bg-blue-600/10 text-blue-700"    },
+    { label: "Scheduled",      value: metrics.totalScheduled,  Icon: CheckCircle2, color: "bg-green-600/10 text-green-700"  },
+    { label: "Pending",        value: metrics.totalPending,    Icon: Clock3,       color: "bg-amber-500/10 text-amber-700"  },
+    { label: "Avg Conversion", value: `${metrics.avgConversion}%`, Icon: CalendarDays, color: "bg-violet-600/10 text-violet-700" },
   ] as const;
 
   return (
@@ -180,34 +147,22 @@ export default function OutreachPage() {
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Button
-              asChild
-              variant="outline"
-              className="rounded-2xl border-white/60 bg-white/80 backdrop-blur"
-            >
-              <Link href="/">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Back
-              </Link>
+            <Button asChild variant="outline" className="rounded-2xl border-white/60 bg-white/80 backdrop-blur">
+              <Link href="/"><ArrowLeft className="mr-2 h-4 w-4" />Back</Link>
             </Button>
             <div>
               <div className="flex items-center gap-2">
                 <div className="rounded-2xl bg-blue-600/10 p-2 text-blue-700">
                   <Phone className="h-5 w-5" />
                 </div>
-                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-                  Outreach
-                </h1>
+                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Outreach</h1>
               </div>
               <p className="mt-1 text-sm text-slate-600">
-                Clinic-based coverage cards driven directly from the canonical schedule.
+                Scheduler team-member cards backed by today's canonical schedule.
               </p>
             </div>
           </div>
-          <Badge
-            variant="outline"
-            className="rounded-full border-blue-200 bg-blue-50 px-3 py-1 text-blue-700"
-          >
+          <Badge variant="outline" className="rounded-full border-blue-200 bg-blue-50 px-3 py-1 text-blue-700">
             {formatDisplayDate(data?.today)}
           </Badge>
         </div>
@@ -217,13 +172,9 @@ export default function OutreachPage() {
           {METRIC_CARDS.map(({ label, value, Icon, color }) => (
             <Card key={label} className={`${shellClass()} p-5`}>
               <div className="flex items-center gap-3">
-                <div className={`rounded-2xl p-2 ${color}`}>
-                  <Icon className="h-5 w-5" />
-                </div>
+                <div className={`rounded-2xl p-2 ${color}`}><Icon className="h-5 w-5" /></div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
-                    {label}
-                  </p>
+                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">{label}</p>
                   <p className="mt-1 text-2xl font-semibold text-slate-900">{value}</p>
                 </div>
               </div>
@@ -234,71 +185,55 @@ export default function OutreachPage() {
         {/* Main grid */}
         <div className="grid gap-6 xl:grid-cols-[1.05fr_1.4fr]">
 
-          {/* Coverage cards */}
+          {/* Scheduler cards */}
           <Card className={`${shellClass()} p-5`}>
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Clinic Coverage Cards</h2>
-                <p className="text-sm text-slate-500">
-                  Each card is one clinic's call queue for the day.
-                </p>
+                <h2 className="text-lg font-semibold text-slate-900">Scheduler Team Members</h2>
+                <p className="text-sm text-slate-500">Each card owns the call list for their assigned clinic.</p>
               </div>
-              <Badge
-                variant="outline"
-                className="rounded-full border-slate-200 bg-slate-50 text-slate-700"
-              >
-                {coverageCards.length} active
+              <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-700">
+                {schedulerCards.length} active
               </Badge>
             </div>
 
             {isLoading ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
-                Loading outreach metrics…
+                Loading outreach data…
               </div>
-            ) : coverageCards.length === 0 ? (
+            ) : schedulerCards.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
-                No schedule data found for today.
+                No schedule data for today. Add schedulers in{" "}
+                <Link href="/settings" className="text-blue-600 underline underline-offset-2">Settings</Link>.
               </div>
             ) : (
               <div className="grid gap-4 md:grid-cols-2">
-                {coverageCards.map((card) => {
-                  const active = selectedCoverage?.id === card.id;
+                {schedulerCards.map((card) => {
+                  const active = selectedScheduler?.id === card.id;
                   return (
                     <button
                       key={card.id}
                       type="button"
-                      onClick={() => setSelectedCoverageId(card.id)}
+                      onClick={() => setSelectedSchedulerId(card.id)}
                       className={`text-left ${shellClass(active)} p-5`}
-                      data-testid={`outreach-coverage-card-${card.id}`}
+                      data-testid={`outreach-scheduler-card-${card.id}`}
                     >
                       <div>
                         <h3 className="text-base font-semibold text-slate-900">{card.name}</h3>
-                        <p className="mt-0.5 text-xs text-slate-500">Clinic call queue</p>
+                        <p className="mt-0.5 text-xs text-slate-500">{card.facility}</p>
                       </div>
                       <div className="mt-4 grid grid-cols-3 gap-3">
                         <div className="rounded-2xl bg-slate-50 p-3">
-                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                            Calls
-                          </p>
-                          <p className="mt-1 text-xl font-semibold text-slate-900">
-                            {card.touchedCount}
-                          </p>
+                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Calls</p>
+                          <p className="mt-1 text-xl font-semibold text-slate-900">{card.touchedCount}</p>
                         </div>
                         <div className="rounded-2xl bg-slate-50 p-3">
-                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                            Scheduled
-                          </p>
-                          <p className="mt-1 text-xl font-semibold text-slate-900">
-                            {card.scheduledCount}
-                          </p>
+                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Scheduled</p>
+                          <p className="mt-1 text-xl font-semibold text-slate-900">{card.scheduledCount}</p>
                         </div>
                         <div className="rounded-2xl bg-slate-50 p-3">
-                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                            Conv.
-                          </p>
-                          <p className="mt-1 text-xl font-semibold text-slate-900">
-                            {card.conversionRate}%
-                          </p>
+                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Conv.</p>
+                          <p className="mt-1 text-xl font-semibold text-slate-900">{card.conversionRate}%</p>
                         </div>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
@@ -321,11 +256,9 @@ export default function OutreachPage() {
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">
-                  {selectedCoverage ? `${selectedCoverage.name} — Call List` : "Call List"}
+                  {selectedScheduler ? `${selectedScheduler.name} — Call List` : "Call List"}
                 </h2>
-                <p className="text-sm text-slate-500">
-                  Same schedule source, with provider preserved for order context.
-                </p>
+                <p className="text-sm text-slate-500">Provider shown for ancillary order context.</p>
               </div>
               <div className="relative w-full max-w-xs">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -339,9 +272,9 @@ export default function OutreachPage() {
               </div>
             </div>
 
-            {!selectedCoverage ? (
+            {!selectedScheduler ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
-                Select a clinic coverage card to view the call list.
+                Select a scheduler card to view the call list.
               </div>
             ) : filteredCallList.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
@@ -358,28 +291,15 @@ export default function OutreachPage() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-base font-semibold text-slate-900">
-                            {item.patientName}
-                          </h3>
-                          <Badge
-                            className={`rounded-full border text-xs ${statusBadgeClass(item.appointmentStatus)}`}
-                          >
+                          <h3 className="text-base font-semibold text-slate-900">{item.patientName}</h3>
+                          <Badge className={`rounded-full border text-xs ${statusBadgeClass(item.appointmentStatus)}`}>
                             {item.appointmentStatus}
                           </Badge>
                         </div>
                         <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
-                          <span className="inline-flex items-center gap-1">
-                            <Clock3 className="h-3.5 w-3.5" />
-                            {item.time}
-                          </span>
-                          <span className="inline-flex items-center gap-1">
-                            <Building2 className="h-3.5 w-3.5" />
-                            {item.facility}
-                          </span>
-                          <span className="inline-flex items-center gap-1">
-                            <Phone className="h-3.5 w-3.5" />
-                            {item.phoneNumber}
-                          </span>
+                          <span className="inline-flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />{item.time}</span>
+                          <span className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5" />{item.facility}</span>
+                          <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{item.phoneNumber}</span>
                         </div>
                       </div>
                     </div>
@@ -389,39 +309,19 @@ export default function OutreachPage() {
                         <Stethoscope className="h-3.5 w-3.5" />
                         Provider
                       </div>
-                      <p className="mt-1 text-sm font-medium text-slate-800">
-                        {item.providerName}
-                      </p>
+                      <p className="mt-1 text-sm font-medium text-slate-800">{item.providerName}</p>
                     </div>
 
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <Badge
-                        variant="outline"
-                        className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs"
-                      >
-                        {item.patientType}
-                      </Badge>
-                      <Badge
-                        variant="outline"
-                        className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs"
-                      >
-                        {item.insurance}
-                      </Badge>
-                      <Badge
-                        variant="outline"
-                        className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs"
-                      >
-                        Batch {item.batchId}
-                      </Badge>
+                      <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">{item.patientType}</Badge>
+                      <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">{item.insurance}</Badge>
+                      <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">Batch {item.batchId}</Badge>
                     </div>
 
                     {item.qualifyingTests.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-2">
                         {item.qualifyingTests.map((test) => (
-                          <Badge
-                            key={`${item.id}-${test}`}
-                            className="rounded-full bg-blue-50 text-blue-700 text-xs hover:bg-blue-50"
-                          >
+                          <Badge key={`${item.id}-${test}`} className="rounded-full bg-blue-50 text-blue-700 text-xs hover:bg-blue-50">
                             {test}
                           </Badge>
                         ))}

@@ -267,3 +267,20 @@ export const insertAncillaryAppointmentSchema = createInsertSchema(ancillaryAppo
 
 export type AncillaryAppointment = typeof ancillaryAppointments.$inferSelect;
 export type InsertAncillaryAppointment = z.infer<typeof insertAncillaryAppointmentSchema>;
+
+export const outreachSchedulers = pgTable("outreach_schedulers", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  facility: text("facility").notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_outreach_schedulers_facility").on(table.facility),
+]);
+
+export const insertOutreachSchedulerSchema = createInsertSchema(outreachSchedulers).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type OutreachScheduler = typeof outreachSchedulers.$inferSelect;
+export type InsertOutreachScheduler = z.infer<typeof insertOutreachSchedulerSchema>;

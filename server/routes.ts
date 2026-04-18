@@ -35,6 +35,7 @@ import {
   extractImagePatients,
 } from "./services/screening";
 import type { InsertBillingRecord } from "../shared/schema";
+import { insertOutreachSchedulerSchema } from "../shared/schema";
 import { registerTestHistoryRoutes } from "./routes/testHistory";
 import { registerPatientReferenceRoutes } from "./routes/patientReferences";
 import { registerGeneratedNotesRoutes } from "./routes/generatedNotes";
@@ -626,6 +627,56 @@ export async function registerRoutes(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: message || "Failed to build outreach dashboard" });
+    }
+  });
+
+  app.get("/api/outreach/schedulers", async (_req, res) => {
+    try {
+      const schedulers = await storage.getOutreachSchedulers();
+      res.json(schedulers);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/outreach/schedulers", async (req, res) => {
+    try {
+      const parsed = insertOutreachSchedulerSchema.extend({
+        facility: insertOutreachSchedulerSchema.shape.facility.refine(
+          (f) => (VALID_FACILITIES as readonly string[]).includes(f),
+          { message: "facility must be one of the three valid clinics" },
+        ),
+      }).safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      const scheduler = await storage.createOutreachScheduler(parsed.data);
+      res.status(201).json(scheduler);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/outreach/schedulers/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const parsed = insertOutreachSchedulerSchema.partial().safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      const updated = await storage.updateOutreachScheduler(id, parsed.data);
+      if (!updated) return res.status(404).json({ error: "Scheduler not found" });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/outreach/schedulers/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      await storage.deleteOutreachScheduler(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
   });
 

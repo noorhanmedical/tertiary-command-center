@@ -8,6 +8,7 @@ import {
   billingRecords,
   uploadedDocuments,
   ancillaryAppointments,
+  outreachSchedulers,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
@@ -24,6 +25,8 @@ import {
   type InsertUploadedDocument,
   type AncillaryAppointment,
   type InsertAncillaryAppointment,
+  type OutreachScheduler,
+  type InsertOutreachScheduler,
   users,
   type User,
   type InsertUser,
@@ -104,6 +107,11 @@ export interface IStorage {
   getUpcomingAppointments(limit?: number): Promise<AncillaryAppointment[]>;
   cancelAppointment(id: number): Promise<AncillaryAppointment | undefined>;
   getAppointmentsByPatient(patientScreeningId: number): Promise<AncillaryAppointment[]>;
+
+  getOutreachSchedulers(): Promise<OutreachScheduler[]>;
+  createOutreachScheduler(record: InsertOutreachScheduler): Promise<OutreachScheduler>;
+  updateOutreachScheduler(id: number, updates: Partial<InsertOutreachScheduler>): Promise<OutreachScheduler | undefined>;
+  deleteOutreachScheduler(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -369,6 +377,27 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(ancillaryAppointments)
       .where(eq(ancillaryAppointments.patientScreeningId, patientScreeningId))
       .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime));
+  }
+
+  async getOutreachSchedulers(): Promise<OutreachScheduler[]> {
+    return db.select().from(outreachSchedulers).orderBy(asc(outreachSchedulers.name));
+  }
+
+  async createOutreachScheduler(record: InsertOutreachScheduler): Promise<OutreachScheduler> {
+    const [result] = await db.insert(outreachSchedulers).values(record).returning();
+    return result;
+  }
+
+  async updateOutreachScheduler(id: number, updates: Partial<InsertOutreachScheduler>): Promise<OutreachScheduler | undefined> {
+    const [result] = await db.update(outreachSchedulers)
+      .set(updates)
+      .where(eq(outreachSchedulers.id, id))
+      .returning();
+    return result;
+  }
+
+  async deleteOutreachScheduler(id: number): Promise<void> {
+    await db.delete(outreachSchedulers).where(eq(outreachSchedulers.id, id));
   }
 }
 

@@ -1,5 +1,5 @@
 import type { IStorage } from "../storage";
-import type { ScreeningBatch, PatientScreening } from "@shared/schema";
+import type { ScreeningBatch, PatientScreening, OutreachScheduler } from "@shared/schema";
 
 type OutreachCallItem = {
   id: string;
@@ -17,9 +17,10 @@ type OutreachCallItem = {
   providerName: string;
 };
 
-type CoverageCardEntry = {
+type SchedulerCardEntry = {
   id: string;
   name: string;
+  facility: string;
   totalPatients: number;
   touchedCount: number;
   scheduledCount: number;
@@ -31,13 +32,13 @@ type CoverageCardEntry = {
 export type OutreachDashboard = {
   today: string;
   metrics: {
-    coverageCount: number;
+    schedulerCount: number;
     totalCalls: number;
     totalScheduled: number;
     totalPending: number;
     avgConversion: number;
   };
-  coverageCards: CoverageCardEntry[];
+  schedulerCards: SchedulerCardEntry[];
 };
 
 function s(v: unknown): string {
@@ -48,34 +49,40 @@ function canonicalDay(v?: string | null): string {
   return s(v).slice(0, 10);
 }
 
-function getFacility(batch: ScreeningBatch): string {
-  return s(batch.facility) || "Unassigned Facility";
-}
-
-function getProvider(batch: ScreeningBatch): string {
-  return s(batch.clinicianName) || "No provider";
+function resolveSchedulerName(
+  facility: string,
+  schedulers: OutreachScheduler[],
+): string {
+  const match = schedulers.find((sc) => sc.facility === facility);
+  return match ? match.name : "Unassigned";
 }
 
 export async function buildOutreachDashboard(
   storage: IStorage,
   today: string,
 ): Promise<OutreachDashboard> {
-  const batches = await storage.getAllScreeningBatches();
-  const map = new Map<string, CoverageCardEntry>();
+  const [batches, schedulers] = await Promise.all([
+    storage.getAllScreeningBatches(),
+    storage.getOutreachSchedulers(),
+  ]);
 
-  for (const batch of batches) {
+  const map = new Map<string, SchedulerCardEntry>();
+
+  for (const batch of batches as ScreeningBatch[]) {
     const batchDay = canonicalDay(batch.scheduleDate);
     if (batchDay && batchDay !== today) continue;
 
     const patients: PatientScreening[] = await storage.getPatientScreeningsByBatch(batch.id);
-    const facility = getFacility(batch);
-    const cardId = facility.toLowerCase().replace(/\s+/g, "-");
-    const providerName = getProvider(batch);
+    const facility = s(batch.facility) || "Unassigned Facility";
+    const schedulerName = resolveSchedulerName(facility, schedulers);
+    const cardId = schedulerName.toLowerCase().replace(/\s+/g, "-");
+    const providerName = s(batch.clinicianName) || "No provider";
 
     if (!map.has(cardId)) {
       map.set(cardId, {
         id: cardId,
-        name: facility,
+        name: schedulerName,
+        facility,
         totalPatients: 0,
         touchedCount: 0,
         scheduledCount: 0,
@@ -118,7 +125,7 @@ export async function buildOutreachDashboard(
     }
   }
 
-  const coverageCards: CoverageCardEntry[] = Array.from(map.values())
+  const schedulerCards: SchedulerCardEntry[] = Array.from(map.values())
     .map((entry) => ({
       ...entry,
       callList: [...entry.callList].sort(
@@ -136,21 +143,21 @@ export async function buildOutreachDashboard(
         b.totalPatients - a.totalPatients || a.name.localeCompare(b.name),
     );
 
-  const totalPatients = coverageCards.reduce((sum, c) => sum + c.totalPatients, 0);
-  const totalScheduled = coverageCards.reduce((sum, c) => sum + c.scheduledCount, 0);
+  const totalPatients = schedulerCards.reduce((sum, c) => sum + c.totalPatients, 0);
+  const totalScheduled = schedulerCards.reduce((sum, c) => sum + c.scheduledCount, 0);
 
   return {
     today,
     metrics: {
-      coverageCount: coverageCards.length,
-      totalCalls: coverageCards.reduce((sum, c) => sum + c.touchedCount, 0),
+      schedulerCount: schedulerCards.length,
+      totalCalls: schedulerCards.reduce((sum, c) => sum + c.touchedCount, 0),
       totalScheduled,
-      totalPending: coverageCards.reduce((sum, c) => sum + c.pendingCount, 0),
+      totalPending: schedulerCards.reduce((sum, c) => sum + c.pendingCount, 0),
       avgConversion:
         totalPatients > 0
           ? Math.round((totalScheduled / totalPatients) * 100)
           : 0,
     },
-    coverageCards,
+    schedulerCards,
   };
 }

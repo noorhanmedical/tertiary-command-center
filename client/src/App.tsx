@@ -14,6 +14,7 @@ import BillingPage from "@/pages/billing";
 import DocumentUploadPage from "@/pages/document-upload";
 import AppointmentsPage from "@/pages/appointments";
 import OutreachPage from "@/pages/outreach";
+import SettingsPage from "@/pages/settings";
 
 function App() {
   const style = {
@@ -42,6 +43,7 @@ function App() {
                   <Route path="/document-upload" component={DocumentUploadPage} />
                   <Route path="/appointments" component={AppointmentsPage} />
                   <Route path="/outreach" component={OutreachPage} />
+                  <Route path="/settings" component={SettingsPage} />
                   <Route>
                     <SidebarProvider defaultOpen={false} style={style as React.CSSProperties}>
                       <Switch>
