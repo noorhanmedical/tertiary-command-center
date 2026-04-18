@@ -944,16 +944,17 @@ export default function BillingPage() {
               {syncBillingMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <SiGooglesheets className="w-3.5 h-3.5" />}
               Sync to Sheets
             </Button>
+            {(masterSheetUrl || billingSheetUrl) && (
+              <a href={masterSheetUrl ?? billingSheetUrl!} target="_blank" rel="noopener noreferrer"
+                className="text-[10px] text-emerald-600 hover:underline inline-flex items-center gap-1"
+                title="Open master Plexus Billing Tracker"
+                data-testid="link-master-billing-sheet">
+                <SiGooglesheets className="w-3 h-3" />Master Sheet
+              </a>
+            )}
             {billingSyncedAt && (
-              <span className="text-[10px] text-slate-400 whitespace-nowrap flex items-center gap-1">
+              <span className="text-[10px] text-slate-400 whitespace-nowrap">
                 Synced {new Date(billingSyncedAt).toLocaleTimeString()}
-                {(masterSheetUrl || billingSheetUrl) && (
-                  <a href={masterSheetUrl ?? billingSheetUrl!} target="_blank" rel="noopener noreferrer"
-                    className="text-emerald-600 hover:underline inline-flex items-center gap-0.5 ml-1"
-                    title="Open master Plexus Billing Tracker">
-                    <ExternalLink className="w-2.5 h-2.5" />Master
-                  </a>
-                )}
               </span>
             )}
             <Button size="sm" variant="outline" className="gap-1.5 text-xs h-8 text-slate-600" onClick={() => setShowAddRow(true)} data-testid="button-add-billing-row">
