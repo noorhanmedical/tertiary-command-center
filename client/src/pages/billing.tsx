@@ -967,8 +967,10 @@ export default function BillingPage() {
             {(() => {
               const activeFacilityUrl = facilityTab !== "All" ? facilitySheetUrls[facilityTab] : null;
               const openUrl = activeFacilityUrl ?? masterSheetUrl ?? billingSheetUrl;
-              const label = activeFacilityUrl ? `${facilityTab} Sheet` : "Master Sheet";
-              const title = activeFacilityUrl ? `Open ${facilityTab} billing sheet` : "Open master Plexus Billing Tracker";
+              const label = activeFacilityUrl ? `Open ${facilityTab} Sheet` : "Open Billing Sheet";
+              const title = activeFacilityUrl
+                ? `Open ${facilityTab} billing sheet in Google Sheets`
+                : "Open Plexus Billing Tracker in Google Sheets";
               if (!openUrl) return null;
               return (
                 <a href={openUrl} target="_blank" rel="noopener noreferrer"
