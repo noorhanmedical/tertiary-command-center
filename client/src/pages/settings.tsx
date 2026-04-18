@@ -192,6 +192,29 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* Static Team Members card */}
+        <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+          <div className="mb-4 flex items-center gap-2">
+            <Database className="h-5 w-5 text-blue-700" />
+            <h2 className="text-lg font-semibold text-slate-900">Team Members</h2>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {(data?.teamMembers || []).map((member) => (
+              <div key={member.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-100 text-sm font-semibold text-blue-700">
+                    {member.initials}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-900">{member.name}</p>
+                    <p className="text-sm text-slate-500">{member.role}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
         {/* Scheduler Team */}
         <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
           <div className="mb-4 flex items-center justify-between gap-2">
@@ -333,29 +356,6 @@ export default function SettingsPage() {
             >
               Add Member
             </Button>
-          </div>
-        </Card>
-
-        {/* Static Team Members card */}
-        <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-          <div className="mb-4 flex items-center gap-2">
-            <Database className="h-5 w-5 text-blue-700" />
-            <h2 className="text-lg font-semibold text-slate-900">Team Members</h2>
-          </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            {(data?.teamMembers || []).map((member) => (
-              <div key={member.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-100 text-sm font-semibold text-blue-700">
-                    {member.initials}
-                  </div>
-                  <div>
-                    <p className="font-semibold text-slate-900">{member.name}</p>
-                    <p className="text-sm text-slate-500">{member.role}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
           </div>
         </Card>
 
