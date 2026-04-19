@@ -67,15 +67,28 @@ const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Vet
 
 export async function initializeDriveFolderTree(): Promise<void> {
   try {
-    const { getSetting, setSetting } = await import("../dbSettings");
+    const { getSetting, setSetting, deleteSettingsByPrefix } = await import("../dbSettings");
     const drive = await getUncachableGoogleDriveClient();
 
     const rootKey = "DRIVE_FOLDER_plexus_ancillary_platform";
+    const cachedRootId = await getSetting(rootKey);
+    const envRootId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID ?? null;
+
+    if (cachedRootId && envRootId && cachedRootId !== envRootId) {
+      const cleared = await deleteSettingsByPrefix("DRIVE_FOLDER_");
+      console.log(
+        `[Drive] GOOGLE_DRIVE_ROOT_FOLDER_ID changed (${cachedRootId} → ${envRootId}). ` +
+        `Cleared ${cleared} stale folder settings — will re-initialize under new root.`
+      );
+    }
+
     let rootId = await getSetting(rootKey);
     if (!rootId) {
       rootId = await getOrCreatePreferredRootFolder(drive);
       await setSetting(rootKey, rootId);
-      console.log(`[Drive] Root folder resolved: ${rootId}`);
+      console.log(`[Drive] Root folder resolved: ${rootId} (https://drive.google.com/drive/folders/${rootId})`);
+    } else {
+      console.log(`[Drive] Using cached root folder: ${rootId} (https://drive.google.com/drive/folders/${rootId})`);
     }
 
     for (const facility of VALID_FACILITIES) {
