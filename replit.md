@@ -26,6 +26,14 @@ This project is an AI-powered patient screening application designed to analyze 
 ## System Architecture
 The application features a React + Vite + Tailwind CSS + Shadcn UI frontend, providing an iOS-style card layout and a modern user experience with a clean, icy blue-white theme. The backend is built with Express.js, handling file parsing, OpenAI integration, and API routing. PostgreSQL, managed with Drizzle ORM, serves as the database, utilizing explicit indexes for optimized performance. The system employs a 3-step draft workflow: build schedule, edit clinical data, and analyze for ancillaries. Core features include tab-based navigation for schedules, a collapsible sidebar for schedule history, and an expandable patient result card view. A service layer encapsulates AI client interactions, data ingestion, and screening logic. Operational robustness is ensured through health checks, graceful shutdown mechanisms, and schema management via Drizzle migrations. Documents are generated client-side and can be exported.
 
+### DB Pool and Transaction Safety (Task #150)
+- **Pool config** (`server/db.ts`): max:20, min:2, idleTimeoutMillis:30s, connectionTimeoutMillis:3s; error event listener prevents process crash on dropped client
+- **Startup recovery**: On boot, any batch still in "processing" status (from a crashed run) is automatically reset to "draft" so users can re-run analysis — no manual DB intervention needed
+- **Batch analysis transactions**: The reset+processing transition and the final completed/error transitions are wrapped in `db.transaction()` blocks
+- **Bulk patient import transactions**: File upload and text-paste imports build all rows and insert in a single `db.transaction()` — all rows land together or none do
+- **Billing bulk import transaction**: Google Sheets import accumulates all create/update ops, then executes them in a single `db.transaction()`
+- **Healthz pool telemetry**: `GET /healthz` now returns `{ status:"ok", db:{ total, idle, waiting } }` for ALB/monitoring use
+
 ### Canonical Platform Navigation (Task #158)
 A persistent `GlobalNav` left-rail (`client/src/components/GlobalNav.tsx`) is visible on every page with 7 canonical domains + Admin at the bottom:
 - **Schedule** (`/schedule`) — canonical source of `scheduleDate`; was `/`

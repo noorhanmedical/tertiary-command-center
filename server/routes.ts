@@ -1,6 +1,9 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { db, pool } from "./db";
+import { patientScreenings, billingRecords, screeningBatches } from "@shared/schema";
+import { eq } from "drizzle-orm";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import { z } from "zod";
@@ -142,10 +145,16 @@ export async function registerRoutes(
   // ─── Health check (exempt from auth) ──────────────────────────────────────
   app.get("/healthz", async (_req, res) => {
     try {
-      const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
       await db.execute(sql`SELECT 1`);
-      res.json({ status: "ok", db: true });
+      res.json({
+        status: "ok",
+        db: {
+          total: pool.totalCount,
+          idle: pool.idleCount,
+          waiting: pool.waitingCount,
+        },
+      });
     } catch {
       res.status(503).json({ status: "error", db: false });
     }
@@ -285,39 +294,38 @@ export async function registerRoutes(
         }
       }
 
-      const created = [];
-      for (const p of allPatients) {
-        const patient = await storage.createPatientScreening({
-          batchId,
-          name: p.name,
-          time: p.time || null,
-          age: p.age || null,
-          gender: p.gender || null,
-          insurance: p.insurance || null,
-          facility: batch.facility || null,
-          diagnoses: p.diagnoses || null,
-          history: p.history || null,
-          medications: p.medications || null,
-          previousTests: p.previousTests || null,
-          previousTestsDate: extractDateFromPrevTests(p.previousTests) || null,
-          noPreviousTests: p.noPreviousTests ?? false,
-          notes: p.notes || null,
-          qualifyingTests: [],
-          reasoning: {},
-          status: "draft",
-          appointmentStatus: "pending",
-          patientType: p.time ? "visit" : "outreach",
-        });
-        created.push(patient);
-      }
+      const patientRows = allPatients.map((p) => ({
+        batchId,
+        name: p.name,
+        time: p.time || null,
+        age: p.age || null,
+        gender: p.gender || null,
+        insurance: p.insurance || null,
+        facility: batch.facility || null,
+        diagnoses: p.diagnoses || null,
+        history: p.history || null,
+        medications: p.medications || null,
+        previousTests: p.previousTests || null,
+        previousTestsDate: extractDateFromPrevTests(p.previousTests) || null,
+        noPreviousTests: p.noPreviousTests ?? false,
+        notes: p.notes || null,
+        qualifyingTests: [] as string[],
+        reasoning: {} as Record<string, unknown>,
+        status: "draft" as const,
+        appointmentStatus: "pending" as const,
+        patientType: (p.time ? "visit" : "outreach") as "visit" | "outreach",
+      }));
+
+      const created = patientRows.length > 0
+        ? await db.transaction(async (tx) => tx.insert(patientScreenings).values(patientRows).returning())
+        : [];
 
       await storage.updateScreeningBatch(batchId, {
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
-      const refreshed = await storage.getPatientScreeningsByBatch(batchId);
       const createdIds = new Set(created.map((p) => p.id));
-      const enrichedPatients = refreshed.filter((p) => createdIds.has(p.id));
+      const enrichedPatients = created.filter((p) => createdIds.has(p.id));
 
       res.json({ imported: enrichedPatients.length, patients: enrichedPatients });
     } catch (error: any) {
@@ -337,41 +345,37 @@ export async function registerRoutes(
 
       const patients = await parseWithAI(text);
 
-      const created = [];
-      for (const p of patients) {
-        const patient = await storage.createPatientScreening({
-          batchId,
-          name: p.name,
-          time: p.time || null,
-          age: p.age || null,
-          gender: p.gender || null,
-          insurance: p.insurance || null,
-          facility: batch.facility || null,
-          diagnoses: p.diagnoses || null,
-          history: p.history || null,
-          medications: p.medications || null,
-          previousTests: p.previousTests || null,
-          previousTestsDate: extractDateFromPrevTests(p.previousTests) || null,
-          noPreviousTests: p.noPreviousTests ?? false,
-          notes: null,
-          qualifyingTests: [],
-          reasoning: {},
-          status: "draft",
-          appointmentStatus: "pending",
-          patientType: p.time ? "visit" : "outreach",
-        });
-        created.push(patient);
-      }
+      const patientRows2 = patients.map((p) => ({
+        batchId,
+        name: p.name,
+        time: p.time || null,
+        age: p.age || null,
+        gender: p.gender || null,
+        insurance: p.insurance || null,
+        facility: batch.facility || null,
+        diagnoses: p.diagnoses || null,
+        history: p.history || null,
+        medications: p.medications || null,
+        previousTests: p.previousTests || null,
+        previousTestsDate: extractDateFromPrevTests(p.previousTests) || null,
+        noPreviousTests: p.noPreviousTests ?? false,
+        notes: null as string | null,
+        qualifyingTests: [] as string[],
+        reasoning: {} as Record<string, unknown>,
+        status: "draft" as const,
+        appointmentStatus: "pending" as const,
+        patientType: (p.time ? "visit" : "outreach") as "visit" | "outreach",
+      }));
+
+      const created2 = patientRows2.length > 0
+        ? await db.transaction(async (tx) => tx.insert(patientScreenings).values(patientRows2).returning())
+        : [];
 
       await storage.updateScreeningBatch(batchId, {
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
-      const refreshed2 = await storage.getPatientScreeningsByBatch(batchId);
-      const createdIds2 = new Set(created.map((p) => p.id));
-      const enrichedPatients2 = refreshed2.filter((p) => createdIds2.has(p.id));
-
-      res.json({ imported: enrichedPatients2.length, patients: enrichedPatients2 });
+      res.json({ imported: created2.length, patients: created2 });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -593,14 +597,16 @@ export async function registerRoutes(
       const patients = await storage.getPatientScreeningsByBatch(batchId);
       if (patients.length === 0) return res.status(400).json({ error: "No patients in batch" });
 
-      if (batch.status === "processing") {
-        await storage.updateScreeningBatch(batchId, { status: "draft" });
-        for (const p of patients.filter((p) => p.status === "processing")) {
-          await storage.updatePatientScreening(p.id, { status: "draft", qualifyingTests: [], reasoning: {} });
+      await db.transaction(async (tx) => {
+        if (batch.status === "processing") {
+          await tx.update(screeningBatches).set({ status: "draft" }).where(eq(screeningBatches.id, batchId));
+          const processingPatients = patients.filter((p) => p.status === "processing");
+          for (const p of processingPatients) {
+            await tx.update(patientScreenings).set({ status: "draft", qualifyingTests: [], reasoning: {} }).where(eq(patientScreenings.id, p.id));
+          }
         }
-      }
-
-      await storage.updateScreeningBatch(batchId, { status: "processing" });
+        await tx.update(screeningBatches).set({ status: "processing" }).where(eq(screeningBatches.id, batchId));
+      });
 
       res.json({ success: true, patientCount: patients.length, async: true });
 
@@ -665,14 +671,15 @@ export async function registerRoutes(
         { concurrency: 5, retries: 3 }
       );
 
-      await storage.updateScreeningBatch(batchId, {
-        status: "completed",
-        patientCount: patients.length,
+      await db.transaction(async (tx) => {
+        await tx.update(screeningBatches).set({ status: "completed", patientCount: patients.length }).where(eq(screeningBatches.id, batchId));
       });
     } catch (error: unknown) {
       console.error("Analysis error:", error);
       try {
-        await storage.updateScreeningBatch(batchId, { status: "draft" });
+        await db.transaction(async (tx) => {
+          await tx.update(screeningBatches).set({ status: "draft" }).where(eq(screeningBatches.id, batchId));
+        });
       } catch (resetErr: unknown) {
         console.error("Failed to reset batch status after analysis error:", resetErr);
       }
@@ -1049,6 +1056,11 @@ export async function registerRoutes(
       let updated = 0;
       let skipped = 0;
 
+      type BillingCreateOp = import("../shared/schema").InsertBillingRecord;
+      type BillingUpdateOp = { id: number; updates: Partial<import("../shared/schema").InsertBillingRecord> };
+      const createOps: BillingCreateOp[] = [];
+      const updateOps: BillingUpdateOp[] = [];
+
       for (const facility of KNOWN_FACILITIES) {
         const settingKey = `BILLING_SPREADSHEET_ID_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`;
         const spreadsheetId = await getSetting(settingKey);
@@ -1089,11 +1101,11 @@ export async function registerRoutes(
           }
 
           if (existing) {
-            await storage.updateBillingRecord(existing.id, updates);
+            updateOps.push({ id: existing.id, updates });
             updated++;
           } else if (!seenKeys.has(rowKey)) {
             seenKeys.add(rowKey);
-            await storage.createBillingRecord({
+            createOps.push({
               patientId: null,
               batchId: null,
               patientName,
@@ -1120,6 +1132,17 @@ export async function registerRoutes(
             skipped++;
           }
         }
+      }
+
+      if (createOps.length > 0 || updateOps.length > 0) {
+        await db.transaction(async (tx) => {
+          if (createOps.length > 0) {
+            await tx.insert(billingRecords).values(createOps);
+          }
+          for (const { id, updates } of updateOps) {
+            await tx.update(billingRecords).set(updates).where(eq(billingRecords.id, id));
+          }
+        });
       }
 
       res.json({ success: true, created, updated, skipped, total: created + updated });
