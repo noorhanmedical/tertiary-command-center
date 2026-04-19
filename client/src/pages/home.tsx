@@ -126,8 +126,8 @@ export default function Home() {
     onSuccess: (data) => { queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] }); openScheduleTab(data.id, data.name || "New Schedule"); },
   });
   const addPatientMutation = useMutation({
-    mutationFn: async ({ batchId, name, time }: { batchId: number; name: string; time?: string }) => {
-      const res = await apiRequest("POST", `/api/batches/${batchId}/patients`, { name, time }); return res.json();
+    mutationFn: async ({ batchId, name, time, age, gender, dob, phoneNumber, insurance, diagnoses, history, medications, previousTests, previousTestsDate, noPreviousTests, patientType, notes }: { batchId: number; name: string; time?: string; age?: string | number; gender?: string; dob?: string; phoneNumber?: string; insurance?: string; diagnoses?: string; history?: string; medications?: string; previousTests?: string; previousTestsDate?: string; noPreviousTests?: boolean; patientType?: string; notes?: string }) => {
+      const res = await apiRequest("POST", `/api/batches/${batchId}/patients`, { name, time, age, gender, dob, phoneNumber, insurance, diagnoses, history, medications, previousTests, previousTestsDate, noPreviousTests, patientType, notes }); return res.json();
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] }); queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] }); },
   });
