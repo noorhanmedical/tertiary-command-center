@@ -72,9 +72,11 @@ async function requireDriveConnected(res: any): Promise<boolean> {
   return true;
 }
 
+const S3_PROVIDER_UNAVAILABLE = { available: false, reason: "S3 provider active" } as const;
+
 function requireDriveProvider(res: any): boolean {
   if (getStorageProvider() === "s3") {
-    res.status(503).json({ available: false, reason: "S3 provider active — Plexus Drive browser is unavailable when using S3 storage." });
+    res.status(503).json(S3_PROVIDER_UNAVAILABLE);
     return false;
   }
   return true;
