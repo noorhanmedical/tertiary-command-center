@@ -268,6 +268,28 @@ export const insertAncillaryAppointmentSchema = createInsertSchema(ancillaryAppo
 export type AncillaryAppointment = typeof ancillaryAppointments.$inferSelect;
 export type InsertAncillaryAppointment = z.infer<typeof insertAncillaryAppointmentSchema>;
 
+export const analysisJobs = pgTable("analysis_jobs", {
+  id: serial("id").primaryKey(),
+  batchId: integer("batch_id").notNull().references(() => screeningBatches.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("running"),
+  totalPatients: integer("total_patients").notNull(),
+  completedPatients: integer("completed_patients").notNull().default(0),
+  errorMessage: text("error_message"),
+  startedAt: timestamp("started_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  index("idx_analysis_jobs_batch_id").on(table.batchId),
+  index("idx_analysis_jobs_status").on(table.status),
+]);
+
+export const insertAnalysisJobSchema = createInsertSchema(analysisJobs).omit({
+  id: true,
+  startedAt: true,
+});
+
+export type AnalysisJob = typeof analysisJobs.$inferSelect;
+export type InsertAnalysisJob = z.infer<typeof insertAnalysisJobSchema>;
+
 export const outreachSchedulers = pgTable("outreach_schedulers", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),

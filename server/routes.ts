@@ -85,6 +85,20 @@ export async function registerRoutes(
     console.error("[startup] Failed to reset stuck batches:", startupErr.message);
   }
 
+  // ─── Fail any analysis_jobs still marked "running" from the previous process ─
+  try {
+    await storage.failRunningAnalysisJobs("Server restarted mid-analysis");
+  } catch (jobErr: any) {
+    console.error("[startup] Failed to fail interrupted analysis jobs:", jobErr.message);
+  }
+
+  // ─── Purge analysis_jobs older than 7 days ─────────────────────────────────
+  try {
+    await storage.purgeOldAnalysisJobs(7);
+  } catch (purgeErr: any) {
+    console.error("[startup] Failed to purge old analysis jobs:", purgeErr.message);
+  }
+
   // ─── Auth endpoints (exempt from session requirement) ─────────────────────
   app.post("/api/auth/login", async (req, res) => {
     const { username, password } = req.body;
@@ -625,7 +639,14 @@ export async function registerRoutes(
         await tx.update(screeningBatches).set({ status: "processing" }).where(eq(screeningBatches.id, batchId));
       });
 
-      res.json({ success: true, patientCount: patients.length, async: true });
+      const job = await storage.createAnalysisJob({
+        batchId,
+        status: "running",
+        totalPatients: patients.length,
+        completedPatients: 0,
+      });
+
+      res.json({ success: true, patientCount: patients.length, jobId: job.id, async: true });
 
       const facilityQualMode = await getQualificationMode(batch.facility ?? null);
       console.log(`[batch:${batchId}] Qualification mode: ${facilityQualMode} (facility: ${batch.facility ?? "none"})`);
@@ -684,6 +705,7 @@ export async function registerRoutes(
               status: "error",
             });
           }
+          await storage.incrementAnalysisJobProgress(job.id).catch(() => {});
         },
         { concurrency: 5, retries: 3 }
       );
@@ -691,6 +713,7 @@ export async function registerRoutes(
       await db.transaction(async (tx) => {
         await tx.update(screeningBatches).set({ status: "completed", patientCount: patients.length }).where(eq(screeningBatches.id, batchId));
       });
+      await storage.updateAnalysisJob(job.id, { status: "completed", completedAt: new Date() });
     } catch (error: unknown) {
       console.error("Analysis error:", error);
       try {
@@ -700,6 +723,46 @@ export async function registerRoutes(
       } catch (resetErr: unknown) {
         console.error("Failed to set batch status to error after analysis failure:", resetErr);
       }
+      try {
+        const failedJob = await storage.getLatestAnalysisJobByBatch(batchId);
+        if (failedJob && failedJob.status === "running") {
+          const errMsg = error instanceof Error ? error.message : "Unknown analysis error";
+          await storage.updateAnalysisJob(failedJob.id, { status: "failed", errorMessage: errMsg, completedAt: new Date() });
+        }
+      } catch (jobErr: unknown) {
+        console.error("Failed to mark analysis job as failed:", jobErr);
+      }
+    }
+  });
+
+  // ─── Analysis job status polling ───────────────────────────────────────────
+  app.get("/api/batches/:id/analysis-status", async (req, res) => {
+    try {
+      const batchId = parseInt(req.params.id);
+      const job = await storage.getLatestAnalysisJobByBatch(batchId);
+      if (!job) {
+        return res.json({
+          status: "not_started",
+          totalPatients: 0,
+          completedPatients: 0,
+          progress: "0/0",
+          errorMessage: null,
+        });
+      }
+      return res.json({
+        id: job.id,
+        batchId: job.batchId,
+        status: job.status,
+        totalPatients: job.totalPatients,
+        completedPatients: job.completedPatients,
+        progress: `${job.completedPatients}/${job.totalPatients}`,
+        errorMessage: job.errorMessage ?? null,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt ?? null,
+      });
+    } catch (error: any) {
+      console.error("analysis-status error:", error.message);
+      res.status(500).json({ error: "Failed to fetch analysis status" });
     }
   });
 

@@ -180,21 +180,27 @@ export default function Home() {
       const data = await res.json();
       const total = data.patientCount || 0;
       setAnalysisProgress({ completed: 0, total });
-      const MAX_POLLS = 180;
-      let lastCompleted = 0, stallStreak = 0;
+      const MAX_POLLS = 300;
       const poll = async (attempt = 0): Promise<void> => {
         if (attempt >= MAX_POLLS) throw new Error("Analysis is taking longer than expected. Click Generate All to resume.");
-        const batchRes = await fetch(`/api/screening-batches/${batchId}`, { credentials: "include" });
-        if (!batchRes.ok) throw new Error("Lost connection during analysis. Click Generate All to resume.");
-        const bd = await batchRes.json();
-        const completed = (bd.patients || []).filter((p: PatientScreening) => p.status === "completed").length;
-        setAnalysisProgress({ completed, total });
-        queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", batchId] });
-        if (bd.status === "completed") return;
-        if (bd.status === "error" || bd.status === "draft") throw new Error("Analysis stopped unexpectedly. Click Generate All to try again.");
-        if (completed > lastCompleted) { lastCompleted = completed; stallStreak = 0; }
-        else if (lastCompleted > 0) { stallStreak++; if (stallStreak >= 60) throw new Error("Analysis appears stalled. Click Generate All to resume."); }
-        await new Promise((r) => setTimeout(r, 2000));
+        const statusRes = await fetch(`/api/batches/${batchId}/analysis-status`, { credentials: "include" });
+        if (!statusRes.ok) throw new Error("Lost connection during analysis. Click Generate All to resume.");
+        const statusData = await statusRes.json();
+        const completed = statusData.completedPatients ?? 0;
+        setAnalysisProgress({ completed, total: statusData.totalPatients || total });
+        if (statusData.status === "completed") {
+          queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", batchId] });
+          return;
+        }
+        if (statusData.status === "failed") {
+          queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", batchId] });
+          throw new Error(statusData.errorMessage || "Analysis failed. Click Generate All to try again.");
+        }
+        if (statusData.status === "not_started") {
+          await new Promise((r) => setTimeout(r, 3000));
+          return poll(attempt + 1);
+        }
+        await new Promise((r) => setTimeout(r, 3000));
         return poll(attempt + 1);
       };
       await poll();

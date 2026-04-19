@@ -10,6 +10,7 @@ import {
   uploadedDocuments,
   ancillaryAppointments,
   outreachSchedulers,
+  analysisJobs,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
@@ -28,6 +29,8 @@ import {
   type InsertAncillaryAppointment,
   type OutreachScheduler,
   type InsertOutreachScheduler,
+  type AnalysisJob,
+  type InsertAnalysisJob,
   users,
   type User,
   type InsertUser,
@@ -116,6 +119,13 @@ export interface IStorage {
   createOutreachScheduler(record: InsertOutreachScheduler): Promise<OutreachScheduler>;
   updateOutreachScheduler(id: number, updates: Partial<InsertOutreachScheduler>): Promise<OutreachScheduler | undefined>;
   deleteOutreachScheduler(id: number): Promise<OutreachScheduler | undefined>;
+
+  createAnalysisJob(record: InsertAnalysisJob): Promise<AnalysisJob>;
+  updateAnalysisJob(id: number, updates: Partial<InsertAnalysisJob>): Promise<AnalysisJob | undefined>;
+  incrementAnalysisJobProgress(jobId: number): Promise<void>;
+  getLatestAnalysisJobByBatch(batchId: number): Promise<AnalysisJob | undefined>;
+  failRunningAnalysisJobs(errorMessage: string): Promise<void>;
+  purgeOldAnalysisJobs(olderThanDays: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -421,6 +431,46 @@ export class DatabaseStorage implements IStorage {
   async deleteOutreachScheduler(id: number): Promise<OutreachScheduler | undefined> {
     const [deleted] = await db.delete(outreachSchedulers).where(eq(outreachSchedulers.id, id)).returning();
     return deleted;
+  }
+
+  async createAnalysisJob(record: InsertAnalysisJob): Promise<AnalysisJob> {
+    const [result] = await db.insert(analysisJobs).values(record).returning();
+    return result;
+  }
+
+  async updateAnalysisJob(id: number, updates: Partial<InsertAnalysisJob>): Promise<AnalysisJob | undefined> {
+    const [result] = await db.update(analysisJobs).set(updates).where(eq(analysisJobs.id, id)).returning();
+    return result;
+  }
+
+  async incrementAnalysisJobProgress(jobId: number): Promise<void> {
+    await db.update(analysisJobs)
+      .set({ completedPatients: sql`${analysisJobs.completedPatients} + 1` })
+      .where(eq(analysisJobs.id, jobId));
+  }
+
+  async getLatestAnalysisJobByBatch(batchId: number): Promise<AnalysisJob | undefined> {
+    const [result] = await db.select().from(analysisJobs)
+      .where(eq(analysisJobs.batchId, batchId))
+      .orderBy(desc(analysisJobs.startedAt))
+      .limit(1);
+    return result;
+  }
+
+  async failRunningAnalysisJobs(errorMessage: string): Promise<void> {
+    await db.update(analysisJobs)
+      .set({ status: "failed", errorMessage, completedAt: new Date() })
+      .where(eq(analysisJobs.status, "running"));
+  }
+
+  async purgeOldAnalysisJobs(olderThanDays: number): Promise<void> {
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+    await db.delete(analysisJobs).where(
+      and(
+        sql`${analysisJobs.completedAt} IS NOT NULL`,
+        sql`${analysisJobs.completedAt} < ${cutoff}`
+      )
+    );
   }
 }
 

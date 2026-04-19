@@ -26,6 +26,14 @@ This project is an AI-powered patient screening application designed to analyze 
 ## System Architecture
 The application features a React + Vite + Tailwind CSS + Shadcn UI frontend, providing an iOS-style card layout and a modern user experience with a clean, icy blue-white theme. The backend is built with Express.js, handling file parsing, OpenAI integration, and API routing. PostgreSQL, managed with Drizzle ORM, serves as the database, utilizing explicit indexes for optimized performance. The system employs a 3-step draft workflow: build schedule, edit clinical data, and analyze for ancillaries. Core features include tab-based navigation for schedules, a collapsible sidebar for schedule history, and an expandable patient result card view. A service layer encapsulates AI client interactions, data ingestion, and screening logic. Operational robustness is ensured through health checks, graceful shutdown mechanisms, and schema management via Drizzle migrations. Documents are generated client-side and can be exported.
 
+### Analysis Job Durability and Status Polling (Task #151)
+- **`analysis_jobs` table** (`shared/schema.ts`): id, batchId (FK→screeningBatches, cascade), status (pending|running|completed|failed), totalPatients, completedPatients (atomically incremented), errorMessage, startedAt, completedAt; indexes on batchId and status
+- **Storage methods** (`server/storage.ts`): `createAnalysisJob`, `updateAnalysisJob`, `incrementAnalysisJobProgress` (SQL `+1` for concurrency safety), `getLatestAnalysisJobByBatch`, `failRunningAnalysisJobs`, `purgeOldAnalysisJobs`
+- **Batch analyze route**: Creates an `analysis_jobs` row (status=running) immediately before handing off the async job; increments `completedPatients` after each patient regardless of per-patient success/failure; sets status=completed+completedAt on success; sets status=failed+errorMessage on outer error
+- **Status polling endpoint**: `GET /api/batches/:id/analysis-status` — returns latest analysis_jobs row for that batch plus a computed `progress` string (e.g. "12/20"); returns a synthetic "not_started" shape if no job exists
+- **Startup recovery**: Extended to also call `failRunningAnalysisJobs("Server restarted mid-analysis")` and `purgeOldAnalysisJobs(7)` on boot — no orphan running jobs survive restarts
+- **Frontend polling** (`client/src/pages/home.tsx`): `analyzeAllMutation` now polls `GET /api/batches/:id/analysis-status` every 3 s instead of fetching the full batch; stops when status=completed or failed; invalidates patient list cache on completion
+
 ### DB Pool and Transaction Safety (Task #150)
 - **Pool config** (`server/db.ts`): max:20, min:2, idleTimeoutMillis:30s, connectionTimeoutMillis:3s; error event listener prevents process crash on dropped client
 - **Startup recovery**: On boot, any batch still in "processing" status (from a crashed run) is automatically reset to "draft" so users can re-run analysis — no manual DB intervention needed
