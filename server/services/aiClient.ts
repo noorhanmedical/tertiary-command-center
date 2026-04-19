@@ -1,4 +1,5 @@
 import OpenAI_import from "openai";
+import { withOpenAIConcurrencyLimit } from "../middleware/rateLimiter";
 
 const OpenAI = ((OpenAI_import as any).default ?? OpenAI_import) as typeof OpenAI_import;
 
@@ -22,12 +23,14 @@ export async function withRetry<T>(
   let lastErr: unknown;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const result = await Promise.race([
-        fn(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`AI timeout after ${AI_TIMEOUT_MS}ms`)), AI_TIMEOUT_MS)
-        ),
-      ]);
+      const result = await withOpenAIConcurrencyLimit(() =>
+        Promise.race([
+          fn(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`AI timeout after ${AI_TIMEOUT_MS}ms`)), AI_TIMEOUT_MS)
+          ),
+        ])
+      );
       return result;
     } catch (err: any) {
       lastErr = err;
