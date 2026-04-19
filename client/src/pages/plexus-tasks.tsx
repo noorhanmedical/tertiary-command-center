@@ -67,10 +67,12 @@ function TaskRow({
   task,
   onStatusChange,
   unreadCount = 0,
+  userMap = new Map(),
 }: {
   task: PlexusTask;
   onStatusChange: (id: number, status: string) => void;
   unreadCount?: number;
+  userMap?: Map<string, string>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const qc = useQueryClient();
@@ -147,7 +149,7 @@ function TaskRow({
             {task.assignedToUserId && (
               <span className="flex items-center gap-1">
                 <User className="h-3 w-3" />
-                {task.assignedToUserId}
+                {userMap.get(task.assignedToUserId) ?? task.assignedToUserId.slice(0, 8)}
               </span>
             )}
             {task.patientName && (
@@ -211,8 +213,12 @@ function MyWorkView() {
   const { data: projects = [] } = useQuery<PlexusProject[]>({
     queryKey: ["/api/plexus/projects"],
   });
+  const { data: users = [] } = useQuery<{ id: string; username: string }[]>({
+    queryKey: ["/api/plexus/users"],
+  });
   const { data: unreadEntries = [] } = useUnreadPerTask();
   const msgMap = new Map(unreadEntries.map((m) => [m.taskId, m.unreadCount]));
+  const userMap = new Map(users.map((u) => [u.id, u.username]));
 
   const projectMap = new Map(projects.map((p) => [p.id, p]));
 
@@ -269,6 +275,7 @@ function MyWorkView() {
                   task={t}
                   onStatusChange={(id, status) => updateMutation.mutate({ id, status })}
                   unreadCount={msgMap.get(t.id) ?? 0}
+                  userMap={userMap}
                 />
               ))}
             </div>
@@ -287,6 +294,10 @@ function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => v
   const { data: projects = [], isLoading } = useQuery<PlexusProject[]>({
     queryKey: ["/api/plexus/projects"],
   });
+  const { data: users = [] } = useQuery<{ id: string; username: string }[]>({
+    queryKey: ["/api/plexus/users"],
+  });
+  const userMap = new Map(users.map((u) => [u.id, u.username]));
 
   const [expandedProject, setExpandedProject] = useState<number | null>(null);
 
@@ -393,7 +404,7 @@ function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => v
                 )}
                 {project.createdByUserId && (
                   <p className="mt-0.5 text-xs text-slate-400">
-                    Owner: {project.createdByUserId}
+                    Owner: {userMap.get(project.createdByUserId) ?? project.createdByUserId.slice(0, 8)}
                   </p>
                 )}
               </div>
@@ -425,6 +436,7 @@ function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => v
                         task={t}
                         onStatusChange={(id, status) => updateMutation.mutate({ id, status })}
                         unreadCount={msgMap.get(t.id) ?? 0}
+                        userMap={userMap}
                       />
                     ))}
                   </div>
@@ -444,8 +456,12 @@ function SentView() {
   const { data: tasks = [], isLoading } = useQuery<PlexusTask[]>({
     queryKey: ["/api/plexus/tasks/sent"],
   });
+  const { data: users = [] } = useQuery<{ id: string; username: string }[]>({
+    queryKey: ["/api/plexus/users"],
+  });
   const { data: unreadEntries = [] } = useUnreadPerTask();
   const msgMap = new Map(unreadEntries.map((m) => [m.taskId, m.unreadCount]));
+  const userMap = new Map(users.map((u) => [u.id, u.username]));
 
   const updateMutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) =>
@@ -488,6 +504,7 @@ function SentView() {
             task={t}
             onStatusChange={(id, status) => updateMutation.mutate({ id, status })}
             unreadCount={msgMap.get(t.id) ?? 0}
+            userMap={userMap}
           />
           {t.lastActivityAt && (
             <p className="px-1 text-[10px] text-slate-400">
