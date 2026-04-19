@@ -324,7 +324,7 @@ export function registerPlexusTasksRoutes(app: Express) {
       const userId = uid(req);
       if (!await canViewProject(projectId, userId)) return res.status(403).json({ error: "Not authorized to view this project" });
       const tasks = await storage.getTasksByProject(projectId);
-      res.json(tasks);
+      res.json(await enrichWithPatientNames(tasks));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

@@ -724,6 +724,10 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
+  // Returns task IDs where the user has membership for unread counting.
+  // Closed tasks are excluded from direct membership — unread badges
+  // for closed tasks would be noise since closed tasks are considered archived.
+  // Collaborator tasks are always included (to catch team-help scenarios).
   private async _getMemberTaskIds(userId: string): Promise<number[]> {
     const [directRows, collabRows] = await Promise.all([
       db.select({ id: plexusTasks.id }).from(plexusTasks)
