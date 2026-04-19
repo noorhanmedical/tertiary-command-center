@@ -5,6 +5,7 @@ import { db } from "../db";
 import { billingRecords } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import type { InsertBillingRecord } from "../../shared/schema";
+import { logAudit } from "../services/auditService";
 
 type BackgroundSyncBilling = () => void | Promise<void>;
 
@@ -127,6 +128,7 @@ export function registerBillingRoutes(
         clinician: clinician ?? null,
         insuranceInfo: insuranceInfo ?? null,
       });
+      void logAudit(req, "create", "billing_record", record.id, { patientName, service });
       res.status(201).json(record);
       void backgroundSyncBilling();
     } catch (error: any) {
@@ -144,6 +146,7 @@ export function registerBillingRoutes(
       ) as Partial<InsertBillingRecord>;
       const record = await storage.updateBillingRecord(id, updates);
       if (!record) return res.status(404).json({ error: "Billing record not found" });
+      void logAudit(req, "update", "billing_record", id, updates);
       res.json(record);
       void backgroundSyncBilling();
     } catch (error: any) {
@@ -155,6 +158,7 @@ export function registerBillingRoutes(
     try {
       const id = parseInt(req.params.id);
       await storage.deleteBillingRecord(id);
+      void logAudit(req, "delete", "billing_record", id, null);
       res.status(204).send();
       void backgroundSyncBilling();
     } catch (error: any) {

@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { VALID_FACILITIES } from "./helpers";
+import { logAudit } from "../services/auditService";
 
 export function registerAppointmentRoutes(app: Express) {
   app.get("/api/appointments", async (req, res) => {
@@ -62,6 +63,7 @@ export function registerAppointmentRoutes(app: Express) {
         testType,
         status: "scheduled",
       });
+      void logAudit(req, "create", "appointment", appt.id, { patientName, facility, scheduledDate, scheduledTime, testType });
       res.json(appt);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -78,6 +80,7 @@ export function registerAppointmentRoutes(app: Express) {
       if (parsed.data.status === "cancelled") {
         const appt = await storage.cancelAppointment(id);
         if (!appt) return res.status(404).json({ error: "Appointment not found" });
+        void logAudit(req, "cancel", "appointment", id, { status: "cancelled" });
         return res.json(appt);
       }
       res.status(400).json({ error: "Only cancellation is supported via PATCH" });

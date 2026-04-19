@@ -21,6 +21,10 @@ export async function setupVite(server: Server, app: Express) {
     customLogger: {
       ...viteLogger,
       error: (msg, options) => {
+        if (msg.includes("handleUpgrade() was called more than once")) {
+          viteLogger.warn("[vite] Suppressed duplicate WebSocket upgrade (harmless reconnect race)", options);
+          return;
+        }
         viteLogger.error(msg, options);
         process.exit(1);
       },

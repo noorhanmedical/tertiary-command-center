@@ -87,6 +87,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// Suppress harmless Vite HMR WebSocket race condition that occurs during dev server restarts
+process.on("uncaughtException", (err) => {
+  if (err.message?.includes("handleUpgrade() was called more than once")) {
+    console.warn("[vite] Suppressed duplicate WebSocket upgrade (harmless reconnect race)");
+    return;
+  }
+  console.error("Uncaught exception:", err);
+  process.exit(1);
+});
+
 (async () => {
   await registerRoutes(httpServer, app);
 

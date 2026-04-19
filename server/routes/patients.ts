@@ -12,6 +12,7 @@ import {
   analyzeTestWithAI,
 } from "../services/screening";
 import { normalizeInsuranceType } from "../services/ingest";
+import { logAudit } from "../services/auditService";
 
 type BackgroundSyncPatients = () => void | Promise<void>;
 
@@ -55,6 +56,8 @@ export function registerPatientRoutes(
 
       const patient = await storage.updatePatientScreening(id, updates);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      void logAudit(req, "update", "patient", id, updates);
 
       const wasAlreadyCompleted = previousPatient?.appointmentStatus?.toLowerCase() === "completed";
       if (data.appointmentStatus && data.appointmentStatus.toLowerCase() === "completed" && !wasAlreadyCompleted) {
@@ -113,6 +116,7 @@ export function registerPatientRoutes(
         patientCount: (await storage.getPatientScreeningsByBatch(patient.batchId)).length,
       });
 
+      void logAudit(req, "delete", "patient", id, { name: patient.name });
       res.status(204).send();
     } catch (error: any) {
       res.status(500).json({ error: error.message });

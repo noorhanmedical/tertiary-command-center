@@ -23,6 +23,7 @@ import {
   extractPdfPatients,
   extractImagePatients,
 } from "../services/screening";
+import { logAudit } from "../services/auditService";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -39,6 +40,7 @@ export function registerBatchRoutes(app: Express) {
         facility: parsed.data.facility || null,
         scheduleDate: parsed.data.scheduleDate || null,
       });
+      void logAudit(req, "create", "batch", batch.id, { name: batch.name, facility: batch.facility });
       res.json(batch);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -88,6 +90,7 @@ export function registerBatchRoutes(app: Express) {
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
+      void logAudit(req, "create", "patient", patient.id, { name: patient.name, batchId });
       res.json(patient);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -413,6 +416,7 @@ export function registerBatchRoutes(app: Express) {
     try {
       const id = parseInt(req.params.id);
       await storage.deleteScreeningBatch(id);
+      void logAudit(req, "delete", "batch", id, null);
       res.status(204).send();
     } catch (error: any) {
       res.status(500).json({ error: error.message });

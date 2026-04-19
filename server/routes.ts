@@ -132,6 +132,32 @@ export async function registerRoutes(
 
   app.use("/api", requireAuth);
 
+  // ─── Audit log query endpoints ─────────────────────────────────────────────
+  app.get("/api/audit-log", async (req, res) => {
+    try {
+      const { userId, entityType, fromDate, toDate, limit } = req.query as Record<string, string | undefined>;
+      const logs = await storage.getAuditLogs({
+        userId: userId || undefined,
+        entityType: entityType || undefined,
+        fromDate: fromDate ? new Date(fromDate) : undefined,
+        toDate: toDate ? new Date(toDate) : undefined,
+        limit: limit ? parseInt(limit, 10) : 200,
+      });
+      res.json(logs);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/audit-log/users", async (_req, res) => {
+    try {
+      const users = await storage.getAllUsers();
+      res.json(users.map((u) => ({ id: u.id, username: u.username })));
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ─── Domain route registrations ────────────────────────────────────────────
   registerGoogleRoutes(app);
   registerTestHistoryRoutes(app, { backgroundSyncPatients });
@@ -198,30 +224,6 @@ export async function registerRoutes(
     const { id } = req.params;
     if (id === req.session.userId) {
       return res.status(400).json({ message: "Cannot delete your own account" });
-    }
-    await storage.deleteUser(id);
-    return res.json({ ok: true });
-  });
-
-  app.get("/api/users", async (req, res) => {
-    if (req.session.username !== "admin") {
-      return res.status(403).json({ message: "Forbidden — only the admin account can view users" });
-    }
-    const allUsers = await storage.getAllUsers();
-    return res.json(allUsers);
-  });
-
-  app.delete("/api/users/:id", async (req, res) => {
-    if (req.session.username !== "admin") {
-      return res.status(403).json({ message: "Forbidden — only the admin account can delete users" });
-    }
-    const { id } = req.params;
-    if (id === req.session.userId) {
-      return res.status(400).json({ message: "You cannot delete your own account" });
-    }
-    const target = await storage.getUser(id);
-    if (!target) {
-      return res.status(404).json({ message: "User not found" });
     }
     await storage.deleteUser(id);
     return res.json({ ok: true });

@@ -17,6 +17,7 @@ import {
   plexusTaskMessages,
   plexusTaskEvents,
   plexusTaskReads,
+  auditLog,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
@@ -48,11 +49,13 @@ import {
   type PlexusTaskEvent,
   type InsertPlexusTaskEvent,
   type PlexusTaskRead,
+  type AuditLog,
+  type InsertAuditLog,
   users,
   type User,
   type InsertUser,
 } from "@shared/schema";
-import { eq, desc, ilike, sql, and, gte, asc, ne, inArray } from "drizzle-orm";
+import { eq, desc, ilike, sql, and, gte, lte, asc, ne, inArray } from "drizzle-orm";
 
 function parseTimeToMinutes(time: string | null | undefined): number {
   if (!time) return Infinity;
@@ -192,6 +195,16 @@ export interface IStorage {
   // ── Patient search (for task patient-link) ─────────────────────────────
   searchPatientsByName(query: string): Promise<PatientScreening[]>;
   getPatientById(id: number): Promise<PatientScreening | undefined>;
+
+  // ── Audit Log ────────────────────────────────────────────────────────────
+  createAuditLog(record: InsertAuditLog): Promise<AuditLog>;
+  getAuditLogs(filters?: {
+    userId?: string;
+    entityType?: string;
+    fromDate?: Date;
+    toDate?: Date;
+    limit?: number;
+  }): Promise<AuditLog[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -839,8 +852,31 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-}
+  async createAuditLog(record: InsertAuditLog): Promise<AuditLog> {
+    const [entry] = await db.insert(auditLog).values(record).returning();
+    return entry;
+  }
 
-export const storage = new DatabaseStorage();
+  async getAuditLogs(filters?: {
+    userId?: string;
+    entityType?: string;
+    fromDate?: Date;
+    toDate?: Date;
+    limit?: number;
+  }): Promise<AuditLog[]> {
+    const conditions = [];
+    if (filters?.userId) conditions.push(eq(auditLog.userId, filters.userId));
+    if (filters?.entityType) conditions.push(eq(auditLog.entityType, filters.entityType));
+    if (filters?.fromDate) conditions.push(gte(auditLog.createdAt, filters.fromDate));
+    if (filters?.toDate) conditions.push(lte(auditLog.createdAt, filters.toDate));
+
+    const query = db.select().from(auditLog)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(auditLog.createdAt))
+      .limit(filters?.limit ?? 200);
+
+    return query;
+  }
+}
 
 export const storage = new DatabaseStorage();

@@ -18,6 +18,7 @@ import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
 import AdminOpsPage from "@/pages/admin-ops";
 import AdminPage from "@/pages/admin";
 import AdminUsersPage from "@/pages/admin-users";
+import AuditLogPage from "@/pages/audit-log";
 import ScheduleDashboardPage from "@/pages/schedule-dashboard";
 import SettingsPage from "@/pages/settings";
 import TeamOpsPage from "@/pages/team-ops";
@@ -79,6 +80,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/admin/users">
                   <AdminGuard user={user}><AdminUsersPage /></AdminGuard>
+                </Route>
+                <Route path="/audit-log">
+                  <AdminGuard user={user}><AuditLogPage /></AdminGuard>
                 </Route>
                 <Route path="/admin-ops">
                   <AdminGuard user={user}><AdminOpsPage /></AdminGuard>
