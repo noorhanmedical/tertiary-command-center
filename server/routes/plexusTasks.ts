@@ -439,8 +439,11 @@ export function registerPlexusTasksRoutes(app: Express) {
           return res.status(403).json({ error: "Self-join is only allowed on urgent non-closed tasks" });
         }
       }
+      const existingCollabs = await storage.getCollaborators(taskId);
+      const wasExisting = existingCollabs.some((c) => c.userId === targetUserId);
       const collab = await storage.addCollaborator({ taskId, userId: targetUserId, role: parsed.data.role });
-      await writeEvent({ taskId, userId: actingUserId, eventType: "collaborator_added", payload: { collaboratorUserId: targetUserId, role: parsed.data.role } });
+      const eventType = wasExisting ? "collaborator_role_changed" : "collaborator_added";
+      await writeEvent({ taskId, userId: actingUserId, eventType, payload: { collaboratorUserId: targetUserId, role: parsed.data.role } });
       res.status(201).json(collab);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
