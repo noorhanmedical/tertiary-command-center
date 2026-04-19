@@ -93,9 +93,7 @@ export default function Home() {
   const importHistoryFileMutation = useMutation({
     mutationFn: async (file: File) => {
       const formData = new FormData(); formData.append("file", file);
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {}; if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch("/api/test-history/import", { method: "POST", headers, body: formData });
+      const res = await fetch("/api/test-history/import", { method: "POST", credentials: "include", body: formData });
       if (!res.ok) throw new Error((await res.json()).error || "Import failed"); return res.json();
     },
     onSuccess: (data) => { queryClient.invalidateQueries({ queryKey: ["/api/test-history"] }); toast({ title: `Imported ${data.imported} records` }); },
@@ -141,9 +139,7 @@ export default function Home() {
   });
   const importFileMutation = useMutation({
     mutationFn: async ({ batchId, formData }: { batchId: number; formData: FormData }) => {
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {}; if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch(`/api/batches/${batchId}/import-file`, { method: "POST", headers, body: formData });
+      const res = await fetch(`/api/batches/${batchId}/import-file`, { method: "POST", credentials: "include", body: formData });
       if (!res.ok) throw new Error(await res.text()); return res.json();
     },
     onSuccess: (data) => { queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] }); queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] }); toast({ title: `Imported ${data.imported} patients` }); },
@@ -188,9 +184,7 @@ export default function Home() {
       let lastCompleted = 0, stallStreak = 0;
       const poll = async (attempt = 0): Promise<void> => {
         if (attempt >= MAX_POLLS) throw new Error("Analysis is taking longer than expected. Click Generate All to resume.");
-        const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-        const h: Record<string, string> = {}; if (apiKey) h["Authorization"] = `Bearer ${apiKey}`;
-        const batchRes = await fetch(`/api/screening-batches/${batchId}`, { headers: h });
+        const batchRes = await fetch(`/api/screening-batches/${batchId}`, { credentials: "include" });
         if (!batchRes.ok) throw new Error("Lost connection during analysis. Click Generate All to resume.");
         const bd = await batchRes.json();
         const completed = (bd.patients || []).filter((p: PatientScreening) => p.status === "completed").length;
@@ -237,9 +231,7 @@ export default function Home() {
   const handleDrop = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files.length > 0) handleFileUpload(e.dataTransfer.files); }, [handleFileUpload]);
   const handleExport = useCallback(async () => {
     if (!selectedBatchId) return;
-    const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-    const headers: Record<string, string> = {}; if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-    const res = await fetch(`/api/screening-batches/${selectedBatchId}/export`, { headers });
+    const res = await fetch(`/api/screening-batches/${selectedBatchId}/export`, { credentials: "include" });
     const blob = await res.blob(); const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `screening-results-${selectedBatchId}.csv`; a.click(); URL.revokeObjectURL(url);
   }, [selectedBatchId]);

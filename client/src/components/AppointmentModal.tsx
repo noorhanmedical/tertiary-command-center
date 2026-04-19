@@ -47,10 +47,7 @@ export function AppointmentModal({ patient, onClose, defaultDate }: AppointmentM
   const { data: appointments = [] } = useQuery<AncillaryAppointment[]>({
     queryKey: ["/api/appointments", facility],
     queryFn: async () => {
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch(`/api/appointments?facility=${encodeURIComponent(facility)}`, { headers });
+      const res = await fetch(`/api/appointments?facility=${encodeURIComponent(facility)}`, { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
@@ -59,10 +56,7 @@ export function AppointmentModal({ patient, onClose, defaultDate }: AppointmentM
   const { data: patientAppts = [] } = useQuery<AncillaryAppointment[]>({
     queryKey: ["/api/appointments/patient", patient.id],
     queryFn: async () => {
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch(`/api/appointments/patient/${patient.id}`, { headers });
+      const res = await fetch(`/api/appointments/patient/${patient.id}`, { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },

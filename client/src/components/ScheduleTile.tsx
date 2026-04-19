@@ -11,10 +11,7 @@ export function ScheduleTile() {
   const { data: appts = [], isLoading } = useQuery<AncillaryAppointment[]>({
     queryKey: ["/api/appointments/schedule-tile"],
     queryFn: async () => {
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch("/api/appointments?upcoming=true", { headers });
+      const res = await fetch("/api/appointments?upcoming=true", { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },

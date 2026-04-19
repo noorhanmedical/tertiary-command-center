@@ -8,11 +8,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Upload, FileText, CheckCircle, ExternalLink, Loader2, ScanText, ClipboardList } from "lucide-react";
 import { VALID_FACILITIES } from "@shared/plexus";
 
-const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
-function authHeaders(): Record<string, string> {
-  if (API_KEY) return { Authorization: `Bearer ${API_KEY}` };
-  return {};
-}
 const ANCILLARY_TYPES = ["BrainWave", "VitalWave", "Ultrasound"] as const;
 
 type DocType = "report" | "informed_consent" | "screening_form";
@@ -51,7 +46,6 @@ function UploadCard({ docType, title, description, color, icon }: UploadCardProp
       formData.append("file", f);
       const res = await fetch("/api/documents/ocr-name", {
         method: "POST",
-        headers: authHeaders(),
         body: formData,
         credentials: "include",
       });
@@ -75,7 +69,6 @@ function UploadCard({ docType, title, description, color, icon }: UploadCardProp
       formData.append("file", file);
       const res = await fetch("/api/documents/upload", {
         method: "POST",
-        headers: authHeaders(),
         body: formData,
         credentials: "include",
       });
