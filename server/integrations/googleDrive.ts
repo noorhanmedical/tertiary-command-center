@@ -65,6 +65,55 @@ export async function getDriveUserEmail(): Promise<string | null> {
 
 const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
 
+async function discoverAndMapExistingSheets(
+  drive: Awaited<ReturnType<typeof getUncachableGoogleDriveClient>>,
+  rootId: string,
+  setSetting: (key: string, value: string) => Promise<void>
+): Promise<void> {
+  try {
+    const listResp = await drive.files.list({
+      q: `${driveQueryEscape(rootId)} in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+      fields: "files(id,name)",
+      pageSize: 100,
+      spaces: "drive",
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+
+    const files = (listResp.data as drive_v3.Schema$FileList).files ?? [];
+    if (files.length === 0) {
+      console.log("[Drive] No existing spreadsheets found in root folder — will create fresh on next sync.");
+      return;
+    }
+
+    console.log(`[Drive] Discovered ${files.length} spreadsheet(s) in root folder — remapping to settings.`);
+
+    for (const file of files) {
+      const name = file.name ?? "";
+      const id = file.id!;
+
+      if (name === "Plexus Patient Directory") {
+        await setSetting("GOOGLE_SHEETS_PATIENTS_ID", id);
+        await setSetting("PATIENTS_SPREADSHEET_ID", id);
+        console.log(`[Drive]   Mapped "Plexus Patient Directory" → GOOGLE_SHEETS_PATIENTS_ID`);
+        continue;
+      }
+
+      for (const facility of VALID_FACILITIES) {
+        const safeKey = facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "");
+        if (name === `Plexus Billing Tracker \u2014 ${facility}`) {
+          await setSetting(`GOOGLE_SHEETS_BILLING_ID_${safeKey}`, id);
+          await setSetting(`BILLING_SPREADSHEET_ID_${safeKey}`, id);
+          console.log(`[Drive]   Mapped "${name}" → BILLING_SPREADSHEET_ID_${safeKey}`);
+          break;
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("[Drive] Sheet discovery skipped:", err.message);
+  }
+}
+
 export async function initializeDriveFolderTree(): Promise<void> {
   try {
     const { getSetting, setSetting, deleteSettingsByPrefix } = await import("../dbSettings");
@@ -75,10 +124,15 @@ export async function initializeDriveFolderTree(): Promise<void> {
     const envRootId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID ?? null;
 
     if (cachedRootId && envRootId && cachedRootId !== envRootId) {
-      const cleared = await deleteSettingsByPrefix("DRIVE_FOLDER_");
+      const driveCleared = await deleteSettingsByPrefix("DRIVE_FOLDER_");
+      const sheetPrefixes = ["GOOGLE_SHEETS_", "PATIENTS_SPREADSHEET_ID", "BILLING_SPREADSHEET_ID", "PATIENTS_LAST_SYNCED_AT", "BILLING_LAST_SYNCED_AT"];
+      let sheetCleared = 0;
+      for (const prefix of sheetPrefixes) {
+        sheetCleared += await deleteSettingsByPrefix(prefix);
+      }
       console.log(
         `[Drive] GOOGLE_DRIVE_ROOT_FOLDER_ID changed (${cachedRootId} → ${envRootId}). ` +
-        `Cleared ${cleared} stale folder settings — will re-initialize under new root.`
+        `Cleared ${driveCleared} folder + ${sheetCleared} spreadsheet stale settings — will re-initialize under new root.`
       );
     }
 
@@ -87,6 +141,7 @@ export async function initializeDriveFolderTree(): Promise<void> {
       rootId = await getOrCreatePreferredRootFolder(drive);
       await setSetting(rootKey, rootId);
       console.log(`[Drive] Root folder resolved: ${rootId} (https://drive.google.com/drive/folders/${rootId})`);
+      await discoverAndMapExistingSheets(drive, rootId, setSetting);
     } else {
       console.log(`[Drive] Using cached root folder: ${rootId} (https://drive.google.com/drive/folders/${rootId})`);
     }
