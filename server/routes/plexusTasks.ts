@@ -220,6 +220,25 @@ export function registerPlexusTasksRoutes(app: Express) {
   });
 
   // ── Tasks ─────────────────────────────────────────────────────────────────
+  // Returns all tasks where the user is creator or assignee (union, deduplicated)
+  app.get("/api/plexus/tasks", async (req: Request, res: Response) => {
+    try {
+      const userId = uid(req);
+      const [assigned, created] = await Promise.all([
+        storage.getTasksByAssignee(userId),
+        storage.getTasksByCreator(userId),
+      ]);
+      const seen = new Set<number>();
+      const all: typeof assigned = [];
+      for (const t of [...assigned, ...created]) {
+        if (!seen.has(t.id)) { seen.add(t.id); all.push(t); }
+      }
+      res.json(await enrichWithPatientNames(all));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/plexus/tasks/my-work", async (req: Request, res: Response) => {
     try {
       const tasks = await storage.getTasksByAssignee(uid(req));

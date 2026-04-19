@@ -76,3 +76,36 @@ CREATE INDEX IF NOT EXISTS "plexus_tasks_created_by_idx" ON "plexus_tasks"("crea
 CREATE INDEX IF NOT EXISTS "plexus_tasks_project_idx" ON "plexus_tasks"("project_id");
 CREATE INDEX IF NOT EXISTS "plexus_task_messages_task_idx" ON "plexus_task_messages"("task_id");
 CREATE INDEX IF NOT EXISTS "plexus_task_events_task_idx" ON "plexus_task_events"("task_id");
+
+-- DB-level check constraints for canonical enum-like fields
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'plexus_tasks_task_type_check') THEN
+    ALTER TABLE "plexus_tasks" ADD CONSTRAINT "plexus_tasks_task_type_check"
+      CHECK (task_type IN ('task', 'subtask', 'milestone', 'approval'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'plexus_tasks_urgency_check') THEN
+    ALTER TABLE "plexus_tasks" ADD CONSTRAINT "plexus_tasks_urgency_check"
+      CHECK (urgency IN ('none', 'EOD', 'within 3 hours', 'within 1 hour'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'plexus_tasks_priority_check') THEN
+    ALTER TABLE "plexus_tasks" ADD CONSTRAINT "plexus_tasks_priority_check"
+      CHECK (priority IN ('low', 'normal', 'high'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'plexus_tasks_status_check') THEN
+    ALTER TABLE "plexus_tasks" ADD CONSTRAINT "plexus_tasks_status_check"
+      CHECK (status IN ('open', 'in_progress', 'done', 'closed'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'plexus_task_collaborators_role_check') THEN
+    ALTER TABLE "plexus_task_collaborators" ADD CONSTRAINT "plexus_task_collaborators_role_check"
+      CHECK (role IN ('owner', 'assignee', 'collaborator', 'watcher'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'plexus_projects_status_check') THEN
+    ALTER TABLE "plexus_projects" ADD CONSTRAINT "plexus_projects_status_check"
+      CHECK (status IN ('active', 'archived', 'closed'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'plexus_projects_type_check') THEN
+    ALTER TABLE "plexus_projects" ADD CONSTRAINT "plexus_projects_type_check"
+      CHECK (project_type IN ('operational', 'clinical', 'admin', 'training'));
+  END IF;
+END $$;
