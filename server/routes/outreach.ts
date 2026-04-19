@@ -32,6 +32,9 @@ export function registerOutreachRoutes(app: Express) {
           (f) => (VALID_FACILITIES as readonly string[]).includes(f),
           { message: "facility must be one of the three valid clinics" },
         ),
+        capacityPercent: insertOutreachSchedulerSchema.shape.capacityPercent
+          .refine((n) => n != null && n >= 0 && n <= 100, { message: "capacityPercent must be between 0 and 100" })
+          .optional(),
       }).safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       const scheduler = await storage.createOutreachScheduler(parsed.data);
@@ -50,6 +53,9 @@ export function registerOutreachRoutes(app: Express) {
           (f) => (VALID_FACILITIES as readonly string[]).includes(f),
           { message: "facility must be one of the three valid clinics" },
         ).optional(),
+        capacityPercent: insertOutreachSchedulerSchema.shape.capacityPercent
+          .refine((n) => n != null && n >= 0 && n <= 100, { message: "capacityPercent must be between 0 and 100" })
+          .optional(),
       });
       const parsed = patchSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });

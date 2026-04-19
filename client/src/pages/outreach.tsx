@@ -29,6 +29,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
+type PriorTestEntry = {
+  testName: string;
+  dateOfService: string;
+  clinic: string | null;
+  notes: string | null;
+};
+
+type ReasoningEntry = {
+  testName: string;
+  text: string;
+  pearls?: string[];
+  qualifyingFactors?: string[];
+};
+
 type OutreachCallItem = {
   id: string;
   patientId: number;
@@ -44,12 +58,24 @@ type OutreachCallItem = {
   time: string;
   providerName: string;
   notes: string | null;
+  dob: string | null;
+  age: number | null;
+  gender: string | null;
+  diagnoses: string | null;
+  history: string | null;
+  medications: string | null;
+  previousTests: string | null;
+  previousTestsDate: string | null;
+  noPreviousTests: boolean;
+  reasoning: ReasoningEntry[];
+  priorTestHistory: PriorTestEntry[];
 };
 
 type OutreachSchedulerCard = {
   id: string;
   name: string;
   facility: string;
+  capacityPercent: number;
   totalPatients: number;
   touchedCount: number;
   scheduledCount: number;
@@ -120,7 +146,11 @@ function filterList(list: OutreachCallItem[], q: string): OutreachCallItem[] {
       item.patientName.toLowerCase().includes(lq) ||
       item.facility.toLowerCase().includes(lq) ||
       item.providerName.toLowerCase().includes(lq) ||
-      item.qualifyingTests.join(" ").toLowerCase().includes(lq),
+      item.qualifyingTests.join(" ").toLowerCase().includes(lq) ||
+      (item.previousTests ?? "").toLowerCase().includes(lq) ||
+      item.priorTestHistory.some((p) => p.testName.toLowerCase().includes(lq)) ||
+      (item.diagnoses ?? "").toLowerCase().includes(lq) ||
+      (item.insurance ?? "").toLowerCase().includes(lq),
   );
 }
 

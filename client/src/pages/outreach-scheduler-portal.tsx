@@ -28,6 +28,11 @@ import {
   AlertTriangle,
   Users,
   ListTodo,
+  FileText,
+  Pill,
+  History,
+  ClipboardList,
+  Sparkles,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -67,6 +72,20 @@ import type { AuthUser } from "@/App";
 
 type Facility = (typeof VALID_FACILITIES)[number];
 
+type PriorTestEntry = {
+  testName: string;
+  dateOfService: string;
+  clinic: string | null;
+  notes: string | null;
+};
+
+type ReasoningEntry = {
+  testName: string;
+  text: string;
+  pearls?: string[];
+  qualifyingFactors?: string[];
+};
+
 type OutreachCallItem = {
   id: string;
   patientId: number;
@@ -82,12 +101,24 @@ type OutreachCallItem = {
   time: string;
   providerName: string;
   notes: string | null;
+  dob: string | null;
+  age: number | null;
+  gender: string | null;
+  diagnoses: string | null;
+  history: string | null;
+  medications: string | null;
+  previousTests: string | null;
+  previousTestsDate: string | null;
+  noPreviousTests: boolean;
+  reasoning: ReasoningEntry[];
+  priorTestHistory: PriorTestEntry[];
 };
 
 type OutreachSchedulerCard = {
   id: string;
   name: string;
   facility: string;
+  capacityPercent: number;
   totalPatients: number;
   touchedCount: number;
   scheduledCount: number;
@@ -205,6 +236,7 @@ export default function OutreachSchedulerPortalPage() {
   const [search, setSearch] = useState("");
   const [pendingPatientId, setPendingPatientId] = useState<number | null>(null);
   const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
+  const [expandedDetails, setExpandedDetails] = useState<Set<number>>(new Set());
   const [noteDrafts, setNoteDrafts] = useState<Map<number, string>>(new Map());
 
   // Tasks tile state
@@ -370,6 +402,15 @@ export default function OutreachSchedulerPortalPage() {
     onError: (e: Error) => toast({ title: "Could not join task", description: e.message, variant: "destructive" }),
   });
 
+  function toggleDetails(patientId: number) {
+    setExpandedDetails((prev) => {
+      const next = new Set(prev);
+      if (next.has(patientId)) next.delete(patientId);
+      else next.add(patientId);
+      return next;
+    });
+  }
+
   function toggleNotes(patientId: number, existingNote: string | null) {
     setExpandedNotes((prev) => {
       const next = new Set(prev);
@@ -408,7 +449,11 @@ export default function OutreachSchedulerPortalPage() {
         item.patientName.toLowerCase().includes(q) ||
         item.facility.toLowerCase().includes(q) ||
         item.providerName.toLowerCase().includes(q) ||
-        item.qualifyingTests.join(" ").toLowerCase().includes(q),
+        item.qualifyingTests.join(" ").toLowerCase().includes(q) ||
+        (item.previousTests ?? "").toLowerCase().includes(q) ||
+        item.priorTestHistory.some((p) => p.testName.toLowerCase().includes(q)) ||
+        (item.diagnoses ?? "").toLowerCase().includes(q) ||
+        (item.insurance ?? "").toLowerCase().includes(q),
     );
   }, [search, card]);
 
@@ -741,6 +786,18 @@ export default function OutreachSchedulerPortalPage() {
                           )}
                           <button
                             type="button"
+                            onClick={() => toggleDetails(item.patientId)}
+                            className={["inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition", expandedDetails.has(item.patientId) ? "border-slate-300 bg-slate-100 text-slate-700" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"].join(" ")}
+                            data-testid={`portal-details-toggle-${item.patientId}`}
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                            {expandedDetails.has(item.patientId) ? "Hide details" : "Patient details"}
+                            {expandedDetails.has(item.patientId)
+                              ? <ChevronUp className="h-3 w-3" />
+                              : <ChevronDown className="h-3 w-3" />}
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => toggleNotes(item.patientId, item.notes)}
                             className={["inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition", expandedNotes.has(item.patientId) ? "border-blue-200 bg-blue-50 text-blue-700" : item.notes ? "border-violet-200 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"].join(" ")}
                             data-testid={`portal-notes-toggle-${item.patientId}`}
@@ -750,6 +807,107 @@ export default function OutreachSchedulerPortalPage() {
                           </button>
                         </div>
                       </div>
+
+                      {expandedDetails.has(item.patientId) && (
+                        <div
+                          className="mt-3 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 sm:grid-cols-2"
+                          data-testid={`portal-details-panel-${item.patientId}`}
+                        >
+                          <div className="rounded-xl border border-white bg-white p-3">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Demographics</div>
+                            <dl className="mt-1.5 space-y-0.5 text-xs text-slate-700">
+                              <div><span className="text-slate-500">DOB:</span> <span data-testid={`portal-details-dob-${item.patientId}`}>{item.dob ?? "—"}</span>{item.age != null && <span className="ml-1 text-slate-400">({item.age} yo)</span>}</div>
+                              <div><span className="text-slate-500">Gender:</span> {item.gender ?? "—"}</div>
+                              <div><span className="text-slate-500">Insurance:</span> <span data-testid={`portal-details-insurance-${item.patientId}`}>{item.insurance || "—"}</span></div>
+                              <div><span className="text-slate-500">Phone:</span> {item.phoneNumber}</div>
+                            </dl>
+                          </div>
+
+                          <div className="rounded-xl border border-white bg-white p-3">
+                            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              <ClipboardList className="h-3 w-3" />Diagnoses
+                            </div>
+                            <p className="mt-1.5 whitespace-pre-wrap text-xs text-slate-700" data-testid={`portal-details-diagnoses-${item.patientId}`}>
+                              {item.diagnoses?.trim() || "None recorded"}
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl border border-white bg-white p-3">
+                            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              <History className="h-3 w-3" />History
+                            </div>
+                            <p className="mt-1.5 whitespace-pre-wrap text-xs text-slate-700" data-testid={`portal-details-history-${item.patientId}`}>
+                              {item.history?.trim() || "None recorded"}
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl border border-white bg-white p-3">
+                            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              <Pill className="h-3 w-3" />Medications
+                            </div>
+                            <p className="mt-1.5 whitespace-pre-wrap text-xs text-slate-700" data-testid={`portal-details-medications-${item.patientId}`}>
+                              {item.medications?.trim() || "None recorded"}
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl border border-white bg-white p-3 sm:col-span-2">
+                            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              <CalendarCheck className="h-3 w-3" />Prior Tests
+                            </div>
+                            {item.noPreviousTests && (
+                              <p className="mt-1.5 text-xs italic text-slate-500" data-testid={`portal-details-no-prior-${item.patientId}`}>
+                                Patient reports no prior testing.
+                              </p>
+                            )}
+                            {item.previousTests && (
+                              <p className="mt-1.5 text-xs text-slate-700" data-testid={`portal-details-screening-prev-${item.patientId}`}>
+                                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">From screening: </span>
+                                {item.previousTests}
+                                {item.previousTestsDate && <span className="text-slate-400"> · {item.previousTestsDate}</span>}
+                              </p>
+                            )}
+                            {item.priorTestHistory.length > 0 && (
+                              <ul className="mt-2 space-y-1 text-xs text-slate-700" data-testid={`portal-details-prior-list-${item.patientId}`}>
+                                {item.priorTestHistory.map((p, i) => (
+                                  <li key={`${item.patientId}-prior-${i}`} className="flex flex-wrap items-center gap-2">
+                                    <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-[10px]">{p.testName}</Badge>
+                                    <span className="text-slate-600">{p.dateOfService}</span>
+                                    {p.clinic && <span className="text-slate-400">· {p.clinic}</span>}
+                                    {p.notes && <span className="text-slate-400 italic">— {p.notes}</span>}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {!item.noPreviousTests && !item.previousTests && item.priorTestHistory.length === 0 && (
+                              <p className="mt-1.5 text-xs italic text-slate-500">No prior tests on file.</p>
+                            )}
+                          </div>
+
+                          {item.reasoning.length > 0 && (
+                            <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3 sm:col-span-2">
+                              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-700">
+                                <Sparkles className="h-3 w-3" />Why this patient qualifies
+                              </div>
+                              <div className="mt-2 space-y-2" data-testid={`portal-details-reasoning-${item.patientId}`}>
+                                {item.reasoning.map((r, i) => (
+                                  <div key={`${item.patientId}-reason-${i}`} className="rounded-lg border border-amber-100 bg-white p-2">
+                                    <div className="text-[11px] font-semibold text-amber-800">{r.testName}</div>
+                                    {r.text && <p className="mt-0.5 text-xs text-slate-700">{r.text}</p>}
+                                    {r.qualifyingFactors && r.qualifyingFactors.length > 0 && (
+                                      <ul className="mt-1 list-disc pl-4 text-[11px] text-slate-600">
+                                        {r.qualifyingFactors.map((q, qi) => <li key={qi}>{q}</li>)}
+                                      </ul>
+                                    )}
+                                    {r.pearls && r.pearls.length > 0 && (
+                                      <p className="mt-1 text-[11px] italic text-slate-500">Pearls: {r.pearls.join("; ")}</p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {expandedNotes.has(item.patientId) && (
                         <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-3">

@@ -454,6 +454,7 @@ export const outreachSchedulers = pgTable("outreach_schedulers", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   facility: text("facility").notNull(),
+  capacityPercent: integer("capacity_percent").notNull().default(100),
   userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [

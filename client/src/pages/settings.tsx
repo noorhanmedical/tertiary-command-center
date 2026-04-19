@@ -66,8 +66,11 @@ type OutreachScheduler = {
   id: number;
   name: string;
   facility: string;
+  capacityPercent: number;
   createdAt: string;
 };
+
+const CAPACITY_OPTIONS = [25, 50, 75, 100] as const;
 
 function facilityColor(f: string) {
   if (f.includes("Spring")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
@@ -148,18 +151,21 @@ export default function SettingsPage() {
 
   const [newName, setNewName] = useState("");
   const [newFacility, setNewFacility] = useState<Facility>("Taylor Family Practice");
+  const [newCapacity, setNewCapacity] = useState<number>(100);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [editFacility, setEditFacility] = useState<Facility>("Taylor Family Practice");
+  const [editCapacity, setEditCapacity] = useState<number>(100);
   const seededRef = useRef(false);
 
   const createMutation = useMutation({
-    mutationFn: (body: { name: string; facility: string }) =>
+    mutationFn: (body: { name: string; facility: string; capacityPercent?: number }) =>
       apiRequest("POST", "/api/outreach/schedulers", body).then((r) => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/schedulers"] });
       setNewName("");
       setNewFacility("Taylor Family Practice");
+      setNewCapacity(100);
       toast({ title: "Scheduler added" });
     },
     onError: (err: Error) =>
@@ -167,7 +173,7 @@ export default function SettingsPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, body }: { id: number; body: { name: string; facility: string } }) =>
+    mutationFn: ({ id, body }: { id: number; body: { name: string; facility: string; capacityPercent: number } }) =>
       apiRequest("PATCH", `/api/outreach/schedulers/${id}`, body).then((r) => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/schedulers"] });
@@ -203,6 +209,7 @@ export default function SettingsPage() {
     setEditingId(s.id);
     setEditName(s.name);
     setEditFacility(s.facility as Facility);
+    setEditCapacity(s.capacityPercent ?? 100);
   }
 
   function cancelEdit() {
@@ -211,12 +218,12 @@ export default function SettingsPage() {
 
   function submitEdit(id: number) {
     if (!editName.trim()) return;
-    updateMutation.mutate({ id, body: { name: editName.trim(), facility: editFacility } });
+    updateMutation.mutate({ id, body: { name: editName.trim(), facility: editFacility, capacityPercent: editCapacity } });
   }
 
   function handleAdd() {
     if (!newName.trim()) return;
-    createMutation.mutate({ name: newName.trim(), facility: newFacility });
+    createMutation.mutate({ name: newName.trim(), facility: newFacility, capacityPercent: newCapacity });
   }
 
   return (
@@ -313,6 +320,16 @@ export default function SettingsPage() {
                         ))}
                       </SelectContent>
                     </Select>
+                    <Select value={String(editCapacity)} onValueChange={(v) => setEditCapacity(parseInt(v, 10))}>
+                      <SelectTrigger className="h-8 w-28 rounded-xl text-sm" data-testid={`select-edit-capacity-${s.id}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CAPACITY_OPTIONS.map((c) => (
+                          <SelectItem key={c} value={String(c)}>{c}% calls</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <Button
                       size="sm"
                       className="h-8 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
@@ -351,6 +368,14 @@ export default function SettingsPage() {
                         data-testid={`badge-facility-${s.id}`}
                       >
                         {s.facility}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="rounded-full border-slate-200 bg-white text-xs text-slate-600"
+                        data-testid={`badge-capacity-${s.id}`}
+                        title="Share of the workday spent on calls — drives capacity-weighted patient distribution."
+                      >
+                        {s.capacityPercent ?? 100}% calls
                       </Badge>
                       <button
                         type="button"
@@ -394,6 +419,16 @@ export default function SettingsPage() {
               <SelectContent>
                 {FACILITIES.map((f) => (
                   <SelectItem key={f} value={f}>{f}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={String(newCapacity)} onValueChange={(v) => setNewCapacity(parseInt(v, 10))}>
+              <SelectTrigger className="h-8 w-32 rounded-xl text-sm" data-testid="select-new-scheduler-capacity">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CAPACITY_OPTIONS.map((c) => (
+                  <SelectItem key={c} value={String(c)}>{c}% calls</SelectItem>
                 ))}
               </SelectContent>
             </Select>
