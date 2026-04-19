@@ -78,6 +78,16 @@ interface PatientCardProps {
   onDelete: () => void;
   onAnalyze: () => void;
   onOpenScheduleModal: (patient: PatientScreening) => void;
+  schedulerName?: string | null;
+}
+
+function getInitials(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("");
 }
 
 export function PatientCard({
@@ -87,6 +97,7 @@ export function PatientCard({
   onDelete,
   onAnalyze,
   onOpenScheduleModal,
+  schedulerName,
 }: PatientCardProps) {
   const isCompleted = patient.status === "completed";
   const serverTests = patient.qualifyingTests || [];
@@ -227,6 +238,15 @@ export function PatientCard({
             <Badge variant="outline" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate">
               <Check className="w-3 h-3 text-emerald-500" /> Analyzed
             </Badge>
+          )}
+          {schedulerName && (
+            <span
+              title={`Scheduler: ${schedulerName}`}
+              className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-primary/10 text-primary text-[10px] font-semibold shrink-0"
+              data-testid={`badge-scheduler-initials-${patient.id}`}
+            >
+              {getInitials(schedulerName)}
+            </span>
           )}
         </div>
         <div className="flex flex-col gap-2 items-end min-w-[220px]">

@@ -39,6 +39,7 @@ export const screeningBatches = pgTable("screening_batches", {
   status: text("status").notNull().default("processing"),
   facility: text("facility"),
   scheduleDate: text("schedule_date"),
+  assignedSchedulerId: integer("assigned_scheduler_id"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_screening_batches_status").on(table.status),
@@ -337,6 +338,7 @@ export const plexusTasks = pgTable("plexus_tasks", {
   assignedToUserId: varchar("assigned_to_user_id").references(() => users.id, { onDelete: "set null" }),
   createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
   patientScreeningId: integer("patient_screening_id").references(() => patientScreenings.id, { onDelete: "set null" }),
+  batchId: integer("batch_id").references(() => screeningBatches.id, { onDelete: "set null" }),
   dueDate: text("due_date"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -346,6 +348,7 @@ export const plexusTasks = pgTable("plexus_tasks", {
   index("idx_plexus_tasks_created_by").on(table.createdByUserId),
   index("idx_plexus_tasks_status").on(table.status),
   index("idx_plexus_tasks_urgency").on(table.urgency),
+  index("idx_plexus_tasks_batch_id").on(table.batchId),
 ]);
 
 export const insertPlexusTaskSchema = createInsertSchema(plexusTasks).omit({ id: true, createdAt: true, updatedAt: true });
@@ -439,9 +442,11 @@ export const outreachSchedulers = pgTable("outreach_schedulers", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   facility: text("facility").notNull(),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_outreach_schedulers_facility").on(table.facility),
+  index("idx_outreach_schedulers_user_id").on(table.userId),
 ]);
 
 export const insertOutreachSchedulerSchema = createInsertSchema(outreachSchedulers).omit({

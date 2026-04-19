@@ -6,12 +6,12 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Calendar as CalendarPicker } from "@/components/ui/calendar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSidebar, SidebarTrigger } from "@/components/ui/sidebar";
-import { Database, FileText, Loader2, Lock, Plus, Search, Trash2, Upload, X } from "lucide-react";
-import type { ScreeningBatch, PatientScreening, PatientTestHistory } from "@shared/schema";
+import { AlertTriangle, Database, FileText, Loader2, Lock, Plus, Search, Trash2, Upload, User, X } from "lucide-react";
+import type { ScreeningBatch, PatientScreening, PatientTestHistory, OutreachScheduler } from "@shared/schema";
 import type { ReasoningValue } from "@/lib/pdfGeneration";
 import { VALID_FACILITIES } from "@shared/plexus";
 import { HomeSidebar } from "@/components/HomeSidebar";
@@ -22,7 +22,7 @@ import { PatientCard } from "@/components/PatientCard";
 import { AppointmentModal } from "@/components/AppointmentModal";
 import { BatchHeader } from "@/components/BatchHeader";
 
-export type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
+export type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[]; assignedScheduler?: OutreachScheduler | null };
 
 const FACILITIES = VALID_FACILITIES;
 const IMPORT_ACCESS_CODE = "1234";
@@ -54,6 +54,11 @@ export default function Home() {
   const [dashboardWeekOverride, setDashboardWeekOverride] = useState<string | null>(null);
   const [dashboardClinicKey, setDashboardClinicKey] = useState<string | null>(null);
   const [isAutoPolling, setIsAutoPolling] = useState(false);
+  const [assignSchedulerModal, setAssignSchedulerModal] = useState<{
+    batchId: number;
+    batchName: string;
+    availableSchedulers: OutreachScheduler[];
+  } | null>(null);
   const autoPollingRef = useRef(false);
   const prevBatchStatusRef = useRef<string | undefined>(undefined);
   const wasAutoPollingRef = useRef(false);
@@ -89,6 +94,9 @@ export default function Home() {
     enabled: view === "home",
     refetchInterval: 120000,
   });
+  const { data: outreachSchedulers = [] } = useQuery<OutreachScheduler[]>({
+    queryKey: ["/api/outreach/schedulers"],
+  });
 
   const importHistoryMutation = useMutation({
     mutationFn: async (text: string) => { const res = await apiRequest("POST", "/api/test-history/import", { text }); return res.json(); },
@@ -119,6 +127,21 @@ export default function Home() {
     else { setTabs((prev) => [...prev, { type: "schedule", batchId, label }]); setActiveTabIndex(tabs.length); }
   }, [tabs]);
 
+  useEffect(() => {
+    const stored = sessionStorage.getItem("pendingSchedulerAssignment");
+    if (stored) {
+      try {
+        const pending = JSON.parse(stored) as { batchId: number; batchName: string; availableSchedulers: OutreachScheduler[] };
+        if (pending.batchId && pending.batchName) {
+          openScheduleTab(pending.batchId, pending.batchName);
+          setAssignSchedulerModal(pending);
+        }
+      } catch {
+        sessionStorage.removeItem("pendingSchedulerAssignment");
+      }
+    }
+  }, []);
+
   const closeTab = useCallback((index: number) => {
     setTabs((prev) => { const next = prev.filter((_, i) => i !== index); return next.length === 0 ? [{ type: "home" as const }] : next; });
     setActiveTabIndex((prev) => { if (index < prev) return prev - 1; if (index === prev) return Math.max(0, index - 1); return prev; });
@@ -128,7 +151,33 @@ export default function Home() {
     mutationFn: async ({ name, facility, scheduleDate }: { name: string; facility: string; scheduleDate?: string }) => {
       const res = await apiRequest("POST", "/api/batches", { name, facility, scheduleDate }); return res.json();
     },
-    onSuccess: (data) => { queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] }); openScheduleTab(data.id, data.name || "New Schedule"); },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+      openScheduleTab(data.id, data.name || "New Schedule");
+      if (data.requiresManualAssignment) {
+        const pendingAssignment = {
+          batchId: data.id,
+          batchName: data.name || "New Schedule",
+          availableSchedulers: data.availableSchedulers ?? [],
+        };
+        sessionStorage.setItem("pendingSchedulerAssignment", JSON.stringify(pendingAssignment));
+        setAssignSchedulerModal(pendingAssignment);
+      }
+    },
+  });
+  const assignSchedulerMutation = useMutation({
+    mutationFn: async ({ batchId, schedulerId }: { batchId: number; schedulerId: number | null }) => {
+      const res = await apiRequest("POST", `/api/batches/${batchId}/assign-scheduler`, { schedulerId });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
+      sessionStorage.removeItem("pendingSchedulerAssignment");
+      setAssignSchedulerModal(null);
+      toast({ title: "Scheduler assigned" });
+    },
+    onError: (e: unknown) => toast({ title: "Assignment failed", description: e instanceof Error ? e.message : "Failed to assign scheduler", variant: "destructive" }),
   });
   const addPatientMutation = useMutation({
     mutationFn: async ({ batchId, name, time, age, gender, dob, phoneNumber, insurance, diagnoses, history, medications, previousTests, previousTestsDate, noPreviousTests, patientType, notes }: { batchId: number; name: string; time?: string; age?: string | number; gender?: string; dob?: string; phoneNumber?: string; insurance?: string; diagnoses?: string; history?: string; medications?: string; previousTests?: string; previousTestsDate?: string; noPreviousTests?: boolean; patientType?: string; notes?: string }) => {
@@ -517,6 +566,12 @@ export default function Home() {
               onDeleteAll={() => { if (confirm("Delete all patients from this schedule?")) patients.forEach((p) => deletePatientMutation.mutate(p.id)); }}
               onGenerateAll={() => analyzeAllMutation.mutate(selectedBatchId!)}
               onUpdateClinician={(clinicianName) => updateClinicianMutation.mutate({ id: selectedBatchId!, clinicianName })}
+              schedulers={outreachSchedulers}
+              onAssignScheduler={selectedBatch ? () => setAssignSchedulerModal({
+                batchId: selectedBatch.id,
+                batchName: selectedBatch.name,
+                availableSchedulers: outreachSchedulers.filter((s) => s.facility === selectedBatch.facility),
+              }) : undefined}
             />
             <main className="flex-1 overflow-auto">
               <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
@@ -594,6 +649,7 @@ export default function Home() {
                           onDelete={() => deletePatientMutation.mutate(patient.id)}
                           onAnalyze={() => analyzeOnePatient(patient.id)}
                           onOpenScheduleModal={(p) => setScheduleModalPatient(p)}
+                          schedulerName={selectedBatch?.assignedScheduler?.name ?? null}
                         />
                       ))}
                     </div>
@@ -648,6 +704,58 @@ export default function Home() {
           defaultDate={selectedBatch?.scheduleDate ?? undefined}
         />
       )}
+
+      <Dialog open={!!assignSchedulerModal} onOpenChange={() => {}}>
+        <DialogContent className="max-w-md [&>button.absolute]:hidden" data-testid="dialog-assign-scheduler" onInteractOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle>Assign Scheduler</DialogTitle>
+            <DialogDescription>
+              Same-day schedules require manual scheduler assignment. Please select a scheduler for this batch before continuing.
+            </DialogDescription>
+          </DialogHeader>
+          {assignSchedulerModal && (
+            <div className="py-2 space-y-2">
+              {assignSchedulerModal.availableSchedulers.length === 0 ? (
+                <div className="flex flex-col items-center gap-3 py-4 text-center">
+                  <AlertTriangle className="w-8 h-8 text-amber-500" />
+                  <p className="text-sm text-muted-foreground">No schedulers are assigned to <strong>{selectedBatch?.facility || "this clinic"}</strong>.</p>
+                  <p className="text-xs text-muted-foreground">The schedule will be saved without a scheduler. An urgent task will be created.</p>
+                </div>
+              ) : (
+                assignSchedulerModal.availableSchedulers.map((scheduler) => (
+                  <button
+                    key={scheduler.id}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border hover:border-primary hover:bg-primary/5 transition-colors text-left"
+                    onClick={() => assignSchedulerMutation.mutate({ batchId: assignSchedulerModal.batchId, schedulerId: scheduler.id })}
+                    disabled={assignSchedulerMutation.isPending}
+                    data-testid={`button-select-scheduler-${scheduler.id}`}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                      <User className="w-4 h-4 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">{scheduler.name}</p>
+                      <p className="text-xs text-muted-foreground">{scheduler.facility}</p>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            {assignSchedulerModal?.availableSchedulers.length === 0 ? (
+              <Button
+                onClick={() => assignSchedulerMutation.mutate({ batchId: assignSchedulerModal!.batchId, schedulerId: null })}
+                disabled={assignSchedulerMutation.isPending}
+                data-testid="button-save-unassigned"
+              >
+                {assignSchedulerMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                Save Without Scheduler
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

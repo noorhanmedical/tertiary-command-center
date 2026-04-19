@@ -1,8 +1,10 @@
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { Building2, Loader2, Sparkles, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { AlertTriangle, Building2, Loader2, Sparkles, Trash2, User } from "lucide-react";
 import { StepTimeline } from "@/components/StepTimeline";
 import type { PatientScreening, ScreeningBatch } from "@shared/schema";
+import type { OutreachScheduler } from "@shared/schema";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
@@ -19,6 +21,8 @@ interface BatchHeaderProps {
   onDeleteAll: () => void;
   onGenerateAll: () => void;
   onUpdateClinician: (clinicianName: string) => void;
+  schedulers?: OutreachScheduler[];
+  onAssignScheduler?: () => void;
 }
 
 export function BatchHeader({
@@ -34,7 +38,13 @@ export function BatchHeader({
   onDeleteAll,
   onGenerateAll,
   onUpdateClinician,
+  schedulers = [],
+  onAssignScheduler,
 }: BatchHeaderProps) {
+  const assignedScheduler = selectedBatch?.assignedSchedulerId != null
+    ? schedulers.find((s) => s.id === selectedBatch.assignedSchedulerId) ?? null
+    : null;
+
   return (
     <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
       <StepTimeline current="build" onNavigate={onNavigate} canGoToResults={completedCount > 0} />
@@ -64,6 +74,30 @@ export function BatchHeader({
                 <span className="text-xs text-muted-foreground" data-testid="text-facility-build">{selectedBatch.facility}</span>
               </div>
             )}
+            <div className="flex items-center gap-1 mt-0.5">
+              {assignedScheduler ? (
+                <>
+                  <User className="w-3 h-3 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground" data-testid="text-assigned-scheduler">{assignedScheduler.name}</span>
+                </>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-400 text-amber-600 dark:text-amber-400 gap-0.5" data-testid="badge-unassigned-scheduler">
+                    <AlertTriangle className="w-2.5 h-2.5" />
+                    No scheduler assigned
+                  </Badge>
+                  {onAssignScheduler && (
+                    <button
+                      onClick={onAssignScheduler}
+                      className="text-[10px] text-primary underline hover:no-underline"
+                      data-testid="button-assign-scheduler-inline"
+                    >
+                      Assign
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">

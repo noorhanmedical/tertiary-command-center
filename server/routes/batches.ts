@@ -24,6 +24,10 @@ import {
   extractImagePatients,
 } from "../services/screening";
 import { logAudit } from "../services/auditService";
+import {
+  findSchedulerForBatch,
+  createAssignmentTask,
+} from "../services/schedulerAssignmentService";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -41,7 +45,83 @@ export function registerBatchRoutes(app: Express) {
         scheduleDate: parsed.data.scheduleDate || null,
       });
       void logAudit(req, "create", "batch", batch.id, { name: batch.name, facility: batch.facility });
-      res.json(batch);
+
+      const assignment = await findSchedulerForBatch(
+        parsed.data.facility || null,
+        parsed.data.scheduleDate || null,
+      );
+
+      if (!assignment.requiresManualAssignment) {
+        if (assignment.scheduler) {
+          await storage.updateScreeningBatch(batch.id, { assignedSchedulerId: assignment.scheduler.id });
+          await createAssignmentTask(batch.id, batch.name, assignment.scheduler.id);
+          return res.json({
+            ...batch,
+            assignedSchedulerId: assignment.scheduler.id,
+            assignedScheduler: assignment.scheduler,
+            requiresManualAssignment: false,
+          });
+        } else {
+          await createAssignmentTask(batch.id, batch.name, null);
+          return res.json({
+            ...batch,
+            assignedSchedulerId: null,
+            requiresManualAssignment: false,
+          });
+        }
+      }
+
+      return res.json({
+        ...batch,
+        requiresManualAssignment: assignment.requiresManualAssignment,
+        availableSchedulers: assignment.availableSchedulers,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/batches/:id/assign-scheduler", async (req, res) => {
+    try {
+      const batchId = parseInt(req.params.id);
+      const batch = await storage.getScreeningBatch(batchId);
+      if (!batch) return res.status(404).json({ error: "Batch not found" });
+
+      const { schedulerId } = req.body;
+      const schedulerIdNum = schedulerId != null ? parseInt(String(schedulerId)) : null;
+
+      const allSchedulers = await storage.getOutreachSchedulers();
+      const assignedScheduler = schedulerIdNum != null
+        ? allSchedulers.find((s) => s.id === schedulerIdNum) ?? null
+        : null;
+
+      if (schedulerIdNum != null && !assignedScheduler) {
+        return res.status(404).json({ error: "Scheduler not found" });
+      }
+
+      if (schedulerIdNum != null && assignedScheduler && batch.facility && assignedScheduler.facility !== batch.facility) {
+        return res.status(400).json({ error: "Scheduler facility does not match batch facility" });
+      }
+
+      const updated = await storage.updateScreeningBatch(batchId, {
+        assignedSchedulerId: schedulerIdNum,
+      });
+
+      const task = await createAssignmentTask(batchId, batch.name, schedulerIdNum);
+
+      if (task) {
+        void storage.writeEvent({
+          taskId: task.id,
+          projectId: null,
+          userId: req.session.userId ?? null,
+          eventType: "scheduler_assigned",
+          payload: { batchId, schedulerName: assignedScheduler?.name ?? "Unassigned" },
+        });
+      }
+
+      void logAudit(req, "update", "batch", batchId, { assignedSchedulerId: schedulerIdNum });
+
+      return res.json({ ...updated, assignedScheduler });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -391,7 +471,12 @@ export function registerBatchRoutes(app: Express) {
       if (!batch) return res.status(404).json({ error: "Batch not found" });
 
       const patients = await storage.getPatientScreeningsByBatch(id);
-      res.json({ ...batch, patients });
+      let assignedScheduler = null;
+      if (batch.assignedSchedulerId) {
+        const schedulers = await storage.getOutreachSchedulers();
+        assignedScheduler = schedulers.find((s) => s.id === batch.assignedSchedulerId) ?? null;
+      }
+      res.json({ ...batch, patients, assignedScheduler });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
