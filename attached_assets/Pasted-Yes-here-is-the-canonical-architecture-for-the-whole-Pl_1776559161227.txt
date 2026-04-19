@@ -1,0 +1,223 @@
+Yes — here is the canonical architecture for the whole Plexus project, stripped down to the actual system shape.
+
+Core product spine
+
+Schedule → Patient Flow → Outreach / Technician / Ancillary Documents → Billing
+
+That is the real operational chain.
+
+Canonical top-level tiles
+
+These are the actual primary domains:
+
+* Mission Control
+* Patient Flow
+* Schedule
+* Outreach Center
+* Technician Central
+* Ancillary Documents
+* Billing
+* Team Ops
+* Clinic Analytics
+* Clinic Onboarding
+* Plexus Workspace
+* Patient Database
+* Task Brain
+
+Not top-level
+
+These should stay nested, not promoted:
+
+* Admin
+* System Architecture
+
+Canonical ownership by domain
+
+Schedule
+
+* direct clinic EMR schedule source
+* contains Global Schedule inside it
+* operational truth for what is happening in clinic time
+
+Patient Flow
+
+* patient eligibility
+* due / due soon / cooldown
+* progression state
+* patient-level rationale and next-step state
+* canonical owner page: PatientWorkflow.tsx
+
+Outreach Center
+
+* communication and scheduling execution layer
+* outreach tabs:
+    * Outreach Center
+    * Marketing Center
+    * Team Portal
+    * Metrics Center / manager dashboard
+* owns follow-up / callback / outreach workflow
+
+Technician Central
+
+* ultrasound-only
+* technician scheduling
+* technician availability
+* ultrasound execution and reporting
+* must not become a non-ultrasound catch-all
+
+Ancillary Documents
+
+* non-ultrasound document/report workflow
+* screening
+* pre-procedure
+* procedure note
+* billing document
+* report-driven packet readiness
+* all non-ultrasound reports upload through here
+
+Billing
+
+* downstream packet review and billing workflow
+* not an overview-heavy dashboard
+* final packet/document readiness owner
+
+Team Ops
+
+* staffing / coverage authority
+* manager workbench
+* staffing calendar
+* clinic coverage
+* self-service portal
+* should eventually feed outreach coverage and technician scheduling decisions
+
+Mission Control
+
+* admin-facing orchestration surface
+* should consume canonical data from real owners
+* must not become a second execution system
+* should route into real owner pages
+
+Clinic Analytics
+
+* analytics / diligence / strategy surface
+* not execution
+* clinic performance, payer mix, financial health, opportunity scoring
+
+Clinic Onboarding
+
+* clinic setup / readiness / onboarding state
+* admin / leadership facing
+
+Patient Database
+
+* canonical patient context
+* patient search / patient record context layer
+
+Plexus Workspace
+
+* workspace / supporting operational material layer
+
+Task Brain
+
+* intelligence / reasoning / orchestration support layer
+* not a replacement for real workflow owners
+
+Admin
+
+* control/configuration layer only
+* should contain:
+    * Access Control
+    * System Architecture
+    * ancillary definitions
+    * clinic settings
+    * technician rules
+    * admin thresholds and prioritization logic
+
+Canonical logic rules
+
+Lifecycle tags
+
+* Visit
+* Outreach
+
+Rule:
+
+* before visit = Outreach
+* on visit through 4 weeks after = Visit
+* more than 4 weeks after = Outreach
+
+Global Schedule
+
+* remains inside Schedule
+* not a separate top-level tile
+* execution spine input layer
+
+Ordering Portal
+
+* stays exactly as it is
+* screening form in Ordering Portal and Ancillary Documents should be identical
+
+Canonical supporting layers
+
+These are shared architecture layers, not page duplicates:
+
+* shared selectors
+* workflow spine / execution spine
+* patient case index
+* patient context index
+* global schedule selectors
+* team ops selectors
+* ancillary document selectors
+* registry / normalization layers
+
+Canonical architecture principle
+
+There should be:
+
+* one real owner page per domain
+* shared selector/workflow layers underneath
+* Mission Control and Admin consuming those layers
+* no parallel page systems
+* no second calendars
+* no second patient-flow systems
+* no second document systems
+
+Canonical mental model
+
+Think of Plexus like this:
+
+Operational source
+
+* Schedule
+
+Patient state engine
+
+* Patient Flow
+
+Execution surfaces
+
+* Outreach Center
+* Technician Central
+* Ancillary Documents
+
+Downstream financial completion
+
+* Billing
+
+Staffing authority
+
+* Team Ops
+
+Admin orchestration
+
+* Mission Control
+
+Strategy / diligence
+
+* Clinic Analytics
+
+Configuration authority
+
+* Admin
+
+If you want, I can turn this into a one-page canonical architecture map with “tile → purpose → owner → upstream inputs → downstream outputs.”
