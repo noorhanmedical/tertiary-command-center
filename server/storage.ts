@@ -744,16 +744,22 @@ export class DatabaseStorage implements IStorage {
   async getUnreadCount(userId: string): Promise<number> {
     const taskIds = await this._getMemberTaskIds(userId);
     if (taskIds.length === 0) return 0;
-    const rows = await db.execute<{ unread: number }>(sql`
-      SELECT COUNT(m.id)::int AS unread
-      FROM plexus_task_messages m
-      LEFT JOIN plexus_task_reads r
-        ON r.task_id = m.task_id AND r.user_id = ${userId}
-      WHERE m.task_id = ANY(ARRAY[${sql.join(taskIds.map((id) => sql`${id}::int`), sql`, `)}])
-        AND m.sender_user_id != ${userId}
-        AND (r.last_read_at IS NULL OR m.created_at > r.last_read_at)
-    `);
-    return Number((rows as any)[0]?.unread ?? 0);
+    const [msgRows, readRows] = await Promise.all([
+      db.select({ taskId: plexusTaskMessages.taskId, createdAt: plexusTaskMessages.createdAt })
+        .from(plexusTaskMessages)
+        .where(and(
+          inArray(plexusTaskMessages.taskId, taskIds),
+          sql`${plexusTaskMessages.senderUserId} != ${userId}`
+        )),
+      db.select({ taskId: plexusTaskReads.taskId, lastReadAt: plexusTaskReads.lastReadAt })
+        .from(plexusTaskReads)
+        .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, taskIds))),
+    ]);
+    const readMap = new Map(readRows.map((r) => [r.taskId, r.lastReadAt]));
+    return msgRows.filter((m) => {
+      const lastRead = readMap.get(m.taskId);
+      return !lastRead || m.createdAt > lastRead;
+    }).length;
   }
 
   async deleteTask(id: number): Promise<void> {
@@ -767,18 +773,26 @@ export class DatabaseStorage implements IStorage {
   async getUnreadPerTask(userId: string): Promise<{ taskId: number; unreadCount: number }[]> {
     const taskIds = await this._getMemberTaskIds(userId);
     if (taskIds.length === 0) return [];
-    const rows = await db.execute<{ task_id: number; unread: number }>(sql`
-      SELECT m.task_id, COUNT(m.id)::int AS unread
-      FROM plexus_task_messages m
-      LEFT JOIN plexus_task_reads r
-        ON r.task_id = m.task_id AND r.user_id = ${userId}
-      WHERE m.task_id = ANY(ARRAY[${sql.join(taskIds.map((id) => sql`${id}::int`), sql`, `)}])
-        AND m.sender_user_id != ${userId}
-        AND (r.last_read_at IS NULL OR m.created_at > r.last_read_at)
-      GROUP BY m.task_id
-      HAVING COUNT(m.id) > 0
-    `);
-    return (rows as unknown as Array<{ task_id: number; unread: number }>).map((r) => ({ taskId: Number(r.task_id), unreadCount: Number(r.unread) }));
+    const [msgRows, readRows] = await Promise.all([
+      db.select({ taskId: plexusTaskMessages.taskId, createdAt: plexusTaskMessages.createdAt })
+        .from(plexusTaskMessages)
+        .where(and(
+          inArray(plexusTaskMessages.taskId, taskIds),
+          sql`${plexusTaskMessages.senderUserId} != ${userId}`
+        )),
+      db.select({ taskId: plexusTaskReads.taskId, lastReadAt: plexusTaskReads.lastReadAt })
+        .from(plexusTaskReads)
+        .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, taskIds))),
+    ]);
+    const readMap = new Map(readRows.map((r) => [r.taskId, r.lastReadAt]));
+    const perTask = new Map<number, number>();
+    for (const m of msgRows) {
+      const lastRead = readMap.get(m.taskId);
+      if (!lastRead || m.createdAt > lastRead) {
+        perTask.set(m.taskId, (perTask.get(m.taskId) ?? 0) + 1);
+      }
+    }
+    return Array.from(perTask.entries()).map(([taskId, unreadCount]) => ({ taskId, unreadCount }));
   }
 
   async searchPatientsByName(query: string): Promise<PatientScreening[]> {
