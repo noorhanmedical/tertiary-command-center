@@ -156,6 +156,7 @@ export interface IStorage {
   getTasksByProject(projectId: number): Promise<PlexusTask[]>;
   getTasksByAssignee(userId: string): Promise<PlexusTask[]>;
   getTasksByCreator(userId: string): Promise<PlexusTask[]>;
+  getTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]>;
   getUrgentTasks(): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
   getAllUsers(): Promise<User[]>;
@@ -185,6 +186,7 @@ export interface IStorage {
 
   // ── Patient search (for task patient-link) ─────────────────────────────
   searchPatientsByName(query: string): Promise<PatientScreening[]>;
+  getPatientById(id: number): Promise<PatientScreening | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -581,6 +583,26 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(plexusTasks.createdAt));
   }
 
+  async getTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]> {
+    const tasks = await db.select().from(plexusTasks)
+      .where(eq(plexusTasks.createdByUserId, userId))
+      .orderBy(desc(plexusTasks.updatedAt));
+    if (tasks.length === 0) return [];
+    const taskIds = tasks.map((t) => t.id);
+    const latestMsgs = await db.select({
+      taskId: plexusTaskMessages.taskId,
+      latestAt: sql<Date>`MAX(${plexusTaskMessages.createdAt})`,
+    })
+      .from(plexusTaskMessages)
+      .where(inArray(plexusTaskMessages.taskId, taskIds))
+      .groupBy(plexusTaskMessages.taskId);
+    const msgMap = new Map(latestMsgs.map((m) => [m.taskId, m.latestAt]));
+    return tasks.map((t) => ({
+      ...t,
+      lastActivityAt: msgMap.get(t.id) ?? t.updatedAt,
+    }));
+  }
+
   async getUrgentTasks(): Promise<PlexusTask[]> {
     return db.select().from(plexusTasks)
       .where(and(
@@ -719,22 +741,20 @@ export class DatabaseStorage implements IStorage {
     const reads = await db.select().from(plexusTaskReads)
       .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, taskIds)));
     const readMap = new Map(reads.map((r) => [r.taskId, r.lastReadAt]));
-    const msgCounts = await db.select({
-      taskId: plexusTaskMessages.taskId,
-      latestAt: sql<Date>`MAX(${plexusTaskMessages.createdAt})`,
-      total: sql<number>`COUNT(*)`,
-    })
-      .from(plexusTaskMessages)
-      .where(and(
-        inArray(plexusTaskMessages.taskId, taskIds),
-        sql`${plexusTaskMessages.senderUserId} != ${userId}`
-      ))
-      .groupBy(plexusTaskMessages.taskId);
     const result: { taskId: number; unreadCount: number }[] = [];
-    for (const row of msgCounts) {
-      const lastRead = readMap.get(row.taskId);
-      if (!lastRead || row.latestAt > lastRead) {
-        result.push({ taskId: row.taskId, unreadCount: 1 });
+    for (const taskId of taskIds) {
+      const lastRead = readMap.get(taskId) ?? null;
+      const countQuery = db.select({ cnt: sql<number>`COUNT(*)` })
+        .from(plexusTaskMessages)
+        .where(and(
+          eq(plexusTaskMessages.taskId, taskId),
+          sql`${plexusTaskMessages.senderUserId} != ${userId}`,
+          ...(lastRead ? [sql`${plexusTaskMessages.createdAt} > ${lastRead}`] : [])
+        ));
+      const [{ cnt }] = await countQuery;
+      const unreadCount = Number(cnt);
+      if (unreadCount > 0) {
+        result.push({ taskId, unreadCount });
       }
     }
     return result;
@@ -744,6 +764,11 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(patientScreenings)
       .where(sql`LOWER(${patientScreenings.name}) LIKE LOWER(${'%' + query + '%'})`)
       .limit(20);
+  }
+
+  async getPatientById(id: number): Promise<PatientScreening | undefined> {
+    const [result] = await db.select().from(patientScreenings).where(eq(patientScreenings.id, id));
+    return result;
   }
 }
 

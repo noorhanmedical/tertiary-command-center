@@ -27,7 +27,12 @@ import { Card } from "@/components/ui/card";
 import { CreateTaskModal } from "@/components/plexus/CreateTaskModal";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { PlexusTask, PlexusProject } from "@shared/schema";
+import type { PlexusProject } from "@shared/schema";
+
+type PlexusTask = import("@shared/schema").PlexusTask & {
+  patientName?: string | null;
+  lastActivityAt?: Date | string | null;
+};
 
 type View = "my-work" | "projects" | "sent";
 
@@ -142,6 +147,12 @@ function TaskRow({
               <span className="flex items-center gap-1">
                 <User className="h-3 w-3" />
                 {task.assignedToUserId}
+              </span>
+            )}
+            {task.patientName && (
+              <span className="flex items-center gap-1 text-blue-500">
+                <User className="h-3 w-3" />
+                {task.patientName}
               </span>
             )}
           </div>
@@ -456,15 +467,33 @@ function SentView() {
     );
   }
 
+  function formatRelative(dt: Date | string | null | undefined): string | null {
+    if (!dt) return null;
+    const d = typeof dt === "string" ? new Date(dt) : dt;
+    const diffMs = Date.now() - d.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return "just now";
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffH = Math.floor(diffMin / 60);
+    if (diffH < 24) return `${diffH}h ago`;
+    return `${Math.floor(diffH / 24)}d ago`;
+  }
+
   return (
     <div className="space-y-2">
       {tasks.map((t) => (
-        <TaskRow
-          key={t.id}
-          task={t}
-          onStatusChange={(id, status) => updateMutation.mutate({ id, status })}
-          unreadCount={msgMap.get(t.id) ?? 0}
-        />
+        <div key={t.id} className="space-y-0.5">
+          <TaskRow
+            task={t}
+            onStatusChange={(id, status) => updateMutation.mutate({ id, status })}
+            unreadCount={msgMap.get(t.id) ?? 0}
+          />
+          {t.lastActivityAt && (
+            <p className="px-1 text-[10px] text-slate-400">
+              Last activity: {formatRelative(t.lastActivityAt)}
+            </p>
+          )}
+        </div>
       ))}
     </div>
   );
@@ -549,6 +578,12 @@ function UrgentPanel({
                           <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-500">
                             <Clock className="h-2.5 w-2.5" />
                             {t.dueDate}
+                          </span>
+                        )}
+                        {t.patientName && (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] text-blue-500">
+                            <User className="h-2.5 w-2.5" />
+                            {t.patientName}
                           </span>
                         )}
                       </div>

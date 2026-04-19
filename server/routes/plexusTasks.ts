@@ -2,6 +2,17 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 
+// ── Typed event payloads ───────────────────────────────────────────────────
+type EventPayload =
+  | { title: string; projectType?: string }
+  | { title: string }
+  | { from: string; to: string }
+  | { messageId: number }
+  | { collaboratorUserId: string; role: string }
+  | { readAt: string }
+  | Record<string, string | number | boolean | null | undefined>;
+
+// ── Validation schemas ─────────────────────────────────────────────────────
 const createProjectSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
@@ -35,8 +46,27 @@ const updateTaskSchema = z.object({
   taskType: z.string().optional(),
 });
 
+const createMessageSchema = z.object({
+  body: z.string().min(1, "Message body is required"),
+});
+
+const addCollaboratorSchema = z.object({
+  role: z.enum(["collaborator", "reviewer", "owner"]).default("collaborator"),
+});
+
+// ── Helpers ────────────────────────────────────────────────────────────────
 function uid(req: Request): string {
   return req.session.userId!;
+}
+
+async function enrichWithPatientNames<T extends { patientScreeningId?: number | null }>(
+  tasks: T[]
+): Promise<(T & { patientName?: string | null })[]> {
+  const ids = [...new Set(tasks.map((t) => t.patientScreeningId).filter((id): id is number => id != null))];
+  if (ids.length === 0) return tasks.map((t) => ({ ...t, patientName: null }));
+  const patients = await Promise.all(ids.map((id) => storage.getPatientById(id)));
+  const nameMap = new Map(patients.filter(Boolean).map((p) => [p!.id, p!.name]));
+  return tasks.map((t) => ({ ...t, patientName: t.patientScreeningId ? (nameMap.get(t.patientScreeningId) ?? null) : null }));
 }
 
 function canEditTask(task: { createdByUserId?: string | null; assignedToUserId?: string | null }, userId: string): boolean {
@@ -47,8 +77,28 @@ function canEditProject(project: { createdByUserId?: string | null }, userId: st
   return project.createdByUserId === userId;
 }
 
+async function canViewTask(taskId: number, userId: string): Promise<boolean> {
+  const task = await storage.getTaskById(taskId);
+  if (!task) return false;
+  if (task.createdByUserId === userId || task.assignedToUserId === userId) return true;
+  const collabs = await storage.getCollaborators(taskId);
+  return collabs.some((c) => c.userId === userId);
+}
+
+async function writeEvent(
+  data: { taskId?: number | null; projectId?: number | null; userId: string; eventType: string; payload: EventPayload }
+) {
+  await storage.writeEvent({
+    taskId: data.taskId ?? null,
+    projectId: data.projectId ?? null,
+    userId: data.userId,
+    eventType: data.eventType,
+    payload: data.payload,
+  });
+}
+
 export function registerPlexusTasksRoutes(app: Express) {
-  // ── Users list (for assignee picker) ─────────────────────────────────────
+  // ── Users list ────────────────────────────────────────────────────────────
   app.get("/api/plexus/users", async (_req, res: Response) => {
     try {
       const users = await storage.getAllUsers();
@@ -58,7 +108,7 @@ export function registerPlexusTasksRoutes(app: Express) {
     }
   });
 
-  // ── Patient search (for task patient-link) ────────────────────────────────
+  // ── Patient search ────────────────────────────────────────────────────────
   app.get("/api/plexus/patients/search", async (req: Request, res: Response) => {
     try {
       const q = String(req.query.q ?? "").trim();
@@ -86,13 +136,7 @@ export function registerPlexusTasksRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
       const userId = uid(req);
       const project = await storage.createProject({ ...parsed.data, createdByUserId: userId });
-      await storage.writeEvent({
-        projectId: project.id,
-        taskId: null,
-        userId,
-        eventType: "project_created",
-        payload: { title: project.title, projectType: project.projectType } as any,
-      });
+      await writeEvent({ projectId: project.id, userId, eventType: "project_created", payload: { title: project.title, projectType: project.projectType } });
       res.status(201).json(project);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -107,17 +151,9 @@ export function registerPlexusTasksRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
       const existing = await storage.getProjectById(id);
       if (!existing) return res.status(404).json({ error: "Project not found" });
-      if (!canEditProject(existing, userId)) {
-        return res.status(403).json({ error: "Only the project owner can update this project" });
-      }
+      if (!canEditProject(existing, userId)) return res.status(403).json({ error: "Only the project owner can update this project" });
       const project = await storage.updateProject(id, parsed.data);
-      await storage.writeEvent({
-        projectId: id,
-        taskId: null,
-        userId,
-        eventType: "project_updated",
-        payload: parsed.data as any,
-      });
+      await writeEvent({ projectId: id, userId, eventType: "project_updated", payload: parsed.data as EventPayload });
       res.json(project);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -130,16 +166,8 @@ export function registerPlexusTasksRoutes(app: Express) {
       const userId = uid(req);
       const existing = await storage.getProjectById(id);
       if (!existing) return res.status(404).json({ error: "Project not found" });
-      if (!canEditProject(existing, userId)) {
-        return res.status(403).json({ error: "Only the project owner can delete this project" });
-      }
-      await storage.writeEvent({
-        projectId: id,
-        taskId: null,
-        userId,
-        eventType: "project_deleted",
-        payload: { title: existing.title } as any,
-      });
+      if (!canEditProject(existing, userId)) return res.status(403).json({ error: "Only the project owner can delete this project" });
+      await writeEvent({ projectId: id, userId, eventType: "project_deleted", payload: { title: existing.title } });
       await storage.deleteProject(id);
       res.json({ ok: true });
     } catch (e: any) {
@@ -165,7 +193,7 @@ export function registerPlexusTasksRoutes(app: Express) {
   app.get("/api/plexus/tasks/my-work", async (req: Request, res: Response) => {
     try {
       const tasks = await storage.getTasksByAssignee(uid(req));
-      res.json(tasks);
+      res.json(await enrichWithPatientNames(tasks));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -173,8 +201,8 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.get("/api/plexus/tasks/sent", async (req: Request, res: Response) => {
     try {
-      const tasks = await storage.getTasksByCreator(uid(req));
-      res.json(tasks);
+      const tasks = await storage.getTasksByCreatorWithActivity(uid(req));
+      res.json(await enrichWithPatientNames(tasks));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -183,7 +211,7 @@ export function registerPlexusTasksRoutes(app: Express) {
   app.get("/api/plexus/tasks/urgent", async (_req, res: Response) => {
     try {
       const tasks = await storage.getUrgentTasks();
-      res.json(tasks);
+      res.json(await enrichWithPatientNames(tasks));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -200,8 +228,7 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.get("/api/plexus/tasks/unread-per-task", async (req: Request, res: Response) => {
     try {
-      const userId = uid(req);
-      const perTask = await storage.getUnreadPerTask(userId);
+      const perTask = await storage.getUnreadPerTask(uid(req));
       res.json(perTask);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -221,6 +248,8 @@ export function registerPlexusTasksRoutes(app: Express) {
   app.get("/api/plexus/tasks/:id", async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
+      const userId = uid(req);
+      if (!await canViewTask(id, userId)) return res.status(403).json({ error: "Not authorized to view this task" });
       const task = await storage.getTaskById(id);
       if (!task) return res.status(404).json({ error: "Task not found" });
       res.json(task);
@@ -235,12 +264,7 @@ export function registerPlexusTasksRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
       const userId = uid(req);
       const task = await storage.createTask({ ...parsed.data, createdByUserId: userId });
-      await storage.writeEvent({
-        taskId: task.id,
-        userId,
-        eventType: "created",
-        payload: { title: task.title } as any,
-      });
+      await writeEvent({ taskId: task.id, userId, eventType: "created", payload: { title: task.title } });
       res.status(201).json(task);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -255,24 +279,15 @@ export function registerPlexusTasksRoutes(app: Express) {
       const userId = uid(req);
       const prev = await storage.getTaskById(id);
       if (!prev) return res.status(404).json({ error: "Task not found" });
-      if (!canEditTask(prev, userId)) {
-        return res.status(403).json({ error: "Only the task creator or assignee can update this task" });
-      }
+      if (!canEditTask(prev, userId)) return res.status(403).json({ error: "Only the task creator or assignee can update this task" });
       const task = await storage.updateTask(id, parsed.data);
       if (parsed.data.status && parsed.data.status !== prev.status) {
-        await storage.writeEvent({
-          taskId: id,
-          userId,
-          eventType: "status_changed",
-          payload: { from: prev.status, to: parsed.data.status } as any,
-        });
+        await writeEvent({ taskId: id, userId, eventType: "status_changed", payload: { from: prev.status, to: parsed.data.status } });
       } else {
-        await storage.writeEvent({
-          taskId: id,
-          userId,
-          eventType: "updated",
-          payload: parsed.data as any,
-        });
+        const safePayload: EventPayload = Object.fromEntries(
+          Object.entries(parsed.data).filter(([, v]) => v !== undefined)
+        );
+        await writeEvent({ taskId: id, userId, eventType: "updated", payload: safePayload });
       }
       res.json(task);
     } catch (e: any) {
@@ -286,15 +301,8 @@ export function registerPlexusTasksRoutes(app: Express) {
       const userId = uid(req);
       const task = await storage.getTaskById(id);
       if (!task) return res.status(404).json({ error: "Task not found" });
-      if (!canEditTask(task, userId)) {
-        return res.status(403).json({ error: "Only the task creator or assignee can delete this task" });
-      }
-      await storage.writeEvent({
-        taskId: id,
-        userId,
-        eventType: "deleted",
-        payload: { title: task.title } as any,
-      });
+      if (!canEditTask(task, userId)) return res.status(403).json({ error: "Only the task creator or assignee can delete this task" });
+      await writeEvent({ taskId: id, userId, eventType: "deleted", payload: { title: task.title } });
       await storage.deleteTask(id);
       res.json({ ok: true });
     } catch (e: any) {
@@ -306,6 +314,8 @@ export function registerPlexusTasksRoutes(app: Express) {
   app.get("/api/plexus/tasks/:id/collaborators", async (req: Request, res: Response) => {
     try {
       const taskId = parseInt(req.params.id);
+      const userId = uid(req);
+      if (!await canViewTask(taskId, userId)) return res.status(403).json({ error: "Not authorized" });
       const collabs = await storage.getCollaborators(taskId);
       res.json(collabs);
     } catch (e: any) {
@@ -317,14 +327,10 @@ export function registerPlexusTasksRoutes(app: Express) {
     try {
       const taskId = parseInt(req.params.id);
       const actingUserId = uid(req);
-      const role: string = req.body.role ?? "collaborator";
-      const collab = await storage.addCollaborator({ taskId, userId: actingUserId, role });
-      await storage.writeEvent({
-        taskId,
-        userId: actingUserId,
-        eventType: "collaborator_added",
-        payload: { collaboratorUserId: actingUserId, role } as any,
-      });
+      const parsed = addCollaboratorSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
+      const collab = await storage.addCollaborator({ taskId, userId: actingUserId, role: parsed.data.role });
+      await writeEvent({ taskId, userId: actingUserId, eventType: "collaborator_added", payload: { collaboratorUserId: actingUserId, role: parsed.data.role } });
       res.status(201).json(collab);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -335,6 +341,8 @@ export function registerPlexusTasksRoutes(app: Express) {
   app.get("/api/plexus/tasks/:id/messages", async (req: Request, res: Response) => {
     try {
       const taskId = parseInt(req.params.id);
+      const userId = uid(req);
+      if (!await canViewTask(taskId, userId)) return res.status(403).json({ error: "Not authorized" });
       const messages = await storage.getMessages(taskId);
       res.json(messages);
     } catch (e: any) {
@@ -345,26 +353,23 @@ export function registerPlexusTasksRoutes(app: Express) {
   app.post("/api/plexus/tasks/:id/messages", async (req: Request, res: Response) => {
     try {
       const taskId = parseInt(req.params.id);
-      const { body } = req.body;
-      if (!body?.trim()) return res.status(400).json({ error: "body required" });
+      const parsed = createMessageSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
       const userId = uid(req);
-      const message = await storage.addMessage({ taskId, senderUserId: userId, body });
-      await storage.writeEvent({
-        taskId,
-        userId,
-        eventType: "message_sent",
-        payload: { messageId: message.id } as any,
-      });
+      const message = await storage.addMessage({ taskId, senderUserId: userId, body: parsed.data.body });
+      await writeEvent({ taskId, userId, eventType: "message_sent", payload: { messageId: message.id } });
       res.status(201).json(message);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  // ── Events (audit log) ────────────────────────────────────────────────────
+  // ── Events ────────────────────────────────────────────────────────────────
   app.get("/api/plexus/tasks/:id/events", async (req: Request, res: Response) => {
     try {
       const taskId = parseInt(req.params.id);
+      const userId = uid(req);
+      if (!await canViewTask(taskId, userId)) return res.status(403).json({ error: "Not authorized" });
       const events = await storage.getEvents(taskId);
       res.json(events);
     } catch (e: any) {
