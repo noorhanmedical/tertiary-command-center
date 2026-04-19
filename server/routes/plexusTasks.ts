@@ -88,6 +88,13 @@ function canEditTask(task: { createdByUserId?: string | null; assignedToUserId?:
   return task.createdByUserId === userId || task.assignedToUserId === userId;
 }
 
+// Collaborators (added via the Help button) may also update task status
+async function canEditTaskOrCollaborator(taskId: number, task: { createdByUserId?: string | null; assignedToUserId?: string | null }, userId: string): Promise<boolean> {
+  if (canEditTask(task, userId)) return true;
+  const collabs = await storage.getCollaborators(taskId);
+  return collabs.some((c) => c.userId === userId);
+}
+
 function canEditProject(project: { createdByUserId?: string | null }, userId: string): boolean {
   return project.createdByUserId === userId;
 }
@@ -357,7 +364,7 @@ export function registerPlexusTasksRoutes(app: Express) {
       const userId = uid(req);
       const prev = await storage.getTaskById(id);
       if (!prev) return res.status(404).json({ error: "Task not found" });
-      if (!canEditTask(prev, userId)) return res.status(403).json({ error: "Only the task creator or assignee can update this task" });
+      if (!await canEditTaskOrCollaborator(id, prev, userId)) return res.status(403).json({ error: "Only the task creator, assignee, or a collaborator can update this task" });
       if (parsed.data.projectId != null && parsed.data.projectId !== prev.projectId) {
         if (!await canViewProject(parsed.data.projectId, userId)) {
           return res.status(403).json({ error: "Not authorized to move task to this project" });
