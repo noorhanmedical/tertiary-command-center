@@ -115,10 +115,7 @@ const SERVICE_TYPE_OPTIONS = [
 ];
 
 const PRIMARY_INSURANCE_OPTIONS = ["Medicare", "Medicare Advantage", "PPO", "HMO", "Medicaid", "Self Pay"];
-const DOC_STATUS_OPTIONS = ["Not Started", "Preprocedure Order Note", "Post-Procedure Note", "Billing Document", "Complete"];
 const CLAIM_STATUS_OPTIONS = ["Not Billed", "Submitted", "Accepted", "Pending", "Denied", "Rejected"];
-const PAYER_STATUS_OPTIONS = ["Pending", "Accepted", "Denied", "Rejected", "Paid In Full", "Partial Payment"];
-const PAYMENT_STATUS_OPTIONS = ["Unpaid", "Partial", "Paid"];
 
 const DOC_KIND_LABELS: Record<string, string> = {
   preProcedureOrder: "Pre-Procedure Order",
@@ -153,12 +150,6 @@ function formatDate(dateStr: string | null): string {
   return new Date(yyyy, mm - 1, dd).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function calcDaysInAR(dateSubmitted: string | null): number | null {
-  if (!dateSubmitted) return null;
-  const start = new Date(dateSubmitted);
-  if (isNaN(start.getTime())) return null;
-  return Math.max(0, Math.round((Date.now() - start.getTime()) / 86400000));
-}
 
 function rowAccentClass(record: BillingRecord): string {
   const cs = record.billingStatus ?? "";
@@ -1002,25 +993,12 @@ export default function BillingPage() {
             </Button>
             <div className="h-4 w-px bg-slate-200" />
             {(() => {
-              if (facilityTab !== "All") {
-                const facilityUrl = facilitySheetUrls[facilityTab];
-                if (!facilityUrl) return null;
-                return (
-                  <a href={facilityUrl} target="_blank" rel="noopener noreferrer"
-                    className="text-[10px] text-emerald-600 hover:underline inline-flex items-center gap-1"
-                    title={`Open ${facilityTab} billing sheet in Google Sheets`}
-                    data-testid="link-active-billing-sheet">
-                    <SiGooglesheets className="w-3 h-3" />Open {facilityTab} Sheet
-                  </a>
-                );
-              }
-              const driveFolderUrl = googleStatus?.sheets?.billingDriveFolderUrl ?? null;
-              const openUrl = driveFolderUrl ?? masterSheetUrl ?? billingSheetUrl;
+              const openUrl = masterSheetUrl ?? billingSheetUrl ?? (googleStatus?.sheets?.billingDriveFolderUrl ?? null);
               if (!openUrl) return null;
               return (
                 <a href={openUrl} target="_blank" rel="noopener noreferrer"
                   className="text-[10px] text-emerald-600 hover:underline inline-flex items-center gap-1"
-                  title="Open Plexus Billing Tracker folder in Google Drive"
+                  title="Open Plexus Billing Tracker in Google Sheets"
                   data-testid="link-active-billing-sheet">
                   <SiGooglesheets className="w-3 h-3" />Open Billing Sheet
                 </a>
@@ -1059,7 +1037,6 @@ export default function BillingPage() {
         {/* Facility tabs */}
         <div className="px-5 flex items-center gap-1 border-t border-slate-100 pt-2 pb-0" data-testid="facility-tabs">
           {["All", ...FACILITY_OPTIONS].map((fac) => {
-            const facUrl = fac !== "All" ? facilitySheetUrls[fac] : null;
             return (
               <div key={fac} className="flex items-center gap-0">
                 <button
@@ -1076,15 +1053,6 @@ export default function BillingPage() {
                     {fac === "All" ? records.length : records.filter(r => r.facility === fac).length}
                   </span>
                 </button>
-                {facUrl && (
-                  <a href={facUrl} target="_blank" rel="noopener noreferrer"
-                    className="ml-0.5 p-1 text-slate-300 hover:text-emerald-500 transition-colors"
-                    title={`Open ${fac} billing sheet`}
-                    data-testid={`link-sheet-${fac.replace(/\s+/g, "-").toLowerCase()}`}
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                )}
               </div>
             );
           })}
