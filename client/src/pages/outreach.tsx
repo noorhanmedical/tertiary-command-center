@@ -65,6 +65,7 @@ type OutreachDashboard = {
     totalScheduled: number;
     totalPending: number;
     avgConversion: number;
+    totalBooked: number;
   };
   schedulerCards: OutreachSchedulerCard[];
 };
@@ -174,12 +175,13 @@ export default function OutreachPage() {
   }
 
   const schedulerCards = data?.schedulerCards ?? [];
-  const metrics = data?.metrics ?? { schedulerCount: 0, totalCalls: 0, totalScheduled: 0, totalPending: 0, avgConversion: 0 };
+  const metrics = data?.metrics ?? { schedulerCount: 0, totalCalls: 0, totalScheduled: 0, totalPending: 0, avgConversion: 0, totalBooked: 0 };
 
   const METRIC_CARDS = [
     { label: "Schedulers",     value: metrics.schedulerCount,      Icon: Users2,       color: "bg-slate-900/5 text-slate-700"   },
     { label: "Calls Worked",   value: metrics.totalCalls,          Icon: Phone,        color: "bg-blue-600/10 text-blue-700"    },
     { label: "Scheduled",      value: metrics.totalScheduled,      Icon: CheckCircle2, color: "bg-green-600/10 text-green-700"  },
+    { label: "Booked Today",   value: metrics.totalBooked,         Icon: CalendarCheck, color: "bg-emerald-600/10 text-emerald-700" },
     { label: "Pending",        value: metrics.totalPending,        Icon: Clock3,       color: "bg-amber-500/10 text-amber-700"  },
     { label: "Avg Conversion", value: `${metrics.avgConversion}%`, Icon: CalendarDays, color: "bg-violet-600/10 text-violet-700" },
   ] as const;
@@ -212,7 +214,7 @@ export default function OutreachPage() {
         </div>
 
         {/* Metrics */}
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
           {METRIC_CARDS.map(({ label, value, Icon, color }) => (
             <Card key={label} className={`${shellClass()} p-5`}>
               <div className="flex items-center gap-3">

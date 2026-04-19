@@ -38,6 +38,7 @@ export type OutreachDashboard = {
     totalScheduled: number;
     totalPending: number;
     avgConversion: number;
+    totalBooked: number;
   };
   schedulerCards: SchedulerCardEntry[];
 };
@@ -62,9 +63,10 @@ export async function buildOutreachDashboard(
   storage: IStorage,
   today: string,
 ): Promise<OutreachDashboard> {
-  const [batches, schedulers] = await Promise.all([
+  const [batches, schedulers, todayAppointments] = await Promise.all([
     storage.getAllScreeningBatches(),
     storage.getOutreachSchedulers(),
+    storage.getAppointments({ date: today, status: "scheduled" }),
   ]);
 
   const map = new Map<string, SchedulerCardEntry>();
@@ -165,6 +167,18 @@ export async function buildOutreachDashboard(
   const totalPatients = schedulerCards.reduce((sum, c) => sum + c.totalPatients, 0);
   const totalScheduled = schedulerCards.reduce((sum, c) => sum + c.scheduledCount, 0);
 
+  const allPatientNames = new Set(
+    schedulerCards.flatMap((c) =>
+      c.callList.map((item) => item.patientName.trim().toLowerCase()),
+    ),
+  );
+  const bookedPatientNames = new Set(
+    todayAppointments
+      .map((a) => a.patientName.trim().toLowerCase())
+      .filter((name) => allPatientNames.has(name)),
+  );
+  const totalBooked = bookedPatientNames.size;
+
   return {
     today,
     metrics: {
@@ -176,6 +190,7 @@ export async function buildOutreachDashboard(
         totalPatients > 0
           ? Math.round((totalScheduled / totalPatients) * 100)
           : 0,
+      totalBooked,
     },
     schedulerCards,
   };
