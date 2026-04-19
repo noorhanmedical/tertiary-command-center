@@ -23,6 +23,11 @@ import {
   MessageSquare,
   Save,
   Search,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
+  Users,
+  ListTodo,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -53,10 +58,12 @@ import {
 import type { BookingSlot } from "@/components/clinic-calendar";
 import { VALID_FACILITIES } from "@shared/plexus";
 import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
+import { TaskDrawer } from "@/components/plexus/TaskDrawer";
+import type { PlexusTaskSummary, UserEntry } from "@/components/plexus/SchedulerIcon";
+import type { AuthUser } from "@/App";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-const FACILITIES = VALID_FACILITIES;
 type Facility = (typeof VALID_FACILITIES)[number];
 
 type OutreachCallItem = {
@@ -135,6 +142,43 @@ function statusLabel(status?: string | null) {
   return status || "Pending";
 }
 
+// ─── Urgency helpers ──────────────────────────────────────────────────────────
+
+function urgencyBadgeClass(urgency: string) {
+  if (urgency === "EOD") return "bg-amber-100 text-amber-700 border-amber-200";
+  if (urgency === "within 3 hours") return "bg-orange-100 text-orange-700 border-orange-200";
+  if (urgency === "within 1 hour") return "bg-red-100 text-red-700 border-red-200";
+  return "bg-slate-100 text-slate-600 border-slate-200";
+}
+
+function urgencyShortLabel(urgency: string) {
+  if (urgency === "EOD") return "EOD";
+  if (urgency === "within 3 hours") return "3 hr";
+  if (urgency === "within 1 hour") return "1 hr";
+  return urgency;
+}
+
+function calcTimeRemaining(urgency: string, createdAt: string): string {
+  const created = new Date(createdAt).getTime();
+  const now = Date.now();
+  let deadline: number;
+  if (urgency === "within 1 hour") {
+    deadline = created + 60 * 60 * 1000;
+  } else if (urgency === "within 3 hours") {
+    deadline = created + 3 * 60 * 60 * 1000;
+  } else {
+    const eod = new Date();
+    eod.setHours(17, 0, 0, 0);
+    deadline = eod.getTime();
+  }
+  const diff = deadline - now;
+  if (diff <= 0) return "Overdue";
+  const hrs = Math.floor(diff / (60 * 60 * 1000));
+  const mins = Math.floor((diff % (60 * 60 * 1000)) / (60 * 1000));
+  if (hrs > 0) return `${hrs}h ${mins}m left`;
+  return `${mins}m left`;
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function OutreachSchedulerPortalPage() {
@@ -148,6 +192,8 @@ export default function OutreachSchedulerPortalPage() {
   const [selectedDay, setSelectedDay] = useState<number | null>(today.getDate());
   const [bookSlot, setBookSlot] = useState<BookingSlot | null>(null);
   const [bookName, setBookName] = useState("");
+  const [bookLinkedPatient, setBookLinkedPatient] = useState<OutreachCallItem | null>(null);
+  const [bookPatientSearch, setBookPatientSearch] = useState("");
   const [cancelTarget, setCancelTarget] = useState<AncillaryAppointment | null>(null);
   const [callListBookPatient, setCallListBookPatient] = useState<OutreachCallItem | null>(null);
   const [callListBookTestType, setCallListBookTestType] = useState<"BrainWave" | "VitalWave">("BrainWave");
@@ -159,6 +205,14 @@ export default function OutreachSchedulerPortalPage() {
   const [pendingPatientId, setPendingPatientId] = useState<number | null>(null);
   const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
   const [noteDrafts, setNoteDrafts] = useState<Map<number, string>>(new Map());
+
+  // Tasks tile state
+  const [taskDrawerPatientId, setTaskDrawerPatientId] = useState<number | null>(null);
+  const [taskDrawerTasks, setTaskDrawerTasks] = useState<PlexusTaskSummary[]>([]);
+  const [taskDrawerPatientName, setTaskDrawerPatientName] = useState<string>("");
+
+  // Urgent panel state
+  const [urgentPanelOpen, setUrgentPanelOpen] = useState(true);
 
   const { toast } = useToast();
   const queryClientLocal = useQueryClient();
@@ -188,6 +242,46 @@ export default function OutreachSchedulerPortalPage() {
     refetchInterval: 30_000,
   });
 
+  // Plexus tasks — "My Work" (open/in_progress)
+  const { data: myWorkTasks = [] } = useQuery<PlexusTaskSummary[]>({
+    queryKey: ["/api/plexus/tasks/my-work"],
+    refetchInterval: 60_000,
+  });
+
+  // Urgent tasks — all non-closed urgent tasks (poll every 30s)
+  const { data: urgentTasks = [] } = useQuery<PlexusTaskSummary[]>({
+    queryKey: ["/api/plexus/tasks/urgent"],
+    refetchInterval: 30_000,
+  });
+
+  // Current user + users list (for TaskDrawer)
+  const { data: currentUser } = useQuery<AuthUser>({
+    queryKey: ["/api/auth/me"],
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: users = [] } = useQuery<UserEntry[]>({
+    queryKey: ["/api/plexus/users"],
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: unreadPerTask = [] } = useQuery<{ taskId: number; unreadCount: number }[]>({
+    queryKey: ["/api/plexus/tasks/unread-per-task"],
+    refetchInterval: 60_000,
+  });
+
+  const unreadTaskIds = useMemo(() => {
+    const s = new Set<number>();
+    for (const u of unreadPerTask) { if (u.unreadCount > 0) s.add(u.taskId); }
+    return s;
+  }, [unreadPerTask]);
+
+  // Open tasks from my-work
+  const openTasks = useMemo(
+    () => myWorkTasks.filter((t) => t.status === "open" || t.status === "in_progress"),
+    [myWorkTasks],
+  );
+
   // Book appointment
   const bookMutation = useMutation({
     mutationFn: async ({ patientName, testType, scheduledTime, patientId }: { patientName: string; testType: string; scheduledTime: string; patientId?: number }) => {
@@ -215,6 +309,8 @@ export default function OutreachSchedulerPortalPage() {
       }
       setBookSlot(null);
       setBookName("");
+      setBookLinkedPatient(null);
+      setBookPatientSearch("");
       setCallListBookPatient(null);
       setCallListBookTime("");
     },
@@ -259,6 +355,20 @@ export default function OutreachSchedulerPortalPage() {
     onError: () => toast({ title: "Save failed", description: "Could not save the note.", variant: "destructive" }),
   });
 
+  // Help (add as collaborator)
+  const helpMutation = useMutation({
+    mutationFn: async (taskId: number) => {
+      const res = await apiRequest("POST", `/api/plexus/tasks/${taskId}/collaborators`, { role: "collaborator" });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "You've been added as a collaborator" });
+      queryClientLocal.invalidateQueries({ queryKey: ["/api/plexus/tasks/urgent"] });
+    },
+    onError: (e: Error) => toast({ title: "Could not join task", description: e.message, variant: "destructive" }),
+  });
+
   function toggleNotes(patientId: number, existingNote: string | null) {
     setExpandedNotes((prev) => {
       const next = new Set(prev);
@@ -271,6 +381,12 @@ export default function OutreachSchedulerPortalPage() {
       }
       return next;
     });
+  }
+
+  function openTaskDrawer(task: PlexusTaskSummary) {
+    setTaskDrawerPatientId(task.patientScreeningId ?? 0);
+    setTaskDrawerTasks([task]);
+    setTaskDrawerPatientName(task.patientName ?? "");
   }
 
   const bookedDates = new Set<string>(
@@ -319,6 +435,17 @@ export default function OutreachSchedulerPortalPage() {
     }
     return names;
   }, [card?.callList]);
+
+  // Patient search in booking dialog — filtered from call list
+  const bookPatientResults = useMemo(() => {
+    const q = bookPatientSearch.trim().toLowerCase();
+    const list = card?.callList ?? [];
+    if (!q) return list.slice(0, 8);
+    return list.filter((p) => p.patientName.toLowerCase().includes(q)).slice(0, 8);
+  }, [bookPatientSearch, card]);
+
+  // Effective name for slot booking
+  const effectiveBookName = bookLinkedPatient?.patientName ?? bookName;
 
   // Loading / not found states
   if (isLoading) {
@@ -440,7 +567,12 @@ export default function OutreachSchedulerPortalPage() {
                   <SlotGrid
                     appointments={appointments}
                     selectedDate={selectedDateStr!}
-                    onBook={(slot) => { setBookSlot(slot); setBookName(""); }}
+                    onBook={(slot) => {
+                      setBookSlot(slot);
+                      setBookName("");
+                      setBookLinkedPatient(null);
+                      setBookPatientSearch("");
+                    }}
                     onCancel={(appt) => setCancelTarget(appt)}
                     testIdPrefix="portal"
                     availableLabel="Open"
@@ -662,10 +794,146 @@ export default function OutreachSchedulerPortalPage() {
             )}
           </Card>
         </div>
+
+        {/* ── Bottom: Tasks tile + Urgent panel ──────────────────────── */}
+        <div className="grid gap-5 xl:grid-cols-2">
+
+          {/* Tasks tile */}
+          <Card className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl" data-testid="portal-tasks-tile">
+            <div className="mb-4 flex items-center gap-2">
+              <ListTodo className="h-4 w-4 text-violet-600" />
+              <h2 className="text-sm font-semibold text-slate-800">My Open Tasks</h2>
+              {openTasks.length > 0 && (
+                <Badge className="ml-auto rounded-full bg-violet-100 text-violet-700 text-[10px]">{openTasks.length}</Badge>
+              )}
+            </div>
+            {openTasks.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-400">
+                No open tasks
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {openTasks.map((task) => {
+                  const hasUnread = unreadTaskIds.has(task.id);
+                  return (
+                    <button
+                      key={task.id}
+                      type="button"
+                      onClick={() => openTaskDrawer(task)}
+                      className="flex w-full items-center gap-3 rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-left transition hover:border-violet-200 hover:bg-violet-50/40"
+                      data-testid={`portal-task-item-${task.id}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-medium text-slate-800">{task.title}</span>
+                          {hasUnread && (
+                            <span className="h-2 w-2 shrink-0 rounded-full bg-blue-500" data-testid={`portal-task-unread-${task.id}`} />
+                          )}
+                        </div>
+                        {task.patientName && (
+                          <p className="mt-0.5 truncate text-xs text-slate-500">{task.patientName}</p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {task.urgency !== "none" && (
+                          <Badge className={`rounded-full border text-[10px] ${urgencyBadgeClass(task.urgency)}`}>
+                            {urgencyShortLabel(task.urgency)}
+                          </Badge>
+                        )}
+                        <Badge variant="outline" className="rounded-full text-[10px] capitalize text-slate-500">
+                          {task.status.replace("_", " ")}
+                        </Badge>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+
+          {/* Urgent requests panel */}
+          <Card className="rounded-3xl border border-white/60 bg-white/80 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl" data-testid="portal-urgent-panel">
+            <button
+              type="button"
+              onClick={() => setUrgentPanelOpen((v) => !v)}
+              className="flex w-full items-center gap-2 px-5 py-4 text-left"
+              data-testid="portal-urgent-panel-toggle"
+            >
+              <AlertTriangle className="h-4 w-4 text-orange-500" />
+              <span className="text-sm font-semibold text-slate-800">Urgent Requests</span>
+              {urgentTasks.length > 0 && (
+                <Badge className="rounded-full bg-orange-100 text-orange-700 text-[10px]">{urgentTasks.length}</Badge>
+              )}
+              <span className="ml-auto text-slate-400">
+                {urgentPanelOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </span>
+            </button>
+
+            {urgentPanelOpen && (
+              <div className="border-t border-slate-100 px-5 pb-5 pt-3">
+                {urgentTasks.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-400">
+                    No urgent requests at this time
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {urgentTasks.map((task) => {
+                      const userMap = new Map<string, UserEntry>(users.map((u) => [u.id, u]));
+                      const requester = task.createdByUserId ? (userMap.get(task.createdByUserId)?.username ?? task.createdByUserId) : "Unknown";
+                      const timeRemaining = calcTimeRemaining(task.urgency, task.createdAt);
+                      const isOverdue = timeRemaining === "Overdue";
+                      return (
+                        <div
+                          key={task.id}
+                          className="rounded-2xl border border-orange-100 bg-orange-50/50 p-3"
+                          data-testid={`portal-urgent-item-${task.id}`}
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge className={`rounded-full border text-[10px] ${urgencyBadgeClass(task.urgency)}`}>
+                                  {urgencyShortLabel(task.urgency)}
+                                </Badge>
+                                <span className={`text-xs font-medium ${isOverdue ? "text-red-600" : "text-orange-700"}`}>
+                                  <Clock className="inline h-3 w-3 mr-0.5" />{timeRemaining}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-sm font-semibold text-slate-800 truncate">{task.title}</p>
+                              {task.patientName && (
+                                <p className="text-xs text-slate-500">Patient: {task.patientName}</p>
+                              )}
+                              {task.description && (
+                                <p className="mt-1 text-xs text-slate-600 line-clamp-2">{task.description}</p>
+                              )}
+                              <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
+                                <Users className="h-3 w-3" />
+                                <span>Requested by {requester}</span>
+                              </div>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="shrink-0 rounded-xl border-orange-200 bg-white text-orange-700 hover:bg-orange-50 text-xs h-7 px-3"
+                              disabled={helpMutation.isPending}
+                              onClick={() => helpMutation.mutate(task.id)}
+                              data-testid={`portal-urgent-help-${task.id}`}
+                            >
+                              Help
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+        </div>
       </div>
 
-      {/* Book dialog */}
-      <Dialog open={!!bookSlot} onOpenChange={(open) => !open && setBookSlot(null)}>
+      {/* Book dialog (slot click) */}
+      <Dialog open={!!bookSlot} onOpenChange={(open) => { if (!open) { setBookSlot(null); setBookLinkedPatient(null); setBookPatientSearch(""); setBookName(""); } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle className="text-base">Book Appointment</DialogTitle></DialogHeader>
           <div className="space-y-3 py-1">
@@ -682,40 +950,91 @@ export default function OutreachSchedulerPortalPage() {
               <Calendar className="h-3.5 w-3.5" />
               <span>{selectedDay ? new Date(calYear, calMonth, selectedDay).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : ""}</span>
             </div>
+
+            {/* Patient picker from call list */}
             <div>
-              <Label htmlFor="portal-book-name" className="text-xs font-medium text-slate-700">Patient Name</Label>
-              <Input
-                id="portal-book-name"
-                value={bookName}
-                onChange={(e) => setBookName(e.target.value)}
-                placeholder="Enter patient name"
-                className="mt-1 text-sm"
-                data-testid="portal-input-book-name"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && bookName.trim() && bookSlot && !scheduledCallListNames.has(bookName.trim().toLowerCase()))
-                    bookMutation.mutate({ patientName: bookName.trim(), testType: bookSlot.testType, scheduledTime: bookSlot.time });
-                }}
-              />
+              <Label className="text-xs font-medium text-slate-700">Link patient from call list (optional)</Label>
+              {bookLinkedPatient ? (
+                <div className="mt-1 flex items-center justify-between rounded-lg border border-violet-200 bg-violet-50 px-3 py-2">
+                  <span className="text-sm font-semibold text-violet-800">{bookLinkedPatient.patientName}</span>
+                  <button
+                    type="button"
+                    onClick={() => { setBookLinkedPatient(null); setBookPatientSearch(""); }}
+                    className="text-violet-400 hover:text-violet-700"
+                    data-testid="portal-book-clear-patient"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-1 space-y-1">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    <Input
+                      value={bookPatientSearch}
+                      onChange={(e) => setBookPatientSearch(e.target.value)}
+                      placeholder="Search call list…"
+                      className="pl-8 text-sm h-8 rounded-xl"
+                      data-testid="portal-book-patient-search"
+                    />
+                  </div>
+                  {bookPatientResults.length > 0 && (
+                    <div className="max-h-32 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+                      {bookPatientResults.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => { setBookLinkedPatient(p); setBookName(""); setBookPatientSearch(""); }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-violet-50 border-b border-slate-50 last:border-0"
+                          data-testid={`portal-book-pick-patient-${p.patientId}`}
+                        >
+                          <span className="font-medium text-slate-800">{p.patientName}</span>
+                          <span className="text-slate-400">{p.facility}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-            {bookName.trim() && scheduledCallListNames.has(bookName.trim().toLowerCase()) && (
+
+            {/* Manual name override when no patient selected */}
+            {!bookLinkedPatient && (
+              <div>
+                <Label htmlFor="portal-book-name" className="text-xs font-medium text-slate-700">Or enter name manually</Label>
+                <Input
+                  id="portal-book-name"
+                  value={bookName}
+                  onChange={(e) => setBookName(e.target.value)}
+                  placeholder="Patient name"
+                  className="mt-1 text-sm"
+                  data-testid="portal-input-book-name"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && effectiveBookName.trim() && bookSlot && !scheduledCallListNames.has(effectiveBookName.trim().toLowerCase()))
+                      bookMutation.mutate({ patientName: effectiveBookName.trim(), testType: bookSlot.testType, scheduledTime: bookSlot.time });
+                  }}
+                />
+              </div>
+            )}
+
+            {effectiveBookName.trim() && scheduledCallListNames.has(effectiveBookName.trim().toLowerCase()) && (
               <div
                 className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800"
                 data-testid="portal-book-already-scheduled-warning"
               >
                 <CalendarCheck className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
                 <span>
-                  <span className="font-semibold">{bookName.trim()}</span> is already marked as scheduled on the call list. Double-booking is not allowed.
+                  <span className="font-semibold">{effectiveBookName.trim()}</span> is already marked as scheduled on the call list. Double-booking is not allowed.
                 </span>
               </div>
             )}
           </div>
           <DialogFooter>
-            <Button variant="ghost" size="sm" onClick={() => setBookSlot(null)}>Cancel</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setBookSlot(null); setBookLinkedPatient(null); setBookPatientSearch(""); setBookName(""); }}>Cancel</Button>
             <Button
               size="sm"
-              disabled={!bookName.trim() || bookMutation.isPending || scheduledCallListNames.has(bookName.trim().toLowerCase())}
-              onClick={() => bookSlot && bookMutation.mutate({ patientName: bookName.trim(), testType: bookSlot.testType, scheduledTime: bookSlot.time })}
+              disabled={!effectiveBookName.trim() || bookMutation.isPending || scheduledCallListNames.has(effectiveBookName.trim().toLowerCase())}
+              onClick={() => bookSlot && bookMutation.mutate({ patientName: effectiveBookName.trim(), testType: bookSlot.testType, scheduledTime: bookSlot.time, patientId: bookLinkedPatient?.patientId })}
               data-testid="portal-button-confirm-book"
             >
               {bookMutation.isPending ? "Booking…" : "Confirm Booking"}
@@ -845,6 +1164,18 @@ export default function OutreachSchedulerPortalPage() {
           </Dialog>
         );
       })()}
+
+      {/* Task drawer */}
+      {taskDrawerPatientId !== null && currentUser && (
+        <TaskDrawer
+          patientScreeningId={taskDrawerPatientId}
+          patientName={taskDrawerPatientName}
+          tasks={taskDrawerTasks}
+          currentUser={currentUser}
+          users={users}
+          onClose={() => { setTaskDrawerPatientId(null); setTaskDrawerTasks([]); setTaskDrawerPatientName(""); }}
+        />
+      )}
     </div>
   );
 }
