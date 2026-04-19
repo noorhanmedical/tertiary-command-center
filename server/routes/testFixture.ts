@@ -48,7 +48,7 @@ export function registerTestFixtureRoutes(app: Express) {
         facility,
         scheduleDate: today,
         isTest: true,
-      } as any);
+      });
 
       // 3) Create patient
       const patient = await storage.createPatientScreening({
@@ -78,7 +78,7 @@ export function registerTestFixtureRoutes(app: Express) {
         appointmentStatus: "pending",
         patientType: "visit",
         isTest: true,
-      } as any);
+      });
 
       // 4) Create billing records
       const tests = patient.qualifyingTests || [];
@@ -98,7 +98,7 @@ export function registerTestFixtureRoutes(app: Express) {
           billingStatus: "Not Billed",
           paidStatus: "Unpaid",
           isTest: true,
-        } as any);
+        });
         billingIds.push(r.id);
       }
 
@@ -130,7 +130,7 @@ export function registerTestFixtureRoutes(app: Express) {
         driveFileId: null,
         driveWebViewLink: null,
         isTest: true,
-      } as any);
+      });
       const udBlob = await saveBlob({
         ownerType: "uploaded_document",
         ownerId: ud.id,
@@ -180,10 +180,10 @@ export function registerTestFixtureRoutes(app: Express) {
       const sheetBilling = await enqueueSheetSync("sheet_billing", true);
       const sheetPatients = await enqueueSheetSync("sheet_patients", true);
 
-      // 9) Optional auto-upload right now
-      let drainResult = null as any;
+      // 9) Optional auto-upload — restricted to test items only.
+      let drainResult: import("../services/outbox").DrainResult | null = null;
       if (autoUpload) {
-        drainResult = await drainOutbox({});
+        drainResult = await drainOutbox({ isTest: true });
       }
 
       res.json({

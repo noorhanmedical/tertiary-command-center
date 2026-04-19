@@ -313,6 +313,15 @@ export interface FolderTree {
   orderNoteFolderId: string;
   procedureNoteFolderId: string;
   billingDocFolderId: string;
+  // Expanded folder kinds (Task #219).
+  insuranceCardFolderId?: string;
+  patientCommunicationFolderId?: string;
+  pathologyLabResultFolderId?: string;
+  preProcedureNoteFolderId?: string;
+  postProcedureFollowupFolderId?: string;
+  facilityTemplatesFolderId?: string;
+  facilityComplianceArchiveFolderId?: string;
+  facilityTestDataFolderId?: string;
   facilityFolderId: string;
   patientFolderId: string;
   ancillaryTypeFolderId: string;
@@ -613,6 +622,18 @@ export async function ensureStructuredFacilityFolderTree(
     clinicalDocsFolderId
   );
 
+  // Expanded folder kinds (Task #219).
+  const insuranceCardFolderId = await getOrCreateFolder(drive, "Insurance Card", clinicalDocsFolderId);
+  const patientCommunicationFolderId = await getOrCreateFolder(drive, "Patient Communication", clinicalDocsFolderId);
+  const pathologyLabResultFolderId = await getOrCreateFolder(drive, "Pathology / Lab Result", clinicalDocsFolderId);
+  const preProcedureNoteFolderId = await getOrCreateFolder(drive, "Pre-Procedure Note", clinicalDocsFolderId);
+  const postProcedureFollowupFolderId = await getOrCreateFolder(drive, "Post-Procedure Follow-up", clinicalDocsFolderId);
+
+  // Facility-level shared folders.
+  const facilityTemplatesFolderId = await getOrCreateFolder(drive, "Templates", facilityClinicalDocumentsFolderId);
+  const facilityComplianceArchiveFolderId = await getOrCreateFolder(drive, "Compliance Archive", facilityClinicalDocumentsFolderId);
+  const facilityTestDataFolderId = await getOrCreateFolder(drive, "Test Data", facilityClinicalDocumentsFolderId);
+
   return {
     clinicalDocsFolderId,
     reportFolderId,
@@ -621,6 +642,14 @@ export async function ensureStructuredFacilityFolderTree(
     orderNoteFolderId,
     procedureNoteFolderId,
     billingDocFolderId,
+    insuranceCardFolderId,
+    patientCommunicationFolderId,
+    pathologyLabResultFolderId,
+    preProcedureNoteFolderId,
+    postProcedureFollowupFolderId,
+    facilityTemplatesFolderId,
+    facilityComplianceArchiveFolderId,
+    facilityTestDataFolderId,
     facilityFolderId: facilityClinicalDocumentsFolderId,
     patientFolderId: clinicalDocsFolderId,
     ancillaryTypeFolderId: clinicalDocsFolderId,
