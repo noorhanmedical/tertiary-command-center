@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import { storage } from "../storage";
 import { addTestHistorySchema } from "./helpers";
 import { parseHistoryCsv, parseHistoryImport } from "../services/ingest";
+import { invalidatePatientDatabase } from "./patientDatabase";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -32,6 +33,7 @@ export function registerTestHistoryRoutes(
       }
 
       const record = await storage.createTestHistory(parsed.data);
+      invalidatePatientDatabase();
       res.json(record);
       void backgroundSyncPatients();
     } catch (error: any) {
@@ -78,6 +80,7 @@ export function registerTestHistoryRoutes(
       }));
 
       const created = await storage.createTestHistoryBulk(validRecords);
+      invalidatePatientDatabase();
       res.json(created);
       void backgroundSyncPatients();
     } catch (error: any) {
@@ -89,6 +92,7 @@ export function registerTestHistoryRoutes(
     try {
       const id = parseInt(String(req.params.id), 10);
       await storage.deleteTestHistory(id);
+      invalidatePatientDatabase();
       res.json({ success: true });
       void backgroundSyncPatients();
     } catch (error: any) {
@@ -99,6 +103,7 @@ export function registerTestHistoryRoutes(
   app.delete("/api/test-history", async (_req, res) => {
     try {
       await storage.deleteAllTestHistory();
+      invalidatePatientDatabase();
       res.json({ success: true });
       void backgroundSyncPatients();
     } catch (error: any) {

@@ -24,6 +24,7 @@ import {
   extractImagePatients,
 } from "../services/screening";
 import { logAudit } from "../services/auditService";
+import { invalidatePatientDatabase } from "./patientDatabase";
 import {
   findSchedulerForBatch,
   createAssignmentTask,
@@ -171,6 +172,7 @@ export function registerBatchRoutes(app: Express) {
       });
 
       void logAudit(req, "create", "patient", patient.id, { name: patient.name, batchId });
+      invalidatePatientDatabase();
       res.json(patient);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -243,6 +245,7 @@ export function registerBatchRoutes(app: Express) {
       const createdIds = new Set(created.map((p) => p.id));
       const enrichedPatients = created.filter((p) => createdIds.has(p.id));
 
+      invalidatePatientDatabase();
       res.json({ imported: enrichedPatients.length, patients: enrichedPatients });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -291,6 +294,7 @@ export function registerBatchRoutes(app: Express) {
         patientCount: (await storage.getPatientScreeningsByBatch(batchId)).length,
       });
 
+      invalidatePatientDatabase();
       res.json({ imported: created2.length, patients: created2 });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -389,6 +393,7 @@ export function registerBatchRoutes(app: Express) {
         await tx.update(screeningBatches).set({ status: "completed", patientCount: patients.length }).where(eq(screeningBatches.id, batchId));
       });
       await storage.updateAnalysisJob(job.id, { status: "completed", completedAt: new Date() });
+      invalidatePatientDatabase();
     } catch (error: unknown) {
       console.error("Analysis error:", error);
       try {
@@ -491,6 +496,7 @@ export function registerBatchRoutes(app: Express) {
       if (facility !== undefined) batchUpdates.facility = facility ?? null;
       const updated = await storage.updateScreeningBatch(id, batchUpdates);
       if (!updated) return res.status(404).json({ error: "Batch not found" });
+      invalidatePatientDatabase();
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -502,6 +508,7 @@ export function registerBatchRoutes(app: Express) {
       const id = parseInt(req.params.id);
       await storage.deleteScreeningBatch(id);
       void logAudit(req, "delete", "batch", id, null);
+      invalidatePatientDatabase();
       res.status(204).send();
     } catch (error: any) {
       res.status(500).json({ error: error.message });

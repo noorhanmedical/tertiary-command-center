@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { storage } from "../storage";
 import { saveGeneratedNoteSchema } from "./helpers";
+import { invalidatePatientDatabase } from "./patientDatabase";
 
 export function registerGeneratedNotesRoutes(app: Express) {
   app.get("/api/generated-notes", async (_req, res) => {
@@ -31,6 +32,7 @@ export function registerGeneratedNotesRoutes(app: Express) {
         await storage.deleteGeneratedNotesByPatient(patientId);
       }
       const saved = await storage.saveGeneratedNotes(parsed);
+      invalidatePatientDatabase();
       res.json(saved);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -47,6 +49,7 @@ export function registerGeneratedNotesRoutes(app: Express) {
         await storage.deleteGeneratedNotesByPatientAndService(patientId, service);
       }
       const saved = await storage.saveGeneratedNotes(parsed);
+      invalidatePatientDatabase();
       res.json(saved);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -57,6 +60,7 @@ export function registerGeneratedNotesRoutes(app: Express) {
     try {
       const patientId = parseInt(String(req.params.patientId), 10);
       await storage.deleteGeneratedNotesByPatient(patientId);
+      invalidatePatientDatabase();
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

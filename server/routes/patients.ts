@@ -13,6 +13,7 @@ import {
 } from "../services/screening";
 import { normalizeInsuranceType } from "../services/ingest";
 import { logAudit } from "../services/auditService";
+import { invalidatePatientDatabase } from "./patientDatabase";
 
 type BackgroundSyncPatients = () => void | Promise<void>;
 
@@ -58,6 +59,7 @@ export function registerPatientRoutes(
       if (!patient) return res.status(404).json({ error: "Patient not found" });
 
       void logAudit(req, "update", "patient", id, updates);
+      invalidatePatientDatabase();
 
       const wasAlreadyCompleted = previousPatient?.appointmentStatus?.toLowerCase() === "completed";
       if (data.appointmentStatus && data.appointmentStatus.toLowerCase() === "completed" && !wasAlreadyCompleted) {
@@ -80,6 +82,7 @@ export function registerPatientRoutes(
               clinic,
             }));
             await storage.bulkInsertTestHistoryIfNotExists(records);
+            invalidatePatientDatabase();
             void backgroundSyncPatients();
           }
         } catch (e) {
@@ -117,6 +120,7 @@ export function registerPatientRoutes(
       });
 
       void logAudit(req, "delete", "patient", id, { name: patient.name });
+      invalidatePatientDatabase();
       res.status(204).send();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -163,6 +167,7 @@ export function registerPatientRoutes(
         status: "completed",
       });
 
+      invalidatePatientDatabase();
       res.json(updated);
     } catch (error: any) {
       console.error("Per-patient analysis error:", error);
@@ -223,6 +228,7 @@ export function registerPatientRoutes(
         reasoning: mergedReasoning,
       });
 
+      invalidatePatientDatabase();
       res.json({ reasoning: mergedReasoning, testName, patient: updated });
     } catch (error: any) {
       console.error("Single-test analysis error:", error);
@@ -266,6 +272,7 @@ export function registerPatientRoutes(
       );
 
       const saved = await storage.saveGeneratedNotes(records);
+      invalidatePatientDatabase();
       res.json({ notes: saved });
     } catch (error: any) {
       console.error("[refresh-notes] Error:", error.message);
