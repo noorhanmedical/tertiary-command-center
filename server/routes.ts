@@ -14,6 +14,8 @@ import { registerOutreachRoutes } from "./routes/outreach";
 import { registerSettingsRoutes } from "./routes/settings";
 import { registerAppointmentRoutes } from "./routes/appointments";
 import { registerAdminRoutes } from "./routes/admin";
+import { registerOutboxRoutes } from "./routes/outbox";
+import { registerTestFixtureRoutes } from "./routes/testFixture";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
@@ -180,6 +182,8 @@ export async function registerRoutes(
   registerSettingsRoutes(app);
   registerAppointmentRoutes(app);
   registerAdminRoutes(app);
+  registerOutboxRoutes(app);
+  registerTestFixtureRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {

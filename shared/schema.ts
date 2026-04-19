@@ -456,3 +456,81 @@ export const insertOutreachSchedulerSchema = createInsertSchema(outreachSchedule
 
 export type OutreachScheduler = typeof outreachSchedulers.$inferSelect;
 export type InsertOutreachScheduler = z.infer<typeof insertOutreachSchedulerSchema>;
+
+// ─── Document Blobs (local FS-backed file persistence) ──────────────────────
+
+export const documentBlobs = pgTable("document_blobs", {
+  id: serial("id").primaryKey(),
+  ownerType: text("owner_type").notNull(),
+  ownerId: integer("owner_id").notNull(),
+  filename: text("filename").notNull(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  storagePath: text("storage_path").notNull(),
+  sha256: text("sha256").notNull(),
+  isTest: boolean("is_test").notNull().default(false),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_document_blobs_owner").on(table.ownerType, table.ownerId),
+  index("idx_document_blobs_sha256").on(table.sha256),
+]);
+
+export const insertDocumentBlobSchema = createInsertSchema(documentBlobs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type DocumentBlob = typeof documentBlobs.$inferSelect;
+export type InsertDocumentBlob = z.infer<typeof insertDocumentBlobSchema>;
+
+// ─── Outbox: pending uploads to Google Drive / Sheets ───────────────────────
+
+export const OUTBOX_KINDS = [
+  "drive_file",          // upload a blob (uploaded_document or generated_note) to Drive
+  "sheet_billing",       // sync billing records to Sheets
+  "sheet_patients",      // sync patient screenings to Sheets
+] as const;
+export type OutboxKind = typeof OUTBOX_KINDS[number];
+
+export const OUTBOX_STATUSES = ["pending", "uploading", "completed", "failed"] as const;
+export type OutboxStatus = typeof OUTBOX_STATUSES[number];
+
+export const outboxItems = pgTable("outbox_items", {
+  id: serial("id").primaryKey(),
+  kind: text("kind").notNull(),
+  // For drive_file: blobId points at document_blobs row.
+  blobId: integer("blob_id"),
+  // For drive_file: descriptive grouping.
+  facility: text("facility"),
+  patientName: text("patient_name"),
+  ancillaryType: text("ancillary_type"),
+  docKind: text("doc_kind"),
+  // For drive_file: the resolved Drive folder id (computed at drain time if null).
+  targetFolderId: text("target_folder_id"),
+  // For sheet_*: spreadsheet id (resolved at drain time if null).
+  targetSheetId: text("target_sheet_id"),
+  filename: text("filename"),
+  status: text("status").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  errorText: text("error_text"),
+  resultId: text("result_id"),
+  resultUrl: text("result_url"),
+  isTest: boolean("is_test").notNull().default(false),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  lastAttemptAt: timestamp("last_attempt_at"),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  index("idx_outbox_items_status").on(table.status),
+  index("idx_outbox_items_kind").on(table.kind),
+  index("idx_outbox_items_is_test").on(table.isTest),
+]);
+
+export const insertOutboxItemSchema = createInsertSchema(outboxItems).omit({
+  id: true,
+  createdAt: true,
+  lastAttemptAt: true,
+  completedAt: true,
+});
+
+export type OutboxItem = typeof outboxItems.$inferSelect;
+export type InsertOutboxItem = z.infer<typeof insertOutboxItemSchema>;
