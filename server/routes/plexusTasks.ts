@@ -12,6 +12,14 @@ type EventPayload =
   | { readAt: string }
   | Record<string, string | number | boolean | null | undefined>;
 
+// ── Event type enum (mirrors DB check constraint on plexus_task_events.event_type) ──
+type PlexusEventType =
+  | "created" | "updated" | "deleted"
+  | "status_changed" | "assignment_changed"
+  | "project_created" | "project_updated" | "project_deleted"
+  | "collaborator_added" | "collaborator_role_changed"
+  | "message_sent" | "read";
+
 // ── Enum constants (mirror DB check constraints) ───────────────────────────
 const TASK_TYPE = ["task", "subtask", "milestone", "approval"] as const;
 const TASK_STATUS = ["open", "in_progress", "done", "closed"] as const;
@@ -121,7 +129,7 @@ async function canViewProject(projectId: number, userId: string): Promise<boolea
 }
 
 async function writeEvent(
-  data: { taskId?: number | null; projectId?: number | null; userId: string; eventType: string; payload: EventPayload }
+  data: { taskId?: number | null; projectId?: number | null; userId: string; eventType: PlexusEventType; payload: EventPayload }
 ) {
   await storage.writeEvent({
     taskId: data.taskId ?? null,

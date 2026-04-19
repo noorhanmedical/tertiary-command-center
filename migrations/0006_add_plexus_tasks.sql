@@ -108,4 +108,13 @@ BEGIN
     ALTER TABLE "plexus_projects" ADD CONSTRAINT "plexus_projects_type_check"
       CHECK (project_type IN ('operational', 'clinical', 'admin', 'training'));
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'plexus_task_events_event_type_check') THEN
+    ALTER TABLE "plexus_task_events" ADD CONSTRAINT "plexus_task_events_event_type_check"
+      CHECK (event_type IN (
+        'created', 'updated', 'deleted', 'status_changed', 'assignment_changed',
+        'project_created', 'project_updated', 'project_deleted',
+        'collaborator_added', 'collaborator_role_changed',
+        'message_sent', 'read'
+      ));
+  END IF;
 END $$;
