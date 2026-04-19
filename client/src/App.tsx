@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
+import SchedulePage from "@/pages/SchedulePage";
 import SharedSchedule from "@/pages/shared-schedule";
 import PatientDatabasePage from "@/pages/patient-database";
 import DocumentsPage from "@/pages/documents";
@@ -38,7 +39,7 @@ export type AuthUser = { id: string; username: string; role: string } | null;
 
 function AdminGuard({ user, children }: { user: AuthUser; children: React.ReactNode }) {
   if (!user || user.role !== "admin") {
-    return <Redirect to="/schedule" />;
+    return <Redirect to="/home" />;
   }
   return <>{children}</>;
 }
@@ -54,7 +55,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
             <div className="flex-1 min-h-0 overflow-auto">
               <Switch>
                 <Route path="/">
-                  <Redirect to="/schedule" />
+                  <Redirect to="/home" />
                 </Route>
                 <Route path="/archive">
                   <Redirect to="/patient-database" />
@@ -62,11 +63,12 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/plexus">
                   <Redirect to="/documents" />
                 </Route>
-                <Route path="/schedule">
+                <Route path="/home">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
                     <Home />
                   </SidebarProvider>
                 </Route>
+                <Route path="/schedule" component={SchedulePage} />
                 <Route path="/patient-database" component={PatientDatabasePage} />
                 <Route path="/documents" component={DocumentsPage} />
                 <Route path="/billing" component={BillingPage} />
@@ -134,7 +136,7 @@ function AppShell() {
           duration: 8000,
         });
       }
-      navigate("/schedule");
+      navigate("/home");
     });
   }
 

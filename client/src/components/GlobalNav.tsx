@@ -2,6 +2,7 @@ import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
   CalendarDays,
+  Home as HomeIcon,
   Phone,
   FileText,
   CreditCard,
@@ -25,6 +26,7 @@ type NavItemDef = {
 };
 
 const NAV_ITEMS: NavItemDef[] = [
+  { href: "/home",             label: "Home",             Icon: HomeIcon,     roles: ["admin", "clinician", "scheduler"] },
   { href: "/schedule",         label: "Schedule",         Icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
   { href: "/outreach",         label: "Outreach Center",  Icon: Phone,        roles: ["admin", "clinician", "scheduler"] },
   { href: "/documents",        label: "Ancillary Docs",   Icon: FileText,     roles: ["admin", "clinician"] },
@@ -124,7 +126,8 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
   const todayCount = todaySummary?.patientCount ?? 0;
 
   const isActive = (href: string) => {
-    if (href === "/schedule") return location === "/schedule" || location === "/";
+    if (href === "/home") return location === "/home" || location === "/";
+    if (href === "/schedule") return location === "/schedule";
     return location === href || location.startsWith(href + "/");
   };
 
