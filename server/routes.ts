@@ -284,12 +284,10 @@ export async function registerRoutes(
     return res.json({ ok: true });
   });
 
-  // ─── Static files and error handling ──────────────────────────────────────────────
-  if (app.get("env") === "development") {
-    await setupVite(httpServer, app);
-  } else {
-    serveStatic(app);
-  }
+  // Note: Vite/static middleware setup is handled by server/index.ts after
+  // registerRoutes() returns, so the API routes above are registered first
+  // and the SPA catch-all does not shadow them. Do NOT setupVite here — doing
+  // so would attach a second HMR WebSocket and break HMR reconnects.
 
   return httpServer;
 }
