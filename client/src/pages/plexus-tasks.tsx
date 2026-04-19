@@ -300,6 +300,20 @@ function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => v
   const userMap = new Map(users.map((u) => [u.id, u.username]));
 
   const [expandedProject, setExpandedProject] = useState<number | null>(null);
+  const [newProjectTitle, setNewProjectTitle] = useState("");
+  const [showNewProject, setShowNewProject] = useState(false);
+
+  const createProjectMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("POST", "/api/plexus/projects", { title: newProjectTitle.trim(), projectType: "operational" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/plexus/projects"] });
+      setNewProjectTitle("");
+      setShowNewProject(false);
+      toast({ title: "Project created" });
+    },
+    onError: (e: Error) => toast({ title: "Failed to create project", description: e.message, variant: "destructive" }),
+  });
 
   const { data: projectTasks = [] } = useQuery<PlexusTask[]>({
     queryKey: ["/api/plexus/tasks/by-project", expandedProject],
@@ -342,20 +356,60 @@ function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => v
 
   if (isLoading) return <div className="py-10 text-center text-sm text-slate-400">Loading…</div>;
 
-  if (projects.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-slate-200 bg-slate-50/60 py-16 text-center">
-        <FolderOpen className="h-10 w-10 text-slate-300" />
-        <div>
-          <p className="text-sm font-medium text-slate-600">No projects yet</p>
-          <p className="mt-1 text-xs text-slate-400">Create a task inside a project to get started</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-3">
+      {/* New Project inline form */}
+      <div className="flex items-center justify-end mb-1">
+        {showNewProject ? (
+          <div className="flex items-center gap-2">
+            <input
+              autoFocus
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              placeholder="Project name…"
+              value={newProjectTitle}
+              onChange={(e) => setNewProjectTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newProjectTitle.trim()) createProjectMutation.mutate();
+                if (e.key === "Escape") setShowNewProject(false);
+              }}
+              data-testid="input-new-project-title"
+            />
+            <Button
+              size="sm"
+              className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs"
+              onClick={() => newProjectTitle.trim() && createProjectMutation.mutate()}
+              disabled={createProjectMutation.isPending || !newProjectTitle.trim()}
+              data-testid="button-create-project-confirm"
+            >
+              Create
+            </Button>
+            <Button size="sm" variant="ghost" className="rounded-xl text-xs" onClick={() => setShowNewProject(false)}>
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            className="rounded-xl border-indigo-200 text-indigo-700 hover:bg-indigo-50 text-xs"
+            onClick={() => setShowNewProject(true)}
+            data-testid="button-new-project"
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            New Project
+          </Button>
+        )}
+      </div>
+
+      {projects.length === 0 && !showNewProject && (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-slate-200 bg-slate-50/60 py-16 text-center">
+          <FolderOpen className="h-10 w-10 text-slate-300" />
+          <div>
+            <p className="text-sm font-medium text-slate-600">No projects yet</p>
+            <p className="mt-1 text-xs text-slate-400">Click &quot;New Project&quot; above to create your first project</p>
+          </div>
+        </div>
+      )}
       {projects.map((project) => {
         const isOpen = expandedProject === project.id;
         const summary = summaries[project.id];
