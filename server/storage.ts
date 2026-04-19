@@ -828,6 +828,7 @@ export class DatabaseStorage implements IStorage {
     const [result] = await db.select().from(patientScreenings).where(eq(patientScreenings.id, id));
     return result;
   }
+
 }
 
 export const storage = new DatabaseStorage();

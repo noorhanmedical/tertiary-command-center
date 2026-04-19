@@ -108,6 +108,7 @@ export function CreateTaskModal({ open, onClose, defaultProjectId }: CreateTaskM
         dueDate: dueDate || null,
         patientScreeningId: selectedPatient?.id ?? null,
       });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed"); }
       return res.json();
     },
     onSuccess: () => {

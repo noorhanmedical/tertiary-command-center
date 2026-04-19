@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+<import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 
@@ -511,4 +511,6 @@ export function registerPlexusTasksRoutes(app: Express) {
       res.status(500).json({ error: e.message });
     }
   });
+}
+
 }

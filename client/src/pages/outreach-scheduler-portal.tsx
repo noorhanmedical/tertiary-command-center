@@ -309,6 +309,16 @@ export default function OutreachSchedulerPortalPage() {
     [filteredCallList, appointmentByPatientName],
   );
 
+  const scheduledCallListNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const item of card?.callList ?? []) {
+      if (item.appointmentStatus?.toLowerCase() === "scheduled") {
+        names.add(item.patientName.trim().toLowerCase());
+      }
+    }
+    return names;
+  }, [card?.callList]);
+
   // Loading / not found states
   if (isLoading) {
     return (
@@ -681,15 +691,31 @@ export default function OutreachSchedulerPortalPage() {
                 data-testid="portal-input-book-name"
                 autoFocus
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && bookName.trim() && bookSlot)
+                  if (e.key === "Enter" && bookName.trim() && bookSlot && !scheduledCallListNames.has(bookName.trim().toLowerCase()))
                     bookMutation.mutate({ patientName: bookName.trim(), testType: bookSlot.testType, scheduledTime: bookSlot.time });
                 }}
               />
             </div>
+            {bookName.trim() && scheduledCallListNames.has(bookName.trim().toLowerCase()) && (
+              <div
+                className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800"
+                data-testid="portal-book-already-scheduled-warning"
+              >
+                <CalendarCheck className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <span>
+                  <span className="font-semibold">{bookName.trim()}</span> is already marked as scheduled on the call list. Double-booking is not allowed.
+                </span>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="ghost" size="sm" onClick={() => setBookSlot(null)}>Cancel</Button>
-            <Button size="sm" disabled={!bookName.trim() || bookMutation.isPending} onClick={() => bookSlot && bookMutation.mutate({ patientName: bookName.trim(), testType: bookSlot.testType, scheduledTime: bookSlot.time })} data-testid="portal-button-confirm-book">
+            <Button
+              size="sm"
+              disabled={!bookName.trim() || bookMutation.isPending || scheduledCallListNames.has(bookName.trim().toLowerCase())}
+              onClick={() => bookSlot && bookMutation.mutate({ patientName: bookName.trim(), testType: bookSlot.testType, scheduledTime: bookSlot.time })}
+              data-testid="portal-button-confirm-book"
+            >
               {bookMutation.isPending ? "Booking…" : "Confirm Booking"}
             </Button>
           </DialogFooter>
