@@ -12,7 +12,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import {
-  Calendar, Database, Loader2, Plus, Trash2, Users,
+  Calendar, Loader2, Plus, Trash2, Users,
 } from "lucide-react";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 
@@ -25,7 +25,7 @@ interface HomeSidebarProps {
   selectedBatchId: number | null;
   selectedBatchIds: Set<number>;
   setSelectedBatchIds: Dispatch<SetStateAction<Set<number>>>;
-  onHistoryTab: () => void;
+  onHistoryTab?: () => void;
   onReferencesTab: () => void;
   onNewSchedule: () => void;
   onSelectSchedule: (batch: ScreeningBatchWithPatients) => void;
@@ -42,7 +42,6 @@ export function HomeSidebar({
   selectedBatchId,
   selectedBatchIds,
   setSelectedBatchIds,
-  onHistoryTab,
   onReferencesTab,
   onNewSchedule,
   onSelectSchedule,
@@ -58,16 +57,6 @@ export function HomeSidebar({
           <SidebarGroupLabel>Schedule Views</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  onClick={() => { onHistoryTab(); setSidebarOpen(false); }}
-                  isActive={view === "history"}
-                  data-testid="sidebar-patient-history"
-                >
-                  <Database className="w-4 h-4 shrink-0" />
-                  <span className="text-sm font-medium">Patient History</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   onClick={() => { onReferencesTab(); setSidebarOpen(false); }}

@@ -8,7 +8,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import SharedSchedule from "@/pages/shared-schedule";
-import ArchivePage from "@/pages/archive";
+import PatientDatabasePage from "@/pages/patient-database";
 import DocumentsPage from "@/pages/documents";
 import BillingPage from "@/pages/billing";
 import DocumentUploadPage from "@/pages/document-upload";
@@ -67,7 +67,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                     <Home />
                   </SidebarProvider>
                 </Route>
-                <Route path="/patient-database" component={ArchivePage} />
+                <Route path="/patient-database" component={PatientDatabasePage} />
                 <Route path="/documents" component={DocumentsPage} />
                 <Route path="/billing" component={BillingPage} />
                 <Route path="/document-upload" component={DocumentUploadPage} />
