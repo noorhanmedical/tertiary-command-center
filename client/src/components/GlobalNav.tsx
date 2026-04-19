@@ -12,7 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { PatientScreening, ScreeningBatch } from "@shared/schema";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
@@ -40,7 +40,18 @@ function TodayBadge({ count }: { count: number }) {
 
 export function GlobalNav() {
   const [location] = useLocation();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024);
+  const [manualOverride, setManualOverride] = useState(false);
+
+  useEffect(() => {
+    function handleResize() {
+      if (!manualOverride) {
+        setCollapsed(window.innerWidth < 1024);
+      }
+    }
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [manualOverride]);
 
   const { data: batches = [] } = useQuery<ScreeningBatchWithPatients[]>({
     queryKey: ["/api/screening-batches"],
@@ -69,7 +80,7 @@ export function GlobalNav() {
           <span className="text-white font-bold text-sm tracking-tight truncate">Plexus</span>
         )}
         <button
-          onClick={() => setCollapsed((c) => !c)}
+          onClick={() => { setManualOverride(true); setCollapsed((c) => !c); }}
           className="text-white/50 hover:text-white transition-colors rounded-lg p-1 hover:bg-white/10"
           data-testid="button-nav-collapse"
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
