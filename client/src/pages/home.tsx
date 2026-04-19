@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -53,6 +53,11 @@ export default function Home() {
   const [scheduleModalPatient, setScheduleModalPatient] = useState<PatientScreening | null>(null);
   const [dashboardWeekOverride, setDashboardWeekOverride] = useState<string | null>(null);
   const [dashboardClinicKey, setDashboardClinicKey] = useState<string | null>(null);
+  const [isAutoPolling, setIsAutoPolling] = useState(false);
+  const autoPollingRef = useRef(false);
+  const prevBatchStatusRef = useRef<string | undefined>(undefined);
+  const wasAutoPollingRef = useRef(false);
+  const trackedBatchIdRef = useRef<number | null>(null);
 
   const activeTab = tabs[activeTabIndex] || tabs[0] || { type: "home" };
   const selectedBatchId = activeTab.type === "schedule" ? activeTab.batchId : null;
@@ -243,7 +248,7 @@ export default function Home() {
   }, [selectedBatchId]);
 
   const patients = selectedBatch?.patients || [];
-  const isProcessing = analyzeAllMutation.isPending;
+  const isProcessing = analyzeAllMutation.isPending || isAutoPolling;
   const completedCount = patients.filter((p) => p.status === "completed").length;
 
   const setScheduleViewMode = useCallback((mode: "build" | "results") => {
@@ -273,6 +278,92 @@ export default function Home() {
     const validIds = new Set(batches.map((b) => b.id));
     setSelectedBatchIds((prev) => { const pruned = new Set(Array.from(prev).filter((id) => validIds.has(id))); return pruned.size === prev.size ? prev : pruned; });
   }, [batches]);
+
+  useEffect(() => {
+    if (!selectedBatchId || !selectedBatch || selectedBatch.status !== "processing" || analyzeAllMutation.isPending || autoPollingRef.current) {
+      return;
+    }
+    autoPollingRef.current = true;
+    wasAutoPollingRef.current = true;
+    setIsAutoPolling(true);
+    let cancelled = false;
+    let consecutiveErrors = 0;
+    const MAX_CONSECUTIVE_ERRORS = 5;
+
+    const poll = async (): Promise<void> => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/batches/${selectedBatchId}/analysis-status`, { credentials: "include" });
+        if (cancelled) return;
+        if (!res.ok) {
+          consecutiveErrors++;
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            autoPollingRef.current = false;
+            setIsAutoPolling(false);
+            setAnalysisProgress(null);
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 3000));
+          return poll();
+        }
+        consecutiveErrors = 0;
+        const data = await res.json();
+        if (cancelled) return;
+        setAnalysisProgress({ completed: data.completedPatients ?? 0, total: data.totalPatients ?? 0 });
+        if (data.status === "completed" || data.status === "failed") {
+          autoPollingRef.current = false;
+          setIsAutoPolling(false);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 3000));
+        return poll();
+      } catch {
+        consecutiveErrors++;
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          autoPollingRef.current = false;
+          setIsAutoPolling(false);
+          setAnalysisProgress(null);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 3000));
+        return poll();
+      }
+    };
+
+    poll();
+
+    return () => {
+      cancelled = true;
+      autoPollingRef.current = false;
+      setIsAutoPolling(false);
+    };
+  }, [selectedBatchId, selectedBatch?.status, analyzeAllMutation.isPending]);
+
+  useEffect(() => {
+    if (trackedBatchIdRef.current !== selectedBatchId) {
+      trackedBatchIdRef.current = selectedBatchId;
+      prevBatchStatusRef.current = selectedBatch?.status;
+      wasAutoPollingRef.current = false;
+      return;
+    }
+    const prevStatus = prevBatchStatusRef.current;
+    const currentStatus = selectedBatch?.status;
+    prevBatchStatusRef.current = currentStatus;
+    if (prevStatus !== "processing" || currentStatus === "processing") return;
+    if (!wasAutoPollingRef.current) return;
+    wasAutoPollingRef.current = false;
+    setAnalysisProgress(null);
+    autoPollingRef.current = false;
+    setIsAutoPolling(false);
+    queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+    if (currentStatus === "completed") {
+      toast({ title: "Analysis complete", description: "All patients have been screened." });
+      setTabs((prev) => prev.map((tab) => tab.type === "schedule" && tab.batchId === selectedBatchId ? { ...tab, viewMode: "results" as const } : tab));
+    } else if (currentStatus === "failed") {
+      toast({ title: "Analysis failed", description: "Analysis failed. Click Generate All to try again.", variant: "destructive" });
+    }
+  }, [selectedBatch?.status, selectedBatchId]);
 
   return (
     <>
