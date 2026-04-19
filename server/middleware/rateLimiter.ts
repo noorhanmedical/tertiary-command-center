@@ -1,4 +1,5 @@
-const MAX_CONCURRENT = parseInt(process.env.OPENAI_MAX_CONCURRENT || "10", 10);
+const _parsed = parseInt(process.env.OPENAI_MAX_CONCURRENT || "10", 10);
+const MAX_CONCURRENT = Number.isFinite(_parsed) && _parsed >= 1 ? _parsed : 10;
 
 let _inFlight = 0;
 const _queue: Array<() => void> = [];

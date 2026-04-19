@@ -36,6 +36,8 @@ Authentication and session management are implemented using per-user login sessi
 
 Frontend component structure has been modularized, breaking down a monolithic `home.tsx` into focused, reusable components like `PatientCard.tsx`, `ClinicalDataEditor.tsx`, and `ResultsView.tsx`, improving maintainability and development efficiency.
 
+**Server directory structure** is organized into distinct layers: `server/integrations/` holds external system adapters (Google Drive, Google Sheets, S3, file storage factory); `server/middleware/` holds cross-cutting concerns (error handler, OpenAI concurrency rate limiter — capped at `OPENAI_MAX_CONCURRENT`, default 10); `server/parsers/` holds file-format-specific parsers (`excel.ts`, `csv.ts`, `pdf.ts`, `plainText.ts`, `types.ts`). `server/services/ingest.ts` is the orchestrator/dispatcher — it exports `parseFileBuffer(buffer, filename, mimetype?)` for single-call file dispatch by extension, plus re-exports all individual parser APIs for backward compatibility with existing call sites in routes.
+
 ## External Dependencies
 - **OpenAI GPT-5.2**: For AI-powered patient qualification and clinical note generation.
 - **Google Workspace (Google Sheets, Google Drive)**: For synchronizing patient and billing data, and exporting clinical notes as Google Docs.
