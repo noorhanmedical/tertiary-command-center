@@ -26,6 +26,21 @@ This project is an AI-powered patient screening application designed to analyze 
 ## System Architecture
 The application features a React + Vite + Tailwind CSS + Shadcn UI frontend, providing an iOS-style card layout and a modern user experience with a clean, icy blue-white theme. The backend is built with Express.js, handling file parsing, OpenAI integration, and API routing. PostgreSQL, managed with Drizzle ORM, serves as the database, utilizing explicit indexes for optimized performance. The system employs a 3-step draft workflow: build schedule, edit clinical data, and analyze for ancillaries. Core features include tab-based navigation for schedules, a collapsible sidebar for schedule history, and an expandable patient result card view. A service layer encapsulates AI client interactions, data ingestion, and screening logic. Operational robustness is ensured through health checks, graceful shutdown mechanisms, and schema management via Drizzle migrations. Documents are generated client-side and can be exported.
 
+### Frontend Component Structure (Task #144)
+The originally monolithic `client/src/pages/home.tsx` (3,492 lines) has been split into focused components in `client/src/components/`:
+- **PatientCard.tsx**: Patient card with form fields, clinical data entry, paste-to-fill, scheduling button
+- **ClinicalDataEditor.tsx**: Dx/Hx/Rx/Previous Tests section with structured text editors
+- **BatchHeader.tsx**: Schedule header bar with facility, date, clinician, and action buttons
+- **AppointmentModal.tsx**: Calendar-based appointment booking modal
+- **NotesPanelDrawer.tsx**: Completed-tests dialog for marking patients complete and generating ancillary docs
+- **StepTimeline.tsx**: Three-step progress indicator (Add Patients → Clinical Data → Analyze)
+- **ScheduleTile.tsx**: Schedule history tile component
+- **PatientDirectoryView.tsx**: Full patient directory view with search and archive
+- **ResultsView.tsx**: Results/analyze view with PDF export and status management
+- **HomeSidebar.tsx**: Collapsible sidebar with navigation and schedule history
+- **HomeDashboard.tsx**: Home tiles dashboard (New Schedule, Ancillary Docs, Document Upload, etc.)
+- `home.tsx` is now 570 lines (down from 3,492) handling only tab state, shared state, and orchestration
+
 ### Ancillary Appointment Scheduling (Task #104)
 A connected scheduling system with a single `ancillary_appointments` DB table shared across three surfaces:
 1. **Home page tile** (`/`): "Upcoming Appointments" card showing next N appointments with click-through to `/appointments`
