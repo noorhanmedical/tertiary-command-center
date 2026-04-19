@@ -231,16 +231,6 @@ export async function executeExportNotes(): Promise<ExportNotesResult> {
         folder = `${note.facility || "unknown"}/${note.service || "unknown"}/${category}`;
       }
 
-      console.log("[fileStorage export-note debug]", {
-        noteId: note.id,
-        title: note.title,
-        docKind: note.docKind,
-        facility: note.facility,
-        service: note.service,
-        folder,
-        provider,
-      });
-
       const { id: driveFileId, viewUrl: webViewLink } = await fileStorage.uploadFile({
         filename,
         content,

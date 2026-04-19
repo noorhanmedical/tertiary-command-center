@@ -1,6 +1,6 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { IFileStorage, UploadFileParams, FileUploadResult, FileListItem } from "./fileStorage";
+import type { IFileStorage, UploadFileParams, FileUploadResult, FileListItem } from "./types";
 
 const PRESIGNED_URL_TTL_SECONDS = 24 * 60 * 60;
 

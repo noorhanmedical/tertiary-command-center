@@ -178,6 +178,9 @@ export function registerGoogleRoutes(app: Express) {
 
   app.post("/api/google/drive/export-note", async (req, res) => {
     try {
+      if (!requireDriveProvider(res)) return;
+      if (!await requireDriveConnected(res)) return;
+
       const { noteId } = req.body;
       if (!noteId || typeof noteId !== "number") {
         return res.status(400).json({ error: "noteId is required" });
@@ -185,6 +188,8 @@ export function registerGoogleRoutes(app: Express) {
 
       const note = await storage.getGeneratedNote(noteId);
       if (!note) return res.status(404).json({ error: "Note not found" });
+
+      const { uploadTextAsGoogleDoc, ensureStructuredFacilityFolderTree } = await import("../googleDrive");
 
       const sections = (note.sections as { heading: string; body: string }[]) || [];
       const content = sections
@@ -195,33 +200,13 @@ export function registerGoogleRoutes(app: Express) {
       const filename = `${note.patientName} - ${note.title} (${note.scheduleDate || note.generatedAt.toISOString().split("T")[0]})`;
 
       const DRIVE_ANCILLARY_TYPES: readonly string[] = ["BrainWave", "VitalWave", "Ultrasound"];
-      const provider = getStorageProvider();
-      const fileStorage = getFileStorage();
-
-      let folder: string | undefined;
-      if (provider === "google_drive") {
-        const { ensureStructuredFacilityFolderTree } = await import("../googleDrive");
-        if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES.includes(note.service)) {
-          const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
-          folder = resolveGeneratedNoteFolderId(tree, note);
-        }
-      } else {
-        const docKind = (note.docKind || "").trim();
-        const category =
-          docKind === "screening" ? "screening-forms" :
-          docKind === "billing" ? "billing-docs" :
-          docKind === "postProcedureNote" ? "procedure-notes" :
-          docKind === "preProcedureOrder" ? "order-notes" :
-          "clinical-docs";
-        folder = `${note.facility || "unknown"}/${note.service || "unknown"}/${category}`;
+      let clinicalDocsFolderId: string | undefined;
+      if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES.includes(note.service)) {
+        const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
+        clinicalDocsFolderId = resolveGeneratedNoteFolderId(tree, note);
       }
 
-      const { id: driveFileId, viewUrl: webViewLink } = await fileStorage.uploadFile({
-        filename,
-        content,
-        contentType: "text/plain",
-        folder,
-      });
+      const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content, clinicalDocsFolderId);
 
       const updated = await storage.updateGeneratedNoteDriveInfo(noteId, driveFileId, webViewLink);
 
@@ -239,6 +224,9 @@ export function registerGoogleRoutes(app: Express) {
 
   app.post("/api/google/drive/export-all", async (_req, res) => {
     try {
+      if (!requireDriveProvider(res)) return;
+      if (!await requireDriveConnected(res)) return;
+
       const result = await runExportNotesWithLock(true);
       if (!result) {
         res.json({ success: true, message: "Export already in progress, queued" });
@@ -280,6 +268,9 @@ export function registerGoogleRoutes(app: Express) {
 
   app.post("/api/google/drive/upload-report", upload.single("file"), async (req, res) => {
     try {
+      if (!requireDriveProvider(res)) return;
+      if (!await requireDriveConnected(res)) return;
+
       const body = req.body as { facility?: string; patientName?: string; ancillaryType?: string };
       const { facility, patientName, ancillaryType } = body;
       if (!facility || !isValidFacility(facility)) {
@@ -302,25 +293,11 @@ export function registerGoogleRoutes(app: Express) {
         return res.status(400).json({ error: "Only PDF files are accepted" });
       }
 
+      const { ensureStructuredFacilityFolderTree, uploadPdfToFolder } = await import("../googleDrive");
+      const tree = await ensureStructuredFacilityFolderTree(facility, patientName.trim(), ancillaryType);
+
       const filename = file.originalname || `${patientName.trim()} - ${ancillaryType} Report.pdf`;
-      const provider = getStorageProvider();
-      const fileStorage = getFileStorage();
-
-      let folder: string;
-      if (provider === "google_drive") {
-        const { ensureStructuredFacilityFolderTree } = await import("../googleDrive");
-        const tree = await ensureStructuredFacilityFolderTree(facility, patientName.trim(), ancillaryType);
-        folder = tree.reportFolderId;
-      } else {
-        folder = `${facility}/${ancillaryType}/report`;
-      }
-
-      const { id: driveFileId, viewUrl: webViewLink } = await fileStorage.uploadFile({
-        filename,
-        content: file.buffer,
-        contentType: "application/pdf",
-        folder,
-      });
+      const { id: driveFileId, webViewLink } = await uploadPdfToFolder(filename, file.buffer, tree.reportFolderId);
 
       res.json({ success: true, driveFileId, webViewLink });
     } catch (error: any) {
@@ -447,6 +424,23 @@ export function registerGoogleRoutes(app: Express) {
       const records = await storage.getAllUploadedDocuments();
       res.json(records);
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ─── File Storage View URL (provider-agnostic presigned URL refresh) ───────
+
+  app.get("/api/file-storage/view-url", async (req, res) => {
+    try {
+      const fileId = req.query.fileId as string;
+      if (!fileId || !fileId.trim()) {
+        return res.status(400).json({ error: "fileId is required" });
+      }
+      const fileStorage = getFileStorage();
+      const viewUrl = await fileStorage.getFileUrl(fileId.trim());
+      res.json({ viewUrl });
+    } catch (error: any) {
+      console.error("View URL refresh error:", error);
       res.status(500).json({ error: error.message });
     }
   });

@@ -1,4 +1,4 @@
-import type { IFileStorage, UploadFileParams, FileUploadResult, FileListItem } from "./fileStorage";
+import type { IFileStorage, UploadFileParams, FileUploadResult, FileListItem } from "./types";
 
 export class GoogleDriveFileStorage implements IFileStorage {
   async uploadFile({ filename, content, contentType, folder }: UploadFileParams): Promise<FileUploadResult> {
