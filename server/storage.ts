@@ -80,6 +80,8 @@ export interface IStorage {
   getAllUsers(): Promise<Omit<User, "password">[]>;
   getUserCount(): Promise<number>;
   updateUserPassword(id: string, plaintext: string): Promise<void>;
+  updateUserRole(id: string, role: string): Promise<void>;
+  deleteUser(id: string): Promise<void>;
   validateUserPassword(username: string, plaintext: string): Promise<User | null>;
   deactivateUser(id: string): Promise<void>;
   deleteUser(id: string): Promise<void>;
@@ -217,6 +219,14 @@ export class DatabaseStorage implements IStorage {
   async updateUserPassword(id: string, plaintext: string): Promise<void> {
     const hashed = await bcrypt.hash(plaintext, 12);
     await db.update(users).set({ password: hashed }).where(eq(users.id, id));
+  }
+
+  async updateUserRole(id: string, role: string): Promise<void> {
+    await db.update(users).set({ role }).where(eq(users.id, id));
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await db.delete(users).where(eq(users.id, id));
   }
 
   async validateUserPassword(username: string, plaintext: string): Promise<User | null> {

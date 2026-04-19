@@ -31,7 +31,14 @@ const SIDEBAR_STYLE = {
   "--sidebar-width-icon": "3rem",
 } as React.CSSProperties;
 
-type AuthUser = { id: string; username: string } | null;
+export type AuthUser = { id: string; username: string; role: string } | null;
+
+function AdminGuard({ user, children }: { user: AuthUser; children: React.ReactNode }) {
+  if (!user || user.role !== "admin") {
+    return <Redirect to="/schedule" />;
+  }
+  return <>{children}</>;
+}
 
 function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   return (
@@ -67,11 +74,19 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain" component={TaskBrainPage} />
                 <Route path="/plexus-tasks" component={PlexusTasksPage} />
-                <Route path="/admin" component={AdminPage} />
-                <Route path="/admin/users" component={AdminUsersPage} />
-                <Route path="/admin-ops" component={AdminOpsPage} />
+                <Route path="/admin">
+                  <AdminGuard user={user}><AdminPage /></AdminGuard>
+                </Route>
+                <Route path="/admin/users">
+                  <AdminGuard user={user}><AdminUsersPage /></AdminGuard>
+                </Route>
+                <Route path="/admin-ops">
+                  <AdminGuard user={user}><AdminOpsPage /></AdminGuard>
+                </Route>
                 <Route path="/schedule-dashboard" component={ScheduleDashboardPage} />
-                <Route path="/settings" component={SettingsPage} />
+                <Route path="/settings">
+                  <AdminGuard user={user}><SettingsPage /></AdminGuard>
+                </Route>
                 <Route component={NotFound} />
               </Switch>
             </div>

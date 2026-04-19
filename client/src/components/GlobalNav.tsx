@@ -12,10 +12,11 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
-  User,
   CheckSquare,
 } from "lucide-react";
 import { useState, useEffect } from "react";
+import type { AuthUser } from "@/App";
+
 const NAV_ITEMS = [
   { href: "/schedule",          label: "Schedule",            Icon: CalendarDays,  domain: true },
   { href: "/outreach",          label: "Outreach Center",     Icon: Phone,         domain: true },
@@ -45,7 +46,25 @@ function UnreadBadge({ count }: { count: number }) {
   );
 }
 
-type AuthUser = { id: string; username: string } | null;
+function UserAvatar({ username, collapsed }: { username: string; collapsed: boolean }) {
+  const initials = username
+    .split(/[\s._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toUpperCase())
+    .join("");
+
+  return (
+    <div
+      className="w-7 h-7 rounded-full bg-indigo-500/70 flex items-center justify-center shrink-0"
+      title={collapsed ? username : undefined}
+      data-testid="avatar-user"
+      aria-label={`Signed in as ${username}`}
+    >
+      <span className="text-white text-[10px] font-bold leading-none">{initials || "?"}</span>
+    </div>
+  );
+}
 
 export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () => void }) {
   const [location] = useLocation();
@@ -79,6 +98,8 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
     if (href === "/schedule") return location === "/schedule" || location === "/";
     return location === href || location.startsWith(href + "/");
   };
+
+  const isAdmin = user?.role === "admin";
 
   return (
     <nav
@@ -137,36 +158,42 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
       </div>
 
       <div className="border-t border-white/10 px-2 py-2 space-y-0.5">
-        <Link href="/admin">
-          <div
-            className={`flex items-center gap-3 px-2 py-2 rounded-xl cursor-pointer transition-colors group ${
-              isActive("/admin") || isActive("/admin-ops") || isActive("/settings")
-                ? "bg-white/15 text-white"
-                : "text-white/50 hover:bg-white/8 hover:text-white/70"
-            } ${collapsed ? "justify-center" : ""}`}
-            data-testid="nav-item-admin"
-            title={collapsed ? "Admin" : undefined}
-          >
-            <Shield className="w-4 h-4 shrink-0" />
-            {!collapsed && <span className="text-xs font-medium truncate">Admin</span>}
-          </div>
-        </Link>
+        {isAdmin && (
+          <Link href="/admin">
+            <div
+              className={`flex items-center gap-3 px-2 py-2 rounded-xl cursor-pointer transition-colors group ${
+                isActive("/admin") || isActive("/admin-ops") || isActive("/settings")
+                  ? "bg-white/15 text-white"
+                  : "text-white/50 hover:bg-white/8 hover:text-white/70"
+              } ${collapsed ? "justify-center" : ""}`}
+              data-testid="nav-item-admin"
+              title={collapsed ? "Admin" : undefined}
+            >
+              <Shield className="w-4 h-4 shrink-0" />
+              {!collapsed && <span className="text-xs font-medium truncate">Admin</span>}
+            </div>
+          </Link>
+        )}
 
         {user && (
           <div
             className={`flex items-center gap-2 px-2 py-2 rounded-xl ${collapsed ? "justify-center" : ""}`}
-            title={collapsed ? `${user.username} — click to sign out` : undefined}
           >
+            <UserAvatar username={user.username} collapsed={collapsed} />
             {!collapsed && (
               <>
-                <User className="w-3.5 h-3.5 text-white/30 shrink-0" />
-                <span className="text-xs text-white/40 truncate flex-1">{user.username}</span>
+                <div className="flex flex-col min-w-0 flex-1">
+                  <span className="text-xs text-white/70 font-medium truncate" data-testid="text-username">{user.username}</span>
+                  {isAdmin && (
+                    <span className="text-[10px] text-indigo-400/80 font-medium leading-none mt-0.5">Admin</span>
+                  )}
+                </div>
               </>
             )}
             {onLogout && (
               <button
                 onClick={onLogout}
-                className="p-1 rounded-lg text-white/30 hover:text-white/70 hover:bg-white/10 transition-colors"
+                className="p-1 rounded-lg text-white/30 hover:text-white/70 hover:bg-white/10 transition-colors shrink-0"
                 title="Sign out"
                 data-testid="button-logout"
                 aria-label="Sign out"

@@ -115,7 +115,8 @@ export async function registerRoutes(
     }
     req.session.userId = user.id;
     req.session.username = user.username;
-    return res.json({ id: user.id, username: user.username });
+    req.session.role = user.role;
+    return res.json({ id: user.id, username: user.username, role: user.role });
   });
 
   app.post("/api/auth/logout", (req, res) => {
@@ -129,7 +130,7 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-    return res.json({ id: req.session.userId, username: req.session.username });
+    return res.json({ id: req.session.userId, username: req.session.username, role: req.session.role ?? "user" });
   });
 
   // ─── /api/healthz — pool telemetry (exempt from auth, mirrors /healthz) ───
@@ -157,6 +158,16 @@ export async function registerRoutes(
     return next();
   };
 
+  const requireAdmin = (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (req.session.role !== "admin") {
+      return res.status(403).json({ message: "Forbidden — admin access required" });
+    }
+    return next();
+  };
+
   app.use("/api", requireAuth);
 
   // Register Google / Drive / Document routes (protected by requireAuth above)
@@ -171,7 +182,7 @@ export async function registerRoutes(
   try {
     const count = await storage.getUserCount();
     if (count === 0) {
-      await storage.createUser({ username: "admin", password: "admin" });
+      await storage.createUser({ username: "admin", password: "admin", role: "admin" });
       console.warn("[auth] ⚠ No users found. Created default admin/admin account — CHANGE THIS PASSWORD IMMEDIATELY");
     }
   } catch (seedErr: any) {
@@ -197,20 +208,32 @@ export async function registerRoutes(
   });
 
   // ─── User management (admin-only) ─────────────────────────────────────────
-  app.post("/api/users", async (req, res) => {
-    if (req.session.username !== "admin") {
-      return res.status(403).json({ message: "Forbidden — only the admin account can create users" });
-    }
-    const { username, password } = req.body;
+  app.post("/api/users", requireAdmin, async (req, res) => {
+    const { username, password, role } = req.body;
     if (!username || !password) {
       return res.status(400).json({ message: "Username and password are required" });
     }
+    const safeRole = role === "admin" ? "admin" : "user";
     const existing = await storage.getUserByUsername(username);
     if (existing) {
       return res.status(409).json({ message: "Username already exists" });
     }
-    const user = await storage.createUser({ username, password });
-    return res.status(201).json({ id: user.id, username: user.username });
+    const user = await storage.createUser({ username, password, role: safeRole });
+    return res.status(201).json({ id: user.id, username: user.username, role: user.role });
+  });
+
+  app.get("/api/users", requireAdmin, async (_req, res) => {
+    const allUsers = await storage.getAllUsers();
+    return res.json(allUsers.map((u) => ({ id: u.id, username: u.username, role: u.role })));
+  });
+
+  app.delete("/api/users/:id", requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    if (id === req.session.userId) {
+      return res.status(400).json({ message: "Cannot delete your own account" });
+    }
+    await storage.deleteUser(id);
+    return res.json({ ok: true });
   });
 
   app.get("/api/users", async (req, res) => {
