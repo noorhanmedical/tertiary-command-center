@@ -72,7 +72,7 @@ export async function registerRoutes(
         const patients = await storage.getPatientScreeningsByBatch(batch.id);
         const processingPatients = patients.filter((patient) => patient.status === "processing");
         for (const p of processingPatients) {
-          await storage.updatePatientScreening(p.id, { status: "pending", qualifyingTests: [] });
+          await storage.updatePatientScreening(p.id, { status: "draft", qualifyingTests: [] });
         }
         console.log(`[startup] Reset interrupted batch #${batch.id} → draft (${processingPatients.length} patients reset)`);
         resetCount++;
@@ -114,7 +114,24 @@ export async function registerRoutes(
     return res.json({ id: req.session.userId, username: req.session.username });
   });
 
-  // ─── requireAuth middleware (applied to all other /api/* routes) ───────────
+  // ─── /api/healthz — pool telemetry (exempt from auth, mirrors /healthz) ───
+  app.get("/api/healthz", async (_req, res) => {
+    try {
+      const { sql } = await import("drizzle-orm");
+      await db.execute(sql`SELECT 1`);
+      res.json({
+        status: "ok",
+        db: {
+          total: pool.totalCount,
+          idle: pool.idleCount,
+          waiting: pool.waitingCount,
+        },
+      });
+    } catch {
+      res.status(503).json({ status: "error", db: false });
+    }
+  });
+
   const requireAuth = (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
@@ -598,7 +615,7 @@ export async function registerRoutes(
       if (patients.length === 0) return res.status(400).json({ error: "No patients in batch" });
 
       await db.transaction(async (tx) => {
-        if (batch.status === "processing") {
+        if (batch.status === "processing" || batch.status === "error") {
           await tx.update(screeningBatches).set({ status: "draft" }).where(eq(screeningBatches.id, batchId));
           const processingPatients = patients.filter((p) => p.status === "processing");
           for (const p of processingPatients) {
@@ -678,10 +695,10 @@ export async function registerRoutes(
       console.error("Analysis error:", error);
       try {
         await db.transaction(async (tx) => {
-          await tx.update(screeningBatches).set({ status: "draft" }).where(eq(screeningBatches.id, batchId));
+          await tx.update(screeningBatches).set({ status: "error" }).where(eq(screeningBatches.id, batchId));
         });
       } catch (resetErr: unknown) {
-        console.error("Failed to reset batch status after analysis error:", resetErr);
+        console.error("Failed to set batch status to error after analysis failure:", resetErr);
       }
     }
   });
