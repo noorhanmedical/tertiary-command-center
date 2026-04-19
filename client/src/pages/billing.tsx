@@ -953,10 +953,10 @@ export default function BillingPage() {
     { label: "Report", w: 75, docKind: "report" },
     { label: "Procedure Note", w: 115, docKind: "postProcedureNote" },
     { label: "Billing Doc", w: 90, docKind: "billing" },
-    { label: "Primary Paid", w: 110 },
-    { label: "Insurance Paid", w: 115 },
-    { label: "Secondary Paid", w: 115 },
-    { label: "Pt Responsibility", w: 130 },
+    { label: "Primary Paid Amount", w: 145 },
+    { label: "Insurance Paid Amount", w: 155 },
+    { label: "Secondary Paid Amount", w: 155 },
+    { label: "Patient Responsibility Amount", w: 200 },
     { label: "Claim Status", w: 130 },
     { label: "Last Biller Update", w: 145 },
     { label: "Next Action", w: 140 },
@@ -1044,7 +1044,7 @@ export default function BillingPage() {
             { icon: Wallet, label: "Primary Paid", value: fmtMoney(metrics.totalPrimary), color: "text-emerald-700", bg: "bg-emerald-50" },
             { icon: TrendingUp, label: "Insurance Paid", value: fmtMoney(metrics.totalInsurance), color: "text-blue-700", bg: "bg-blue-50" },
             { icon: Banknote, label: "Secondary Paid", value: fmtMoney(metrics.totalSecondary), color: "text-violet-700", bg: "bg-violet-50" },
-            { icon: Timer, label: "Pt Responsibility", value: fmtMoney(metrics.totalPatientResp), color: "text-amber-700", bg: "bg-amber-50" },
+            { icon: Timer, label: "Patient Responsibility", value: fmtMoney(metrics.totalPatientResp), color: "text-amber-700", bg: "bg-amber-50" },
           ].map(({ icon: Icon, label, value, color, bg }) => (
             <div key={label} className={`rounded-xl px-3.5 py-2.5 ${bg} flex items-center gap-3`} data-testid={`metric-${label.replace(/\s+/g, "-").toLowerCase()}`}>
               <Icon className={`w-4 h-4 shrink-0 ${color}`} />
