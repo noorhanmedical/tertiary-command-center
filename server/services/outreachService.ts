@@ -41,6 +41,7 @@ export type OutreachDashboard = {
     totalBooked: number;
   };
   schedulerCards: SchedulerCardEntry[];
+  uncoveredFacilities: string[];
 };
 
 function s(v: unknown): string {
@@ -70,6 +71,7 @@ export async function buildOutreachDashboard(
   ]);
 
   const map = new Map<string, SchedulerCardEntry>();
+  const uncoveredFacilitySet = new Set<string>();
 
   for (const batch of batches) {
     const batchDay = canonicalDay(batch.scheduleDate);
@@ -78,6 +80,9 @@ export async function buildOutreachDashboard(
     const patients: PatientScreening[] = await storage.getPatientScreeningsByBatch(batch.id);
     const facility = s(batch.facility) || "Unassigned Facility";
     const schedulerName = resolveSchedulerName(facility, schedulers);
+    if (schedulerName === "Unassigned" && patients.length > 0) {
+      uncoveredFacilitySet.add(facility);
+    }
     const cardId = `${schedulerName.toLowerCase().replace(/\s+/g, "-")}__${facility.toLowerCase().replace(/\s+/g, "-")}`;
     const providerName = s(batch.clinicianName) || "No provider";
 
@@ -193,5 +198,6 @@ export async function buildOutreachDashboard(
       totalBooked,
     },
     schedulerCards,
+    uncoveredFacilities: Array.from(uncoveredFacilitySet).sort(),
   };
 }

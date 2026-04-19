@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ArrowLeft,
   Building2,
   CalendarDays,
@@ -68,6 +69,7 @@ type OutreachDashboard = {
     totalBooked: number;
   };
   schedulerCards: OutreachSchedulerCard[];
+  uncoveredFacilities: string[];
 };
 
 const CALL_OUTCOMES = [
@@ -176,6 +178,7 @@ export default function OutreachPage() {
 
   const schedulerCards = data?.schedulerCards ?? [];
   const metrics = data?.metrics ?? { schedulerCount: 0, totalCalls: 0, totalScheduled: 0, totalPending: 0, avgConversion: 0, totalBooked: 0 };
+  const uncoveredFacilities = data?.uncoveredFacilities ?? [];
 
   const METRIC_CARDS = [
     { label: "Schedulers",     value: metrics.schedulerCount,      Icon: Users2,       color: "bg-slate-900/5 text-slate-700"   },
@@ -239,6 +242,39 @@ export default function OutreachPage() {
             data-testid="outreach-search-input"
           />
         </div>
+
+        {/* Uncovered clinic warning */}
+        {uncoveredFacilities.length > 0 && (
+          <div
+            className="flex flex-wrap items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3"
+            data-testid="uncovered-clinics-warning"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div className="flex-1 text-sm text-amber-800">
+              <span className="font-semibold">No scheduler assigned</span> for{" "}
+              {uncoveredFacilities.length === 1
+                ? <span className="font-medium">{uncoveredFacilities[0]}</span>
+                : (
+                  <>
+                    {uncoveredFacilities.slice(0, -1).map((f, i) => (
+                      <span key={f}>
+                        <span className="font-medium">{f}</span>
+                        {i < uncoveredFacilities.length - 2 ? ", " : ""}
+                      </span>
+                    ))}
+                    {" "}and{" "}
+                    <span className="font-medium">{uncoveredFacilities[uncoveredFacilities.length - 1]}</span>
+                  </>
+                )
+              }
+              {". "}Patients from {uncoveredFacilities.length === 1 ? "this clinic" : "these clinics"} will appear under an Unassigned card.{" "}
+              <Link href="/settings" className="font-medium underline underline-offset-2 hover:text-amber-900" data-testid="uncovered-clinics-settings-link">
+                Add a scheduler in Settings
+              </Link>
+              .
+            </div>
+          </div>
+        )}
 
         {/* Stacked scheduler cards */}
         {isLoading ? (
