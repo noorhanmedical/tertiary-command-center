@@ -74,7 +74,7 @@ export async function registerRoutes(
         for (const p of processingPatients) {
           await storage.updatePatientScreening(p.id, { status: "draft", qualifyingTests: [] });
         }
-        console.log(`[startup] Reset interrupted batch #${batch.id} → draft (${processingPatients.length} patients reset)`);
+        console.warn(`[startup] Reset interrupted batch #${batch.id} → draft (${processingPatients.length} patients reset)`);
         resetCount++;
       }
     }
