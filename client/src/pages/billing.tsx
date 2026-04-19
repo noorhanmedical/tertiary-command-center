@@ -609,12 +609,13 @@ function NotesModal({
 
 // ─── Add Row Modal ──────────────────────────────────────────────────────────
 
-function AddRowModal({ onClose, onAdd }: {
+function AddRowModal({ onClose, onAdd, defaultDate }: {
   onClose: () => void;
   onAdd: (data: { patientName: string; dateOfService: string; facility: string; clinician: string; service: string; insuranceInfo: string }) => void;
+  defaultDate?: string;
 }) {
   const [patientName, setPatientName] = useState("");
-  const [dateOfService, setDateOfService] = useState("");
+  const [dateOfService, setDateOfService] = useState(defaultDate || "");
   const [facility, setFacility] = useState("");
   const [clinician, setClinician] = useState("");
   const [service, setService] = useState("");

@@ -897,7 +897,18 @@ export async function registerRoutes(
     try {
       const parsed = createBillingRecordSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      const { patientId, batchId, service, facility, dateOfService, patientName, clinician, insuranceInfo } = parsed.data;
+      const { patientId, batchId, service, facility, patientName, clinician, insuranceInfo } = parsed.data;
+      let { dateOfService } = parsed.data;
+
+      // Canonical date rule: derive dateOfService from batch.scheduleDate when batchId is
+      // present and the caller did not supply a date.
+      if (!dateOfService && batchId != null) {
+        const batch = await storage.getScreeningBatch(batchId);
+        if (batch?.scheduleDate) {
+          dateOfService = batch.scheduleDate;
+        }
+      }
+
       const record = await storage.createBillingRecord({
         patientId: patientId ?? null,
         batchId: batchId ?? null,
@@ -1426,6 +1437,20 @@ ${parsed.data.text}`;
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
 
       const { patientScreeningId, patientName, facility, scheduledDate, scheduledTime, testType } = parsed.data;
+
+      // Canonical date guard: when patientScreeningId is provided, validate scheduledDate
+      // matches the patient's batch.scheduleDate (the single source of truth).
+      if (patientScreeningId != null) {
+        const patient = await storage.getPatientScreening(patientScreeningId);
+        if (patient) {
+          const batch = await storage.getScreeningBatch(patient.batchId);
+          if (batch?.scheduleDate && batch.scheduleDate !== scheduledDate) {
+            console.warn(
+              `[appointments] canonical date mismatch: patient ${patientScreeningId} batch scheduleDate=${batch.scheduleDate} but scheduledDate=${scheduledDate}. Allowing with warning.`
+            );
+          }
+        }
+      }
 
       // Duplicate slot check: same facility+date+time+testType must not already be scheduled
       const existing = await storage.getAppointments({ facility, date: scheduledDate, testType, status: "scheduled" });
