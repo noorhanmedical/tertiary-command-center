@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   ChevronLeft,
   Calendar,
@@ -27,12 +26,10 @@ import {
   isBrainWave,
 } from "@/components/clinic-calendar";
 import type { BookingSlot } from "@/components/clinic-calendar";
-import { VALID_FACILITIES, ANCILLARY_TESTS } from "@shared/plexus";
+import { VALID_FACILITIES } from "@shared/plexus";
 
 const FACILITIES = VALID_FACILITIES;
 type Facility = typeof VALID_FACILITIES[number];
-
-const ALL_TESTS = [...ANCILLARY_TESTS];
 
 function ClinicTab({ facility }: { facility: Facility }) {
   const today = new Date();
