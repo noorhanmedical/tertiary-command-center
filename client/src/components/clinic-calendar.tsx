@@ -4,6 +4,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { AncillaryAppointment } from "@shared/schema";
 import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
+import {
+  BRAINWAVE_PALETTE,
+  VITALWAVE_PALETTE,
+  getTestPalette,
+  type TestPalette,
+} from "@/lib/testColors";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +59,12 @@ export function isVitalWave(t: string) { return t.toLowerCase().includes("vital"
 
 // ─── MiniCalendar ─────────────────────────────────────────────────────────────
 
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_NAMES = [
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December",
+];
+
 export function MiniCalendar({
   year,
   month,
@@ -62,6 +74,8 @@ export function MiniCalendar({
   selectedDay,
   bookedDates,
   testIdPrefix = "cal",
+  palette,
+  showOutsideDays = true,
 }: {
   year: number;
   month: number;
@@ -71,53 +85,105 @@ export function MiniCalendar({
   selectedDay: number | null;
   bookedDates: Set<string>;
   testIdPrefix?: string;
+  palette?: TestPalette;
+  showOutsideDays?: boolean;
 }) {
+  const pal = palette ?? getTestPalette(null);
   const firstDow = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const prevMonthDays = new Date(year, month, 0).getDate();
   const today = new Date();
   const todayKey = toDateKey(today.getFullYear(), today.getMonth(), today.getDate());
-  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-  const cells: (number | null)[] = [];
-  for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  while (cells.length % 7 !== 0) cells.push(null);
+  type Cell = { day: number; outside: boolean };
+  const cells: Cell[] = [];
+  for (let i = firstDow - 1; i >= 0; i--) {
+    cells.push({ day: prevMonthDays - i, outside: true });
+  }
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, outside: false });
+  let nextDay = 1;
+  while (cells.length % 7 !== 0) {
+    cells.push({ day: nextDay++, outside: true });
+  }
 
   return (
     <div className="select-none">
-      <div className="flex items-center justify-between mb-3">
-        <Button variant="ghost" size="sm" onClick={onPrev} className="h-7 w-7 p-0" data-testid={`${testIdPrefix}-prev`}>
+      <div className="flex items-center justify-between mb-4">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onPrev}
+          className="h-8 w-8 rounded-full text-slate-600 hover:bg-slate-100"
+          data-testid={`${testIdPrefix}-prev`}
+        >
           <ChevronLeft className="w-4 h-4" />
         </Button>
-        <span className="text-sm font-semibold text-slate-800">{monthNames[month]} {year}</span>
-        <Button variant="ghost" size="sm" onClick={onNext} className="h-7 w-7 p-0" data-testid={`${testIdPrefix}-next`}>
+        <span className="text-base font-semibold text-slate-900 tracking-tight">
+          {MONTH_NAMES[month]} {year}
+        </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onNext}
+          className="h-8 w-8 rounded-full text-slate-600 hover:bg-slate-100"
+          data-testid={`${testIdPrefix}-next`}
+        >
           <ChevronRight className="w-4 h-4" />
         </Button>
       </div>
-      <div className="grid grid-cols-7 gap-0.5 mb-1">
-        {["Su","Mo","Tu","We","Th","Fr","Sa"].map((d) => (
-          <div key={d} className="text-center text-[10px] font-medium text-slate-400 py-1">{d}</div>
+      <div className="grid grid-cols-7 mb-1">
+        {DAY_LABELS.map((d) => (
+          <div
+            key={d}
+            className="text-center text-[11px] font-medium uppercase tracking-wider text-slate-400 py-2"
+          >
+            {d}
+          </div>
         ))}
       </div>
-      <div className="grid grid-cols-7 gap-0.5">
-        {cells.map((d, i) => {
-          if (!d) return <div key={i} />;
-          const key = toDateKey(year, month, d);
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((cell, i) => {
+          const cellMonth = cell.outside
+            ? cell.day > 20
+              ? month - 1
+              : month + 1
+            : month;
+          const cellYear =
+            cellMonth < 0 ? year - 1 : cellMonth > 11 ? year + 1 : year;
+          const normalizedMonth = (cellMonth + 12) % 12;
+          const key = toDateKey(cellYear, normalizedMonth, cell.day);
           const isToday = key === todayKey;
-          const isSelected = d === selectedDay;
+          const isSelected = !cell.outside && cell.day === selectedDay;
           const hasBooking = bookedDates.has(key);
+
+          if (cell.outside && !showOutsideDays) {
+            return <div key={i} className="h-11" />;
+          }
+
           return (
             <button
               key={i}
-              onClick={() => onSelectDay(d)}
-              data-testid={`${testIdPrefix}-day-${d}`}
-              className={`relative flex flex-col items-center justify-center h-8 w-full rounded text-xs font-medium transition-colors
-                ${isSelected ? "bg-primary text-white" : isToday ? "bg-primary/10 text-primary font-bold" : "hover:bg-slate-100 text-slate-700"}
-              `}
+              onClick={() => !cell.outside && onSelectDay(cell.day)}
+              data-testid={cell.outside ? undefined : `${testIdPrefix}-day-${cell.day}`}
+              disabled={cell.outside}
+              className={[
+                "relative h-11 w-full rounded-2xl text-sm font-medium transition-colors flex items-center justify-center",
+                cell.outside
+                  ? "text-slate-300 cursor-default"
+                  : isSelected
+                    ? `${pal.selectedBg} ${pal.selectedText} shadow-sm`
+                    : isToday
+                      ? "text-slate-900 ring-1 ring-slate-300 hover:bg-slate-100"
+                      : "text-slate-800 hover:bg-slate-100",
+              ].join(" ")}
             >
-              {d}
-              {hasBooking && (
-                <span className={`absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full ${isSelected ? "bg-white" : "bg-primary"}`} />
+              {cell.day}
+              {hasBooking && !cell.outside && (
+                <span
+                  className={`absolute bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full ${
+                    isSelected ? "bg-white/90" : pal.dotBg
+                  }`}
+                />
               )}
             </button>
           );
@@ -149,8 +215,8 @@ export function SlotGrid({
   onCancel,
   testIdPrefix = "",
   availableLabel = "Available",
-  bwBadgeLabel = "1 hr slots",
-  vwBadgeLabel = "30 min slots",
+  bwBadgeLabel = "1 hr",
+  vwBadgeLabel = "30 min",
   truncateWidth = "max-w-[100px]",
   scrollToSlot = null,
 }: SlotGridProps) {
@@ -174,82 +240,134 @@ export function SlotGrid({
   const prefix = testIdPrefix ? `${testIdPrefix}-` : "";
 
   return (
-    <div className="grid grid-cols-2 gap-4 mt-4">
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Brain className="w-4 h-4 text-violet-600" />
-          <span className="text-sm font-semibold text-violet-700">BrainWave</span>
-          <Badge variant="secondary" className="text-[10px] bg-violet-100 text-violet-700">{bwBadgeLabel}</Badge>
-        </div>
-        <div className="space-y-1">
-          {BRAINWAVE_SLOTS.map((slot) => {
-            const appt = bookedBW.get(slot);
-            return (
-              <div key={slot} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs border transition-colors
-                ${appt ? "bg-violet-50 border-violet-200" : "bg-white border-slate-200 hover:border-violet-300 hover:bg-violet-50/50 cursor-pointer"}`}
-                onClick={() => !appt && onBook({ time: slot, testType: "BrainWave" })}
-                data-testid={`${prefix}slot-brainwave-${slot}`}
-              >
-                <span className={`font-medium ${appt ? "text-violet-700" : "text-slate-600"}`}>{formatTime12(slot)}</span>
-                {appt ? (
-                  <div className="flex items-center gap-1">
-                    {appt.patientScreeningId != null && (
-                      <SchedulerIcon patientScreeningId={appt.patientScreeningId} patientName={appt.patientName} size="xs" />
-                    )}
-                    <span className={`text-violet-800 font-semibold truncate ${truncateWidth}`}>{appt.patientName}</span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onCancel(appt); }}
-                      className="text-red-400 hover:text-red-600 ml-1"
-                      data-testid={`${prefix}cancel-appt-${appt.id}`}
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <span className="text-slate-400 text-[10px]">{availableLabel}</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
+      <SlotColumn
+        title="BrainWave"
+        slots={BRAINWAVE_SLOTS}
+        bookings={bookedBW}
+        palette={BRAINWAVE_PALETTE}
+        icon={<Brain className="w-4 h-4" />}
+        badgeLabel={bwBadgeLabel}
+        availableLabel={availableLabel}
+        onBook={(time) => onBook({ time, testType: "BrainWave" })}
+        onCancel={onCancel}
+        prefix={prefix}
+        slotType="brainwave"
+        truncateWidth={truncateWidth}
+      />
+      <SlotColumn
+        title="VitalWave"
+        slots={VITALWAVE_SLOTS}
+        bookings={bookedVW}
+        palette={VITALWAVE_PALETTE}
+        icon={<Activity className="w-4 h-4" />}
+        badgeLabel={vwBadgeLabel}
+        availableLabel={availableLabel}
+        onBook={(time) => onBook({ time, testType: "VitalWave" })}
+        onCancel={onCancel}
+        prefix={prefix}
+        slotType="vitalwave"
+        truncateWidth={truncateWidth}
+      />
+    </div>
+  );
+}
+
+function SlotColumn({
+  title,
+  slots,
+  bookings,
+  palette,
+  icon,
+  badgeLabel,
+  availableLabel,
+  onBook,
+  onCancel,
+  prefix,
+  slotType,
+  truncateWidth,
+}: {
+  title: string;
+  slots: string[];
+  bookings: Map<string, AncillaryAppointment>;
+  palette: TestPalette;
+  icon: React.ReactNode;
+  badgeLabel: string;
+  availableLabel: string;
+  onBook: (time: string) => void;
+  onCancel: (appt: AncillaryAppointment) => void;
+  prefix: string;
+  slotType: "brainwave" | "vitalwave";
+  truncateWidth: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <span className={palette.iconText}>{icon}</span>
+        <span className={`text-sm font-semibold ${palette.accentText}`}>{title}</span>
+        <Badge
+          variant="secondary"
+          className={`text-[10px] ${palette.badgeBg} ${palette.badgeText} border-0`}
+        >
+          {badgeLabel}
+        </Badge>
       </div>
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Activity className="w-4 h-4 text-red-500" />
-          <span className="text-sm font-semibold text-red-600">VitalWave</span>
-          <Badge variant="secondary" className="text-[10px] bg-red-100 text-red-600">{vwBadgeLabel}</Badge>
-        </div>
-        <div className="space-y-1">
-          {VITALWAVE_SLOTS.map((slot) => {
-            const appt = bookedVW.get(slot);
-            return (
-              <div key={slot} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs border transition-colors
-                ${appt ? "bg-red-50 border-red-200" : "bg-white border-slate-200 hover:border-red-300 hover:bg-red-50/50 cursor-pointer"}`}
-                onClick={() => !appt && onBook({ time: slot, testType: "VitalWave" })}
-                data-testid={`${prefix}slot-vitalwave-${slot}`}
+      <div className="grid grid-cols-2 gap-2">
+        {slots.map((slot) => {
+          const appt = bookings.get(slot);
+          const isBooked = !!appt;
+          return (
+            <div
+              key={slot}
+              onClick={() => !isBooked && onBook(slot)}
+              data-testid={`${prefix}slot-${slotType}-${slot}`}
+              className={[
+                "group flex items-center justify-between px-3 h-11 rounded-xl border text-xs font-medium transition-colors",
+                isBooked
+                  ? `${palette.bookedBg} ${palette.bookedBorder}`
+                  : `bg-white border-slate-200 ${palette.hoverBorder} ${palette.hoverBg} cursor-pointer`,
+              ].join(" ")}
+            >
+              <span
+                className={
+                  isBooked ? palette.accentText : "text-slate-700"
+                }
               >
-                <span className={`font-medium ${appt ? "text-red-700" : "text-slate-600"}`}>{formatTime12(slot)}</span>
-                {appt ? (
-                  <div className="flex items-center gap-1">
-                    {appt.patientScreeningId != null && (
-                      <SchedulerIcon patientScreeningId={appt.patientScreeningId} patientName={appt.patientName} size="xs" />
-                    )}
-                    <span className={`text-red-800 font-semibold truncate ${truncateWidth}`}>{appt.patientName}</span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onCancel(appt); }}
-                      className="text-red-400 hover:text-red-600 ml-1"
-                      data-testid={`${prefix}cancel-appt-${appt.id}`}
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <span className="text-slate-400 text-[10px]">{availableLabel}</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                {formatTime12(slot)}
+              </span>
+              {appt ? (
+                <div className="flex items-center gap-1 min-w-0">
+                  {appt.patientScreeningId != null && (
+                    <SchedulerIcon
+                      patientScreeningId={appt.patientScreeningId}
+                      patientName={appt.patientName}
+                      size="xs"
+                    />
+                  )}
+                  <span
+                    className={`${palette.bookedText} font-semibold truncate ${truncateWidth}`}
+                  >
+                    {appt.patientName}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCancel(appt);
+                    }}
+                    className="text-slate-400 hover:text-rose-600 ml-1"
+                    data-testid={`${prefix}cancel-appt-${appt.id}`}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <span className="text-slate-400 text-[10px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">
+                  {availableLabel}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -16,6 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CalendarPageHeader, HeaderPill, HeaderStatusPill } from "@/components/CalendarPageHeader";
 
 type TeamMember = {
   id: string;
@@ -107,42 +108,28 @@ export default function ScheduleDashboardPage() {
   return (
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[1650px] flex-col gap-6 px-6 py-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <Button asChild variant="outline" className="rounded-2xl border-white/60 bg-white/80 backdrop-blur">
+        <CalendarPageHeader
+          eyebrow="PLEXUS ANCILLARY"
+          title="Schedule Dashboard"
+          actions={
+            <>
+              <HeaderStatusPill />
               <Link href="/">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Back
+                <HeaderPill icon={<ArrowLeft className="w-3.5 h-3.5" />}>Home</HeaderPill>
               </Link>
-            </Button>
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="rounded-2xl bg-blue-600/10 p-2 text-blue-700">
-                  <CalendarDays className="h-5 w-5" />
-                </div>
-                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Schedule Dashboard</h1>
-              </div>
-              <p className="mt-1 text-sm text-slate-600">
-                Canonical schedule view with clinic tabs, week navigation, month grid, and scheduler coverage.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button asChild variant="outline" className="rounded-2xl border-white/60 bg-white/80 backdrop-blur">
               <Link href="/admin-ops">
-                <Shield className="mr-2 h-4 w-4" />
-                Admin
+                <HeaderPill icon={<Shield className="w-3.5 h-3.5" />}>Admin</HeaderPill>
               </Link>
-            </Button>
-            <Button asChild variant="outline" className="rounded-2xl border-white/60 bg-white/80 backdrop-blur">
               <Link href="/settings">
-                <SettingsIcon className="mr-2 h-4 w-4" />
-                Settings
+                <HeaderPill icon={<SettingsIcon className="w-3.5 h-3.5" />}>Settings</HeaderPill>
               </Link>
-            </Button>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <p className="mt-2 text-sm text-slate-300/85">
+            Canonical schedule view with clinic tabs, week navigation, month grid, and scheduler coverage.
+          </p>
+        </CalendarPageHeader>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">

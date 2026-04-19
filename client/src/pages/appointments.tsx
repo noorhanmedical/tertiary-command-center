@@ -15,7 +15,9 @@ import {
   X,
   Brain,
   Activity,
+  ArrowLeft,
 } from "lucide-react";
+import { CalendarPageHeader, HeaderPill, HeaderStatusPill } from "@/components/CalendarPageHeader";
 import type { AncillaryAppointment } from "@shared/schema";
 import { Link } from "wouter";
 import {
@@ -135,7 +137,7 @@ function ClinicTab({ facility }: { facility: Facility }) {
                       <span className="font-semibold text-slate-700">{formatTime12(a.scheduledTime)}</span>
                       <span className="text-slate-500 ml-1.5">{a.patientName}</span>
                     </div>
-                    <Badge variant="secondary" className={`text-[9px] ${isBrainWave(a.testType) ? "bg-violet-100 text-violet-700" : "bg-red-100 text-red-600"}`}>
+                    <Badge variant="secondary" className={`text-[9px] ${isBrainWave(a.testType) ? "bg-violet-100 text-violet-700" : "bg-rose-100 text-rose-800"}`}>
                       {isBrainWave(a.testType) ? "BW" : "VW"}
                     </Badge>
                   </div>
@@ -178,7 +180,7 @@ function ClinicTab({ facility }: { facility: Facility }) {
           </DialogHeader>
           <div className="space-y-3 py-1">
             <div className="flex items-center gap-2 text-sm text-slate-600">
-              {bookSlot?.testType === "BrainWave" ? <Brain className="w-4 h-4 text-violet-600" /> : <Activity className="w-4 h-4 text-red-500" />}
+              {bookSlot?.testType === "BrainWave" ? <Brain className="w-4 h-4 text-violet-600" /> : <Activity className="w-4 h-4 text-rose-700" />}
               <span className="font-medium">{bookSlot?.testType}</span>
               <span className="text-slate-400">·</span>
               <Clock className="w-3.5 h-3.5 text-slate-400" />
@@ -254,26 +256,25 @@ export default function AppointmentsPage() {
 
   return (
     <div className="min-h-screen bg-[hsl(210,35%,96%)]">
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Calendar className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-800">Ancillary Appointments</h1>
-              <p className="text-xs text-slate-500">Schedule BrainWave and VitalWave appointments by clinic</p>
-            </div>
-          </div>
-          <Link href="/" data-testid="link-back-home">
-            <Button variant="ghost" size="sm" className="text-slate-600 gap-1.5">
-              <ChevronLeft className="w-4 h-4" />
-              Back to Home
-            </Button>
-          </Link>
-        </div>
+      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        <CalendarPageHeader
+          eyebrow="ANCILLARY SCHEDULING"
+          title="Ancillary Appointments"
+          actions={
+            <>
+              <HeaderStatusPill />
+              <Link href="/" data-testid="link-back-home">
+                <HeaderPill icon={<ArrowLeft className="w-3.5 h-3.5" />}>Back to Home</HeaderPill>
+              </Link>
+            </>
+          }
+        >
+          <p className="text-sm text-slate-300/85 mt-2">
+            Schedule BrainWave and VitalWave appointments by clinic.
+          </p>
+        </CalendarPageHeader>
 
-        <div className="flex gap-1 mb-6 bg-white rounded-xl border border-slate-200 p-1 w-fit shadow-sm">
+        <div className="flex gap-1 bg-white rounded-xl border border-slate-200 p-1 w-fit shadow-sm">
           {FACILITIES.map((f) => (
             <button
               key={f}

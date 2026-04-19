@@ -58,6 +58,7 @@ import {
 import type { BookingSlot } from "@/components/clinic-calendar";
 import { VALID_FACILITIES } from "@shared/plexus";
 import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
+import { CalendarPageHeader, HeaderPill, HeaderStatusPill } from "@/components/CalendarPageHeader";
 import { TaskDrawer } from "@/components/plexus/TaskDrawer";
 import type { PlexusTaskSummary, UserEntry } from "@/components/plexus/SchedulerIcon";
 import type { AuthUser } from "@/App";
@@ -471,28 +472,22 @@ export default function OutreachSchedulerPortalPage() {
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-6 py-6">
 
-        {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <Button asChild variant="outline" className="rounded-2xl border-white/60 bg-white/80 backdrop-blur">
-              <Link href="/outreach"><ArrowLeft className="mr-2 h-4 w-4" />Back to Outreach</Link>
-            </Button>
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="rounded-2xl bg-violet-600/10 p-2 text-violet-700">
-                  <CheckCircle2 className="h-5 w-5" />
-                </div>
-                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{card.name}</h1>
-                <Badge variant="outline" className="rounded-full border-slate-200 bg-white text-slate-700">
-                  {card.facility}
-                </Badge>
-              </div>
-              <p className="mt-1 text-sm text-slate-500">
-                {card.totalPatients} patient{card.totalPatients !== 1 ? "s" : ""} today · {card.touchedCount} calls worked · {card.conversionRate}% conversion
-              </p>
-            </div>
-          </div>
-        </div>
+        <CalendarPageHeader
+          eyebrow={`SCHEDULER · ${card.facility.toUpperCase()}`}
+          title={card.name}
+          actions={
+            <>
+              <HeaderStatusPill />
+              <Link href="/outreach">
+                <HeaderPill icon={<ArrowLeft className="w-3.5 h-3.5" />}>Back to Outreach</HeaderPill>
+              </Link>
+            </>
+          }
+        >
+          <p className="mt-2 text-sm text-slate-300/85">
+            {card.totalPatients} patient{card.totalPatients !== 1 ? "s" : ""} today · {card.touchedCount} calls worked · {card.conversionRate}% conversion
+          </p>
+        </CalendarPageHeader>
 
         {/* Two-panel layout */}
         <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
@@ -537,7 +532,7 @@ export default function OutreachSchedulerPortalPage() {
                             <span className="font-semibold text-slate-700">{formatTime12(a.scheduledTime)}</span>
                             <span className="ml-1.5 text-slate-500">{a.patientName}</span>
                           </div>
-                          <Badge variant="secondary" className={`text-[9px] ${isBrainWave(a.testType) ? "bg-violet-100 text-violet-700" : "bg-red-100 text-red-600"}`}>
+                          <Badge variant="secondary" className={`text-[9px] ${isBrainWave(a.testType) ? "bg-violet-100 text-violet-700" : "bg-rose-100 text-rose-800"}`}>
                             {isBrainWave(a.testType) ? "BW" : "VW"}
                           </Badge>
                         </div>
@@ -938,7 +933,7 @@ export default function OutreachSchedulerPortalPage() {
           <DialogHeader><DialogTitle className="text-base">Book Appointment</DialogTitle></DialogHeader>
           <div className="space-y-3 py-1">
             <div className="flex items-center gap-2 text-sm text-slate-600">
-              {bookSlot?.testType === "BrainWave" ? <Brain className="h-4 w-4 text-violet-600" /> : <Activity className="h-4 w-4 text-red-500" />}
+              {bookSlot?.testType === "BrainWave" ? <Brain className="h-4 w-4 text-violet-600" /> : <Activity className="h-4 w-4 text-rose-700" />}
               <span className="font-medium">{bookSlot?.testType}</span>
               <span className="text-slate-400">·</span>
               <Clock className="h-3.5 w-3.5 text-slate-400" />
@@ -1113,7 +1108,7 @@ export default function OutreachSchedulerPortalPage() {
                     <button
                       type="button"
                       onClick={() => { setCallListBookTestType("VitalWave"); setCallListBookTime(""); }}
-                      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${callListBookTestType === "VitalWave" ? "border-red-300 bg-red-100 text-red-600 ring-2 ring-red-300 ring-offset-1" : "border-slate-200 bg-white text-slate-500 hover:bg-red-50"}`}
+                      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${callListBookTestType === "VitalWave" ? "border-rose-400 bg-rose-100 text-rose-800 ring-2 ring-rose-400 ring-offset-1" : "border-slate-200 bg-white text-slate-500 hover:bg-rose-50"}`}
                       data-testid="portal-callbook-type-vitalwave"
                     >
                       <Activity className="h-3.5 w-3.5" />VitalWave

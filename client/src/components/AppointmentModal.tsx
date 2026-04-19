@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Calendar, ChevronLeft, ChevronRight, Info } from "lucide-react";
 import type { AncillaryAppointment, PatientScreening } from "@shared/schema";
 import { ANCILLARY_TESTS } from "@shared/plexus";
+import { getTestPalette } from "@/lib/testColors";
 
 const ALL_AVAILABLE_TESTS: string[] = [...ANCILLARY_TESTS];
 
@@ -125,13 +126,19 @@ export function AppointmentModal({ patient, onClose, defaultDate }: AppointmentM
   }
 
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const dayLabels = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const palette = getTestPalette(selectedTestType);
 
   const firstDow = new Date(calYear, calMonth, 1).getDay();
   const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const prevMonthDays = new Date(calYear, calMonth, 0).getDate();
   const todayKey = new Date().toISOString().split("T")[0];
-  const cells: (number | null)[] = [];
-  for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  type Cell = { day: number; outside: boolean };
+  const cells: Cell[] = [];
+  for (let i = firstDow - 1; i >= 0; i--) cells.push({ day: prevMonthDays - i, outside: true });
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, outside: false });
+  let nextDay = 1;
+  while (cells.length % 7 !== 0) cells.push({ day: nextDay++, outside: true });
 
   const scheduledForThisPatient = patientAppts.filter((a) => a.status === "scheduled");
 
@@ -197,90 +204,103 @@ export function AppointmentModal({ patient, onClose, defaultDate }: AppointmentM
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-white rounded-xl border border-slate-200 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <Button variant="ghost" size="sm" onClick={() => {
-                  if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); }
-                  else setCalMonth((m) => m - 1);
-                }} className="h-7 w-7 p-0" data-testid="modal-cal-prev">
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <span className="text-sm font-semibold text-slate-800">{monthNames[calMonth]} {calYear}</span>
-                <Button variant="ghost" size="sm" onClick={() => {
-                  if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); }
-                  else setCalMonth((m) => m + 1);
-                }} className="h-7 w-7 p-0" data-testid="modal-cal-next">
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="grid grid-cols-7 gap-0.5 mb-1">
-                {["Su","Mo","Tu","We","Th","Fr","Sa"].map((d) => (
-                  <div key={d} className="text-center text-[10px] font-medium text-slate-400 py-1">{d}</div>
-                ))}
-              </div>
-              <div className="grid grid-cols-7 gap-0.5">
-                {cells.map((d, i) => {
-                  if (!d) return <div key={i} />;
-                  const key = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-                  const isToday = key === todayKey;
-                  const isScheduleDate = key === defaultDateKey;
-                  const isSel = d === selectedDay;
-                  const hasBooking = bookedDates.has(key);
+          <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6">
+            <div className="text-sm font-semibold text-slate-900 mb-4">Select Appointment Date</div>
+            <div className="flex items-center justify-between mb-3">
+              <Button variant="ghost" size="icon" onClick={() => {
+                if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); }
+                else setCalMonth((m) => m - 1);
+              }} className="h-8 w-8 rounded-full text-slate-600 hover:bg-slate-100" data-testid="modal-cal-prev">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <span className="text-base font-semibold text-slate-900 tracking-tight">{monthNames[calMonth]} {calYear}</span>
+              <Button variant="ghost" size="icon" onClick={() => {
+                if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); }
+                else setCalMonth((m) => m + 1);
+              }} className="h-8 w-8 rounded-full text-slate-600 hover:bg-slate-100" data-testid="modal-cal-next">
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+            <div className="grid grid-cols-7 mb-1">
+              {dayLabels.map((d) => (
+                <div key={d} className="text-center text-[11px] font-medium uppercase tracking-wider text-slate-400 py-2">{d}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {cells.map((cell, i) => {
+                if (cell.outside) {
                   return (
-                    <button
-                      key={i}
-                      onClick={() => setSelectedDay(d)}
-                      data-testid={`modal-cal-day-${d}`}
-                      className={`relative flex flex-col items-center justify-center h-8 w-full rounded text-xs font-medium transition-colors
-                        ${isSel ? "bg-primary text-white" : isScheduleDate ? "bg-blue-100 text-blue-700 font-bold ring-1 ring-blue-300" : isToday ? "bg-primary/10 text-primary font-bold" : "hover:bg-slate-100 text-slate-700"}`}
-                    >
-                      {d}
-                      {hasBooking && (
-                        <span className={`absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full ${isSel ? "bg-white" : "bg-primary"}`} />
-                      )}
-                    </button>
+                    <div key={i} className="h-11 flex items-center justify-center text-sm text-slate-300 select-none">
+                      {cell.day}
+                    </div>
                   );
-                })}
-              </div>
+                }
+                const key = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(cell.day).padStart(2, "0")}`;
+                const isToday = key === todayKey;
+                const isScheduleDate = key === defaultDateKey;
+                const isSel = cell.day === selectedDay;
+                const hasBooking = bookedDates.has(key);
+                return (
+                  <button
+                    key={i}
+                    onClick={() => setSelectedDay(cell.day)}
+                    data-testid={`modal-cal-day-${cell.day}`}
+                    className={[
+                      "relative h-11 w-full rounded-2xl text-sm font-medium transition-colors flex items-center justify-center",
+                      isSel
+                        ? `${palette.selectedBg} ${palette.selectedText} shadow-sm`
+                        : isScheduleDate
+                          ? "bg-slate-100 text-slate-900 ring-1 ring-slate-300"
+                          : isToday
+                            ? "text-slate-900 ring-1 ring-slate-300 hover:bg-slate-100"
+                            : "text-slate-800 hover:bg-slate-100",
+                    ].join(" ")}
+                  >
+                    {cell.day}
+                    {hasBooking && (
+                      <span className={`absolute bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full ${isSel ? "bg-white/90" : palette.dotBg}`} />
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
-            <div>
-              {!selectedDay ? (
-                <div className="flex flex-col items-center justify-center h-full text-slate-400 text-sm">
-                  <Calendar className="w-8 h-8 mb-2 opacity-30" />
-                  Select a day
-                </div>
-              ) : (
-                <div>
-                  <p className="text-xs font-medium text-slate-700 mb-2">
-                    {new Date(calYear, calMonth, selectedDay).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} — {selectedTestType} slots
-                  </p>
-                  <div className="space-y-1 max-h-[280px] overflow-y-auto pr-1">
-                    {slots.map((slot) => {
-                      const isBooked = bookedSlots.has(slot);
-                      return (
-                        <button
-                          key={slot}
-                          disabled={isBooked || bookMutation.isPending}
-                          onClick={() => !isBooked && bookMutation.mutate({ scheduledTime: slot })}
-                          data-testid={`modal-slot-${slot}`}
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs border transition-colors
-                            ${isBooked
-                              ? "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed"
-                              : "bg-white border-slate-200 hover:border-primary hover:bg-primary/5 cursor-pointer text-slate-700"}`}
-                        >
-                          <span className="font-medium">{fmt12(slot)}</span>
-                          <span className={isBooked ? "text-slate-400" : "text-slate-400 text-[10px]"}>
-                            {isBooked ? "Booked" : "Available"}
-                          </span>
-                        </button>
-                      );
-                    })}
+            {selectedDay ? (
+              <div className="mt-6 pt-5 border-t border-slate-200">
+                <div className="flex items-baseline justify-between mb-3">
+                  <div className="text-sm font-semibold text-slate-900">Available Time Slots</div>
+                  <div className="text-xs text-slate-500">
+                    {new Date(calYear, calMonth, selectedDay).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} · {selectedTestType}
                   </div>
                 </div>
-              )}
-            </div>
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {slots.map((slot) => {
+                    const isBooked = bookedSlots.has(slot);
+                    return (
+                      <button
+                        key={slot}
+                        disabled={isBooked || bookMutation.isPending}
+                        onClick={() => !isBooked && bookMutation.mutate({ scheduledTime: slot })}
+                        data-testid={`modal-slot-${slot}`}
+                        className={[
+                          "h-12 px-3 rounded-xl border text-sm font-medium transition-colors",
+                          isBooked
+                            ? "bg-slate-50 border-slate-200 text-slate-400 line-through cursor-not-allowed"
+                            : `bg-white border-slate-200 ${palette.hoverBorder} ${palette.hoverBg} text-slate-800 cursor-pointer`,
+                        ].join(" ")}
+                      >
+                        {fmt12(slot)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-6 pt-5 border-t border-slate-200 flex flex-col items-center justify-center text-slate-400 text-sm py-6">
+                <Calendar className="w-8 h-8 mb-2 opacity-30" />
+                Pick a date to see available time slots
+              </div>
+            )}
           </div>
         </div>
 

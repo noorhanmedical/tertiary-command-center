@@ -215,7 +215,7 @@ export function HomeDashboard({
                 <>
                   <div className="grid grid-cols-7 mb-1">
                     {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-                      <div key={d} className="text-center text-[10px] font-semibold uppercase tracking-wider text-slate-400 py-1">{d}</div>
+                      <div key={d} className="text-center text-[11px] font-medium uppercase tracking-wider text-slate-400 py-2">{d}</div>
                     ))}
                   </div>
                   <div className="grid grid-cols-7 gap-1 mb-4">
@@ -228,24 +228,30 @@ export function HomeDashboard({
                       return (
                         <div
                           key={cell.isoDate}
-                          className={`rounded-xl border p-1.5 min-h-[72px] flex flex-col ${
-                            isToday ? "border-blue-400 bg-blue-50" : isCurrentMonth ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50/50"
+                          className={`rounded-2xl p-2 min-h-[80px] flex flex-col transition-colors ${
+                            isCurrentMonth
+                              ? "bg-white border border-slate-200/70 hover:bg-slate-50"
+                              : "bg-slate-50/40 border border-transparent"
                           }`}
                           data-testid={`dashboard-month-cell-${cell.isoDate}`}
                         >
                           <div className="flex items-center justify-between mb-1">
-                            <span className={`text-[11px] font-bold w-5 h-5 flex items-center justify-center rounded-full ${
-                              isToday ? "bg-blue-600 text-white" : isCurrentMonth ? "text-slate-700" : "text-slate-300"
+                            <span className={`inline-flex items-center justify-center min-w-[1.75rem] h-7 px-1 rounded-2xl text-sm font-semibold ${
+                              isToday
+                                ? "bg-violet-600 text-white shadow-sm"
+                                : isCurrentMonth
+                                  ? "text-slate-900"
+                                  : "text-slate-300"
                             }`}>{dayNum}</span>
                           </div>
                           {cell.patientCount > 0 && (
                             <div className="flex flex-col gap-0.5 mt-auto">
-                              <span className="text-[10px] text-slate-500 leading-tight">
+                              <span className="text-[10px] leading-tight text-slate-500">
                                 <span className="font-semibold text-slate-700">{cell.patientCount}</span> pt{cell.patientCount !== 1 ? "s" : ""}
                               </span>
                               {cell.ancillaryCount > 0 && (
                                 <span className="text-[10px] leading-tight">
-                                  <span className="font-semibold text-blue-600">{cell.ancillaryCount}</span>
+                                  <span className="font-semibold text-violet-600">{cell.ancillaryCount}</span>
                                   <span className="text-slate-400"> anc</span>
                                 </span>
                               )}
