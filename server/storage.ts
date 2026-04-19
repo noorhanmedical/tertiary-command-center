@@ -57,6 +57,64 @@ import {
 } from "@shared/schema";
 import { eq, desc, ilike, sql, and, gte, lte, asc, ne, inArray, or } from "drizzle-orm";
 
+// SQL-aggregated row shapes used by the patient-database endpoints.
+// These let Postgres do the GROUP BY / JOIN work instead of pulling every
+// screening, history row, and generated-note row into the Node process.
+export type PatientRosterAggregateRow = {
+  representativeId: number;
+  batchId: number;
+  name: string;
+  dob: string | null;
+  age: number | null;
+  gender: string | null;
+  phoneNumber: string | null;
+  insurance: string | null;
+  clinic: string;
+  lastVisit: string | null;
+  screeningCount: number;
+  testCount: number;
+  generatedNoteCount: number;
+  cooldownActiveCount: number;
+  nextCooldownClearsAt: string | null;
+  daysUntilNextClear: number | null;
+};
+
+export type PatientRosterAggregateFilters = {
+  search?: string;
+  clinic?: string;
+  /** "1d" | "1w" | "1m" — only include patients with an active cooldown clearing within this window */
+  cooldownWindow?: string;
+};
+
+export type PatientCooldownClinicCount = {
+  clinic: string;
+  oneDay: number;
+  oneWeek: number;
+  oneMonth: number;
+};
+
+export type PatientGroupTotals = { patients: number; clinics: number };
+
+export type UnmatchedHistoryReportRow = {
+  id: number;
+  patientName: string;
+  dob: string | null;
+  testName: string;
+  dateOfService: string;
+  clinic: string | null;
+};
+
+function formatDate(value: unknown): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return null;
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  }
+  const s = String(value);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : s;
+}
+
 function parseTimeToMinutes(time: string | null | undefined): number {
   if (!time) return Infinity;
   const t = time.trim().toUpperCase();
@@ -121,8 +179,18 @@ export interface IStorage {
   getGeneratedNotesByBatch(batchId: number): Promise<GeneratedNote[]>;
   getAllGeneratedNotes(): Promise<GeneratedNote[]>;
   getGeneratedNoteCountsByPatientId(): Promise<Map<number, number>>;
+  getGeneratedNotesByPatientIds(patientIds: number[]): Promise<GeneratedNote[]>;
   deleteGeneratedNotesByPatient(patientId: number): Promise<void>;
   getGeneratedNotesByPatient(patientId: number): Promise<GeneratedNote[]>;
+
+  // ── Patient-database aggregation (SQL GROUP BY name+dob, JOINs against
+  // test history and generated notes). These let the roster/cooldown
+  // endpoints scale without pulling whole tables into Node memory.
+  getPatientRosterAggregates(filters?: PatientRosterAggregateFilters): Promise<PatientRosterAggregateRow[]>;
+  getPatientCooldownDashboard(): Promise<{ totals: PatientGroupTotals; counts: { oneDay: number; oneWeek: number; oneMonth: number }; byClinic: PatientCooldownClinicCount[] }>;
+  getPatientHistoryImportReport(sampleLimit: number): Promise<{ totalHistoryRows: number; unmatchedCount: number; unmatched: UnmatchedHistoryReportRow[] }>;
+  getPatientGroupScreenings(name: string, dob: string | null): Promise<PatientScreening[]>;
+  getPatientGroupTestHistory(name: string, dob: string | null): Promise<PatientTestHistory[]>;
   getGeneratedNote(id: number): Promise<GeneratedNote | undefined>;
   updateGeneratedNoteDriveInfo(id: number, driveFileId: string, driveWebViewLink: string): Promise<GeneratedNote | undefined>;
 
@@ -410,6 +478,287 @@ export class DatabaseStorage implements IStorage {
   async getAllGeneratedNotes(): Promise<GeneratedNote[]> {
     return db.select().from(generatedNotes)
       .orderBy(desc(generatedNotes.generatedAt));
+  }
+
+  async getGeneratedNotesByPatientIds(patientIds: number[]): Promise<GeneratedNote[]> {
+    if (patientIds.length === 0) return [];
+    return db.select().from(generatedNotes)
+      .where(inArray(generatedNotes.patientId, patientIds))
+      .orderBy(desc(generatedNotes.generatedAt));
+  }
+
+  // ── Patient-database SQL aggregation ───────────────────────────────────
+  // All grouping happens in Postgres so the Node process never touches more
+  // than one row per (name, dob) patient group, regardless of how many
+  // screenings, test-history rows, or generated notes back that group.
+
+  async getPatientRosterAggregates(filters: PatientRosterAggregateFilters = {}): Promise<PatientRosterAggregateRow[]> {
+    const search = (filters.search ?? "").trim().toLowerCase();
+    const clinic = (filters.clinic ?? "").trim();
+    const cooldownWindow = (filters.cooldownWindow ?? "").trim();
+    const cooldownLimit =
+      cooldownWindow === "1d" ? 1
+      : cooldownWindow === "1w" ? 7
+      : cooldownWindow === "1m" ? 30
+      : null;
+    if (cooldownWindow && cooldownLimit === null) {
+      // Unknown window — return nothing (matches old route behaviour).
+      return [];
+    }
+
+    const result = await db.execute(sql`
+      WITH groups AS (
+        SELECT name, dob, COUNT(*)::int AS screening_count
+        FROM patient_screenings
+        GROUP BY name, dob
+      ),
+      repr AS (
+        SELECT DISTINCT ON (ps.name, ps.dob)
+          ps.name, ps.dob, ps.id, ps.batch_id, ps.age, ps.gender,
+          ps.phone_number, ps.insurance, ps.facility, ps.created_at,
+          sb.facility AS batch_facility, sb.schedule_date AS batch_schedule_date
+        FROM patient_screenings ps
+        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
+        ORDER BY ps.name, ps.dob, ps.created_at DESC
+      ),
+      notes AS (
+        SELECT ps.name, ps.dob, COUNT(gn.id)::int AS note_count
+        FROM patient_screenings ps
+        LEFT JOIN generated_notes gn ON gn.patient_id = ps.id
+        GROUP BY ps.name, ps.dob
+      ),
+      history AS (
+        SELECT patient_name AS name, dob, COUNT(*)::int AS test_count
+        FROM patient_test_history
+        GROUP BY patient_name, dob
+      ),
+      last_visit AS (
+        SELECT ps.name, ps.dob,
+          MAX(NULLIF(GREATEST(
+            COALESCE(sb.schedule_date, ''),
+            COALESCE(to_char(ps.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), '')
+          ), '')) AS last_visit
+        FROM patient_screenings ps
+        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
+        GROUP BY ps.name, ps.dob
+      ),
+      latest_test AS (
+        SELECT DISTINCT ON (patient_name, dob, lower(btrim(test_name)))
+          patient_name, dob, test_name, date_of_service, insurance_type
+        FROM patient_test_history
+        WHERE date_of_service ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+        ORDER BY patient_name, dob, lower(btrim(test_name)), date_of_service DESC
+      ),
+      test_clears AS (
+        SELECT patient_name AS name, dob,
+          (date_of_service::date + (
+            CASE WHEN lower(insurance_type) = 'medicare'
+                 THEN INTERVAL '12 months' ELSE INTERVAL '6 months' END
+          ))::date AS clears_at
+        FROM latest_test
+      ),
+      patient_cooldown AS (
+        SELECT name, dob,
+          COUNT(*) FILTER (WHERE clears_at > CURRENT_DATE)::int AS active_count,
+          MIN(clears_at) FILTER (WHERE clears_at > CURRENT_DATE) AS next_clear
+        FROM test_clears
+        GROUP BY name, dob
+      )
+      SELECT
+        r.id AS representative_id,
+        r.batch_id,
+        r.name,
+        r.dob,
+        r.age,
+        r.gender,
+        r.phone_number,
+        r.insurance,
+        COALESCE(NULLIF(r.facility, ''), NULLIF(r.batch_facility, ''), 'Unassigned') AS clinic,
+        lv.last_visit,
+        g.screening_count,
+        COALESCE(h.test_count, 0)::int AS test_count,
+        COALESCE(n.note_count, 0)::int AS note_count,
+        COALESCE(pc.active_count, 0)::int AS cooldown_active_count,
+        pc.next_clear,
+        CASE WHEN pc.next_clear IS NULL THEN NULL
+             ELSE (pc.next_clear - CURRENT_DATE)::int END AS days_until_next_clear
+      FROM repr r
+      JOIN groups g ON g.name = r.name AND g.dob IS NOT DISTINCT FROM r.dob
+      LEFT JOIN notes n ON n.name = r.name AND n.dob IS NOT DISTINCT FROM r.dob
+      LEFT JOIN history h ON h.name = r.name AND h.dob IS NOT DISTINCT FROM r.dob
+      LEFT JOIN last_visit lv ON lv.name = r.name AND lv.dob IS NOT DISTINCT FROM r.dob
+      LEFT JOIN patient_cooldown pc ON pc.name = r.name AND pc.dob IS NOT DISTINCT FROM r.dob
+      WHERE
+        (${search}::text = '' OR lower(r.name || ' ' || COALESCE(r.dob, '')) LIKE '%' || ${search}::text || '%')
+        AND (${clinic}::text = '' OR COALESCE(NULLIF(r.facility, ''), NULLIF(r.batch_facility, ''), 'Unassigned') = ${clinic}::text)
+        AND (
+          ${cooldownLimit}::int IS NULL
+          OR (pc.next_clear IS NOT NULL AND (pc.next_clear - CURRENT_DATE) <= ${cooldownLimit}::int)
+        )
+    `);
+
+    return (result.rows as any[]).map((row) => ({
+      representativeId: Number(row.representative_id),
+      batchId: Number(row.batch_id),
+      name: String(row.name),
+      dob: row.dob ?? null,
+      age: row.age == null ? null : Number(row.age),
+      gender: row.gender ?? null,
+      phoneNumber: row.phone_number ?? null,
+      insurance: row.insurance ?? null,
+      clinic: String(row.clinic ?? "Unassigned"),
+      lastVisit: row.last_visit ?? null,
+      screeningCount: Number(row.screening_count),
+      testCount: Number(row.test_count),
+      generatedNoteCount: Number(row.note_count),
+      cooldownActiveCount: Number(row.cooldown_active_count),
+      nextCooldownClearsAt: row.next_clear ? formatDate(row.next_clear) : null,
+      daysUntilNextClear: row.days_until_next_clear == null ? null : Number(row.days_until_next_clear),
+    }));
+  }
+
+  async getPatientCooldownDashboard(): Promise<{
+    totals: PatientGroupTotals;
+    counts: { oneDay: number; oneWeek: number; oneMonth: number };
+    byClinic: PatientCooldownClinicCount[];
+  }> {
+    const result = await db.execute(sql`
+      WITH patient_clinic AS (
+        SELECT DISTINCT ON (ps.name, ps.dob)
+          ps.name, ps.dob,
+          COALESCE(NULLIF(ps.facility, ''), NULLIF(sb.facility, ''), 'Unassigned') AS clinic
+        FROM patient_screenings ps
+        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
+        ORDER BY ps.name, ps.dob, ps.created_at DESC
+      ),
+      latest_test AS (
+        SELECT DISTINCT ON (patient_name, dob, lower(btrim(test_name)))
+          patient_name, dob, test_name, date_of_service, insurance_type
+        FROM patient_test_history
+        WHERE date_of_service ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+        ORDER BY patient_name, dob, lower(btrim(test_name)), date_of_service DESC
+      ),
+      test_clears AS (
+        SELECT patient_name AS name, dob,
+          (date_of_service::date + (
+            CASE WHEN lower(insurance_type) = 'medicare'
+                 THEN INTERVAL '12 months' ELSE INTERVAL '6 months' END
+          ))::date AS clears_at
+        FROM latest_test
+      ),
+      patient_active AS (
+        SELECT name, dob, MIN(clears_at) AS next_clear
+        FROM test_clears
+        WHERE clears_at > CURRENT_DATE
+        GROUP BY name, dob
+      ),
+      joined AS (
+        -- INNER JOIN on patient_clinic so the cooldown dashboard counts only
+        -- patients that exist in the screening roster (matches the previous
+        -- in-memory behaviour, which iterated screeningsByKey).
+        SELECT pa.name, pa.dob, pa.next_clear,
+          (pa.next_clear - CURRENT_DATE)::int AS days_until,
+          pc.clinic
+        FROM patient_active pa
+        JOIN patient_clinic pc ON pc.name = pa.name AND pc.dob IS NOT DISTINCT FROM pa.dob
+      )
+      SELECT
+        (SELECT COUNT(*)::int FROM patient_clinic) AS total_patients,
+        (SELECT COUNT(DISTINCT clinic)::int FROM patient_clinic) AS total_clinics,
+        (SELECT COUNT(*)::int FROM joined WHERE days_until <= 1) AS one_day_total,
+        (SELECT COUNT(*)::int FROM joined WHERE days_until <= 7) AS one_week_total,
+        (SELECT COUNT(*)::int FROM joined WHERE days_until <= 30) AS one_month_total,
+        COALESCE((
+          SELECT json_agg(row_to_json(t)) FROM (
+            SELECT
+              clinic,
+              COUNT(*) FILTER (WHERE days_until <= 1)::int AS one_day,
+              COUNT(*) FILTER (WHERE days_until <= 7)::int AS one_week,
+              COUNT(*) FILTER (WHERE days_until <= 30)::int AS one_month
+            FROM joined
+            GROUP BY clinic
+            HAVING COUNT(*) FILTER (WHERE days_until <= 30) > 0
+            ORDER BY clinic
+          ) t
+        ), '[]'::json) AS by_clinic
+    `);
+    const row: any = (result.rows as any[])[0] ?? {};
+    const byClinic = Array.isArray(row.by_clinic) ? row.by_clinic : [];
+    return {
+      totals: {
+        patients: Number(row.total_patients ?? 0),
+        clinics: Number(row.total_clinics ?? 0),
+      },
+      counts: {
+        oneDay: Number(row.one_day_total ?? 0),
+        oneWeek: Number(row.one_week_total ?? 0),
+        oneMonth: Number(row.one_month_total ?? 0),
+      },
+      byClinic: byClinic.map((c: any) => ({
+        clinic: String(c.clinic ?? "Unassigned"),
+        oneDay: Number(c.one_day ?? 0),
+        oneWeek: Number(c.one_week ?? 0),
+        oneMonth: Number(c.one_month ?? 0),
+      })),
+    };
+  }
+
+  async getPatientHistoryImportReport(sampleLimit: number): Promise<{
+    totalHistoryRows: number;
+    unmatchedCount: number;
+    unmatched: UnmatchedHistoryReportRow[];
+  }> {
+    const totalsRes = await db.execute(sql`
+      SELECT
+        (SELECT COUNT(*)::int FROM patient_test_history) AS total_rows,
+        (SELECT COUNT(*)::int FROM patient_test_history h
+           WHERE NOT EXISTS (
+             SELECT 1 FROM patient_screenings ps
+             WHERE ps.name = h.patient_name AND ps.dob IS NOT DISTINCT FROM h.dob
+           )) AS unmatched_rows
+    `);
+    const totals: any = (totalsRes.rows as any[])[0] ?? {};
+
+    const sampleRes = await db.execute(sql`
+      SELECT h.id, h.patient_name, h.dob, h.test_name, h.date_of_service, h.clinic
+      FROM patient_test_history h
+      WHERE NOT EXISTS (
+        SELECT 1 FROM patient_screenings ps
+        WHERE ps.name = h.patient_name AND ps.dob IS NOT DISTINCT FROM h.dob
+      )
+      ORDER BY h.id DESC
+      LIMIT ${sampleLimit}
+    `);
+    return {
+      totalHistoryRows: Number(totals.total_rows ?? 0),
+      unmatchedCount: Number(totals.unmatched_rows ?? 0),
+      unmatched: (sampleRes.rows as any[]).map((r) => ({
+        id: Number(r.id),
+        patientName: String(r.patient_name),
+        dob: r.dob ?? null,
+        testName: String(r.test_name),
+        dateOfService: String(r.date_of_service),
+        clinic: r.clinic ?? null,
+      })),
+    };
+  }
+
+  async getPatientGroupScreenings(name: string, dob: string | null): Promise<PatientScreening[]> {
+    return db.select().from(patientScreenings).where(and(
+      eq(patientScreenings.name, name),
+      dob === null
+        ? sql`${patientScreenings.dob} IS NULL`
+        : eq(patientScreenings.dob, dob),
+    ));
+  }
+
+  async getPatientGroupTestHistory(name: string, dob: string | null): Promise<PatientTestHistory[]> {
+    return db.select().from(patientTestHistory).where(and(
+      eq(patientTestHistory.patientName, name),
+      dob === null
+        ? sql`${patientTestHistory.dob} IS NULL`
+        : eq(patientTestHistory.dob, dob),
+    )).orderBy(desc(patientTestHistory.dateOfService));
   }
 
   async getGeneratedNoteCountsByPatientId(): Promise<Map<number, number>> {

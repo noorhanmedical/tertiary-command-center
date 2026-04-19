@@ -1,23 +1,29 @@
 import type { Express } from "express";
-import { storage } from "../storage";
-import {
-  patientKey,
-  encodePatientKey,
-  decodePatientKey,
-  splitPatientKey,
-  normalizePatientName,
-  normalizeDob,
-} from "../lib/patientKey";
-import {
-  computeCooldowns,
-  reconcileHistoryToScreenings,
-  type TestCooldownEntry,
-  type UnmatchedHistoryRow,
-} from "../services/cooldownCanonical";
-import type { PatientScreening, PatientTestHistory, ScreeningBatch } from "@shared/schema";
+import { storage, type PatientRosterAggregateRow } from "../storage";
+import { normalizePatientName, normalizeDob } from "../lib/patientKey";
+import { computeCooldowns } from "../services/cooldownCanonical";
 
 const UNASSIGNED = "Unassigned";
 
+// ── Encoding ────────────────────────────────────────────────────────────────
+// Roster rows are now keyed by the raw (name, dob) pair the SQL aggregation
+// groups on. The encoded key is an opaque base64url token returned to the
+// frontend and posted back on the profile endpoint.
+const KEY_DELIM = "\u0001";
+
+function encodeRosterKey(name: string, dob: string | null): string {
+  return Buffer.from(`${name}${KEY_DELIM}${dob ?? ""}`, "utf-8").toString("base64url");
+}
+
+function decodeRosterKey(encoded: string): { name: string; dob: string | null } {
+  const raw = Buffer.from(encoded, "base64url").toString("utf-8");
+  const idx = raw.indexOf(KEY_DELIM);
+  if (idx < 0) return { name: raw, dob: null };
+  const dob = raw.slice(idx + 1);
+  return { name: raw.slice(0, idx), dob: dob === "" ? null : dob };
+}
+
+// ── Response shapes (preserved for the existing UI) ────────────────────────
 type RosterPatient = {
   key: string;
   encodedKey: string;
@@ -37,122 +43,10 @@ type RosterPatient = {
   daysUntilNextClear: number | null;
 };
 
-type ClinicGroup = {
-  clinic: string;
-  patients: RosterPatient[];
-};
-
-type DashboardCounts = {
-  oneDay: number;
-  oneWeek: number;
-  oneMonth: number;
-  totals: { patients: number; clinics: number };
-  byClinic: Array<{ clinic: string; oneDay: number; oneWeek: number; oneMonth: number }>;
-};
-
-function bestScreening(screenings: PatientScreening[]): PatientScreening {
-  let best = screenings[0];
-  let bestT = best.createdAt ? new Date(best.createdAt).getTime() : 0;
-  for (let i = 1; i < screenings.length; i++) {
-    const s = screenings[i];
-    const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
-    if (t > bestT) { best = s; bestT = t; }
-  }
-  return best;
-}
-
-function clinicOf(s: PatientScreening, batchById: Map<number, ScreeningBatch>): string {
-  return s.facility || batchById.get(s.batchId)?.facility || UNASSIGNED;
-}
-
-function summarizeCooldowns(entries: TestCooldownEntry[]): {
-  active: number;
-  nextClears: string | null;
-  daysUntilNextClear: number | null;
-} {
-  const active = entries.filter((e) => !e.cleared);
-  if (active.length === 0) return { active: 0, nextClears: null, daysUntilNextClear: null };
-  const next = active[0]; // already sorted by clearsAt asc
-  return { active: active.length, nextClears: next.clearsAt, daysUntilNextClear: next.daysUntilClear };
-}
-
-// ── Shared dataset cache ────────────────────────────────────────────────────
-// Both endpoints need the same heavy underlying data (batches, screenings,
-// test history, generated-note counts). We compute it once per TTL window and
-// share it across endpoints and concurrent requests.
-type AggregatedDataset = {
-  batchById: Map<number, ScreeningBatch>;
-  screeningsByKey: Map<string, PatientScreening[]>;
-  historyByKey: Map<string, PatientTestHistory[]>;
-  noteCountByPatientId: Map<number, number>;
-  totalHistoryRows: number;
-  unmatchedHistory: UnmatchedHistoryRow[];
-  fuzzyMatchedHistory: number;
-};
-
-const DATASET_TTL_MS = 30_000;
-let datasetCache: { value: AggregatedDataset; expires: number } | null = null;
-let datasetInflight: Promise<AggregatedDataset> | null = null;
-
-async function loadAggregatedDataset(): Promise<AggregatedDataset> {
-  const now = Date.now();
-  if (datasetCache && datasetCache.expires > now) return datasetCache.value;
-  if (datasetInflight) return datasetInflight;
-
-  datasetInflight = (async () => {
-    const [batches, allScreenings, allTestHistory, noteCountByPatientId] = await Promise.all([
-      storage.getAllScreeningBatches(),
-      storage.getAllPatientScreenings(),
-      storage.getAllTestHistory(),
-      storage.getGeneratedNoteCountsByPatientId(),
-    ]);
-
-    const batchById = new Map(batches.map((b) => [b.id, b] as const));
-
-    const screeningsByKey = new Map<string, PatientScreening[]>();
-    for (const s of allScreenings) {
-      const k = patientKey(s.name, s.dob);
-      const arr = screeningsByKey.get(k);
-      if (arr) arr.push(s);
-      else screeningsByKey.set(k, [s]);
-    }
-
-    const clinicForKey = (key: string): string => {
-      const list = screeningsByKey.get(key);
-      if (!list || list.length === 0) return UNASSIGNED;
-      return clinicOf(bestScreening(list), batchById);
-    };
-    const { historyByKey, unmatched, fuzzyMatched } = reconcileHistoryToScreenings(
-      allTestHistory,
-      screeningsByKey,
-      clinicForKey,
-    );
-
-    const ds: AggregatedDataset = {
-      batchById,
-      screeningsByKey,
-      historyByKey,
-      noteCountByPatientId,
-      totalHistoryRows: allTestHistory.length,
-      unmatchedHistory: unmatched,
-      fuzzyMatchedHistory: fuzzyMatched,
-    };
-    datasetCache = { value: ds, expires: Date.now() + DATASET_TTL_MS };
-    return ds;
-  })();
-
-  try {
-    return await datasetInflight;
-  } finally {
-    datasetInflight = null;
-  }
-}
-
-export function invalidatePatientDatabaseCache(): void {
-  datasetCache = null;
-}
+type ClinicGroup = { clinic: string; patients: RosterPatient[] };
 
 // ── Per-response caches keyed by query params ──────────────────────────────
+// Each cache entry holds a SQL-aggregated result, NOT the underlying tables.
 const RESPONSE_TTL_MS = 30_000;
 const rosterResponseCache = new Map<string, { value: any; expires: number }>();
 const cooldownSummaryCache = new Map<string, { value: any; expires: number }>();
@@ -167,26 +61,49 @@ function cacheGet(map: Map<string, { value: any; expires: number }>, key: string
 
 function cacheSet(map: Map<string, { value: any; expires: number }>, key: string, value: any) {
   map.set(key, { value, expires: Date.now() + RESPONSE_TTL_MS });
-  // Bound the cache; the query param space is small.
   if (map.size > 64) {
     const firstKey = map.keys().next().value;
     if (firstKey !== undefined) map.delete(firstKey);
   }
 }
 
-function clearResponseCaches(): void {
+export function invalidatePatientDatabase(): void {
   rosterResponseCache.clear();
   cooldownSummaryCache.clear();
   importReportCache.clear();
 }
 
-// External callers (e.g. mutation endpoints) can fully invalidate.
-export function invalidatePatientDatabase(): void {
-  invalidatePatientDatabaseCache();
-  clearResponseCaches();
+// Back-compat alias for older callers.
+export function invalidatePatientDatabaseCache(): void {
+  invalidatePatientDatabase();
+}
+
+function rosterFromAggregate(row: PatientRosterAggregateRow): RosterPatient {
+  const encodedKey = encodeRosterKey(row.name, row.dob);
+  return {
+    key: encodedKey,
+    encodedKey,
+    name: row.name,
+    dob: row.dob,
+    age: row.age,
+    gender: row.gender,
+    phoneNumber: row.phoneNumber,
+    insurance: row.insurance,
+    clinic: row.clinic || UNASSIGNED,
+    lastVisit: row.lastVisit,
+    testCount: row.testCount,
+    screeningCount: row.screeningCount,
+    generatedNoteCount: row.generatedNoteCount,
+    cooldownActiveCount: row.cooldownActiveCount,
+    nextCooldownClearsAt: row.nextCooldownClearsAt,
+    daysUntilNextClear: row.daysUntilNextClear,
+  };
 }
 
 export function registerPatientDatabaseRoutes(app: Express) {
+  // Roster: SQL GROUP BY (name, dob) with JOINs to test history, generated
+  // notes, and screening_batches. Counts/last-visit/cooldown all computed in
+  // Postgres so the Node process never iterates over the full source tables.
   app.get("/api/patients/database", async (req, res) => {
     try {
       const search = String(req.query.search || "").trim().toLowerCase();
@@ -197,76 +114,22 @@ export function registerPatientDatabaseRoutes(app: Express) {
       const cached = cacheGet(rosterResponseCache, cacheKey);
       if (cached) return res.json(cached);
 
-      const {
-        batchById,
-        screeningsByKey,
-        historyByKey,
-        noteCountByPatientId,
-        unmatchedHistory,
-        fuzzyMatchedHistory,
-      } = await loadAggregatedDataset();
-
-      const now = new Date();
-      const ONE_DAY = 1, ONE_WEEK = 7, ONE_MONTH = 30;
+      const [aggregates, importReport] = await Promise.all([
+        storage.getPatientRosterAggregates({
+          search,
+          clinic: clinicFilter,
+          cooldownWindow,
+        }),
+        storage.getPatientHistoryImportReport(0),
+      ]);
 
       const groupsMap = new Map<string, RosterPatient[]>();
-
-      for (const [key, screenings] of Array.from(screeningsByKey.entries())) {
-        const primary = bestScreening(screenings);
-        const clinic = clinicOf(primary, batchById);
-
-        // Search filter
-        if (search) {
-          const hay = `${primary.name} ${primary.dob || ""}`.toLowerCase();
-          if (!hay.includes(search)) continue;
-        }
-        if (clinicFilter && clinic !== clinicFilter) continue;
-
-        const history = historyByKey.get(key) ?? [];
-        const cooldowns = computeCooldowns(history, now);
-        const cdSummary = summarizeCooldowns(cooldowns);
-
-        // Cooldown window filter
-        if (cooldownWindow) {
-          const limit = cooldownWindow === "1d" ? ONE_DAY : cooldownWindow === "1w" ? ONE_WEEK : cooldownWindow === "1m" ? ONE_MONTH : null;
-          if (limit === null) continue;
-          const inWindow = cooldowns.some((e) => !e.cleared && e.daysUntilClear <= limit);
-          if (!inWindow) continue;
-        }
-
-        let noteCount = 0;
-        for (const s of screenings) noteCount += noteCountByPatientId.get(s.id) ?? 0;
-
-        // Compute last visit from screenings (use batch.scheduleDate if present, else createdAt date).
-        let lastVisit: string | null = null;
-        for (const s of screenings) {
-          const b = batchById.get(s.batchId);
-          const d = b?.scheduleDate || (s.createdAt ? new Date(s.createdAt).toISOString().slice(0, 10) : null);
-          if (d && (!lastVisit || d > lastVisit)) lastVisit = d;
-        }
-
-        const roster: RosterPatient = {
-          key,
-          encodedKey: encodePatientKey(key),
-          name: primary.name,
-          dob: primary.dob ?? null,
-          age: primary.age ?? null,
-          gender: primary.gender ?? null,
-          phoneNumber: primary.phoneNumber ?? null,
-          insurance: primary.insurance ?? null,
-          clinic,
-          lastVisit,
-          testCount: history.length,
-          screeningCount: screenings.length,
-          generatedNoteCount: noteCount,
-          cooldownActiveCount: cdSummary.active,
-          nextCooldownClearsAt: cdSummary.nextClears,
-          daysUntilNextClear: cdSummary.daysUntilNextClear,
-        };
-
+      for (const row of aggregates) {
+        const clinic = row.clinic || UNASSIGNED;
+        const patient = rosterFromAggregate(row);
         const arr = groupsMap.get(clinic);
-        if (arr) arr.push(roster);
-        else groupsMap.set(clinic, [roster]);
+        if (arr) arr.push(patient);
+        else groupsMap.set(clinic, [patient]);
       }
 
       const groups: ClinicGroup[] = Array.from(groupsMap.entries())
@@ -285,8 +148,10 @@ export function registerPatientDatabaseRoutes(app: Express) {
         groups,
         totals: { patients: totalPatients, clinics: groups.length },
         importHealth: {
-          unmatchedHistoryCount: unmatchedHistory.length,
-          fuzzyMatchedHistoryCount: fuzzyMatchedHistory,
+          unmatchedHistoryCount: importReport.unmatchedCount,
+          // SQL aggregation uses exact (name, dob) matching; fuzzy
+          // canonicalization has been removed in favour of the SQL JOIN.
+          fuzzyMatchedHistoryCount: 0,
         },
       };
       cacheSet(rosterResponseCache, cacheKey, payload);
@@ -297,73 +162,54 @@ export function registerPatientDatabaseRoutes(app: Express) {
     }
   });
 
+  // Cooldown dashboard: counts produced entirely by Postgres aggregation.
   app.get("/api/patients/database/cooldown-summary", async (_req, res) => {
     try {
       const cacheKey = "default";
       const cached = cacheGet(cooldownSummaryCache, cacheKey);
       if (cached) return res.json(cached);
 
-      const { batchById, screeningsByKey, historyByKey } = await loadAggregatedDataset();
-
-      const now = new Date();
-      const counts: DashboardCounts = {
-        oneDay: 0,
-        oneWeek: 0,
-        oneMonth: 0,
-        totals: { patients: 0, clinics: 0 },
-        byClinic: [],
+      const dashboard = await storage.getPatientCooldownDashboard();
+      const payload = {
+        oneDay: dashboard.counts.oneDay,
+        oneWeek: dashboard.counts.oneWeek,
+        oneMonth: dashboard.counts.oneMonth,
+        totals: dashboard.totals,
+        byClinic: dashboard.byClinic,
       };
-      const clinicCounts = new Map<string, { oneDay: number; oneWeek: number; oneMonth: number }>();
-      const clinicSet = new Set<string>();
-
-      for (const [key, screenings] of Array.from(screeningsByKey.entries())) {
-        const primary = bestScreening(screenings);
-        const clinic = clinicOf(primary, batchById);
-        clinicSet.add(clinic);
-        const history = historyByKey.get(key) ?? [];
-        if (history.length === 0) continue;
-        const cooldowns = computeCooldowns(history, now);
-        const active = cooldowns.filter((e) => !e.cleared);
-        if (active.length === 0) continue;
-        const next = active[0].daysUntilClear;
-        const bucket = clinicCounts.get(clinic) || { oneDay: 0, oneWeek: 0, oneMonth: 0 };
-        if (next <= 1) { counts.oneDay++; bucket.oneDay++; }
-        if (next <= 7) { counts.oneWeek++; bucket.oneWeek++; }
-        if (next <= 30) { counts.oneMonth++; bucket.oneMonth++; }
-        clinicCounts.set(clinic, bucket);
-      }
-
-      counts.totals.patients = screeningsByKey.size;
-      counts.totals.clinics = clinicSet.size;
-      counts.byClinic = Array.from(clinicCounts.entries())
-        .map(([clinic, c]) => ({ clinic, ...c }))
-        .sort((a, b) => a.clinic.localeCompare(b.clinic));
-
-      cacheSet(cooldownSummaryCache, cacheKey, counts);
-      res.json(counts);
+      cacheSet(cooldownSummaryCache, cacheKey, payload);
+      res.json(payload);
     } catch (error: any) {
       console.error("[patient-database/cooldown-summary] error:", error);
       res.status(500).json({ error: error.message });
     }
   });
 
+  // Import report: counts + small sample of unmatched test-history rows,
+  // both produced via SQL.
   app.get("/api/patients/database/import-report", async (_req, res) => {
     try {
       const cacheKey = "default";
       const cached = cacheGet(importReportCache, cacheKey);
       if (cached) return res.json(cached);
 
-      const ds = await loadAggregatedDataset();
-      const byReason: Record<string, number> = {};
-      for (const u of ds.unmatchedHistory) byReason[u.reason] = (byReason[u.reason] ?? 0) + 1;
+      const report = await storage.getPatientHistoryImportReport(200);
       const payload = {
         totals: {
-          historyRows: ds.totalHistoryRows,
-          unmatched: ds.unmatchedHistory.length,
-          fuzzyMatched: ds.fuzzyMatchedHistory,
+          historyRows: report.totalHistoryRows,
+          unmatched: report.unmatchedCount,
+          fuzzyMatched: 0,
         },
-        byReason,
-        unmatched: ds.unmatchedHistory.slice(0, 200),
+        byReason: report.unmatchedCount > 0 ? { no_screening: report.unmatchedCount } : {},
+        unmatched: report.unmatched.map((u) => ({
+          id: u.id,
+          patientName: u.patientName,
+          dob: u.dob,
+          testName: u.testName,
+          dateOfService: u.dateOfService,
+          clinic: u.clinic,
+          reason: "no_screening",
+        })),
       };
       cacheSet(importReportCache, cacheKey, payload);
       res.json(payload);
@@ -373,29 +219,60 @@ export function registerPatientDatabaseRoutes(app: Express) {
     }
   });
 
+  // Per-patient profile: fetches the (name, dob) group's full screening rows,
+  // notes, and history with scoped queries — never the whole tables.
   app.get("/api/patients/database/:encodedKey", async (req, res) => {
     try {
-      const key = decodePatientKey(req.params.encodedKey);
-      const { dob: dobPart } = splitPatientKey(key);
+      let name: string;
+      let dob: string | null;
+      try {
+        ({ name, dob } = decodeRosterKey(req.params.encodedKey));
+        if (!name) throw new Error("empty");
+      } catch {
+        return res.status(400).json({ error: "Invalid patient key" });
+      }
 
-      const { batchById, screeningsByKey, historyByKey } = await loadAggregatedDataset();
+      const [fullScreenings, history] = await Promise.all([
+        storage.getPatientGroupScreenings(name, dob),
+        storage.getPatientGroupTestHistory(name, dob),
+      ]);
 
-      const screenings = screeningsByKey.get(key) ?? [];
-      if (screenings.length === 0) {
+      if (fullScreenings.length === 0) {
         return res.status(404).json({ error: "Patient not found" });
       }
-      const primary = bestScreening(screenings);
-      const clinic = clinicOf(primary, batchById);
 
-      const history = (historyByKey.get(key) ?? [])
-        .slice()
-        .sort((a, b) => b.dateOfService.localeCompare(a.dateOfService));
-      const cooldowns = computeCooldowns(history, new Date());
+      // Pick most-recent screening as identity record.
+      let primary = fullScreenings[0];
+      let primaryT = primary.createdAt ? new Date(primary.createdAt).getTime() : 0;
+      for (let i = 1; i < fullScreenings.length; i++) {
+        const t = fullScreenings[i].createdAt ? new Date(fullScreenings[i].createdAt).getTime() : 0;
+        if (t > primaryT) { primary = fullScreenings[i]; primaryT = t; }
+      }
 
-      const screeningIds = new Set(screenings.map((s) => s.id));
-      const allNotes = await storage.getAllGeneratedNotes();
+      const batchIds = Array.from(new Set(fullScreenings.map((s) => s.batchId)));
+      const screeningIds = fullScreenings.map((s) => s.id);
+      const [batches, notes] = await Promise.all([
+        Promise.all(batchIds.map((id) => storage.getScreeningBatch(id))),
+        storage.getGeneratedNotesByPatientIds(screeningIds),
+      ]);
+      const batchById = new Map(batches.filter(Boolean).map((b) => [b!.id, b!] as const));
+      const clinic = primary.facility || batchById.get(primary.batchId)?.facility || UNASSIGNED;
 
-      const screeningsOut = screenings
+      // Reuse the canonical cooldown helper so the response shape matches
+      // what the frontend already consumes (lastDate, cooldownMonths,
+      // historyId, clearsAt, etc.).
+      const cooldowns = computeCooldowns(
+        history.map((h) => ({
+          id: h.id,
+          testName: h.testName,
+          dateOfService: h.dateOfService,
+          insuranceType: h.insuranceType,
+          clinic: h.clinic ?? null,
+        })),
+        new Date(),
+      );
+
+      const screeningsOut = fullScreenings
         .map((s) => {
           const b = batchById.get(s.batchId);
           return {
@@ -417,8 +294,7 @@ export function registerPatientDatabaseRoutes(app: Express) {
           return bd.localeCompare(ad);
         });
 
-      const notes = allNotes
-        .filter((n) => screeningIds.has(n.patientId))
+      const notesOut = notes
         .sort((a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime())
         .map((n) => ({
           id: n.id,
@@ -434,11 +310,11 @@ export function registerPatientDatabaseRoutes(app: Express) {
         }));
 
       res.json({
-        key,
+        key: req.params.encodedKey,
         encodedKey: req.params.encodedKey,
         identity: {
           name: primary.name,
-          dob: primary.dob ?? dobPart ?? null,
+          dob: primary.dob ?? dob ?? null,
           age: primary.age ?? null,
           gender: primary.gender ?? null,
           phoneNumber: primary.phoneNumber ?? null,
@@ -460,7 +336,7 @@ export function registerPatientDatabaseRoutes(app: Express) {
         })),
         cooldowns,
         screenings: screeningsOut,
-        generatedNotes: notes,
+        generatedNotes: notesOut,
       });
     } catch (error: any) {
       console.error("[patient-database/profile] error:", error);

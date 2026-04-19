@@ -1,6 +1,26 @@
 import type { PatientScreening, PatientTestHistory } from "@shared/schema";
 import { canonicalNameKey, normalizeDob, patientKey } from "../lib/patientKey";
 
+// Structural shapes used by the helpers below. Accepting these (rather than
+// the full row types) lets callers pass lean projections from
+// patient-database aggregation queries.
+type CooldownHistoryRow = {
+  id: number;
+  testName: string;
+  dateOfService: string;
+  insuranceType: string;
+  clinic: string | null;
+};
+
+type ReconcileHistoryRow = {
+  id: number;
+  patientName: string;
+  dob: string | null;
+  testName: string;
+  dateOfService: string;
+  clinic: string | null;
+};
+
 export function cooldownMonthsFor(insuranceType: string | null | undefined): number {
   return (insuranceType || "").toLowerCase() === "medicare" ? 12 : 6;
 }
@@ -33,13 +53,13 @@ function toISODate(d: Date): string {
  * For each test name, only the most recent service date is returned (it dominates older entries).
  */
 export function computeCooldowns(
-  records: PatientTestHistory[],
+  records: CooldownHistoryRow[],
   now: Date = new Date(),
 ): TestCooldownEntry[] {
   const today = new Date(now);
   today.setHours(0, 0, 0, 0);
 
-  const byTest = new Map<string, PatientTestHistory>();
+  const byTest = new Map<string, CooldownHistoryRow>();
   for (const r of records) {
     const key = r.testName.trim().toLowerCase();
     const cur = byTest.get(key);
@@ -119,11 +139,15 @@ export type ReconciliationResult = {
  *   3. Otherwise, the history row is left under its own key and reported as
  *      unmatched with a reason.
  */
-export function reconcileHistoryToScreenings(
-  history: PatientTestHistory[],
-  screeningsByKey: Map<string, PatientScreening[]>,
+export function reconcileHistoryToScreenings<H extends ReconcileHistoryRow>(
+  history: H[],
+  screeningsByKey: Map<string, unknown>,
   clinicForScreeningKey: (key: string) => string,
-): ReconciliationResult {
+): {
+  historyByKey: Map<string, H[]>;
+  unmatched: UnmatchedHistoryRow[];
+  fuzzyMatched: number;
+} {
   const normalizeClinic = (c: string | null | undefined): string =>
     (c ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 
@@ -146,7 +170,7 @@ export function reconcileHistoryToScreenings(
     else clinicMap.set(clinic, [key]);
   }
 
-  const out = new Map<string, PatientTestHistory[]>();
+  const out = new Map<string, H[]>();
   const unmatched: UnmatchedHistoryRow[] = [];
   let fuzzyMatched = 0;
 
