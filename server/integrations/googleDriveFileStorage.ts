@@ -3,7 +3,7 @@ import type { IFileStorage, UploadFileParams, FileUploadResult, FileListItem } f
 export class GoogleDriveFileStorage implements IFileStorage {
   async uploadFile({ filename, content, contentType, folder }: UploadFileParams): Promise<FileUploadResult> {
     if (contentType === "text/plain" || typeof content === "string") {
-      const { uploadTextAsGoogleDoc } = await import("../googleDrive");
+      const { uploadTextAsGoogleDoc } = await import("./googleDrive");
       const result = await uploadTextAsGoogleDoc(
         filename,
         typeof content === "string" ? content : content.toString("utf-8"),
@@ -11,7 +11,7 @@ export class GoogleDriveFileStorage implements IFileStorage {
       );
       return { id: result.id, viewUrl: result.webViewLink ?? "" };
     } else {
-      const { uploadPdfToFolder } = await import("../googleDrive");
+      const { uploadPdfToFolder } = await import("./googleDrive");
       if (!folder) throw new Error("folder (Drive folder ID) is required for PDF uploads");
       const buf = typeof content === "string" ? Buffer.from(content, "utf-8") : content;
       const result = await uploadPdfToFolder(filename, buf, folder);
@@ -24,13 +24,13 @@ export class GoogleDriveFileStorage implements IFileStorage {
   }
 
   async deleteFile(fileId: string): Promise<void> {
-    const { getUncachableGoogleDriveClient } = await import("../googleDrive");
+    const { getUncachableGoogleDriveClient } = await import("./googleDrive");
     const drive = await getUncachableGoogleDriveClient();
     await drive.files.delete({ fileId });
   }
 
   async listFiles(folderId: string): Promise<FileListItem[]> {
-    const { getUncachableGoogleDriveClient } = await import("../googleDrive");
+    const { getUncachableGoogleDriveClient } = await import("./googleDrive");
     const drive = await getUncachableGoogleDriveClient();
     const escapedId = folderId.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     const resp = await drive.files.list({

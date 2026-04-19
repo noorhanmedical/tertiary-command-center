@@ -33,7 +33,7 @@ const billingSyncLock = { running: false, pending: false };
 const exportNotesLock = { running: false, pending: false };
 
 export async function executeSyncPatients(): Promise<PatientsSyncResult> {
-  const { getOrCreateSpreadsheet, upsertSheetData } = await import("../googleSheets");
+  const { getOrCreateSpreadsheet, upsertSheetData } = await import("../integrations/googleSheets");
   const { setSetting } = await import("../dbSettings");
   const spreadsheetId = await getOrCreateSpreadsheet("GOOGLE_SHEETS_PATIENTS_ID", "Plexus Patient Directory");
   const [references, testHistory] = await Promise.all([
@@ -83,8 +83,8 @@ export function backgroundSyncPatients(): void {
 }
 
 export async function executeSyncBilling(): Promise<BillingSyncResult> {
-  const { getOrCreateSpreadsheetInFolder, upsertSheetData } = await import("../googleSheets");
-  const { getFacilityFolderId } = await import("../googleDrive");
+  const { getOrCreateSpreadsheetInFolder, upsertSheetData } = await import("../integrations/googleSheets");
+  const { getFacilityFolderId } = await import("../integrations/googleDrive");
   const { getSetting, setSetting } = await import("../dbSettings");
   const records = await storage.getAllBillingRecords();
 
@@ -134,7 +134,7 @@ export async function executeSyncBilling(): Promise<BillingSyncResult> {
         folderId
       );
     } else {
-      const { getOrCreateSpreadsheet } = await import("../googleSheets");
+      const { getOrCreateSpreadsheet } = await import("../integrations/googleSheets");
       spreadsheetId = await getOrCreateSpreadsheet(billingSettingKey, `Plexus Billing Tracker — ${facility}`);
     }
 
@@ -215,7 +215,7 @@ export async function executeExportNotes(): Promise<ExportNotesResult> {
 
       let folder: string | undefined;
       if (provider === "google_drive") {
-        const { ensureStructuredFacilityFolderTree } = await import("../googleDrive");
+        const { ensureStructuredFacilityFolderTree } = await import("../integrations/googleDrive");
         if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES_ALL.includes(note.service)) {
           const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
           folder = resolveGeneratedNoteFolderId(tree, note);

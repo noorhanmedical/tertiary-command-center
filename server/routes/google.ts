@@ -28,7 +28,7 @@ function isValidAncillaryType(a: string): a is ValidAncillaryType {
 }
 
 async function getPlexusRootId(): Promise<string> {
-  const { getUncachableGoogleDriveClient, getOrCreateFolder } = await import("../googleDrive");
+  const { getUncachableGoogleDriveClient, getOrCreateFolder } = await import("../integrations/googleDrive");
   const { getSetting, setSetting } = await import("../dbSettings");
   const rootKey = "DRIVE_FOLDER_plexus_ancillary_platform";
   let rootId = await getSetting(rootKey);
@@ -63,7 +63,7 @@ async function isDescendantOfRoot(
 }
 
 async function requireDriveConnected(res: any): Promise<boolean> {
-  const { isGoogleDriveConnected } = await import("../googleDrive");
+  const { isGoogleDriveConnected } = await import("../integrations/googleDrive");
   const connected = await isGoogleDriveConnected();
   if (!connected) {
     res.status(503).json({ error: "Google Drive is not connected", connected: false });
@@ -87,8 +87,8 @@ export function registerGoogleRoutes(app: Express) {
 
   app.get("/api/google/status", async (_req, res) => {
     try {
-      const { isGoogleSheetsConnected } = await import("../googleSheets");
-      const { getDriveStatus } = await import("../googleDrive");
+      const { isGoogleSheetsConnected } = await import("../integrations/googleSheets");
+      const { getDriveStatus } = await import("../integrations/googleDrive");
       const { getSetting } = await import("../dbSettings");
       const KNOWN_FACILITIES = [...VALID_FACILITIES];
       const facilitySettingKeys = KNOWN_FACILITIES.map(f => `BILLING_SPREADSHEET_ID_${f.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`);
@@ -191,7 +191,7 @@ export function registerGoogleRoutes(app: Express) {
       const note = await storage.getGeneratedNote(noteId);
       if (!note) return res.status(404).json({ error: "Note not found" });
 
-      const { uploadTextAsGoogleDoc, ensureStructuredFacilityFolderTree } = await import("../googleDrive");
+      const { uploadTextAsGoogleDoc, ensureStructuredFacilityFolderTree } = await import("../integrations/googleDrive");
 
       const sections = (note.sections as { heading: string; body: string }[]) || [];
       const content = sections
@@ -295,7 +295,7 @@ export function registerGoogleRoutes(app: Express) {
         return res.status(400).json({ error: "Only PDF files are accepted" });
       }
 
-      const { ensureStructuredFacilityFolderTree, uploadPdfToFolder } = await import("../googleDrive");
+      const { ensureStructuredFacilityFolderTree, uploadPdfToFolder } = await import("../integrations/googleDrive");
       const tree = await ensureStructuredFacilityFolderTree(facility, patientName.trim(), ancillaryType);
 
       const filename = file.originalname || `${patientName.trim()} - ${ancillaryType} Report.pdf`;
@@ -380,7 +380,7 @@ export function registerGoogleRoutes(app: Express) {
 
       let folder: string;
       if (provider === "google_drive") {
-        const { ensureStructuredFacilityFolderTree } = await import("../googleDrive");
+        const { ensureStructuredFacilityFolderTree } = await import("../integrations/googleDrive");
         const tree = await ensureStructuredFacilityFolderTree(facility, patientName.trim(), ancillaryType);
         folder =
           docType === "informed_consent" ? tree.informedConsentFolderId :
@@ -454,7 +454,7 @@ export function registerGoogleRoutes(app: Express) {
     try {
       if (!requireDriveProvider(res)) return;
       if (!await requireDriveConnected(res)) return;
-      const { getUncachableGoogleDriveClient } = await import("../googleDrive");
+      const { getUncachableGoogleDriveClient } = await import("../integrations/googleDrive");
 
       const rootId = await getPlexusRootId();
       const requestedId = req.query.folderId as string | undefined;
@@ -504,7 +504,7 @@ export function registerGoogleRoutes(app: Express) {
         return res.status(400).json({ error: "Search query is required" });
       }
 
-      const { getUncachableGoogleDriveClient } = await import("../googleDrive");
+      const { getUncachableGoogleDriveClient } = await import("../integrations/googleDrive");
       const rootId = await getPlexusRootId();
       const drive = await getUncachableGoogleDriveClient();
 
@@ -573,7 +573,7 @@ export function registerGoogleRoutes(app: Express) {
         return res.status(400).json({ error: "fileId and destinationFolderId are required" });
       }
 
-      const { getUncachableGoogleDriveClient } = await import("../googleDrive");
+      const { getUncachableGoogleDriveClient } = await import("../integrations/googleDrive");
       const rootId = await getPlexusRootId();
       const drive = await getUncachableGoogleDriveClient();
 
@@ -610,7 +610,7 @@ export function registerGoogleRoutes(app: Express) {
     try {
       if (!requireDriveProvider(res)) return;
       if (!await requireDriveConnected(res)) return;
-      const { getUncachableGoogleDriveClient } = await import("../googleDrive");
+      const { getUncachableGoogleDriveClient } = await import("../integrations/googleDrive");
       const rootId = await getPlexusRootId();
       const drive = await getUncachableGoogleDriveClient();
 

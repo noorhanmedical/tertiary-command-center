@@ -76,7 +76,7 @@ export async function getOrCreateSpreadsheet(
   settingKey: string,
   title: string
 ): Promise<string> {
-  const { getSetting, setSetting } = await import("./dbSettings");
+  const { getSetting, setSetting } = await import("../dbSettings");
 
   const envId = process.env[settingKey];
   if (envId) return envId;
@@ -102,7 +102,7 @@ export async function getOrCreateSpreadsheetInFolder(
   title: string,
   folderId: string
 ): Promise<string> {
-  const { getSetting, setSetting } = await import("./dbSettings");
+  const { getSetting, setSetting } = await import("../dbSettings");
   const { getUncachableGoogleDriveClient } = await import("./googleDrive");
   const drive = await getUncachableGoogleDriveClient();
 

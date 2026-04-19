@@ -1,0 +1,729 @@
+import { parse } from "csv-parse/sync";
+import { openai, withRetry } from "../services/aiClient";
+import type { ParsedPatient } from "./types";
+
+const END_BLOCK_SYSTEM_PROMPT = `You are a clinical data parser. The input contains numbered patient records separated by "---". Extract clinical data from each record IN ORDER.
+
+For each record extract:
+- "time": appointment time if present (e.g. "9:00 AM"), or null
+- "age": age as a number if present, or null
+- "gender": gender if present (M/F/Male/Female), or null
+- "insurance": insurance carrier/plan name if present (e.g. "Blue Cross Blue Shield", "Medicare", "Cigna", "Aetna", "United Healthcare"), or null
+- "diagnoses": medical conditions/diagnoses/problems ONLY — e.g. hypertension, diabetes, COPD, chest pain, neuropathy. NEVER put medication names, drug names, dosages, test names, imaging study results, or previous ancillary history here.
+- "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
+- "medications": all medications/Rx/prescriptions copied verbatim from the source, joined into one string if multiple sections, or null
+- "previousTests": ONLY copy text from an explicitly labeled section — recognized labels are: "Ancillaries Completed:", "Previous Tests:", "HGA Records:", "Ancillary History:", "Tests Completed:", "Prior Imaging:", "Past Studies:", "Completed Ancillaries:". Copy verbatim. If no such labeled section exists, return null. NEVER extract from Diagnoses, History, Medications, or any narrative text.
+
+Rules:
+- CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
+- FIELD SEPARATION: Diagnoses must contain ONLY disease names and medical conditions from the Diagnoses/Dx column. NEVER move content between columns.
+- For medications: only include actual drug/prescription names and dosages. If the only value looks like a visit reason, test name, or scheduling code (e.g. "BrainWave", "FU HGA", "med refills", "follow up", "physical"), set medications to null.
+- For previousTests: ONLY use explicitly labeled ancillaries sections. Do NOT infer from diagnoses or history text. Even if the history mentions a past Echo or Doppler study, do not put it in previousTests unless it appears under an "Ancillaries Completed:" or equivalent label.
+- Return exactly one result object per record, in the same order as the input.
+- Do NOT include a name field — names are managed externally.
+
+Respond with JSON: { "records": [ ...one object per input record, in order... ] }. No markdown. Do not truncate.`;
+
+const PARSE_SYSTEM_PROMPT = `You are a clinical data parser. Extract EVERY patient record from the input text — do not stop early, do not skip any.
+
+For each patient return:
+- "name": full patient name (required — skip rows with no name)
+- "time": appointment time if present (e.g. "9:00 AM"), or null
+- "age": age as a number if present, or null
+- "gender": gender if present (M/F/Male/Female), or null
+- "insurance": insurance carrier/plan name if present (e.g. "Blue Cross", "Medicare", "Cigna"), or null
+- "diagnoses": medical conditions/diagnoses/problems ONLY — e.g. hypertension, diabetes, COPD, chest pain, neuropathy. NEVER put medication names, drug names, dosages, test names, imaging study results, or previous ancillary history here.
+- "history": past medical history/Hx/PMH copied verbatim from the source, joined into one string if multiple sections, or null
+- "medications": all medications/Rx copied verbatim from the source, joined into one string if multiple sections, or null
+- "previousTests": ONLY copy text from an explicitly labeled section for prior ancillary tests — recognized labels are: "Ancillaries Completed:", "Previous Tests:", "HGA Records:", "Ancillary History:", "Tests Completed:", "Prior Imaging:", "Past Studies:", "Completed Ancillaries:". Copy that section's content verbatim. If no such labeled section is present, return null. NEVER extract from Diagnoses, History, Medications, or any unstructured narrative text.
+
+Rules:
+- CRITICAL: Copy diagnoses, history, medications, and previousTests EXACTLY as written in the source. Do NOT rephrase, reword, expand abbreviations, or alter the text in any way. Preserve original wording, abbreviations, capitalization, and punctuation.
+- FIELD SEPARATION: Each source column maps to exactly one output field. Diagnoses must contain ONLY disease names and medical conditions from the Dx/Diagnoses column. History must contain ONLY content from the Hx/History column. Medications must contain ONLY content from the Rx/Medications column. NEVER move content between columns.
+- NEVER include column header words (such as "Name", "DOB", "Time", "Insurance", "Diagnoses", "Medications", "History", "Rx", "Hx", "Dx") as entries in any clinical field.
+- NEVER put narrative sentences, patient introductions, or visit note prose into medications. The medications field must contain ONLY drug names and dosages — nothing else.
+- Extract ALL patients in the input — even if there are 20 or more.
+- The input may be tab-separated spreadsheet data, a simple name list, or mixed clinical notes — handle all formats.
+- If a row is clearly a header, summary, or empty — skip it.
+- If there is no clinical data for a patient, still include them with null clinical fields.
+- For the "medications" field: only include actual drug/prescription names and dosages. If the only value present looks like a visit reason, appointment note, scheduling code, or test name (e.g. "BrainWave", "VitalWave", "EEG", "FU HGA", "med refills", "follow up", "HGA", "new patient", "physical", "wellness"), set medications to null instead.
+- For the "previousTests" field: ONLY use explicitly labeled ancillaries sections. Do NOT infer from diagnoses or history text. Even if a diagnosis mentions "Echo" or "Doppler", do not move it to previousTests unless it appears in an "Ancillaries Completed:" or equivalent labeled section.
+
+Respond with a JSON object: { "patients": [ ...array of ALL patient objects... ] }. No markdown. Do not truncate.`;
+
+async function parseSingleChunk(chunk: string): Promise<ParsedPatient[]> {
+  const aiResponse = await withRetry(
+    () =>
+      openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: PARSE_SYSTEM_PROMPT },
+          { role: "user", content: chunk },
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+        max_completion_tokens: 16000,
+      }),
+    3,
+    "parseSingleChunk"
+  );
+
+  const content = aiResponse.choices[0]?.message?.content?.trim() || "{}";
+  let parsed: any;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    parsed = JSON.parse(cleaned);
+  }
+
+  const arr: any[] = Array.isArray(parsed) ? parsed : (parsed.patients || parsed.records || []);
+  return arr
+    .filter((p: any) => p.name && typeof p.name === "string" && p.name.trim())
+    .map((p: any) => ({
+      name: p.name.trim(),
+      time: p.time || undefined,
+      age: p.age ? parseInt(String(p.age)) : undefined,
+      gender: p.gender || undefined,
+      insurance: p.insurance || undefined,
+      diagnoses: p.diagnoses || undefined,
+      history: p.history || undefined,
+      medications: p.medications || undefined,
+      previousTests: p.previousTests || undefined,
+    }));
+}
+
+const PROVIDER_CREDENTIAL_RE = /\b(D\.O\.|M\.D\.|NP-BC|NP-C|APRN|ARNP|PA-C|PA\b|RN\b|DO\b|MD\b|NP\b|Ph\.D\.)/i;
+
+export function isProviderName(name: string): boolean {
+  return PROVIDER_CREDENTIAL_RE.test(name);
+}
+
+export function splitByEndDelimiter(text: string): { name: string; block: string; insurance?: string }[] | null {
+  const lines = text.split("\n");
+
+  function isInlineEndRow(line: string): boolean {
+    const t = line.trim();
+    if (!t.includes("\t")) return false;
+    const fields = t.split("\t").map((f) => f.trim());
+    return fields.length >= 2 && fields[fields.length - 1].toLowerCase() === "end";
+  }
+
+  const hasEnd = lines.some((l) => l.trim().toLowerCase() === "end" || isInlineEndRow(l));
+  if (!hasEnd) return null;
+
+  const segments: { name: string; block: string; insurance?: string }[] = [];
+  let patientName: string | null = null;
+  let bodyLines: string[] = [];
+  let currentInsurance: string | undefined;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const lower = trimmed.toLowerCase();
+
+    if (lower === "end") {
+      if (patientName) {
+        segments.push({ name: patientName, block: bodyLines.join("\n"), insurance: currentInsurance });
+      }
+      patientName = null;
+      bodyLines = [];
+      currentInsurance = undefined;
+      continue;
+    }
+
+    if (isInlineEndRow(line)) {
+      if (patientName) {
+        segments.push({ name: patientName, block: bodyLines.join("\n"), insurance: currentInsurance });
+        patientName = null;
+        bodyLines = [];
+        currentInsurance = undefined;
+      }
+      const fields = trimmed.split("\t").map((f) => f.trim());
+      const nonEndFields = fields.slice(0, -1);
+      const first = nonEndFields[0] || "";
+      const second = nonEndFields[1] || "";
+      const combinedName = second ? `${first} ${second}` : first;
+      if (!isProviderName(combinedName)) {
+        const insurance = nonEndFields[nonEndFields.length - 1] || undefined;
+        segments.push({ name: combinedName, block: nonEndFields.join("\t"), insurance });
+      }
+      continue;
+    }
+
+    if (!patientName) {
+      if (!trimmed) continue;
+      if (trimmed.includes("\t")) {
+        const fields = trimmed.split("\t").map((f) => f.trim()).filter(Boolean);
+        const first = fields[0] || "";
+        const second = fields[1] || "";
+        const combinedName = second ? `${first} ${second}` : first;
+        if (isProviderName(combinedName)) continue;
+        patientName = combinedName;
+        bodyLines = [trimmed];
+        currentInsurance = fields.length >= 6 ? (fields[fields.length - 1] || undefined) : undefined;
+      } else {
+        if (isProviderName(trimmed)) continue;
+        patientName = trimmed;
+      }
+    } else {
+      bodyLines.push(line);
+    }
+  }
+  if (patientName) {
+    segments.push({ name: patientName, block: bodyLines.join("\n"), insurance: currentInsurance });
+  }
+
+  return segments.length > 0 ? segments : null;
+}
+
+async function parseEndDelimitedBatch(batch: { name: string; block: string; insurance?: string }[], offset: number): Promise<ParsedPatient[]> {
+  const combined = batch.map((s, i) => `Record ${offset + i + 1}:\n${s.block}`).join("\n\n---\n\n");
+
+  const aiResponse = await withRetry(
+    () =>
+      openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: END_BLOCK_SYSTEM_PROMPT },
+          { role: "user", content: combined },
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+        max_completion_tokens: 16000,
+      }),
+    3,
+    "parseEndDelimitedBatch"
+  );
+
+  const content = aiResponse.choices[0]?.message?.content?.trim() || "{}";
+  let parsed: any;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    parsed = JSON.parse(cleaned);
+  }
+
+  const arr: any[] = Array.isArray(parsed) ? parsed : (parsed.records || parsed.patients || []);
+
+  return batch.map((seg, i) => {
+    const r = arr[i] || {};
+    return {
+      name: seg.name.trim(),
+      time: r.time || undefined,
+      age: r.age ? parseInt(String(r.age)) : undefined,
+      gender: r.gender || undefined,
+      insurance: r.insurance || seg.insurance || undefined,
+      diagnoses: r.diagnoses || undefined,
+      history: r.history || undefined,
+      medications: r.medications || undefined,
+      previousTests: r.previousTests || undefined,
+    };
+  });
+}
+
+async function parseEndDelimitedBlocks(segments: { name: string; block: string; insurance?: string }[]): Promise<ParsedPatient[]> {
+  const MAX_BATCH_CHARS = 160000;
+  const batches: { name: string; block: string; insurance?: string }[][] = [];
+  let currentBatch: { name: string; block: string; insurance?: string }[] = [];
+  let currentLen = 0;
+
+  for (const seg of segments) {
+    const segLen = seg.block.length + 20;
+    if (currentBatch.length > 0 && currentLen + segLen > MAX_BATCH_CHARS) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentLen = 0;
+    }
+    currentBatch.push(seg);
+    currentLen += segLen;
+  }
+  if (currentBatch.length > 0) batches.push(currentBatch);
+
+  const results: ParsedPatient[] = [];
+  let offset = 0;
+  for (const batch of batches) {
+    const batchResults = await parseEndDelimitedBatch(batch, offset);
+    results.push(...batchResults);
+    offset += batch.length;
+  }
+  return results;
+}
+
+function splitIntoChunks(text: string, chunkSize = 8000): string[] {
+  if (text.length <= chunkSize) return [text];
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = start + chunkSize;
+    if (end < text.length) {
+      const breakAt = text.lastIndexOf("\n\n", end);
+      if (breakAt > start + chunkSize / 2) end = breakAt;
+    }
+    chunks.push(text.slice(start, Math.min(end, text.length)));
+    start = end;
+  }
+  return chunks;
+}
+
+export function getNormalizedKeys(name: string): string[] {
+  const t = name.trim();
+  let parts: string[];
+
+  if (t.includes(",")) {
+    const commaIdx = t.indexOf(",");
+    const last = t.slice(0, commaIdx).trim().toLowerCase();
+    const firstMiddle = t.slice(commaIdx + 1).trim().toLowerCase().replace(/\s+/g, " ");
+    const fmParts = firstMiddle.split(" ").filter(Boolean);
+    const full = `${firstMiddle} ${last}`.trim();
+    if (fmParts.length > 1) {
+      const short = `${fmParts[0]} ${last}`.trim();
+      return [full, short];
+    }
+    return [full];
+  }
+
+  parts = t.toLowerCase().replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  if (parts.length >= 3) {
+    const full = parts.join(" ");
+    const short = `${parts[0]} ${parts[parts.length - 1]}`;
+    return [full, short];
+  }
+  return [parts.join(" ")];
+}
+
+function richness(p: ParsedPatient): number {
+  return [p.time, p.age, p.gender, p.diagnoses, p.history, p.medications].filter(Boolean).length;
+}
+
+function pickRicher(a: string | undefined, b: string | undefined): string | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return a.length >= b.length ? a : b;
+}
+
+function mergePatients(a: ParsedPatient, b: ParsedPatient): ParsedPatient {
+  const richerName = richness(a) >= richness(b) ? a.name : b.name;
+  return {
+    name: richerName,
+    time: pickRicher(a.time, b.time),
+    age: a.age ?? b.age,
+    gender: pickRicher(a.gender, b.gender),
+    insurance: a.insurance || b.insurance,
+    diagnoses: pickRicher(a.diagnoses, b.diagnoses),
+    history: pickRicher(a.history, b.history),
+    medications: pickRicher(a.medications, b.medications),
+    previousTests: pickRicher(a.previousTests, b.previousTests),
+    noPreviousTests: Boolean(a.noPreviousTests || b.noPreviousTests) || undefined,
+  };
+}
+
+const EHR_TSV_COLUMN_LABELS = [
+  "time",
+  "name",
+  "gender",
+  "age",
+  "dob",
+  "insurance",
+  "diagnoses",
+  "hpi",
+  "medications",
+  "notes",
+  "reason",
+  "dx",
+  "pmh",
+  "rx",
+  "hx",
+];
+
+function looksLikeEhrTsvRow(row: string[]): boolean {
+  if (row.length < 2) return false;
+  const col0 = row[0]?.trim() ?? "";
+  const col1 = row[1]?.trim() ?? "";
+  const hasTime = /^\d{1,2}:\d{2}/.test(col0) || /^(am|pm)/i.test(col0);
+  const hasName = col1.length > 0 && /[A-Za-z]/.test(col1) && col1.length < 80;
+  return hasTime && hasName;
+}
+
+function isEhrTsvHeader(row: string[]): boolean {
+  if (row.length < 2) return false;
+  const lower = row.map((c) => c.trim().toLowerCase());
+  return lower.some((c) => EHR_TSV_COLUMN_LABELS.includes(c));
+}
+
+function parseTsvWithQuotedFields(text: string): string[][] | null {
+  try {
+    const rows = parse(text, {
+      delimiter: "\t",
+      relax_column_count: true,
+      skip_empty_lines: false,
+      relax_quotes: true,
+    }) as string[][];
+    return rows;
+  } catch {
+    return null;
+  }
+}
+
+type TsvColKind = "diagnoses" | "history" | "medications" | "insurance" | "scalar" | "skip" | "previousTests";
+
+type TsvSegment = {
+  name: string;
+  time?: string;
+  age?: number;
+  gender?: string;
+  insurance?: string;
+  diagnoses?: string;
+  history?: string;
+  medications?: string;
+  previousTests?: string;
+  noPreviousTests?: boolean;
+};
+
+function classifyTsvColumn(val: string): TsvColKind {
+  const trimmed = val.trim();
+  if (!trimmed) return "skip";
+
+  if (trimmed.length < 2 && !/[A-Za-z0-9]/.test(trimmed)) return "skip";
+
+  if (!trimmed.includes("\n") && trimmed.length < 40) {
+    if (/^(m|f|male|female)$/i.test(trimmed)) return "scalar";
+    if (/^\d{1,3}$/.test(trimmed)) return "scalar";
+    if (/^[a-zA-Z]{0,4}\d{4,12}$/.test(trimmed)) return "skip";
+    if (/medicare|medicaid|blue\s*cross|blue\s*shield|aetna|cigna|humana|united|anthem|molina|kaiser|tricare|bcbs|bcbsm|ppo|hmo|self[\s-]?pay|private|commercial|uninsured/i.test(trimmed)) return "insurance";
+  }
+
+  if (/^(reason for appointment|history of present illness|hpi:|chief complaint|hpi\b|subjective|assessment|medical history|past medical history|constitutional:)/i.test(trimmed)) return "history";
+
+  const medPatterns = [
+    /Taking\s*-\s*by\s+[A-Z]/,
+    /\b\d+(\.\d+)?\s*(mg|mcg|ml|units?|tablet|capsule|cap|grain|iu)\b/i,
+    /\b(once|twice|three times|QD|BID|TID|QID|QAM|QPM|QHS|PRN|daily|nightly|weekly)\b/i,
+    /\b(Orally|by Mouth|Subcutaneous|Nasally|Topically|Externally|Under the Tongue)\b/i,
+  ];
+  const medMatchCount = medPatterns.filter((p) => p.test(trimmed)).length;
+  if (medMatchCount >= 2) return "medications";
+  const pharmaFormRE = /\b(tablet|capsule|injection|suspension|solution|drops?|spray|patch|cream|gel|ointment|inhaler|syrup|suppository|auto-injector|syringe)\b/i;
+  if (medMatchCount >= 1 && pharmaFormRE.test(trimmed)) return "medications";
+
+  const prevTestContentRE = /COMPLETED\s*✅|COMPLETED\s*-|BrainWave|VitalWave|Carotid\s+Duplex|\bEchocardiogram\b|Echo\s+TTE|Renal\s+Artery\s+(Doppler|Duplex)|LE\s+Arterial\s+(Doppler|Duplex)|LE\s+Venous\s+(Doppler|Duplex)|Lower\s+Extremity\s+(Arterial|Venous)\s*(Doppler|Duplex)|Upper\s+Extremity\s+(Arterial|Venous)\s*(Doppler|Duplex)|Abdominal\s+Aort\w+\s+Duplex|Venous\s+Duplex|Arterial\s+Doppler|\bEKG\b|\bABI\b|stress\s+echo/i;
+  if (prevTestContentRE.test(trimmed)) return "previousTests";
+
+  const lines = trimmed.split("\n").map((l) => l.trim()).filter(Boolean);
+  const noNarrativeHeaders = !trimmed.includes("History of Present Illness") && !trimmed.includes("Reason for Appointment") && !trimmed.includes("Chief Complaint") && !trimmed.includes("HPI:");
+  const noNarrativeSignals = !/\bpresented?\b|\breports?\b|\bcomplains?\b|\bpatient\b|\bfollow.?up\b/i.test(trimmed);
+  if (lines.length >= 1 && noNarrativeHeaders && noNarrativeSignals && lines.every((l) => l.length < 500 && !/^(Taking|H\s+|R\d{2}|by [A-Z])/.test(l))) {
+    return "diagnoses";
+  }
+
+  return "history";
+}
+
+const PREV_TESTS_HEADER_RE = /hga\s*records?|previous\s*tests?|prior\s*imaging|previous\s*imaging|past\s*studies|ancillary\s*history|ancillaries?\s*completed|completed\s*ancillaries?|ancillaries?\s*done|tests?\s*completed|completed\s*tests?|prior\s*ancillaries?|^ancillaries?$/i;
+const NO_PREV_TESTS_RE = /\bno\s+record\b|\bno\s+prior\b|\bno\s+previous\b|\bnone\b|\bn\/a\b|\bno\s+tests?\b|\bnot\s+applicable\b|\bno\s+ancillar|\bno\s+hga\b/i;
+
+type HeaderFieldKind = "diagnoses" | "history" | "medications" | "skip";
+const HEADER_FIELD_MAP: Record<string, HeaderFieldKind> = {
+  dx: "diagnoses",
+  diagnosis: "diagnoses",
+  diagnoses: "diagnoses",
+  "problem list": "diagnoses",
+  problems: "diagnoses",
+  assessment: "diagnoses",
+  "icd codes": "diagnoses",
+  "dx list": "diagnoses",
+  indications: "diagnoses",
+  indication: "diagnoses",
+  hx: "history",
+  history: "history",
+  pmh: "history",
+  hpi: "history",
+  "past medical history": "history",
+  "medical history": "history",
+  "clinical notes": "history",
+  "soap note": "history",
+  rx: "medications",
+  medications: "medications",
+  meds: "medications",
+  "med list": "medications",
+  "current medications": "medications",
+  "medication list": "medications",
+  prescriptions: "medications",
+  mrn: "skip",
+  "patient id": "skip",
+  "patient mrn": "skip",
+  "chart #": "skip",
+  "chart number": "skip",
+  "chart no": "skip",
+  "encounter id": "skip",
+  "encounter #": "skip",
+};
+
+function detectAndParseTsvSegments(text: string): TsvSegment[] | null {
+  const rows = parseTsvWithQuotedFields(text);
+  if (!rows || rows.length < 2) return null;
+
+  const headerRow = rows.find(isEhrTsvHeader);
+
+  let nameColIdx = 1;
+  let timeColIdx: number | null = 0;
+
+  const prevTestsColIndices = new Set<number>();
+  const colFieldMap = new Map<number, HeaderFieldKind>();
+
+  if (headerRow) {
+    let foundName = false;
+    let foundTime = false;
+    headerRow.forEach((cell, i) => {
+      const label = cell.trim().toLowerCase();
+      if (!foundName && /^(name|patient\s*name|patient)$/.test(label)) {
+        nameColIdx = i;
+        foundName = true;
+      } else if (!foundTime && /^(time|appt\s*time|appointment\s*time|start\s*time|start)$/.test(label)) {
+        timeColIdx = i;
+        foundTime = true;
+      } else if (PREV_TESTS_HEADER_RE.test(cell.trim())) {
+        prevTestsColIndices.add(i);
+      } else if (HEADER_FIELD_MAP[label]) {
+        colFieldMap.set(i, HEADER_FIELD_MAP[label]);
+      }
+    });
+    if (!foundTime) timeColIdx = null;
+  }
+
+  let patientRows: string[][];
+  if (headerRow) {
+    patientRows = rows.filter((row) => !isEhrTsvHeader(row) && row.some((c) => c.trim()));
+  } else {
+    patientRows = rows.filter((row) => looksLikeEhrTsvRow(row) && !isEhrTsvHeader(row));
+  }
+
+  if (patientRows.length === 0) return null;
+
+  const totalRows = rows.filter((r) => r.some((c) => c.trim())).length;
+  if (patientRows.length < Math.max(1, totalRows * 0.3)) return null;
+
+  const metaCols = new Set<number>([nameColIdx]);
+  if (timeColIdx !== null) metaCols.add(timeColIdx);
+
+  const segments: TsvSegment[] = [];
+
+  for (const row of patientRows) {
+    const name = row[nameColIdx]?.trim() ?? "";
+    if (!name) continue;
+    const time = timeColIdx !== null ? (row[timeColIdx]?.trim() ?? "") : "";
+
+    let gender: string | undefined;
+    let age: number | undefined;
+    let detectedInsurance: string | undefined;
+    let noPreviousTests = false;
+    const kindValues: Partial<Record<"diagnoses" | "history" | "medications" | "previousTests", string>> = {};
+
+    for (let colIdx = 0; colIdx < row.length; colIdx++) {
+      if (metaCols.has(colIdx)) continue;
+
+      const val = row[colIdx]?.trim() ?? "";
+      if (!val) continue;
+
+      if (prevTestsColIndices.has(colIdx)) {
+        if (NO_PREV_TESTS_RE.test(val)) {
+          noPreviousTests = true;
+        } else {
+          if (!kindValues["previousTests"] || val.length > kindValues["previousTests"].length) {
+            kindValues["previousTests"] = val;
+          }
+        }
+        continue;
+      }
+
+      if (colFieldMap.has(colIdx)) {
+        const mappedField = colFieldMap.get(colIdx)!;
+        if (mappedField === "skip") continue;
+        const existing = kindValues[mappedField];
+        if (!existing) {
+          kindValues[mappedField] = val;
+        } else {
+          kindValues[mappedField] = existing.includes(val) ? existing : `${existing}\n${val}`;
+        }
+        continue;
+      }
+
+      const kind = classifyTsvColumn(val);
+      if (kind === "skip") continue;
+
+      if (kind === "insurance") { detectedInsurance = val; continue; }
+
+      if (kind === "scalar") {
+        if (/^(m|f|male|female)$/i.test(val)) gender = val;
+        else if (/^\d{1,3}$/.test(val)) age = parseInt(val, 10);
+        continue;
+      }
+
+      const k = kind as "diagnoses" | "history" | "medications";
+      if (!kindValues[k] || val.length > kindValues[k]!.length) {
+        kindValues[k] = val;
+      }
+    }
+
+    const lastCol = row[row.length - 1]?.trim();
+    const lastColIsInsurance =
+      lastCol &&
+      lastCol !== name &&
+      lastCol !== time &&
+      /[A-Za-z]/.test(lastCol) &&
+      lastCol.length < 100 &&
+      /medicare|medicaid|blue\s*cross|blue\s*shield|aetna|cigna|humana|united|anthem|molina|kaiser|tricare|bcbs|bcbsm|ppo|hmo|self[\s-]?pay|private|commercial|uninsured/i.test(lastCol);
+    const insurance = detectedInsurance || (lastColIsInsurance ? lastCol : undefined);
+
+    segments.push({
+      name,
+      time: time || undefined,
+      age,
+      gender,
+      insurance,
+      diagnoses: kindValues["diagnoses"] || undefined,
+      history: kindValues["history"] || undefined,
+      medications: kindValues["medications"] || undefined,
+      previousTests: kindValues["previousTests"] || undefined,
+      noPreviousTests: noPreviousTests || undefined,
+    });
+  }
+
+  return segments.length > 0 ? segments : null;
+}
+
+const DX_JUNK_WORDS = new Set([
+  "name", "patient name", "dob", "date of birth", "time", "insurance",
+  "insurance type", "gender", "age", "mrn", "patient id", "patient",
+  "diagnoses", "diagnosis", "dx", "hx", "rx", "medications", "meds",
+  "previous tests", "prior tests", "hga records", "notes", "history",
+]);
+
+function sanitizePatientFields(p: ParsedPatient): ParsedPatient {
+  const MED_LINE_RE =
+    /\b\d+(\.\d+)?\s*(mg|mcg|ml|units?|tablet|capsule|cap|grain|iu)\b|\b(tablet|capsule|injection|suspension|solution|drops?|spray|patch|cream|gel|ointment|inhaler|syrup|suppository|auto-injector|syringe)\b/i;
+
+  const NARRATIVE_RE = /\bpresented?\b|\bpatient\b|\ba (male|female)\b|\bfollow.?up\b|\bhistory of\b|\bfor (the|a|an)\b|\breports?\b|\bcomplains?\b/i;
+
+  let diagnoses = p.diagnoses;
+  let medications = p.medications;
+  let previousTests = p.previousTests;
+  let history = p.history;
+
+  if (diagnoses) {
+    const lines = diagnoses.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const dxLines: string[] = [];
+    const medLines: string[] = [];
+
+    for (const line of lines) {
+      const lower = line.toLowerCase();
+      if (DX_JUNK_WORDS.has(lower)) continue;
+
+      if (line.length <= 200 && !NARRATIVE_RE.test(line) && MED_LINE_RE.test(line)) {
+        medLines.push(line);
+      } else {
+        dxLines.push(line);
+      }
+    }
+
+    diagnoses = dxLines.length > 0 ? dxLines.join("\n") : undefined;
+    if (medLines.length > 0) {
+      const moved = medLines.join("\n");
+      medications = medications ? `${medications}\n${moved}` : moved;
+    }
+  }
+
+  if (medications) {
+    const medRawLines = medications.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const realMedLines: string[] = [];
+    const narrativeLines: string[] = [];
+
+    for (const line of medRawLines) {
+      if (line.length > 150 && NARRATIVE_RE.test(line)) {
+        narrativeLines.push(line);
+      } else {
+        realMedLines.push(line);
+      }
+    }
+
+    medications = realMedLines.length > 0 ? realMedLines.join("\n") : undefined;
+    if (narrativeLines.length > 0) {
+      const moved = narrativeLines.join("\n");
+      history = history ? `${history}\n${moved}` : moved;
+    }
+  }
+
+  return { ...p, diagnoses, medications, previousTests, history };
+}
+
+function parseTsvSegmentsDirect(segments: TsvSegment[]): ParsedPatient[] {
+  return segments.map((seg) => ({
+    name: seg.name,
+    time: seg.time,
+    age: seg.age,
+    gender: seg.gender,
+    insurance: seg.insurance,
+    diagnoses: seg.diagnoses,
+    history: seg.history,
+    medications: seg.medications,
+    previousTests: seg.previousTests,
+    noPreviousTests: seg.noPreviousTests,
+  }));
+}
+
+export async function parseWithAI(rawText: string): Promise<ParsedPatient[]> {
+  if (!rawText.trim()) return [];
+  try {
+    const trimmed = rawText.substring(0, 400000);
+
+    const endSegments = splitByEndDelimiter(trimmed);
+    const tsvSegments = !endSegments ? detectAndParseTsvSegments(trimmed) : null;
+
+    let allPatients: ParsedPatient[];
+
+    if (endSegments) {
+      allPatients = await parseEndDelimitedBlocks(endSegments);
+    } else if (tsvSegments) {
+      allPatients = parseTsvSegmentsDirect(tsvSegments);
+    } else {
+      const chunks = splitIntoChunks(trimmed, 12000);
+      const results = await Promise.all(chunks.map(parseSingleChunk));
+      allPatients = results.flat();
+    }
+
+    allPatients = allPatients.map(sanitizePatientFields);
+
+    const grouped = new Map<string, ParsedPatient>();
+    const keyIndex = new Map<string, string>();
+
+    for (const p of allPatients) {
+      if (isProviderName(p.name)) continue;
+      const keys = getNormalizedKeys(p.name);
+      if (!keys.length || !keys[0]) continue;
+
+      let existingCanonical: string | undefined;
+      for (const k of keys) {
+        if (keyIndex.has(k)) {
+          existingCanonical = keyIndex.get(k)!;
+          break;
+        }
+      }
+
+      if (existingCanonical) {
+        const existing = grouped.get(existingCanonical)!;
+        grouped.set(existingCanonical, mergePatients(existing, p));
+        for (const k of keys) {
+          if (!keyIndex.has(k)) keyIndex.set(k, existingCanonical);
+        }
+      } else {
+        const canonical = keys[0];
+        grouped.set(canonical, p);
+        for (const k of keys) keyIndex.set(k, canonical);
+      }
+    }
+    return Array.from(grouped.values());
+  } catch (err: any) {
+    console.error("parseWithAI failed:", err.message);
+    return [];
+  }
+}

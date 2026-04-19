@@ -67,7 +67,7 @@ const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Vet
 
 export async function initializeDriveFolderTree(): Promise<void> {
   try {
-    const { getSetting, setSetting } = await import("./dbSettings");
+    const { getSetting, setSetting } = await import("../dbSettings");
     const drive = await getUncachableGoogleDriveClient();
 
     const rootKey = "DRIVE_FOLDER_plexus_ancillary_platform";
@@ -249,7 +249,7 @@ export async function ensurePlexusFolderTree(
   patientName: string,
   ancillaryType: string
 ): Promise<FolderTree> {
-  const { getSetting, setSetting } = await import("./dbSettings");
+  const { getSetting, setSetting } = await import("../dbSettings");
   const drive = await getUncachableGoogleDriveClient();
 
   const rootKey = "DRIVE_FOLDER_plexus_ancillary_platform";
@@ -348,7 +348,7 @@ export async function ensurePlexusFolderTree(
 }
 
 export async function getFacilityFolderId(facility: string): Promise<string> {
-  const { getSetting, setSetting } = await import("./dbSettings");
+  const { getSetting, setSetting } = await import("../dbSettings");
   const drive = await getUncachableGoogleDriveClient();
 
   const rootKey = "DRIVE_FOLDER_plexus_ancillary_platform";

@@ -1099,7 +1099,7 @@ export async function registerRoutes(
 
   app.post("/api/billing-records/import-from-sheet", async (_req, res) => {
     try {
-      const { readSheetData } = await import("./googleSheets");
+      const { readSheetData } = await import("./integrations/googleSheets");
       const { getSetting } = await import("./dbSettings");
 
       const KNOWN_FACILITIES = [...VALID_FACILITIES];
