@@ -389,7 +389,8 @@ export function registerGoogleRoutes(app: Express) {
           docType === "informed_consent" ? "informed-consent" :
           docType === "screening_form" ? "screening-forms" :
           "report";
-        folder = `${facility}/${ancillaryType}/${s3Cat}`;
+        const safePatient = patientName.trim().replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim().slice(0, 80);
+        folder = `${facility}/${ancillaryType}/${safePatient}/${s3Cat}`;
       }
 
       const { id: driveFileId, viewUrl: webViewLink } = await fileStorage.uploadFile({

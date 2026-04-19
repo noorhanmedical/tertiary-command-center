@@ -228,7 +228,8 @@ export async function executeExportNotes(): Promise<ExportNotesResult> {
           docKind === "postProcedureNote" ? "procedure-notes" :
           docKind === "preProcedureOrder" ? "order-notes" :
           "clinical-docs";
-        folder = `${note.facility || "unknown"}/${note.service || "unknown"}/${category}`;
+        const safePatient = (note.patientName || "unknown").replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim().slice(0, 80);
+        folder = `${note.facility || "unknown"}/${note.service || "unknown"}/${safePatient}/${category}`;
       }
 
       const { id: driveFileId, viewUrl: webViewLink } = await fileStorage.uploadFile({

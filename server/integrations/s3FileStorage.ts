@@ -1,5 +1,6 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { randomBytes } from "crypto";
 import type { IFileStorage, UploadFileParams, FileUploadResult, FileListItem } from "./types";
 
 const PRESIGNED_URL_TTL_SECONDS = 24 * 60 * 60;
@@ -29,7 +30,8 @@ export class S3FileStorage implements IFileStorage {
 
   async uploadFile({ filename, content, contentType, folder }: UploadFileParams): Promise<FileUploadResult> {
     const safeFolder = (folder || "").replace(/\/+$/, "").replace(/^\/+/, "");
-    const key = safeFolder ? `${safeFolder}/${filename}` : filename;
+    const uniquePrefix = `${Date.now()}-${randomBytes(4).toString("hex")}`;
+    const key = safeFolder ? `${safeFolder}/${uniquePrefix}-${filename}` : `${uniquePrefix}-${filename}`;
     const body = typeof content === "string" ? Buffer.from(content, "utf-8") : content;
 
     await this.client.send(
