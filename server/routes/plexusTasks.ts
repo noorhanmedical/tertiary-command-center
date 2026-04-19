@@ -149,7 +149,9 @@ export function registerPlexusTasksRoutes(app: Express) {
   });
 
   // ── Projects ──────────────────────────────────────────────────────────────
-  // Returns only projects the requesting user is a member of (creator or task member/collaborator)
+  // Intentional policy: returns only projects the requesting user is a member of
+  // (creator, assignee on any task, or explicit collaborator). Global project listing
+  // is not implemented — all clinic staff work within their own project scope.
   app.get("/api/plexus/projects", async (req: Request, res: Response) => {
     try {
       const projects = await storage.getProjectsForUser(uid(req));
