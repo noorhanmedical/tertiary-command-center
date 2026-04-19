@@ -147,6 +147,7 @@ export interface IStorage {
   // ── Plexus Projects ────────────────────────────────────────────────────
   createProject(record: InsertPlexusProject): Promise<PlexusProject>;
   getProjects(): Promise<PlexusProject[]>;
+  getProjectsForUser(userId: string): Promise<PlexusProject[]>;
   getProjectById(id: number): Promise<PlexusProject | undefined>;
   updateProject(id: number, updates: Partial<InsertPlexusProject>): Promise<PlexusProject | undefined>;
 
@@ -542,6 +543,38 @@ export class DatabaseStorage implements IStorage {
 
   async getProjects(): Promise<PlexusProject[]> {
     return db.select().from(plexusProjects).orderBy(asc(plexusProjects.title));
+  }
+
+  async getProjectsForUser(userId: string): Promise<PlexusProject[]> {
+    const ownedProjects = await db.select({ id: plexusProjects.id })
+      .from(plexusProjects)
+      .where(eq(plexusProjects.createdByUserId, userId));
+    const taskRows = await db.select({ projectId: plexusTasks.projectId })
+      .from(plexusTasks)
+      .where(and(
+        sql`${plexusTasks.projectId} IS NOT NULL`,
+        sql`(${plexusTasks.createdByUserId} = ${userId} OR ${plexusTasks.assignedToUserId} = ${userId})`
+      ));
+    const collabRows = await db.select({ taskId: plexusTaskCollaborators.taskId })
+      .from(plexusTaskCollaborators)
+      .where(eq(plexusTaskCollaborators.userId, userId));
+    const taskIds = collabRows.map((c) => c.taskId);
+    let collabProjectIds: number[] = [];
+    if (taskIds.length > 0) {
+      const collabTasks = await db.select({ projectId: plexusTasks.projectId })
+        .from(plexusTasks)
+        .where(and(inArray(plexusTasks.id, taskIds), sql`${plexusTasks.projectId} IS NOT NULL`));
+      collabProjectIds = collabTasks.map((t) => t.projectId).filter((id): id is number => id != null);
+    }
+    const allIds = Array.from(new Set([
+      ...ownedProjects.map((p) => p.id),
+      ...taskRows.map((t) => t.projectId).filter((id): id is number => id != null),
+      ...collabProjectIds,
+    ]));
+    if (allIds.length === 0) return [];
+    return db.select().from(plexusProjects)
+      .where(inArray(plexusProjects.id, allIds))
+      .orderBy(asc(plexusProjects.title));
   }
 
   async getProjectById(id: number): Promise<PlexusProject | undefined> {

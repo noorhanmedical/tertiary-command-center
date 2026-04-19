@@ -135,9 +135,10 @@ export function registerPlexusTasksRoutes(app: Express) {
   });
 
   // ── Projects ──────────────────────────────────────────────────────────────
-  app.get("/api/plexus/projects", async (_req, res: Response) => {
+  // Returns only projects the requesting user is a member of (creator or task member/collaborator)
+  app.get("/api/plexus/projects", async (req: Request, res: Response) => {
     try {
-      const projects = await storage.getProjects();
+      const projects = await storage.getProjectsForUser(uid(req));
       res.json(projects);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -224,6 +225,9 @@ export function registerPlexusTasksRoutes(app: Express) {
     }
   });
 
+  // Policy: urgent tasks (high/critical urgency, non-closed) are visible to all authenticated
+  // clinic staff so team members can volunteer via the Help button. This is intentional
+  // operational coordination policy — all users are authenticated clinic personnel.
   app.get("/api/plexus/tasks/urgent", async (_req, res: Response) => {
     try {
       const tasks = await storage.getUrgentTasks();
@@ -355,8 +359,10 @@ export function registerPlexusTasksRoutes(app: Express) {
           return res.status(403).json({ error: "Only task owner/assignee can add collaborators for others" });
         }
       } else {
-        if (task.status === "closed") {
-          return res.status(403).json({ error: "Cannot join a closed task" });
+        const canSelfJoin = task.status !== "closed" &&
+          (task.urgency === "critical" || task.urgency === "high");
+        if (!canSelfJoin && !await canViewTask(taskId, actingUserId)) {
+          return res.status(403).json({ error: "Self-join is only allowed on urgent (high/critical) open tasks" });
         }
       }
       const collab = await storage.addCollaborator({ taskId, userId: targetUserId, role: parsed.data.role });
