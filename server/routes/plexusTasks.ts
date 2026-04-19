@@ -348,17 +348,21 @@ export function registerPlexusTasksRoutes(app: Express) {
         }
       }
       const task = await storage.updateTask(id, parsed.data);
+      const eventWrites: Promise<void>[] = [];
       if (parsed.data.status && parsed.data.status !== prev.status) {
-        await writeEvent({ taskId: id, userId, eventType: "status_changed", payload: { from: prev.status, to: parsed.data.status } });
-      } else {
-        const safePayload: EventPayload = Object.fromEntries(
-          Object.entries(parsed.data).filter(([, v]) => v !== undefined)
-        );
-        await writeEvent({ taskId: id, userId, eventType: "updated", payload: safePayload });
+        eventWrites.push(writeEvent({ taskId: id, userId, eventType: "status_changed", payload: { from: prev.status, to: parsed.data.status } }));
       }
       if (parsed.data.assignedToUserId !== undefined && parsed.data.assignedToUserId !== prev.assignedToUserId) {
-        await writeEvent({ taskId: id, userId, eventType: "assignment_changed", payload: { from: prev.assignedToUserId, to: parsed.data.assignedToUserId } });
+        eventWrites.push(writeEvent({ taskId: id, userId, eventType: "assignment_changed", payload: { from: prev.assignedToUserId, to: parsed.data.assignedToUserId } }));
       }
+      const DEDICATED_EVENTS = new Set(["status", "assignedToUserId"]);
+      const otherChangedFields = Object.fromEntries(
+        Object.entries(parsed.data).filter(([k, v]) => v !== undefined && !DEDICATED_EVENTS.has(k))
+      ) as EventPayload;
+      if (Object.keys(otherChangedFields).length > 0) {
+        eventWrites.push(writeEvent({ taskId: id, userId, eventType: "updated", payload: otherChangedFields }));
+      }
+      await Promise.all(eventWrites);
       res.json(task);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
