@@ -12,13 +12,21 @@ type EventPayload =
   | { readAt: string }
   | Record<string, string | number | boolean | null | undefined>;
 
+// ── Enum constants (mirror DB check constraints) ───────────────────────────
+const TASK_TYPE = ["task", "subtask", "milestone", "approval"] as const;
+const TASK_STATUS = ["open", "in_progress", "done", "closed"] as const;
+const TASK_URGENCY = ["none", "EOD", "within 3 hours", "within 1 hour"] as const;
+const TASK_PRIORITY = ["low", "normal", "high"] as const;
+const PROJECT_TYPE = ["operational", "clinical", "admin", "training"] as const;
+const PROJECT_STATUS = ["active", "archived", "closed"] as const;
+
 // ── Validation schemas ─────────────────────────────────────────────────────
 const createProjectSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
-  projectType: z.enum(["clinical", "operational", "admin"]).default("operational"),
+  projectType: z.enum(PROJECT_TYPE).default("operational"),
   facility: z.string().optional(),
-  status: z.string().default("active"),
+  status: z.enum(PROJECT_STATUS).default("active"),
 });
 
 const createTaskSchema = z.object({
@@ -26,9 +34,9 @@ const createTaskSchema = z.object({
   description: z.string().optional(),
   projectId: z.number().optional().nullable(),
   parentTaskId: z.number().optional().nullable(),
-  taskType: z.string().default("task"),
-  urgency: z.enum(["none", "EOD", "within 3 hours", "within 1 hour"]).default("none"),
-  priority: z.enum(["low", "normal", "high"]).default("normal"),
+  taskType: z.enum(TASK_TYPE).default("task"),
+  urgency: z.enum(TASK_URGENCY).default("none"),
+  priority: z.enum(TASK_PRIORITY).default("normal"),
   assignedToUserId: z.string().optional().nullable(),
   patientScreeningId: z.number().optional().nullable(),
   dueDate: z.string().optional().nullable(),
@@ -37,13 +45,13 @@ const createTaskSchema = z.object({
 const updateTaskSchema = z.object({
   title: z.string().min(1).optional(),
   description: z.string().optional().nullable(),
-  status: z.string().optional(),
-  urgency: z.enum(["none", "EOD", "within 3 hours", "within 1 hour"]).optional(),
-  priority: z.enum(["low", "normal", "high"]).optional(),
+  status: z.enum(TASK_STATUS).optional(),
+  urgency: z.enum(TASK_URGENCY).optional(),
+  priority: z.enum(TASK_PRIORITY).optional(),
   assignedToUserId: z.string().optional().nullable(),
   projectId: z.number().optional().nullable(),
   dueDate: z.string().optional().nullable(),
-  taskType: z.string().optional(),
+  taskType: z.enum(TASK_TYPE).optional(),
 });
 
 const createMessageSchema = z.object({
@@ -58,6 +66,12 @@ const addCollaboratorSchema = z.object({
 // ── Helpers ────────────────────────────────────────────────────────────────
 function uid(req: Request): string {
   return req.session.userId!;
+}
+
+function parseId(param: string | string[] | undefined): number | null {
+  const s = Array.isArray(param) ? param[0] : param;
+  const n = parseInt(String(s ?? ""), 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 async function enrichWithPatientNames<T extends { patientScreeningId?: number | null }>(
@@ -160,7 +174,7 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.get("/api/plexus/projects/:id", async (req: Request, res: Response) => {
     try {
-      const id = parseInt(String(req.params.id));
+      const id = parseId(req.params.id); if (id === null) return res.status(400).json({ error: "Invalid id" });
       const userId = uid(req);
       if (!await canViewProject(id, userId)) return res.status(403).json({ error: "Not authorized to view this project" });
       const project = await storage.getProjectById(id);
@@ -173,7 +187,7 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.patch("/api/plexus/projects/:id", async (req: Request, res: Response) => {
     try {
-      const id = parseInt(String(req.params.id));
+      const id = parseId(req.params.id); if (id === null) return res.status(400).json({ error: "Invalid id" });
       const userId = uid(req);
       const parsed = createProjectSchema.partial().safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
@@ -190,7 +204,7 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.delete("/api/plexus/projects/:id", async (req: Request, res: Response) => {
     try {
-      const id = parseInt(String(req.params.id));
+      const id = parseId(req.params.id); if (id === null) return res.status(400).json({ error: "Invalid id" });
       const userId = uid(req);
       const existing = await storage.getProjectById(id);
       if (!existing) return res.status(404).json({ error: "Project not found" });
@@ -205,7 +219,7 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.get("/api/plexus/projects/:id/summary", async (req: Request, res: Response) => {
     try {
-      const id = parseInt(String(req.params.id));
+      const id = parseId(req.params.id); if (id === null) return res.status(400).json({ error: "Invalid id" });
       const userId = uid(req);
       if (!await canViewProject(id, userId)) return res.status(403).json({ error: "Not authorized" });
       const tasks = await storage.getTasksByProject(id);
@@ -289,7 +303,7 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.get("/api/plexus/tasks/by-project/:projectId", async (req: Request, res: Response) => {
     try {
-      const projectId = parseInt(String(req.params.projectId));
+      const projectId = parseId(req.params.projectId); if (projectId === null) return res.status(400).json({ error: "Invalid projectId" });
       const userId = uid(req);
       if (!await canViewProject(projectId, userId)) return res.status(403).json({ error: "Not authorized to view this project" });
       const tasks = await storage.getTasksByProject(projectId);
@@ -301,7 +315,7 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.get("/api/plexus/tasks/:id", async (req: Request, res: Response) => {
     try {
-      const id = parseInt(String(req.params.id));
+      const id = parseId(req.params.id); if (id === null) return res.status(400).json({ error: "Invalid id" });
       const userId = uid(req);
       if (!await canViewTask(id, userId)) return res.status(403).json({ error: "Not authorized to view this task" });
       const task = await storage.getTaskById(id);
@@ -335,7 +349,7 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.patch("/api/plexus/tasks/:id", async (req: Request, res: Response) => {
     try {
-      const id = parseInt(String(req.params.id));
+      const id = parseId(req.params.id); if (id === null) return res.status(400).json({ error: "Invalid id" });
       const parsed = updateTaskSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
       const userId = uid(req);
@@ -371,7 +385,7 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.delete("/api/plexus/tasks/:id", async (req: Request, res: Response) => {
     try {
-      const id = parseInt(String(req.params.id));
+      const id = parseId(req.params.id); if (id === null) return res.status(400).json({ error: "Invalid id" });
       const userId = uid(req);
       const task = await storage.getTaskById(id);
       if (!task) return res.status(404).json({ error: "Task not found" });
@@ -387,7 +401,7 @@ export function registerPlexusTasksRoutes(app: Express) {
   // ── Collaborators ─────────────────────────────────────────────────────────
   app.get("/api/plexus/tasks/:id/collaborators", async (req: Request, res: Response) => {
     try {
-      const taskId = parseInt(String(req.params.id));
+      const taskId = parseId(req.params.id); if (taskId === null) return res.status(400).json({ error: "Invalid id" });
       const userId = uid(req);
       if (!await canViewTask(taskId, userId)) return res.status(403).json({ error: "Not authorized" });
       const collabs = await storage.getCollaborators(taskId);
@@ -399,7 +413,7 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.post("/api/plexus/tasks/:id/collaborators", async (req: Request, res: Response) => {
     try {
-      const taskId = parseInt(String(req.params.id));
+      const taskId = parseId(req.params.id); if (taskId === null) return res.status(400).json({ error: "Invalid id" });
       const actingUserId = uid(req);
       const parsed = addCollaboratorSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
@@ -427,7 +441,7 @@ export function registerPlexusTasksRoutes(app: Express) {
   // ── Messages ──────────────────────────────────────────────────────────────
   app.get("/api/plexus/tasks/:id/messages", async (req: Request, res: Response) => {
     try {
-      const taskId = parseInt(String(req.params.id));
+      const taskId = parseId(req.params.id); if (taskId === null) return res.status(400).json({ error: "Invalid id" });
       const userId = uid(req);
       if (!await canViewTask(taskId, userId)) return res.status(403).json({ error: "Not authorized" });
       const messages = await storage.getMessages(taskId);
@@ -439,7 +453,7 @@ export function registerPlexusTasksRoutes(app: Express) {
 
   app.post("/api/plexus/tasks/:id/messages", async (req: Request, res: Response) => {
     try {
-      const taskId = parseInt(String(req.params.id));
+      const taskId = parseId(req.params.id); if (taskId === null) return res.status(400).json({ error: "Invalid id" });
       const userId = uid(req);
       if (!await canViewTask(taskId, userId)) return res.status(403).json({ error: "Not authorized" });
       const parsed = createMessageSchema.safeParse(req.body);
@@ -455,7 +469,7 @@ export function registerPlexusTasksRoutes(app: Express) {
   // ── Events ────────────────────────────────────────────────────────────────
   app.get("/api/plexus/tasks/:id/events", async (req: Request, res: Response) => {
     try {
-      const taskId = parseInt(String(req.params.id));
+      const taskId = parseId(req.params.id); if (taskId === null) return res.status(400).json({ error: "Invalid id" });
       const userId = uid(req);
       if (!await canViewTask(taskId, userId)) return res.status(403).json({ error: "Not authorized" });
       const events = await storage.getEvents(taskId);
@@ -468,7 +482,7 @@ export function registerPlexusTasksRoutes(app: Express) {
   // ── Read tracking ─────────────────────────────────────────────────────────
   app.post("/api/plexus/tasks/:id/read", async (req: Request, res: Response) => {
     try {
-      const taskId = parseInt(String(req.params.id));
+      const taskId = parseId(req.params.id); if (taskId === null) return res.status(400).json({ error: "Invalid id" });
       const userId = uid(req);
       if (!await canViewTask(taskId, userId)) return res.status(403).json({ error: "Not authorized" });
       await storage.markRead(taskId, userId);
