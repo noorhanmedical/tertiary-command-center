@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckSquare,
@@ -725,6 +725,94 @@ function UrgentPanel({
   );
 }
 
+type OverdueResponse = {
+  overdue: PlexusTask[];
+  dueToday: PlexusTask[];
+  overdueCount: number;
+  dueTodayCount: number;
+};
+
+function OverdueAlert() {
+  const { data } = useQuery<OverdueResponse>({
+    queryKey: ["/api/plexus/tasks/overdue"],
+    refetchInterval: 60_000,
+  });
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("plexus-overdue-dismissed") === "1") setDismissed(true);
+    } catch {}
+  }, []);
+
+  function dismiss() {
+    setDismissed(true);
+    try { sessionStorage.setItem("plexus-overdue-dismissed", "1"); } catch {}
+  }
+
+  if (dismissed || !data) return null;
+  const { overdue = [], dueToday = [] } = data;
+  if (overdue.length === 0 && dueToday.length === 0) return null;
+
+  const all = [...overdue, ...dueToday];
+  const visible = all.slice(0, 5);
+  const moreCount = all.length - visible.length;
+
+  return (
+    <div
+      className="mb-5 rounded-2xl border border-red-200 bg-red-50/80 p-4 shadow-sm"
+      data-testid="alert-overdue-tasks"
+    >
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-red-800">
+            {overdue.length > 0 && (
+              <>
+                {overdue.length} overdue task{overdue.length === 1 ? "" : "s"}
+                {dueToday.length > 0 ? ` · ${dueToday.length} due today` : ""}
+              </>
+            )}
+            {overdue.length === 0 && (
+              <>{dueToday.length} task{dueToday.length === 1 ? "" : "s"} due today</>
+            )}
+          </p>
+          <ul className="mt-2 space-y-1">
+            {visible.map((t) => {
+              const isOverdue = (t.dueDate ?? "") < new Date().toISOString().slice(0, 10);
+              return (
+                <li
+                  key={t.id}
+                  className="flex items-center gap-2 text-xs text-slate-700"
+                  data-testid={`overdue-item-${t.id}`}
+                >
+                  <Clock className={`h-3 w-3 ${isOverdue ? "text-red-500" : "text-amber-500"}`} />
+                  <span className="font-medium">{t.title}</span>
+                  <span className={isOverdue ? "text-red-600" : "text-amber-600"}>
+                    · {isOverdue ? "Overdue" : "Due today"} ({t.dueDate})
+                  </span>
+                </li>
+              );
+            })}
+            {moreCount > 0 && (
+              <li className="text-xs text-slate-500 italic">+ {moreCount} more</li>
+            )}
+          </ul>
+        </div>
+        <button
+          onClick={dismiss}
+          className="shrink-0 rounded-lg p-1 text-red-400 hover:bg-red-100 hover:text-red-600 transition"
+          title="Dismiss"
+          data-testid="button-dismiss-overdue"
+          aria-label="Dismiss overdue alert"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function PlexusTasksPage() {
   const [view, setView] = useState<View>("my-work");
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -819,6 +907,8 @@ export default function PlexusTasksPage() {
             New Task
           </Button>
         </div>
+
+        <OverdueAlert />
 
         {view === "my-work" && <MyWorkView />}
         {view === "projects" && <ProjectsView onCreateTask={(pid) => openCreateFor(pid)} />}

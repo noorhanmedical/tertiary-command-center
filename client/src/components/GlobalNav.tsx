@@ -51,11 +51,17 @@ function TodayBadge({ count }: { count: number }) {
   );
 }
 
-function UnreadBadge({ count }: { count: number }) {
-  if (count === 0) return null;
+function UnreadBadge({ count, overdue }: { count: number; overdue: boolean }) {
+  if (count === 0 && !overdue) return null;
+  const color = overdue ? "bg-red-500" : "bg-indigo-500";
+  const label = count > 0 ? count : "!";
   return (
-    <span className="ml-auto shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-indigo-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
-      {count}
+    <span
+      className={`ml-auto shrink-0 min-w-[20px] h-5 px-1.5 rounded-full ${color} text-white text-[10px] font-bold flex items-center justify-center leading-none`}
+      data-testid={overdue ? "badge-plexus-overdue" : "badge-plexus-unread"}
+      title={overdue ? "You have overdue tasks" : undefined}
+    >
+      {label}
     </span>
   );
 }
@@ -106,6 +112,12 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
     refetchInterval: 60_000,
   });
   const unreadCount = unreadData?.count ?? 0;
+
+  const { data: overdueData } = useQuery<{ overdueCount: number; dueTodayCount: number }>({
+    queryKey: ["/api/plexus/tasks/overdue"],
+    refetchInterval: 60_000,
+  });
+  const overdueCount = overdueData?.overdueCount ?? 0;
 
   const todayCount = todaySummary?.patientCount ?? 0;
 
@@ -158,14 +170,14 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
                   <>
                     <span className="text-sm font-medium truncate flex-1">{label}</span>
                     {isSchedule && <TodayBadge count={todayCount} />}
-                    {isPlexusTasks && <UnreadBadge count={unreadCount} />}
+                    {isPlexusTasks && <UnreadBadge count={unreadCount} overdue={overdueCount > 0} />}
                   </>
                 )}
                 {collapsed && isSchedule && todayCount > 0 && (
                   <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-400" />
                 )}
-                {collapsed && isPlexusTasks && unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-400" />
+                {collapsed && isPlexusTasks && (unreadCount > 0 || overdueCount > 0) && (
+                  <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${overdueCount > 0 ? "bg-red-500" : "bg-indigo-400"}`} />
                 )}
               </div>
             </Link>

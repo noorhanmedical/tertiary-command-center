@@ -300,6 +300,20 @@ export function registerPlexusTasksRoutes(app: Express) {
     }
   });
 
+  app.get("/api/plexus/tasks/overdue", async (req: Request, res: Response) => {
+    try {
+      const userId = uid(req);
+      const tasks = await storage.getOverdueTasksForUser(userId);
+      const today = new Date().toISOString().slice(0, 10);
+      const enriched = await enrichWithPatientNames(tasks);
+      const overdue = enriched.filter((t) => (t.dueDate ?? "") < today);
+      const dueToday = enriched.filter((t) => t.dueDate === today);
+      res.json({ overdue, dueToday, overdueCount: overdue.length, dueTodayCount: dueToday.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/plexus/tasks/unread-count", async (req: Request, res: Response) => {
     try {
       const count = await storage.getUnreadCount(uid(req));

@@ -55,7 +55,7 @@ import {
   type User,
   type InsertUser,
 } from "@shared/schema";
-import { eq, desc, ilike, sql, and, gte, lte, asc, ne, inArray } from "drizzle-orm";
+import { eq, desc, ilike, sql, and, gte, lte, asc, ne, inArray, or } from "drizzle-orm";
 
 function parseTimeToMinutes(time: string | null | undefined): number {
   if (!time) return Infinity;
@@ -167,6 +167,7 @@ export interface IStorage {
   getTasksByCreator(userId: string): Promise<PlexusTask[]>;
   getTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]>;
   getUrgentTasks(): Promise<PlexusTask[]>;
+  getOverdueTasksForUser(userId: string): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
 
   // ── Plexus Collaborators ───────────────────────────────────────────────
@@ -702,6 +703,22 @@ export class DatabaseStorage implements IStorage {
         ne(plexusTasks.status, "done")
       ))
       .orderBy(desc(plexusTasks.createdAt));
+  }
+
+  async getOverdueTasksForUser(userId: string): Promise<PlexusTask[]> {
+    const today = new Date().toISOString().slice(0, 10);
+    return db.select().from(plexusTasks)
+      .where(and(
+        or(
+          eq(plexusTasks.assignedToUserId, userId),
+          eq(plexusTasks.createdByUserId, userId),
+        ),
+        ne(plexusTasks.status, "closed"),
+        ne(plexusTasks.status, "done"),
+        sql`${plexusTasks.dueDate} IS NOT NULL`,
+        lte(plexusTasks.dueDate, today),
+      ))
+      .orderBy(asc(plexusTasks.dueDate));
   }
 
   async updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined> {
