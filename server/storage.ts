@@ -175,6 +175,10 @@ export interface IStorage {
   // ── Plexus Reads ───────────────────────────────────────────────────────
   markRead(taskId: number, userId: string): Promise<void>;
   getUnreadCount(userId: string): Promise<number>;
+
+  // ── Plexus Deletes ─────────────────────────────────────────────────────
+  deleteTask(id: number): Promise<void>;
+  deleteProject(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -640,16 +644,23 @@ export class DatabaseStorage implements IStorage {
 
   // ── Plexus Reads ──────────────────────────────────────────────────────────────
   async markRead(taskId: number, userId: string): Promise<void> {
+    const now = new Date();
     const existing = await db.select().from(plexusTaskReads)
       .where(and(eq(plexusTaskReads.taskId, taskId), eq(plexusTaskReads.userId, userId)))
       .limit(1);
     if (existing.length > 0) {
       await db.update(plexusTaskReads)
-        .set({ lastReadAt: new Date() })
+        .set({ lastReadAt: now })
         .where(eq(plexusTaskReads.id, existing[0].id));
     } else {
       await db.insert(plexusTaskReads).values({ taskId, userId });
     }
+    await db.insert(plexusTaskEvents).values({
+      taskId,
+      userId,
+      eventType: "read",
+      payload: { readAt: now.toISOString() },
+    });
   }
 
   async getUnreadCount(userId: string): Promise<number> {
@@ -663,21 +674,32 @@ export class DatabaseStorage implements IStorage {
     const reads = await db.select().from(plexusTaskReads)
       .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, taskIds)));
     const readMap = new Map(reads.map((r) => [r.taskId, r.lastReadAt]));
+    const latestMsgs = await db.select({
+      taskId: plexusTaskMessages.taskId,
+      latestAt: sql<Date>`MAX(${plexusTaskMessages.createdAt})`,
+    })
+      .from(plexusTaskMessages)
+      .where(and(
+        inArray(plexusTaskMessages.taskId, taskIds),
+        sql`${plexusTaskMessages.senderUserId} != ${userId}`
+      ))
+      .groupBy(plexusTaskMessages.taskId);
     let unread = 0;
-    for (const task of tasksInvolving) {
-      const lastRead = readMap.get(task.id);
-      const msgs = await db.select({ createdAt: plexusTaskMessages.createdAt })
-        .from(plexusTaskMessages)
-        .where(and(
-          eq(plexusTaskMessages.taskId, task.id),
-          sql`${plexusTaskMessages.senderUserId} != ${userId}`
-        ))
-        .limit(1);
-      if (msgs.length > 0 && (!lastRead || msgs[0].createdAt > lastRead)) {
+    for (const row of latestMsgs) {
+      const lastRead = readMap.get(row.taskId);
+      if (!lastRead || row.latestAt > lastRead) {
         unread++;
       }
     }
     return unread;
+  }
+
+  async deleteTask(id: number): Promise<void> {
+    await db.delete(plexusTasks).where(eq(plexusTasks.id, id));
+  }
+
+  async deleteProject(id: number): Promise<void> {
+    await db.delete(plexusProjects).where(eq(plexusProjects.id, id));
   }
 }
 

@@ -209,14 +209,14 @@ export function registerPlexusTasksRoutes(app: Express) {
   app.post("/api/plexus/tasks/:id/collaborators", async (req, res) => {
     try {
       const taskId = parseInt(req.params.id);
-      const { userId, role = "collaborator" } = req.body;
-      if (!userId) return res.status(400).json({ error: "userId required" });
-      const collab = await storage.addCollaborator({ taskId, userId, role });
+      const actingUserId = req.session.userId!;
+      const role: string = req.body.role ?? "collaborator";
+      const collab = await storage.addCollaborator({ taskId, userId: actingUserId, role });
       await storage.writeEvent({
         taskId,
-        userId: req.session.userId!,
+        userId: actingUserId,
         eventType: "collaborator_added",
-        payload: { collaboratorUserId: userId, role },
+        payload: { collaboratorUserId: actingUserId, role },
       });
       res.status(201).json(collab);
     } catch (e: any) {
@@ -272,6 +272,45 @@ export function registerPlexusTasksRoutes(app: Express) {
       const userId = req.session.userId!;
       await storage.markRead(taskId, userId);
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Delete task ───────────────────────────────────────────────────────────
+  app.delete("/api/plexus/tasks/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const task = await storage.getTaskById(id);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      await storage.deleteTask(id);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Delete project ────────────────────────────────────────────────────────
+  app.delete("/api/plexus/projects/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteProject(id);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Project task counts ───────────────────────────────────────────────────
+  app.get("/api/plexus/projects/:id/summary", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const tasks = await storage.getTasksByProject(id);
+      const counts = tasks.reduce<Record<string, number>>((acc, t) => {
+        acc[t.status] = (acc[t.status] ?? 0) + 1;
+        return acc;
+      }, {});
+      res.json({ taskCount: tasks.length, counts });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
