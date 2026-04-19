@@ -692,15 +692,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUnreadCount(userId: string): Promise<number> {
-    const tasksInvolving = await db.select({ id: plexusTasks.id }).from(plexusTasks)
+    const directTasks = await db.select({ id: plexusTasks.id }).from(plexusTasks)
       .where(and(
         ne(plexusTasks.status, "closed"),
         sql`(${plexusTasks.assignedToUserId} = ${userId} OR ${plexusTasks.createdByUserId} = ${userId})`
       ));
-    if (tasksInvolving.length === 0) return 0;
-    const taskIds = tasksInvolving.map((t) => t.id);
+    const collabRows = await db.select({ taskId: plexusTaskCollaborators.taskId })
+      .from(plexusTaskCollaborators)
+      .where(eq(plexusTaskCollaborators.userId, userId));
+    const allIds = Array.from(new Set([
+      ...directTasks.map((t) => t.id),
+      ...collabRows.map((c) => c.taskId),
+    ]));
+    if (allIds.length === 0) return 0;
     const reads = await db.select().from(plexusTaskReads)
-      .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, taskIds)));
+      .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, allIds)));
     const readMap = new Map(reads.map((r) => [r.taskId, r.lastReadAt]));
     const latestMsgs = await db.select({
       taskId: plexusTaskMessages.taskId,
@@ -708,7 +714,7 @@ export class DatabaseStorage implements IStorage {
     })
       .from(plexusTaskMessages)
       .where(and(
-        inArray(plexusTaskMessages.taskId, taskIds),
+        inArray(plexusTaskMessages.taskId, allIds),
         sql`${plexusTaskMessages.senderUserId} != ${userId}`
       ))
       .groupBy(plexusTaskMessages.taskId);
@@ -731,13 +737,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUnreadPerTask(userId: string): Promise<{ taskId: number; unreadCount: number }[]> {
-    const tasksInvolving = await db.select({ id: plexusTasks.id }).from(plexusTasks)
+    const directTasks = await db.select({ id: plexusTasks.id }).from(plexusTasks)
       .where(and(
         ne(plexusTasks.status, "closed"),
         sql`(${plexusTasks.assignedToUserId} = ${userId} OR ${plexusTasks.createdByUserId} = ${userId})`
       ));
-    if (tasksInvolving.length === 0) return [];
-    const taskIds = tasksInvolving.map((t) => t.id);
+    const collabRows = await db.select({ taskId: plexusTaskCollaborators.taskId })
+      .from(plexusTaskCollaborators)
+      .where(eq(plexusTaskCollaborators.userId, userId));
+    const taskIds = Array.from(new Set([
+      ...directTasks.map((t) => t.id),
+      ...collabRows.map((c) => c.taskId),
+    ]));
+    if (taskIds.length === 0) return [];
     const reads = await db.select().from(plexusTaskReads)
       .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, taskIds)));
     const readMap = new Map(reads.map((r) => [r.taskId, r.lastReadAt]));
