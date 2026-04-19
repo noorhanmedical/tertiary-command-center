@@ -92,7 +92,7 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-    return res.json({ id: req.session.userId, username: req.session.username, role: req.session.role ?? "user" });
+    return res.json({ id: req.session.userId, username: req.session.username, role: req.session.role ?? "clinician" });
   });
 
   // ─── /api/healthz — pool telemetry (exempt from auth) ─────────────────────
@@ -126,6 +126,14 @@ export async function registerRoutes(
     }
     if (req.session.role !== "admin") {
       return res.status(403).json({ message: "Forbidden — admin access required" });
+    }
+    return next();
+  };
+
+  const requireRole = (...roles: string[]) => (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
+    const role = req.session.role ?? "clinician";
+    if (!roles.includes(role)) {
+      return res.status(403).json({ message: `Forbidden — requires one of: ${roles.join(", ")}` });
     }
     return next();
   };
@@ -201,23 +209,22 @@ export async function registerRoutes(
   });
 
   // ─── User management (admin-only) ─────────────────────────────────────────
+  app.get("/api/users", requireAdmin, async (_req, res) => {
+    const allUsers = await storage.getAllUsers();
+    return res.json(allUsers.map((u) => ({ id: u.id, username: u.username, role: u.role })));
+  });
+
   app.post("/api/users", requireAdmin, async (req, res) => {
     const { username, password, role } = req.body;
     if (!username || !password) {
       return res.status(400).json({ message: "Username and password are required" });
     }
-    const safeRole = role === "admin" ? "admin" : "user";
     const existing = await storage.getUserByUsername(username);
     if (existing) {
       return res.status(409).json({ message: "Username already exists" });
     }
-    const user = await storage.createUser({ username, password, role: safeRole });
+    const user = await storage.createUser({ username, password, role: role || "clinician" });
     return res.status(201).json({ id: user.id, username: user.username, role: user.role });
-  });
-
-  app.get("/api/users", requireAdmin, async (_req, res) => {
-    const allUsers = await storage.getAllUsers();
-    return res.json(allUsers.map((u) => ({ id: u.id, username: u.username, role: u.role })));
   });
 
   app.delete("/api/users/:id", requireAdmin, async (req, res) => {
@@ -229,10 +236,7 @@ export async function registerRoutes(
     return res.json({ ok: true });
   });
 
-  app.patch("/api/users/:id/deactivate", async (req, res) => {
-    if (req.session.username !== "admin") {
-      return res.status(403).json({ message: "Forbidden — only the admin account can deactivate users" });
-    }
+  app.patch("/api/users/:id/deactivate", requireAdmin, async (req, res) => {
     const { id } = req.params;
     if (id === req.session.userId) {
       return res.status(400).json({ message: "You cannot deactivate your own account" });
@@ -243,6 +247,19 @@ export async function registerRoutes(
     }
     await storage.deactivateUser(id);
     return res.json({ ok: true });
+  });
+
+  app.patch("/api/users/:id/role", requireAdmin, async (req, res) => {
+    const { role } = req.body;
+    if (!role) return res.status(400).json({ message: "role is required" });
+    const { USER_ROLES } = await import("@shared/schema");
+    if (!USER_ROLES.includes(role)) {
+      return res.status(400).json({ message: `Invalid role. Must be one of: ${USER_ROLES.join(", ")}` });
+    }
+    const target = await storage.getUser(req.params.id);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    await storage.updateUserRole(req.params.id, role);
+    return res.json({ id: target.id, username: target.username, role });
   });
 
   app.post("/api/auth/change-password", async (req, res) => {
@@ -261,7 +278,7 @@ export async function registerRoutes(
     return res.json({ ok: true });
   });
 
-  // ─── Static files and error handling ──────────────────────────────────────
+  // ─── Static files and error handling ──────────────────────────────────────────────
   if (app.get("env") === "development") {
     await setupVite(httpServer, app);
   } else {

@@ -84,7 +84,6 @@ export interface IStorage {
   getUserCount(): Promise<number>;
   updateUserPassword(id: string, plaintext: string): Promise<void>;
   updateUserRole(id: string, role: string): Promise<void>;
-  deleteUser(id: string): Promise<void>;
   validateUserPassword(username: string, plaintext: string): Promise<User | null>;
   deactivateUser(id: string): Promise<void>;
   deleteUser(id: string): Promise<void>;
@@ -236,10 +235,6 @@ export class DatabaseStorage implements IStorage {
 
   async updateUserRole(id: string, role: string): Promise<void> {
     await db.update(users).set({ role }).where(eq(users.id, id));
-  }
-
-  async deleteUser(id: string): Promise<void> {
-    await db.delete(users).where(eq(users.id, id));
   }
 
   async validateUserPassword(username: string, plaintext: string): Promise<User | null> {

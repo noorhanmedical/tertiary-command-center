@@ -17,16 +17,30 @@ import {
 import { useState, useEffect } from "react";
 import type { AuthUser } from "@/App";
 
-const NAV_ITEMS = [
-  { href: "/schedule",          label: "Schedule",            Icon: CalendarDays,  domain: true },
-  { href: "/outreach",          label: "Outreach Center",     Icon: Phone,         domain: true },
-  { href: "/documents",         label: "Ancillary Docs",      Icon: FileText,      domain: true },
-  { href: "/billing",           label: "Billing",             Icon: CreditCard,    domain: true },
-  { href: "/team-ops",          label: "Team Ops",            Icon: Users2,        domain: true },
-  { href: "/patient-database",  label: "Patient Database",    Icon: Database,      domain: true },
-  { href: "/plexus-tasks",      label: "Plexus Tasks",        Icon: CheckSquare,   domain: true },
-  { href: "/task-brain",        label: "Task Brain",          Icon: Brain,         domain: true },
-] as const;
+type NavItemDef = {
+  href: string;
+  label: string;
+  Icon: React.ComponentType<{ className?: string }>;
+  roles: string[];
+};
+
+const NAV_ITEMS: NavItemDef[] = [
+  { href: "/schedule",         label: "Schedule",         Icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
+  { href: "/outreach",         label: "Outreach Center",  Icon: Phone,        roles: ["admin", "clinician", "scheduler"] },
+  { href: "/documents",        label: "Ancillary Docs",   Icon: FileText,     roles: ["admin", "clinician"] },
+  { href: "/billing",          label: "Billing",          Icon: CreditCard,   roles: ["admin", "biller"] },
+  { href: "/team-ops",         label: "Team Ops",         Icon: Users2,       roles: ["admin"] },
+  { href: "/patient-database", label: "Patient Database", Icon: Database,     roles: ["admin", "clinician", "biller"] },
+  { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
+  { href: "/task-brain",       label: "Task Brain",       Icon: Brain,        roles: ["admin", "clinician"] },
+];
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: "Admin",
+  clinician: "Clinician",
+  scheduler: "Scheduler",
+  biller: "Biller",
+};
 
 function TodayBadge({ count }: { count: number }) {
   if (count === 0) return null;
@@ -70,6 +84,7 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
   const [location] = useLocation();
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024);
   const [manualOverride, setManualOverride] = useState(false);
+  const userRole = user?.role ?? "clinician";
 
   useEffect(() => {
     function handleResize() {
@@ -99,7 +114,8 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
     return location === href || location.startsWith(href + "/");
   };
 
-  const isAdmin = user?.role === "admin";
+  const visibleNavItems = NAV_ITEMS.filter((item) => item.roles.includes(userRole));
+  const canSeeAdmin = userRole === "admin";
 
   return (
     <nav
@@ -122,7 +138,7 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
       </div>
 
       <div className="flex-1 overflow-y-auto py-2 space-y-0.5 px-2">
-        {NAV_ITEMS.map(({ href, label, Icon }) => {
+        {visibleNavItems.map(({ href, label, Icon }) => {
           const active = isActive(href);
           const isSchedule = href === "/schedule";
           const isPlexusTasks = href === "/plexus-tasks";
@@ -158,7 +174,7 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
       </div>
 
       <div className="border-t border-white/10 px-2 py-2 space-y-0.5">
-        {isAdmin && (
+        {canSeeAdmin && (
           <Link href="/admin">
             <div
               className={`flex items-center gap-3 px-2 py-2 rounded-xl cursor-pointer transition-colors group ${
@@ -178,15 +194,14 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
         {user && (
           <div
             className={`flex items-center gap-2 px-2 py-2 rounded-xl ${collapsed ? "justify-center" : ""}`}
+            title={collapsed ? `${user.username} (${ROLE_LABELS[userRole] ?? userRole}) — click to sign out` : undefined}
           >
             <UserAvatar username={user.username} collapsed={collapsed} />
             {!collapsed && (
               <>
                 <div className="flex flex-col min-w-0 flex-1">
                   <span className="text-xs text-white/70 font-medium truncate" data-testid="text-username">{user.username}</span>
-                  {isAdmin && (
-                    <span className="text-[10px] text-indigo-400/80 font-medium leading-none mt-0.5">Admin</span>
-                  )}
+                  <span className="text-[10px] text-white/40 truncate" data-testid="text-user-role">{ROLE_LABELS[userRole] ?? userRole}</span>
                 </div>
               </>
             )}

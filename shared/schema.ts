@@ -10,19 +10,23 @@ export const appSettings = pgTable("app_settings", {
   value: text("value").notNull(),
 });
 
+export const USER_ROLES = ["admin", "clinician", "scheduler", "biller"] as const;
+export type UserRole = typeof USER_ROLES[number];
+
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
-  role: text("role").notNull().default("user"),
+  role: text("role").notNull().default("clinician"),
   active: boolean("active").notNull().default(true),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
-  role: true,
-}).partial({ role: true });
+}).extend({
+  role: z.enum(USER_ROLES).optional(),
+});
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
