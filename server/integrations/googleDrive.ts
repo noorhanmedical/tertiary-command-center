@@ -73,9 +73,9 @@ export async function initializeDriveFolderTree(): Promise<void> {
     const rootKey = "DRIVE_FOLDER_plexus_ancillary_platform";
     let rootId = await getSetting(rootKey);
     if (!rootId) {
-      rootId = await getOrCreateFolder(drive, "Plexus Ancillary Platform");
+      rootId = await getOrCreatePreferredRootFolder(drive);
       await setSetting(rootKey, rootId);
-      console.log("[Drive] Created root folder: Plexus Ancillary Platform");
+      console.log(`[Drive] Root folder resolved: ${rootId}`);
     }
 
     for (const facility of VALID_FACILITIES) {
@@ -255,7 +255,7 @@ export async function ensurePlexusFolderTree(
   const rootKey = "DRIVE_FOLDER_plexus_ancillary_platform";
   let rootId = await getSetting(rootKey);
   if (!rootId) {
-    rootId = await getOrCreateFolder(drive, "Plexus Ancillary Platform");
+    rootId = await getOrCreatePreferredRootFolder(drive);
     await setSetting(rootKey, rootId);
   }
 
@@ -354,7 +354,7 @@ export async function getFacilityFolderId(facility: string): Promise<string> {
   const rootKey = "DRIVE_FOLDER_plexus_ancillary_platform";
   let rootId = await getSetting(rootKey);
   if (!rootId) {
-    rootId = await getOrCreateFolder(drive, "Plexus Ancillary Platform");
+    rootId = await getOrCreatePreferredRootFolder(drive);
     await setSetting(rootKey, rootId);
   }
 
