@@ -39,11 +39,14 @@ type DashboardCounts = {
 };
 
 function bestScreening(screenings: PatientScreening[]): PatientScreening {
-  return [...screenings].sort((a, b) => {
-    const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-    return bt - at;
-  })[0];
+  let best = screenings[0];
+  let bestT = best.createdAt ? new Date(best.createdAt).getTime() : 0;
+  for (let i = 1; i < screenings.length; i++) {
+    const s = screenings[i];
+    const t = s.createdAt ? new Date(s.createdAt).getTime() : 0;
+    if (t > bestT) { best = s; bestT = t; }
+  }
+  return best;
 }
 
 function clinicOf(s: PatientScreening, batchById: Map<number, ScreeningBatch>): string {
@@ -61,6 +64,94 @@ function summarizeCooldowns(entries: TestCooldownEntry[]): {
   return { active: active.length, nextClears: next.clearsAt, daysUntilNextClear: next.daysUntilClear };
 }
 
+// ── Shared dataset cache ────────────────────────────────────────────────────
+// Both endpoints need the same heavy underlying data (batches, screenings,
+// test history, generated-note counts). We compute it once per TTL window and
+// share it across endpoints and concurrent requests.
+type AggregatedDataset = {
+  batchById: Map<number, ScreeningBatch>;
+  screeningsByKey: Map<string, PatientScreening[]>;
+  historyByKey: Map<string, PatientTestHistory[]>;
+  noteCountByPatientId: Map<number, number>;
+};
+
+const DATASET_TTL_MS = 30_000;
+let datasetCache: { value: AggregatedDataset; expires: number } | null = null;
+let datasetInflight: Promise<AggregatedDataset> | null = null;
+
+async function loadAggregatedDataset(): Promise<AggregatedDataset> {
+  const now = Date.now();
+  if (datasetCache && datasetCache.expires > now) return datasetCache.value;
+  if (datasetInflight) return datasetInflight;
+
+  datasetInflight = (async () => {
+    const [batches, allScreenings, allTestHistory, noteCountByPatientId] = await Promise.all([
+      storage.getAllScreeningBatches(),
+      storage.getAllPatientScreenings(),
+      storage.getAllTestHistory(),
+      storage.getGeneratedNoteCountsByPatientId(),
+    ]);
+
+    const batchById = new Map(batches.map((b) => [b.id, b] as const));
+
+    const screeningsByKey = new Map<string, PatientScreening[]>();
+    for (const s of allScreenings) {
+      const k = patientKey(s.name, s.dob);
+      const arr = screeningsByKey.get(k);
+      if (arr) arr.push(s);
+      else screeningsByKey.set(k, [s]);
+    }
+
+    const historyByKey = groupHistoryByPatient(allTestHistory);
+
+    const ds: AggregatedDataset = { batchById, screeningsByKey, historyByKey, noteCountByPatientId };
+    datasetCache = { value: ds, expires: Date.now() + DATASET_TTL_MS };
+    return ds;
+  })();
+
+  try {
+    return await datasetInflight;
+  } finally {
+    datasetInflight = null;
+  }
+}
+
+export function invalidatePatientDatabaseCache(): void {
+  datasetCache = null;
+}
+
+// ── Per-response caches keyed by query params ──────────────────────────────
+const RESPONSE_TTL_MS = 30_000;
+const rosterResponseCache = new Map<string, { value: any; expires: number }>();
+const cooldownSummaryCache = new Map<string, { value: any; expires: number }>();
+
+function cacheGet(map: Map<string, { value: any; expires: number }>, key: string) {
+  const hit = map.get(key);
+  if (!hit) return null;
+  if (hit.expires <= Date.now()) { map.delete(key); return null; }
+  return hit.value;
+}
+
+function cacheSet(map: Map<string, { value: any; expires: number }>, key: string, value: any) {
+  map.set(key, { value, expires: Date.now() + RESPONSE_TTL_MS });
+  // Bound the cache; the query param space is small.
+  if (map.size > 64) {
+    const firstKey = map.keys().next().value;
+    if (firstKey !== undefined) map.delete(firstKey);
+  }
+}
+
+function clearResponseCaches(): void {
+  rosterResponseCache.clear();
+  cooldownSummaryCache.clear();
+}
+
+// External callers (e.g. mutation endpoints) can fully invalidate.
+export function invalidatePatientDatabase(): void {
+  invalidatePatientDatabaseCache();
+  clearResponseCaches();
+}
+
 export function registerPatientDatabaseRoutes(app: Express) {
   app.get("/api/patients/database", async (req, res) => {
     try {
@@ -68,39 +159,11 @@ export function registerPatientDatabaseRoutes(app: Express) {
       const clinicFilter = String(req.query.clinic || "").trim();
       const cooldownWindow = String(req.query.cooldownWindow || "").trim(); // "1d" | "1w" | "1m"
 
-      const [batches, allTestHistory, allNotes] = await Promise.all([
-        storage.getAllScreeningBatches(),
-        storage.getAllTestHistory(),
-        storage.getAllGeneratedNotes(),
-      ]);
-      const batchById = new Map(batches.map((b) => [b.id, b] as const));
+      const cacheKey = JSON.stringify({ search, clinicFilter, cooldownWindow });
+      const cached = cacheGet(rosterResponseCache, cacheKey);
+      if (cached) return res.json(cached);
 
-      // Collect all patient screenings by walking each batch (parallel-batched).
-      const allScreenings: PatientScreening[] = [];
-      await Promise.all(
-        batches.map(async (b) => {
-          const ps = await storage.getPatientScreeningsByBatch(b.id);
-          for (const p of ps) allScreenings.push(p);
-        }),
-      );
-
-      // Index test history & generated notes by patient key.
-      const historyByKey = groupHistoryByPatient(allTestHistory);
-      const notesByPatientId = new Map<number, GeneratedNote[]>();
-      for (const n of allNotes) {
-        const arr = notesByPatientId.get(n.patientId);
-        if (arr) arr.push(n);
-        else notesByPatientId.set(n.patientId, [n]);
-      }
-
-      // Group screenings by canonical key.
-      const screeningsByKey = new Map<string, PatientScreening[]>();
-      for (const s of allScreenings) {
-        const k = patientKey(s.name, s.dob);
-        const arr = screeningsByKey.get(k);
-        if (arr) arr.push(s);
-        else screeningsByKey.set(k, [s]);
-      }
+      const { batchById, screeningsByKey, historyByKey, noteCountByPatientId } = await loadAggregatedDataset();
 
       const now = new Date();
       const ONE_DAY = 1, ONE_WEEK = 7, ONE_MONTH = 30;
@@ -130,7 +193,8 @@ export function registerPatientDatabaseRoutes(app: Express) {
           if (!inWindow) continue;
         }
 
-        const noteCount = screenings.reduce((acc, s) => acc + (notesByPatientId.get(s.id)?.length ?? 0), 0);
+        let noteCount = 0;
+        for (const s of screenings) noteCount += noteCountByPatientId.get(s.id) ?? 0;
 
         // Compute last visit from screenings (use batch.scheduleDate if present, else createdAt date).
         let lastVisit: string | null = null;
@@ -176,7 +240,9 @@ export function registerPatientDatabaseRoutes(app: Express) {
         });
 
       const totalPatients = groups.reduce((s, g) => s + g.patients.length, 0);
-      res.json({ groups, totals: { patients: totalPatients, clinics: groups.length } });
+      const payload = { groups, totals: { patients: totalPatients, clinics: groups.length } };
+      cacheSet(rosterResponseCache, cacheKey, payload);
+      res.json(payload);
     } catch (error: any) {
       console.error("[patient-database/list] error:", error);
       res.status(500).json({ error: error.message });
@@ -185,27 +251,11 @@ export function registerPatientDatabaseRoutes(app: Express) {
 
   app.get("/api/patients/database/cooldown-summary", async (_req, res) => {
     try {
-      const [batches, allTestHistory] = await Promise.all([
-        storage.getAllScreeningBatches(),
-        storage.getAllTestHistory(),
-      ]);
-      const batchById = new Map(batches.map((b) => [b.id, b] as const));
-      const allScreenings: PatientScreening[] = [];
-      await Promise.all(
-        batches.map(async (b) => {
-          const ps = await storage.getPatientScreeningsByBatch(b.id);
-          for (const p of ps) allScreenings.push(p);
-        }),
-      );
+      const cacheKey = "default";
+      const cached = cacheGet(cooldownSummaryCache, cacheKey);
+      if (cached) return res.json(cached);
 
-      const historyByKey = groupHistoryByPatient(allTestHistory);
-      const screeningsByKey = new Map<string, PatientScreening[]>();
-      for (const s of allScreenings) {
-        const k = patientKey(s.name, s.dob);
-        const arr = screeningsByKey.get(k);
-        if (arr) arr.push(s);
-        else screeningsByKey.set(k, [s]);
-      }
+      const { batchById, screeningsByKey, historyByKey } = await loadAggregatedDataset();
 
       const now = new Date();
       const counts: DashboardCounts = {
@@ -216,10 +266,12 @@ export function registerPatientDatabaseRoutes(app: Express) {
         byClinic: [],
       };
       const clinicCounts = new Map<string, { oneDay: number; oneWeek: number; oneMonth: number }>();
+      const clinicSet = new Set<string>();
 
       for (const [key, screenings] of Array.from(screeningsByKey.entries())) {
         const primary = bestScreening(screenings);
         const clinic = clinicOf(primary, batchById);
+        clinicSet.add(clinic);
         const history = historyByKey.get(key) ?? [];
         if (history.length === 0) continue;
         const cooldowns = computeCooldowns(history, now);
@@ -234,11 +286,12 @@ export function registerPatientDatabaseRoutes(app: Express) {
       }
 
       counts.totals.patients = screeningsByKey.size;
-      counts.totals.clinics = new Set(Array.from(screeningsByKey.values()).map((ss) => clinicOf(bestScreening(ss), batchById))).size;
+      counts.totals.clinics = clinicSet.size;
       counts.byClinic = Array.from(clinicCounts.entries())
         .map(([clinic, c]) => ({ clinic, ...c }))
         .sort((a, b) => a.clinic.localeCompare(b.clinic));
 
+      cacheSet(cooldownSummaryCache, cacheKey, counts);
       res.json(counts);
     } catch (error: any) {
       console.error("[patient-database/cooldown-summary] error:", error);
@@ -250,33 +303,23 @@ export function registerPatientDatabaseRoutes(app: Express) {
     try {
       const key = decodePatientKey(req.params.encodedKey);
       const [_, dobPart] = key.split("__");
-      const _normName = key.split("__")[0];
 
-      const [batches, allTestHistory, allNotes] = await Promise.all([
-        storage.getAllScreeningBatches(),
-        storage.getAllTestHistory(),
-        storage.getAllGeneratedNotes(),
-      ]);
-      const batchById = new Map(batches.map((b) => [b.id, b] as const));
+      const { batchById, screeningsByKey, historyByKey } = await loadAggregatedDataset();
 
-      const allScreenings: PatientScreening[] = [];
-      await Promise.all(
-        batches.map(async (b) => {
-          const ps = await storage.getPatientScreeningsByBatch(b.id);
-          for (const p of ps) allScreenings.push(p);
-        }),
-      );
-
-      const screenings = allScreenings.filter((s) => patientKey(s.name, s.dob) === key);
+      const screenings = screeningsByKey.get(key) ?? [];
       if (screenings.length === 0) {
         return res.status(404).json({ error: "Patient not found" });
       }
       const primary = bestScreening(screenings);
       const clinic = clinicOf(primary, batchById);
 
-      const history = allTestHistory.filter((h) => patientKey(h.patientName, h.dob) === key)
+      const history = (historyByKey.get(key) ?? [])
+        .slice()
         .sort((a, b) => b.dateOfService.localeCompare(a.dateOfService));
       const cooldowns = computeCooldowns(history, new Date());
+
+      const screeningIds = new Set(screenings.map((s) => s.id));
+      const allNotes = await storage.getAllGeneratedNotes();
 
       const screeningsOut = screenings
         .map((s) => {
@@ -301,7 +344,7 @@ export function registerPatientDatabaseRoutes(app: Express) {
         });
 
       const notes = allNotes
-        .filter((n) => screenings.some((s) => s.id === n.patientId))
+        .filter((n) => screeningIds.has(n.patientId))
         .sort((a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime())
         .map((n) => ({
           id: n.id,
@@ -351,3 +394,6 @@ export function registerPatientDatabaseRoutes(app: Express) {
     }
   });
 }
+
+// Re-export helpers for tests/imports.
+export { normalizePatientName, normalizeDob };

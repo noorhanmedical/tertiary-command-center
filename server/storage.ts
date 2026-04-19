@@ -95,6 +95,7 @@ export interface IStorage {
   deleteScreeningBatch(id: number): Promise<void>;
 
   createPatientScreening(screening: InsertPatientScreening): Promise<PatientScreening>;
+  getAllPatientScreenings(): Promise<PatientScreening[]>;
   getPatientScreeningsByBatch(batchId: number): Promise<PatientScreening[]>;
   getPatientScreening(id: number): Promise<PatientScreening | undefined>;
   updatePatientScreening(id: number, updates: Partial<InsertPatientScreening>): Promise<PatientScreening | undefined>;
@@ -119,6 +120,7 @@ export interface IStorage {
   deleteGeneratedNotesByPatientAndService(patientId: number, service: string): Promise<void>;
   getGeneratedNotesByBatch(batchId: number): Promise<GeneratedNote[]>;
   getAllGeneratedNotes(): Promise<GeneratedNote[]>;
+  getGeneratedNoteCountsByPatientId(): Promise<Map<number, number>>;
   deleteGeneratedNotesByPatient(patientId: number): Promise<void>;
   getGeneratedNotesByPatient(patientId: number): Promise<GeneratedNote[]>;
   getGeneratedNote(id: number): Promise<GeneratedNote | undefined>;
@@ -301,6 +303,10 @@ export class DatabaseStorage implements IStorage {
     return rows.sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
   }
 
+  async getAllPatientScreenings(): Promise<PatientScreening[]> {
+    return db.select().from(patientScreenings);
+  }
+
   async getPatientScreening(id: number): Promise<PatientScreening | undefined> {
     const [result] = await db.select().from(patientScreenings).where(eq(patientScreenings.id, id));
     return result;
@@ -404,6 +410,16 @@ export class DatabaseStorage implements IStorage {
   async getAllGeneratedNotes(): Promise<GeneratedNote[]> {
     return db.select().from(generatedNotes)
       .orderBy(desc(generatedNotes.generatedAt));
+  }
+
+  async getGeneratedNoteCountsByPatientId(): Promise<Map<number, number>> {
+    const rows = await db
+      .select({ patientId: generatedNotes.patientId, count: sql<number>`count(*)::int` })
+      .from(generatedNotes)
+      .groupBy(generatedNotes.patientId);
+    const out = new Map<number, number>();
+    for (const r of rows) out.set(r.patientId, Number(r.count));
+    return out;
   }
 
   async deleteGeneratedNotesByPatient(patientId: number): Promise<void> {
