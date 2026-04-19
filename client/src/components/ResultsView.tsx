@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import {
   generateClinicianPDF,
@@ -12,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
-  Building2, Check, ChevronDown, ChevronRight, Download, Loader2, Printer, Scan, Share2, Users2, X,
+  Building2, Check, CheckSquare, ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Printer, Scan, Share2, Users2, X,
 } from "lucide-react";
 import type { PatientScreening, ScreeningBatch } from "@shared/schema";
 import { StepTimeline } from "@/components/StepTimeline";
@@ -21,6 +22,92 @@ import { QualificationReasoningDialog } from "@/features/schedule/QualificationR
 import { categoryIcons, categoryLabels, categoryStyles, getAncillaryCategory, getBadgeColor, isImagingTest, type AncillaryCategory } from "@/features/schedule/ancillaryMeta";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
+
+type PatientTaskSummary = {
+  id: number;
+  title: string;
+  status: string;
+  urgency: string;
+  priority: string;
+};
+
+const TASK_STATUS_STYLES: Record<string, string> = {
+  open: "bg-slate-100 text-slate-700",
+  in_progress: "bg-blue-100 text-blue-700",
+  done: "bg-emerald-100 text-emerald-700",
+  closed: "bg-slate-100 text-slate-400",
+};
+
+function PatientTasksSection({ patientId }: { patientId: number }) {
+  const [open, setOpen] = useState(false);
+  const { data: tasks, isLoading } = useQuery<PatientTaskSummary[]>({
+    queryKey: ["/api/plexus/tasks/by-patient", patientId],
+  });
+
+  const count = tasks?.length ?? 0;
+
+  return (
+    <div className="mt-4 rounded-xl border border-slate-200/70 bg-white/70" data-testid={`section-tasks-${patientId}`}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50/80 rounded-xl transition-colors"
+        data-testid={`button-toggle-tasks-${patientId}`}
+      >
+        <div className="flex items-center gap-2">
+          <CheckSquare className="w-4 h-4 text-indigo-600" />
+          <span className="font-semibold text-sm text-slate-900">Tasks</span>
+          <span
+            className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold"
+            data-testid={`text-task-count-${patientId}`}
+          >
+            {isLoading ? "…" : count}
+          </span>
+        </div>
+        {open
+          ? <ChevronDown className="w-4 h-4 text-slate-400" />
+          : <ChevronRight className="w-4 h-4 text-slate-400" />}
+      </button>
+
+      {open && (
+        <div className="px-4 pb-3 pt-1" onClick={(e) => e.stopPropagation()} data-testid={`panel-tasks-${patientId}`}>
+          {isLoading ? (
+            <p className="text-xs text-slate-500 italic py-2">Loading tasks…</p>
+          ) : count === 0 ? (
+            <p className="text-xs text-slate-500 italic py-2" data-testid={`text-no-tasks-${patientId}`}>
+              No tasks linked to this patient yet.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {tasks!.map((t) => (
+                <li
+                  key={t.id}
+                  className="flex items-center gap-2 text-xs text-slate-800"
+                  data-testid={`row-task-${t.id}`}
+                >
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium capitalize ${TASK_STATUS_STYLES[t.status] ?? TASK_STATUS_STYLES.open}`}
+                  >
+                    {t.status.replace("_", " ")}
+                  </span>
+                  <span className="truncate flex-1" title={t.title}>{t.title}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Link
+            href="/plexus-tasks"
+            className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700"
+            onClick={(e) => e.stopPropagation()}
+            data-testid={`link-task-brain-${patientId}`}
+          >
+            Open in Task Brain <ExternalLink className="w-3 h-3" />
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const APPOINTMENT_STATUSES = ["Completed", "No Show", "Rescheduled", "Scheduled Different Day", "Cancelled", "Pending"] as const;
 
@@ -317,11 +404,9 @@ export function ResultsView({
                               <option key={s} value={s.toLowerCase()}>{s}</option>
                             ))}
                           </select>
-                          {allTests.length > 0 && (
-                            isExpanded
-                              ? <ChevronDown className="w-4 h-4 text-slate-400 transition-transform" />
-                              : <ChevronRight className="w-4 h-4 text-slate-400 transition-transform" />
-                          )}
+                          {isExpanded
+                            ? <ChevronDown className="w-4 h-4 text-slate-400 transition-transform" />
+                            : <ChevronRight className="w-4 h-4 text-slate-400 transition-transform" />}
                         </div>
                         <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-[340px]">
                           {qualTests.map((test) => (
@@ -343,7 +428,7 @@ export function ResultsView({
                     </div>
                   </div>
 
-                  {isExpanded && allTests.length > 0 && (
+                  {isExpanded && (
                     <div className="border-t border-slate-100 bg-slate-50/60 p-5" data-testid={`row-expanded-${patient.id}`}>
                       <div className="flex items-center justify-between mb-4">
                         <h3 className="font-semibold text-base text-slate-900">{patient.name} — Ancillary Details</h3>
@@ -352,6 +437,7 @@ export function ResultsView({
                         </Button>
                       </div>
 
+                      {allTests.length > 0 && (
                       <div className="flex flex-wrap gap-2">
                         {(() => {
                           const grouped: Record<string, string[]> = {};
@@ -385,6 +471,9 @@ export function ResultsView({
                           });
                         })()}
                       </div>
+                      )}
+
+                      <PatientTasksSection patientId={patient.id} />
                     </div>
                   )}
                 </Card>

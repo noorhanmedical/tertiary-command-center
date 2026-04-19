@@ -166,6 +166,7 @@ export interface IStorage {
   getTasksByAssignee(userId: string): Promise<PlexusTask[]>;
   getTasksByCreator(userId: string): Promise<PlexusTask[]>;
   getTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]>;
+  getTasksByPatient(patientScreeningId: number): Promise<PlexusTask[]>;
   getUrgentTasks(): Promise<PlexusTask[]>;
   getOverdueTasksForUser(userId: string): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
@@ -672,6 +673,12 @@ export class DatabaseStorage implements IStorage {
   async getTasksByCreator(userId: string): Promise<PlexusTask[]> {
     return db.select().from(plexusTasks)
       .where(eq(plexusTasks.createdByUserId, userId))
+      .orderBy(desc(plexusTasks.createdAt));
+  }
+
+  async getTasksByPatient(patientScreeningId: number): Promise<PlexusTask[]> {
+    return db.select().from(plexusTasks)
+      .where(eq(plexusTasks.patientScreeningId, patientScreeningId))
       .orderBy(desc(plexusTasks.createdAt));
   }
 

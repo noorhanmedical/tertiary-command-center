@@ -332,6 +332,41 @@ export function registerPlexusTasksRoutes(app: Express) {
     }
   });
 
+  app.get("/api/plexus/tasks/by-patient/:patientId", async (req: Request, res: Response) => {
+    try {
+      const patientId = parseId(req.params.patientId);
+      if (patientId === null) return res.status(400).json({ error: "Invalid patientId" });
+      const userId = uid(req);
+      const tasks = await storage.getTasksByPatient(patientId);
+      // Filter to tasks the requester is permitted to view: creator, assignee,
+      // collaborator, or a member of the task's project. Mirrors the policy
+      // used by canViewTask / canViewProject elsewhere in this router.
+      const visible = (
+        await Promise.all(
+          tasks.map(async (t) => {
+            if (t.createdByUserId === userId || t.assignedToUserId === userId) return t;
+            const collabs = await storage.getCollaborators(t.id);
+            if (collabs.some((c) => c.userId === userId)) return t;
+            if (t.projectId != null && (await canViewProject(t.projectId, userId))) return t;
+            return null;
+          })
+        )
+      ).filter((t): t is typeof tasks[number] => t !== null);
+      // Minimal response shape — only the fields the patient card needs.
+      res.json(
+        visible.map((t) => ({
+          id: t.id,
+          title: t.title,
+          status: t.status,
+          urgency: t.urgency,
+          priority: t.priority,
+        }))
+      );
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/plexus/tasks/by-project/:projectId", async (req: Request, res: Response) => {
     try {
       const projectId = parseId(req.params.projectId); if (projectId === null) return res.status(400).json({ error: "Invalid projectId" });
