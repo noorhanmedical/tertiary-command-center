@@ -56,7 +56,7 @@ function statusIcon(status: string) {
   return STATUS_ICONS[status] ?? STATUS_ICONS["open"];
 }
 
-type MessageCount = { taskId: number; count: number };
+type UnreadEntry = { taskId: number; unreadCount: number };
 
 function TaskRow({
   task,
@@ -182,25 +182,11 @@ function TaskRow({
   );
 }
 
-function useMessageCounts(taskIds: number[]) {
-  return useQuery<MessageCount[]>({
-    queryKey: ["/api/plexus/tasks/message-counts", taskIds.join(",")],
-    queryFn: async () => {
-      if (taskIds.length === 0) return [];
-      const counts: MessageCount[] = [];
-      for (const id of taskIds) {
-        try {
-          const res = await fetch(`/api/plexus/tasks/${id}/messages`, { credentials: "include" });
-          const msgs = await res.json();
-          counts.push({ taskId: id, count: Array.isArray(msgs) ? msgs.length : 0 });
-        } catch {
-          counts.push({ taskId: id, count: 0 });
-        }
-      }
-      return counts;
-    },
-    enabled: taskIds.length > 0,
-    staleTime: 30_000,
+function useUnreadPerTask() {
+  return useQuery<UnreadEntry[]>({
+    queryKey: ["/api/plexus/tasks/unread-per-task"],
+    staleTime: 15_000,
+    refetchInterval: 30_000,
   });
 }
 
@@ -213,8 +199,8 @@ function MyWorkView() {
   const { data: projects = [] } = useQuery<PlexusProject[]>({
     queryKey: ["/api/plexus/projects"],
   });
-  const { data: msgCounts = [] } = useMessageCounts(tasks.map((t) => t.id));
-  const msgMap = new Map(msgCounts.map((m) => [m.taskId, m.count]));
+  const { data: unreadEntries = [] } = useUnreadPerTask();
+  const msgMap = new Map(unreadEntries.map((m) => [m.taskId, m.unreadCount]));
 
   const projectMap = new Map(projects.map((p) => [p.id, p]));
 
@@ -281,6 +267,8 @@ function MyWorkView() {
   );
 }
 
+type ProjectSummary = { taskCount: number; counts: Record<string, number> };
+
 function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => void }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -300,8 +288,27 @@ function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => v
     enabled: !!expandedProject,
   });
 
-  const { data: msgCounts = [] } = useMessageCounts(projectTasks.map((t) => t.id));
-  const msgMap = new Map(msgCounts.map((m) => [m.taskId, m.count]));
+  const { data: summaries = {} } = useQuery<Record<number, ProjectSummary>>({
+    queryKey: ["/api/plexus/projects/summaries", projects.map((p) => p.id).join(",")],
+    queryFn: async () => {
+      if (projects.length === 0) return {};
+      const results: Record<number, ProjectSummary> = {};
+      await Promise.all(
+        projects.map(async (p) => {
+          try {
+            const res = await fetch(`/api/plexus/projects/${p.id}/summary`, { credentials: "include" });
+            results[p.id] = await res.json();
+          } catch {}
+        })
+      );
+      return results;
+    },
+    enabled: projects.length > 0,
+    staleTime: 30_000,
+  });
+
+  const { data: unreadEntries = [] } = useUnreadPerTask();
+  const msgMap = new Map(unreadEntries.map((m) => [m.taskId, m.unreadCount]));
 
   const updateMutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) =>
@@ -328,12 +335,13 @@ function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => v
     <div className="space-y-3">
       {projects.map((project) => {
         const isOpen = expandedProject === project.id;
-        const statusCounts = projectTasks.reduce<Record<string, number>>((acc, t) => {
-          if (expandedProject === project.id) {
-            acc[t.status] = (acc[t.status] ?? 0) + 1;
-          }
-          return acc;
-        }, {});
+        const summary = summaries[project.id];
+        const statusCounts = isOpen
+          ? projectTasks.reduce<Record<string, number>>((acc, t) => {
+              if (expandedProject === project.id) { acc[t.status] = (acc[t.status] ?? 0) + 1; }
+              return acc;
+            }, {})
+          : (summary?.counts ?? {});
         return (
           <Card key={project.id} className="rounded-2xl border border-white/60 bg-white/80 shadow-sm">
             <div
@@ -353,11 +361,16 @@ function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => v
                       {project.facility}
                     </Badge>
                   )}
+                  {summary !== undefined && (
+                    <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                      {summary.taskCount} task{summary.taskCount !== 1 ? "s" : ""}
+                    </span>
+                  )}
                   {project.status === "archived" && (
                     <Badge variant="secondary" className="rounded-full text-[10px]">archived</Badge>
                   )}
                 </div>
-                {isOpen && Object.keys(statusCounts).length > 0 && (
+                {Object.keys(statusCounts).length > 0 && (
                   <div className="mt-1.5 flex flex-wrap gap-2">
                     {Object.entries(statusCounts).map(([status, count]) => (
                       <span key={status} className="text-[10px] text-slate-500">
@@ -419,8 +432,8 @@ function SentView() {
   const { data: tasks = [], isLoading } = useQuery<PlexusTask[]>({
     queryKey: ["/api/plexus/tasks/sent"],
   });
-  const { data: msgCounts = [] } = useMessageCounts(tasks.map((t) => t.id));
-  const msgMap = new Map(msgCounts.map((m) => [m.taskId, m.count]));
+  const { data: unreadEntries = [] } = useUnreadPerTask();
+  const msgMap = new Map(unreadEntries.map((m) => [m.taskId, m.unreadCount]));
 
   const updateMutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) =>
@@ -522,9 +535,23 @@ function UrgentPanel({
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold text-slate-800 leading-tight">{t.title}</p>
-                      <span className={`mt-1 inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${urgencyClass}`}>
-                        {t.urgency}
-                      </span>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${urgencyClass}`}>
+                          {t.urgency}
+                        </span>
+                        {t.assignedToUserId && (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-500">
+                            <User className="h-2.5 w-2.5" />
+                            {t.assignedToUserId.slice(0, 8)}
+                          </span>
+                        )}
+                        {t.dueDate && (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-500">
+                            <Clock className="h-2.5 w-2.5" />
+                            {t.dueDate}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <button

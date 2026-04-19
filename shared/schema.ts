@@ -376,13 +376,15 @@ export type InsertPlexusTaskMessage = z.infer<typeof insertPlexusTaskMessageSche
 
 export const plexusTaskEvents = pgTable("plexus_task_events", {
   id: serial("id").primaryKey(),
-  taskId: integer("task_id").notNull().references(() => plexusTasks.id, { onDelete: "cascade" }),
+  taskId: integer("task_id").references(() => plexusTasks.id, { onDelete: "cascade" }),
+  projectId: integer("project_id").references(() => plexusProjects.id, { onDelete: "cascade" }),
   userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
   eventType: text("event_type").notNull(),
   payload: jsonb("payload"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_plexus_task_events_task_id").on(table.taskId),
+  index("idx_plexus_task_events_project_id").on(table.projectId),
 ]);
 
 export const insertPlexusTaskEventSchema = createInsertSchema(plexusTaskEvents).omit({ id: true, createdAt: true });

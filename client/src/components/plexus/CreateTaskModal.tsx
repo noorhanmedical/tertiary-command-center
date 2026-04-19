@@ -18,11 +18,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Search, X } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 type PlexusProject = { id: number; title: string };
 type PlexusUser = { id: string; username: string };
+type PatientResult = { id: number; name: string; dob?: string | null; insurance?: string | null };
 
 interface CreateTaskModalProps {
   open: boolean;
@@ -43,6 +45,9 @@ export function CreateTaskModal({ open, onClose, defaultProjectId }: CreateTaskM
   const [dueDate, setDueDate] = useState("");
   const [newProjectTitle, setNewProjectTitle] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
+  const [patientSearch, setPatientSearch] = useState("");
+  const [selectedPatient, setSelectedPatient] = useState<PatientResult | null>(null);
+  const [showPatientResults, setShowPatientResults] = useState(false);
 
   const { data: projects = [] } = useQuery<PlexusProject[]>({
     queryKey: ["/api/plexus/projects"],
@@ -52,6 +57,19 @@ export function CreateTaskModal({ open, onClose, defaultProjectId }: CreateTaskM
   const { data: users = [] } = useQuery<PlexusUser[]>({
     queryKey: ["/api/plexus/users"],
     enabled: open,
+  });
+
+  const { data: patientResults = [] } = useQuery<PatientResult[]>({
+    queryKey: ["/api/plexus/patients/search", patientSearch],
+    queryFn: async () => {
+      if (patientSearch.trim().length < 2) return [];
+      const res = await fetch(`/api/plexus/patients/search?q=${encodeURIComponent(patientSearch)}`, {
+        credentials: "include",
+      });
+      return res.json();
+    },
+    enabled: open && patientSearch.trim().length >= 2,
+    staleTime: 10_000,
   });
 
   const createProjectMutation = useMutation({
@@ -82,6 +100,7 @@ export function CreateTaskModal({ open, onClose, defaultProjectId }: CreateTaskM
         urgency,
         priority,
         dueDate: dueDate || null,
+        patientScreeningId: selectedPatient?.id ?? null,
       });
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed"); }
       return res.json();
@@ -101,6 +120,7 @@ export function CreateTaskModal({ open, onClose, defaultProjectId }: CreateTaskM
     setTitle(""); setDescription(""); setProjectId(defaultProjectId ? String(defaultProjectId) : "none");
     setAssignee("none"); setUrgency("none"); setPriority("normal"); setDueDate("");
     setNewProjectTitle(""); setCreatingProject(false);
+    setPatientSearch(""); setSelectedPatient(null); setShowPatientResults(false);
     onClose();
   }
 
@@ -161,7 +181,7 @@ export function CreateTaskModal({ open, onClose, defaultProjectId }: CreateTaskM
                   <Button size="sm" variant="ghost" className="rounded-xl shrink-0" onClick={() => setCreatingProject(false)}>×</Button>
                 </div>
               ) : (
-                <Select value={projectId} onValueChange={setProjectId}>
+                <Select value={projectId} onValueChange={(v) => { if (v === "__new__") { setCreatingProject(true); } else { setProjectId(v); } }}>
                   <SelectTrigger className="rounded-xl" data-testid="select-project">
                     <SelectValue placeholder="No project" />
                   </SelectTrigger>
@@ -170,7 +190,7 @@ export function CreateTaskModal({ open, onClose, defaultProjectId }: CreateTaskM
                     {projects.map((p) => (
                       <SelectItem key={p.id} value={String(p.id)}>{p.title}</SelectItem>
                     ))}
-                    <SelectItem value="__new__" onSelect={() => setCreatingProject(true)}>+ New project…</SelectItem>
+                    <SelectItem value="__new__">+ New project…</SelectItem>
                   </SelectContent>
                 </Select>
               )}
@@ -233,6 +253,53 @@ export function CreateTaskModal({ open, onClose, defaultProjectId }: CreateTaskM
               className="rounded-xl"
               data-testid="input-task-due-date"
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Link Patient <span className="text-xs text-slate-400">(optional)</span></Label>
+            {selectedPatient ? (
+              <div className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+                <span className="flex-1 text-sm text-blue-800 font-medium">{selectedPatient.name}</span>
+                {selectedPatient.dob && (
+                  <span className="text-xs text-blue-500">DOB: {selectedPatient.dob}</span>
+                )}
+                <button
+                  onClick={() => { setSelectedPatient(null); setPatientSearch(""); }}
+                  className="shrink-0 rounded-full p-0.5 text-blue-400 hover:text-blue-600"
+                  data-testid="button-clear-patient"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                <Input
+                  value={patientSearch}
+                  onChange={(e) => { setPatientSearch(e.target.value); setShowPatientResults(true); }}
+                  onFocus={() => setShowPatientResults(true)}
+                  placeholder="Search patient by name…"
+                  className="rounded-xl pl-8"
+                  data-testid="input-patient-search"
+                />
+                {showPatientResults && patientResults.length > 0 && (
+                  <div className="absolute z-50 w-full mt-1 rounded-xl border border-slate-200 bg-white shadow-lg max-h-44 overflow-y-auto">
+                    {patientResults.map((p) => (
+                      <button
+                        key={p.id}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 text-sm"
+                        onClick={() => { setSelectedPatient(p); setPatientSearch(""); setShowPatientResults(false); }}
+                        data-testid={`patient-result-${p.id}`}
+                      >
+                        <span className="font-medium text-slate-800">{p.name}</span>
+                        {p.dob && <span className="text-xs text-slate-400">{p.dob}</span>}
+                        {p.insurance && <span className="ml-auto text-xs text-slate-400">{p.insurance}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

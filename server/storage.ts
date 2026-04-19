@@ -179,6 +179,12 @@ export interface IStorage {
   // ── Plexus Deletes ─────────────────────────────────────────────────────
   deleteTask(id: number): Promise<void>;
   deleteProject(id: number): Promise<void>;
+
+  // ── Plexus Unread Per Task ──────────────────────────────────────────────
+  getUnreadPerTask(userId: string): Promise<{ taskId: number; unreadCount: number }[]>;
+
+  // ── Patient search (for task patient-link) ─────────────────────────────
+  searchPatientsByName(query: string): Promise<PatientScreening[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -700,6 +706,44 @@ export class DatabaseStorage implements IStorage {
 
   async deleteProject(id: number): Promise<void> {
     await db.delete(plexusProjects).where(eq(plexusProjects.id, id));
+  }
+
+  async getUnreadPerTask(userId: string): Promise<{ taskId: number; unreadCount: number }[]> {
+    const tasksInvolving = await db.select({ id: plexusTasks.id }).from(plexusTasks)
+      .where(and(
+        ne(plexusTasks.status, "closed"),
+        sql`(${plexusTasks.assignedToUserId} = ${userId} OR ${plexusTasks.createdByUserId} = ${userId})`
+      ));
+    if (tasksInvolving.length === 0) return [];
+    const taskIds = tasksInvolving.map((t) => t.id);
+    const reads = await db.select().from(plexusTaskReads)
+      .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, taskIds)));
+    const readMap = new Map(reads.map((r) => [r.taskId, r.lastReadAt]));
+    const msgCounts = await db.select({
+      taskId: plexusTaskMessages.taskId,
+      latestAt: sql<Date>`MAX(${plexusTaskMessages.createdAt})`,
+      total: sql<number>`COUNT(*)`,
+    })
+      .from(plexusTaskMessages)
+      .where(and(
+        inArray(plexusTaskMessages.taskId, taskIds),
+        sql`${plexusTaskMessages.senderUserId} != ${userId}`
+      ))
+      .groupBy(plexusTaskMessages.taskId);
+    const result: { taskId: number; unreadCount: number }[] = [];
+    for (const row of msgCounts) {
+      const lastRead = readMap.get(row.taskId);
+      if (!lastRead || row.latestAt > lastRead) {
+        result.push({ taskId: row.taskId, unreadCount: 1 });
+      }
+    }
+    return result;
+  }
+
+  async searchPatientsByName(query: string): Promise<PatientScreening[]> {
+    return db.select().from(patientScreenings)
+      .where(sql`LOWER(${patientScreenings.name}) LIKE LOWER(${'%' + query + '%'})`)
+      .limit(20);
   }
 }
 
