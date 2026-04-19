@@ -12,6 +12,7 @@ import {
   Trash2,
   Check,
   X,
+  Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -70,6 +71,57 @@ function facilityColor(f: string) {
   if (f.includes("Spring")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
   if (f.includes("Veteran")) return "bg-violet-50 text-violet-700 border-violet-200";
   return "bg-blue-50 text-blue-700 border-blue-200";
+}
+
+function ChangePasswordCard() {
+  const { toast } = useToast();
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (newPw !== confirm) { toast({ title: "Passwords do not match", variant: "destructive" }); return; }
+    if (newPw.length < 6) { toast({ title: "New password must be at least 6 characters", variant: "destructive" }); return; }
+    setLoading(true);
+    try {
+      await apiRequest("POST", "/api/auth/change-password", { currentPassword: currentPw, newPassword: newPw });
+      toast({ title: "Password changed successfully" });
+      setCurrentPw(""); setNewPw(""); setConfirm("");
+    } catch (err: any) {
+      const msg = err.message || "Failed to change password";
+      toast({ title: msg.includes("401") ? "Current password is incorrect" : msg, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+      <div className="mb-4 flex items-center gap-2">
+        <Lock className="h-5 w-5 text-indigo-700" />
+        <h2 className="text-lg font-semibold text-slate-900">Change Password</h2>
+      </div>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3 max-w-sm">
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1">Current password</label>
+          <Input type="password" value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} className="rounded-xl" data-testid="input-current-password" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1">New password</label>
+          <Input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} className="rounded-xl" data-testid="input-new-password" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1">Confirm new password</label>
+          <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="rounded-xl" data-testid="input-confirm-password" />
+        </div>
+        <Button type="submit" disabled={loading || !currentPw || !newPw || !confirm} className="w-fit rounded-xl bg-indigo-600 text-white hover:bg-indigo-700" data-testid="button-change-password">
+          {loading ? "Changing…" : "Change Password"}
+        </Button>
+      </form>
+    </Card>
+  );
 }
 
 export default function SettingsPage() {
@@ -354,6 +406,9 @@ export default function SettingsPage() {
             </Button>
           </div>
         </Card>
+
+        {/* Change Password */}
+        <ChangePasswordCard />
 
         {/* Clinic Spreadsheet Connections */}
         <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">

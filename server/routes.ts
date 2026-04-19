@@ -56,10 +56,6 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
-  registerTestHistoryRoutes(app, { backgroundSyncPatients });
-  registerPatientReferenceRoutes(app, { backgroundSyncPatients });
-  registerGeneratedNotesRoutes(app);
-
   // ─── Reset any batches stuck in "processing" from a previous server run ────
   // Analysis jobs are in-process async tasks that do not survive a server restart.
   // Any batch still marked "processing" at startup must have been interrupted;
@@ -86,13 +82,37 @@ export async function registerRoutes(
     console.error("[startup] Failed to reset stuck batches:", startupErr.message);
   }
 
-  // ─── API Key auth middleware ───────────────────────────────────────────────
-  const PLEXUS_API_KEY = process.env.PLEXUS_API_KEY;
-  if (!PLEXUS_API_KEY) {
-    console.error("[auth] FATAL: PLEXUS_API_KEY is not set — all /api routes will return 401");
-  }
+  // ─── Auth endpoints (exempt from session requirement) ─────────────────────
+  app.post("/api/auth/login", async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ message: "Username and password are required" });
+    }
+    const user = await storage.validateUserPassword(username, password);
+    if (!user) {
+      return res.status(401).json({ message: "Invalid username or password" });
+    }
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    return res.json({ id: user.id, username: user.username });
+  });
 
-  app.use("/api", (req, res, next) => {
+  app.post("/api/auth/logout", (req, res) => {
+    req.session.destroy(() => {
+      res.clearCookie("connect.sid");
+      res.json({ ok: true });
+    });
+  });
+
+  app.get("/api/auth/me", (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    return res.json({ id: req.session.userId, username: req.session.username });
+  });
+
+  // ─── requireAuth middleware (applied to all other /api/* routes) ───────────
+  const requireAuth = (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
     const EXEMPT_GET_PATHS = [
       /^\/schedule\/[^/]+$/,
       /^\/schedule\/[^/]+\/patients$/,
@@ -100,21 +120,31 @@ export async function registerRoutes(
     if (req.method === "GET" && EXEMPT_GET_PATHS.some((re) => re.test(req.path))) {
       return next();
     }
-
-    if (!PLEXUS_API_KEY) {
-      return res.status(401).json({ message: "Unauthorized" });
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
     }
-
-    const authHeader = req.headers["authorization"];
-    if (!authHeader || authHeader !== `Bearer ${PLEXUS_API_KEY}`) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-
     return next();
-  });
+  };
 
-  // Register Google / Drive / Document routes (protected by auth middleware above)
+  app.use("/api", requireAuth);
+
+  // Register Google / Drive / Document routes (protected by requireAuth above)
   registerGoogleRoutes(app);
+
+  registerTestHistoryRoutes(app, { backgroundSyncPatients });
+  registerPatientReferenceRoutes(app, { backgroundSyncPatients });
+  registerGeneratedNotesRoutes(app);
+
+  // ─── First-boot seed: create admin/admin if no users exist ────────────────
+  try {
+    const count = await storage.getUserCount();
+    if (count === 0) {
+      await storage.createUser({ username: "admin", password: "admin" });
+      console.warn("[auth] ⚠ No users found. Created default admin/admin account — CHANGE THIS PASSWORD IMMEDIATELY");
+    }
+  } catch (seedErr: any) {
+    console.error("[auth] Failed to seed default admin account:", seedErr.message);
+  }
 
   // ─── Health check (exempt from auth) ──────────────────────────────────────
   app.get("/healthz", async (_req, res) => {
@@ -126,6 +156,38 @@ export async function registerRoutes(
     } catch {
       res.status(503).json({ status: "error", db: false });
     }
+  });
+
+  // ─── User management (admin-only) ─────────────────────────────────────────
+  app.post("/api/users", async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ message: "Username and password are required" });
+    }
+    const existing = await storage.getUserByUsername(username);
+    if (existing) {
+      return res.status(409).json({ message: "Username already exists" });
+    }
+    const user = await storage.createUser({ username, password });
+    return res.status(201).json({ id: user.id, username: user.username });
+  });
+
+  app.post("/api/auth/change-password", async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: "currentPassword and newPassword are required" });
+    }
+    const user = await storage.validateUserPassword(req.session.username!, currentPassword);
+    if (!user) {
+      return res.status(401).json({ message: "Current password is incorrect" });
+    }
+    const bcrypt = await import("bcryptjs");
+    const hashed = await bcrypt.hash(newPassword, 12);
+    await storage.updateUserPassword(req.session.userId, hashed);
+    return res.json({ ok: true });
   });
 
   // ─── Batches ───────────────────────────────────────────────────────────────

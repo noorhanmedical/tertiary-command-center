@@ -71,6 +71,20 @@ A daily call-list workflow for clinic coverage teams, reading directly from the 
 - **API**: `GET /api/outreach/dashboard` — returns `{ today, metrics, coverageCards }`. No new DB table; reads existing `screeningBatches` + `patientScreenings`.
 - **Home tile** + **sidebar link** both wired up at `/outreach`.
 
+## Authentication & Session Management (Task #149)
+Per-user login sessions replace the shared PLEXUS_API_KEY bearer-token approach:
+- **Login page** (`client/src/pages/login.tsx`): Username + password form; shows on any unauthenticated visit.
+- **Session middleware** (`server/index.ts`): `express-session` + `connect-pg-simple` stores sessions in PostgreSQL (`session` table auto-created). Cookie is HTTP-only, 24-hour maxAge.
+- **Auth routes** (`server/routes.ts`): `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` are exempt from requireAuth.
+- **`requireAuth` middleware**: Applied to all other `/api/*` routes; returns 401 if no active session. Shared-schedule GET routes remain public.
+- **bcrypt hashing**: `storage.createUser()` always hashes passwords (cost factor 12). `storage.validateUserPassword()` compares via bcrypt.compare.
+- **First-boot seed**: Server seeds `admin/admin` (bcrypt-hashed) if the users table has zero rows; warns in console to change the password.
+- **Admin account warning**: Toast shown on first admin login directing user to Settings → Change Password.
+- **Change Password** (`client/src/pages/settings.tsx`): `ChangePasswordCard` component backed by `POST /api/auth/change-password`.
+- **User creation** (`POST /api/users`): Admin-only endpoint to create new team member accounts.
+- **Logout button** in `GlobalNav` (bottom of left rail next to username).
+- `client/src/lib/queryClient.ts`: Removed VITE_API_KEY bearer-token headers; all requests use `credentials: "include"` for cookie auth.
+
 ## External Dependencies
 - **OpenAI GPT-5.2**: Used for AI-powered patient qualification and clinical note generation.
 - **Google Workspace (Google Sheets, Google Drive)**: Integrated for synchronizing patient and billing data, and for exporting generated clinical notes as Google Docs.

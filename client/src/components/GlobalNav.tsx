@@ -11,6 +11,8 @@ import {
   Shield,
   ChevronLeft,
   ChevronRight,
+  LogOut,
+  User,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { PatientScreening, ScreeningBatch } from "@shared/schema";
@@ -38,7 +40,9 @@ function TodayBadge({ count }: { count: number }) {
   );
 }
 
-export function GlobalNav() {
+type AuthUser = { id: string; username: string } | null;
+
+export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () => void }) {
   const [location] = useLocation();
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024);
   const [manualOverride, setManualOverride] = useState(false);
@@ -120,7 +124,7 @@ export function GlobalNav() {
         })}
       </div>
 
-      <div className="border-t border-white/10 px-2 py-2">
+      <div className="border-t border-white/10 px-2 py-2 space-y-0.5">
         <Link href="/admin">
           <div
             className={`flex items-center gap-3 px-2 py-2 rounded-xl cursor-pointer transition-colors group ${
@@ -135,6 +139,31 @@ export function GlobalNav() {
             {!collapsed && <span className="text-xs font-medium truncate">Admin</span>}
           </div>
         </Link>
+
+        {user && (
+          <div
+            className={`flex items-center gap-2 px-2 py-2 rounded-xl ${collapsed ? "justify-center" : ""}`}
+            title={collapsed ? `${user.username} — click to sign out` : undefined}
+          >
+            {!collapsed && (
+              <>
+                <User className="w-3.5 h-3.5 text-white/30 shrink-0" />
+                <span className="text-xs text-white/40 truncate flex-1">{user.username}</span>
+              </>
+            )}
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="p-1 rounded-lg text-white/30 hover:text-white/70 hover:bg-white/10 transition-colors"
+                title="Sign out"
+                data-testid="button-logout"
+                aria-label="Sign out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </nav>
   );

@@ -1,4 +1,5 @@
 import { db } from "./db";
+import bcrypt from "bcryptjs";
 import {
   screeningBatches,
   patientScreenings,
@@ -56,6 +57,9 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  getUserCount(): Promise<number>;
+  updateUserPassword(id: string, hashedPassword: string): Promise<void>;
+  validateUserPassword(username: string, plaintext: string): Promise<User | null>;
 
   createScreeningBatch(batch: InsertScreeningBatch): Promise<ScreeningBatch>;
   getScreeningBatch(id: number): Promise<ScreeningBatch | undefined>;
@@ -126,8 +130,25 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db.insert(users).values(insertUser).returning();
+    const hashed = await bcrypt.hash(insertUser.password, 12);
+    const [user] = await db.insert(users).values({ ...insertUser, password: hashed }).returning();
     return user;
+  }
+
+  async getUserCount(): Promise<number> {
+    const result = await db.select({ count: sql<number>`count(*)::int` }).from(users);
+    return result[0]?.count ?? 0;
+  }
+
+  async updateUserPassword(id: string, hashedPassword: string): Promise<void> {
+    await db.update(users).set({ password: hashedPassword }).where(eq(users.id, id));
+  }
+
+  async validateUserPassword(username: string, plaintext: string): Promise<User | null> {
+    const user = await this.getUserByUsername(username);
+    if (!user) return null;
+    const match = await bcrypt.compare(plaintext, user.password);
+    return match ? user : null;
   }
 
   async createScreeningBatch(batch: InsertScreeningBatch): Promise<ScreeningBatch> {
