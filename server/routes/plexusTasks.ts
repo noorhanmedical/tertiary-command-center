@@ -86,6 +86,19 @@ async function canViewTask(taskId: number, userId: string): Promise<boolean> {
   return collabs.some((c) => c.userId === userId);
 }
 
+async function canViewProject(projectId: number, userId: string): Promise<boolean> {
+  const project = await storage.getProjectById(projectId);
+  if (!project) return false;
+  if (project.createdByUserId === userId) return true;
+  const tasks = await storage.getTasksByProject(projectId);
+  for (const t of tasks) {
+    if (t.createdByUserId === userId || t.assignedToUserId === userId) return true;
+    const collabs = await storage.getCollaborators(t.id);
+    if (collabs.some((c) => c.userId === userId)) return true;
+  }
+  return false;
+}
+
 async function writeEvent(
   data: { taskId?: number | null; projectId?: number | null; userId: string; eventType: string; payload: EventPayload }
 ) {
@@ -179,6 +192,8 @@ export function registerPlexusTasksRoutes(app: Express) {
   app.get("/api/plexus/projects/:id/summary", async (req: Request, res: Response) => {
     try {
       const id = parseInt(String(req.params.id));
+      const userId = uid(req);
+      if (!await canViewProject(id, userId)) return res.status(403).json({ error: "Not authorized" });
       const tasks = await storage.getTasksByProject(id);
       const counts = tasks.reduce<Record<string, number>>((acc, t) => {
         acc[t.status] = (acc[t.status] ?? 0) + 1;
@@ -239,6 +254,8 @@ export function registerPlexusTasksRoutes(app: Express) {
   app.get("/api/plexus/tasks/by-project/:projectId", async (req: Request, res: Response) => {
     try {
       const projectId = parseInt(String(req.params.projectId));
+      const userId = uid(req);
+      if (!await canViewProject(projectId, userId)) return res.status(403).json({ error: "Not authorized to view this project" });
       const tasks = await storage.getTasksByProject(projectId);
       res.json(tasks);
     } catch (e: any) {
@@ -333,8 +350,14 @@ export function registerPlexusTasksRoutes(app: Express) {
       const task = await storage.getTaskById(taskId);
       if (!task) return res.status(404).json({ error: "Task not found" });
       const targetUserId = parsed.data.userId ?? actingUserId;
-      if (targetUserId !== actingUserId && !canEditTask(task, actingUserId)) {
-        return res.status(403).json({ error: "Only task owner/assignee can add collaborators for others" });
+      if (targetUserId !== actingUserId) {
+        if (!canEditTask(task, actingUserId)) {
+          return res.status(403).json({ error: "Only task owner/assignee can add collaborators for others" });
+        }
+      } else {
+        if (task.status === "closed") {
+          return res.status(403).json({ error: "Cannot join a closed task" });
+        }
       }
       const collab = await storage.addCollaborator({ taskId, userId: targetUserId, role: parsed.data.role });
       await writeEvent({ taskId, userId: actingUserId, eventType: "collaborator_added", payload: { collaboratorUserId: targetUserId, role: parsed.data.role } });

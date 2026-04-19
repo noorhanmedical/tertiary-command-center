@@ -499,6 +499,25 @@ function SentView() {
   );
 }
 
+function formatTimeRemaining(dueDate: string | null | undefined): { label: string; overdue: boolean } | null {
+  if (!dueDate) return null;
+  const due = new Date(dueDate);
+  const now = new Date();
+  const diffMs = due.getTime() - now.getTime();
+  const overdue = diffMs < 0;
+  const absMs = Math.abs(diffMs);
+  const totalMins = Math.floor(absMs / 60000);
+  const days = Math.floor(totalMins / 1440);
+  const hours = Math.floor((totalMins % 1440) / 60);
+  const mins = totalMins % 60;
+  let label = "";
+  if (days > 0) label = `${days}d ${hours}h`;
+  else if (hours > 0) label = `${hours}h ${mins}m`;
+  else label = `${mins}m`;
+  label += overdue ? " overdue" : " left";
+  return { label, overdue };
+}
+
 function UrgentPanel({
   collapsed,
   onToggle,
@@ -512,6 +531,10 @@ function UrgentPanel({
     queryKey: ["/api/plexus/tasks/urgent"],
     refetchInterval: 30_000,
   });
+  const { data: users = [] } = useQuery<{ id: string; username: string }[]>({
+    queryKey: ["/api/plexus/users"],
+  });
+  const userMap = new Map(users.map((u) => [u.id, u.username]));
 
   const sorted = [...urgentTasks].sort(
     (a, b) => (URGENCY_ORDER[a.urgency] ?? 3) - (URGENCY_ORDER[b.urgency] ?? 3),
@@ -571,15 +594,19 @@ function UrgentPanel({
                         {t.assignedToUserId && (
                           <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-500">
                             <User className="h-2.5 w-2.5" />
-                            {t.assignedToUserId.slice(0, 8)}
+                            {userMap.get(t.assignedToUserId) ?? t.assignedToUserId.slice(0, 8)}
                           </span>
                         )}
-                        {t.dueDate && (
-                          <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-500">
-                            <Clock className="h-2.5 w-2.5" />
-                            {t.dueDate}
-                          </span>
-                        )}
+                        {(() => {
+                          const tr = formatTimeRemaining(t.dueDate);
+                          if (!tr) return null;
+                          return (
+                            <span className={`inline-flex items-center gap-0.5 text-[9px] font-medium ${tr.overdue ? "text-red-600" : "text-amber-600"}`}>
+                              <Clock className="h-2.5 w-2.5" />
+                              {tr.label}
+                            </span>
+                          );
+                        })()}
                         {t.patientName && (
                           <span className="inline-flex items-center gap-0.5 text-[9px] text-blue-500">
                             <User className="h-2.5 w-2.5" />

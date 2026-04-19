@@ -708,24 +708,19 @@ export class DatabaseStorage implements IStorage {
     const reads = await db.select().from(plexusTaskReads)
       .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, allIds)));
     const readMap = new Map(reads.map((r) => [r.taskId, r.lastReadAt]));
-    const latestMsgs = await db.select({
-      taskId: plexusTaskMessages.taskId,
-      latestAt: sql<Date>`MAX(${plexusTaskMessages.createdAt})`,
-    })
-      .from(plexusTaskMessages)
-      .where(and(
-        inArray(plexusTaskMessages.taskId, allIds),
-        sql`${plexusTaskMessages.senderUserId} != ${userId}`
-      ))
-      .groupBy(plexusTaskMessages.taskId);
-    let unread = 0;
-    for (const row of latestMsgs) {
-      const lastRead = readMap.get(row.taskId);
-      if (!lastRead || row.latestAt > lastRead) {
-        unread++;
-      }
+    let totalUnread = 0;
+    for (const taskId of allIds) {
+      const lastRead = readMap.get(taskId) ?? null;
+      const [{ cnt }] = await db.select({ cnt: sql<number>`COUNT(*)` })
+        .from(plexusTaskMessages)
+        .where(and(
+          eq(plexusTaskMessages.taskId, taskId),
+          sql`${plexusTaskMessages.senderUserId} != ${userId}`,
+          ...(lastRead ? [sql`${plexusTaskMessages.createdAt} > ${lastRead}`] : [])
+        ));
+      totalUnread += Number(cnt);
     }
-    return unread;
+    return totalUnread;
   }
 
   async deleteTask(id: number): Promise<void> {
