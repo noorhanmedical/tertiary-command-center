@@ -109,7 +109,9 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
 
   const { data: unreadData } = useQuery<{ count: number }>({
     queryKey: ["/api/plexus/tasks/unread-count"],
-    refetchInterval: 60_000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
   const unreadCount = unreadData?.count ?? 0;
 
