@@ -50,6 +50,13 @@
       "when": 1776588600000,
       "tag": "0006_add_plexus_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1745059200000,
+      "tag": "0007_add_users_active",
+      "breakpoints": true
     }
   ]
 }

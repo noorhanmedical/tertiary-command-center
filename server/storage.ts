@@ -77,9 +77,12 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  getAllUsers(): Promise<Omit<User, "password">[]>;
   getUserCount(): Promise<number>;
   updateUserPassword(id: string, plaintext: string): Promise<void>;
   validateUserPassword(username: string, plaintext: string): Promise<User | null>;
+  deactivateUser(id: string): Promise<void>;
+  deleteUser(id: string): Promise<void>;
 
   createScreeningBatch(batch: InsertScreeningBatch): Promise<ScreeningBatch>;
   getScreeningBatch(id: number): Promise<ScreeningBatch | undefined>;
@@ -160,7 +163,6 @@ export interface IStorage {
   getTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]>;
   getUrgentTasks(): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
-  getAllUsers(): Promise<User[]>;
 
   // ── Plexus Collaborators ───────────────────────────────────────────────
   addCollaborator(record: InsertPlexusTaskCollaborator): Promise<PlexusTaskCollaborator>;
@@ -222,6 +224,23 @@ export class DatabaseStorage implements IStorage {
     if (!user) return null;
     const match = await bcrypt.compare(plaintext, user.password);
     return match ? user : null;
+  }
+
+  async getAllUsers(): Promise<Omit<User, "password">[]> {
+    const rows = await db.select({
+      id: users.id,
+      username: users.username,
+      active: users.active,
+    }).from(users).orderBy(asc(users.username));
+    return rows;
+  }
+
+  async deactivateUser(id: string): Promise<void> {
+    await db.update(users).set({ active: false }).where(eq(users.id, id));
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await db.delete(users).where(eq(users.id, id));
   }
 
   async createScreeningBatch(batch: InsertScreeningBatch): Promise<ScreeningBatch> {
@@ -652,10 +671,6 @@ export class DatabaseStorage implements IStorage {
       .where(eq(plexusTasks.id, id))
       .returning();
     return result;
-  }
-
-  async getAllUsers(): Promise<User[]> {
-    return db.select().from(users).orderBy(asc(users.username));
   }
 
   // ── Plexus Collaborators ──────────────────────────────────────────────────────

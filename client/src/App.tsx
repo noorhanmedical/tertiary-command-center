@@ -17,6 +17,7 @@ import OutreachPage from "@/pages/outreach";
 import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
 import AdminOpsPage from "@/pages/admin-ops";
 import AdminPage from "@/pages/admin";
+import AdminUsersPage from "@/pages/admin-users";
 import ScheduleDashboardPage from "@/pages/schedule-dashboard";
 import SettingsPage from "@/pages/settings";
 import TeamOpsPage from "@/pages/team-ops";
@@ -67,6 +68,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/task-brain" component={TaskBrainPage} />
                 <Route path="/plexus-tasks" component={PlexusTasksPage} />
                 <Route path="/admin" component={AdminPage} />
+                <Route path="/admin/users" component={AdminUsersPage} />
                 <Route path="/admin-ops" component={AdminOpsPage} />
                 <Route path="/schedule-dashboard" component={ScheduleDashboardPage} />
                 <Route path="/settings" component={SettingsPage} />

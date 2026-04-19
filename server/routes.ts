@@ -110,6 +110,9 @@ export async function registerRoutes(
     if (!user) {
       return res.status(401).json({ message: "Invalid username or password" });
     }
+    if (user.active === false) {
+      return res.status(403).json({ message: "This account has been deactivated. Contact your administrator." });
+    }
     req.session.userId = user.id;
     req.session.username = user.username;
     return res.json({ id: user.id, username: user.username });
@@ -208,6 +211,46 @@ export async function registerRoutes(
     }
     const user = await storage.createUser({ username, password });
     return res.status(201).json({ id: user.id, username: user.username });
+  });
+
+  app.get("/api/users", async (req, res) => {
+    if (req.session.username !== "admin") {
+      return res.status(403).json({ message: "Forbidden — only the admin account can view users" });
+    }
+    const allUsers = await storage.getAllUsers();
+    return res.json(allUsers);
+  });
+
+  app.delete("/api/users/:id", async (req, res) => {
+    if (req.session.username !== "admin") {
+      return res.status(403).json({ message: "Forbidden — only the admin account can delete users" });
+    }
+    const { id } = req.params;
+    if (id === req.session.userId) {
+      return res.status(400).json({ message: "You cannot delete your own account" });
+    }
+    const target = await storage.getUser(id);
+    if (!target) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    await storage.deleteUser(id);
+    return res.json({ ok: true });
+  });
+
+  app.patch("/api/users/:id/deactivate", async (req, res) => {
+    if (req.session.username !== "admin") {
+      return res.status(403).json({ message: "Forbidden — only the admin account can deactivate users" });
+    }
+    const { id } = req.params;
+    if (id === req.session.userId) {
+      return res.status(400).json({ message: "You cannot deactivate your own account" });
+    }
+    const target = await storage.getUser(id);
+    if (!target) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    await storage.deactivateUser(id);
+    return res.json({ ok: true });
   });
 
   app.post("/api/auth/change-password", async (req, res) => {

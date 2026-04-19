@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { Shield, Settings, Wrench, Lock, ClipboardList, Building2, ChevronRight } from "lucide-react";
+import { Shield, Settings, Wrench, Users, ClipboardList, Building2, ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 const ADMIN_SECTIONS = [
@@ -20,12 +20,12 @@ const ADMIN_SECTIONS = [
     available: true,
   },
   {
-    href: "#",
-    icon: Lock,
+    href: "/admin/users",
+    icon: Users,
     iconBg: "bg-amber-100 text-amber-700",
-    title: "Access Control",
-    desc: "Role-based access, team permissions, and authentication policies.",
-    available: false,
+    title: "User Management",
+    desc: "Create and remove team accounts, view all users, and manage access.",
+    available: true,
   },
   {
     href: "#",
