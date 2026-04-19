@@ -51,7 +51,7 @@ const createMessageSchema = z.object({
 });
 
 const addCollaboratorSchema = z.object({
-  role: z.enum(["collaborator", "reviewer", "owner"]).default("collaborator"),
+  role: z.enum(["owner", "assignee", "collaborator", "watcher"]).default("collaborator"),
   userId: z.string().optional(),
 });
 
@@ -359,10 +359,9 @@ export function registerPlexusTasksRoutes(app: Express) {
           return res.status(403).json({ error: "Only task owner/assignee can add collaborators for others" });
         }
       } else {
-        const canSelfJoin = task.status !== "closed" &&
-          (task.urgency === "critical" || task.urgency === "high");
-        if (!canSelfJoin && !await canViewTask(taskId, actingUserId)) {
-          return res.status(403).json({ error: "Self-join is only allowed on urgent (high/critical) open tasks" });
+        const isUrgent = task.status !== "closed" && task.status !== "done" && task.urgency !== "none";
+        if (!isUrgent && !await canViewTask(taskId, actingUserId)) {
+          return res.status(403).json({ error: "Self-join is only allowed on urgent non-closed tasks" });
         }
       }
       const collab = await storage.addCollaborator({ taskId, userId: targetUserId, role: parsed.data.role });

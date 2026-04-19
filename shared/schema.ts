@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, serial, text, varchar, integer, timestamp, jsonb, index, boolean, numeric } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, varchar, integer, timestamp, jsonb, index, boolean, numeric, AnyPgColumn } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -320,7 +320,7 @@ export type InsertPlexusProject = z.infer<typeof insertPlexusProjectSchema>;
 export const plexusTasks = pgTable("plexus_tasks", {
   id: serial("id").primaryKey(),
   projectId: integer("project_id").references(() => plexusProjects.id, { onDelete: "set null" }),
-  parentTaskId: integer("parent_task_id"),
+  parentTaskId: integer("parent_task_id").references((): AnyPgColumn => plexusTasks.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   description: text("description"),
   taskType: text("task_type").notNull().default("task"),
