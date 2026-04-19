@@ -217,16 +217,12 @@ export function registerGoogleRoutes(app: Express) {
         isTest: !!(note as any).isTest,
       });
 
-      // Synchronously drain just this item so the existing UX (returning Drive URL) is preserved.
-      const drain = await drainOutbox({ ids: [item.id] });
-      const updated = await storage.getGeneratedNote(noteId);
+      // Enqueue-only: Outbox is the single trigger point for Google writes.
       res.json({
-        success: drain.failed === 0,
+        success: true,
+        queued: true,
         outboxId: item.id,
-        driveFileId: updated?.driveFileId ?? null,
-        webViewLink: updated?.driveWebViewLink ?? null,
-        note: updated,
-        drain,
+        message: "Note saved locally and queued for Google Drive. Open the Admin Outbox to upload.",
       });
     } catch (error: any) {
       console.error("Drive export error:", error);
@@ -307,12 +303,22 @@ export function registerGoogleRoutes(app: Express) {
 
       const filename = file.originalname || `${patientName.trim()} - ${ancillaryType} Report.pdf`;
 
-      // Blob-first: store local, then enqueue + drain.
+      // Persist a real uploaded_documents row first so the blob has a real owner.
+      const record = await storage.saveUploadedDocument({
+        facility,
+        patientName: patientName.trim(),
+        ancillaryType,
+        docType: "report",
+        driveFileId: null,
+        driveWebViewLink: null,
+      });
+
+      // Blob-first: store local, then enqueue. Enqueue-only — Outbox is the only Google trigger.
       const { saveBlob } = await import("../services/blobStore");
-      const { enqueueDriveFile, drainOutbox } = await import("../services/outbox");
+      const { enqueueDriveFile } = await import("../services/outbox");
       const blob = await saveBlob({
         ownerType: "uploaded_document",
-        ownerId: 0,
+        ownerId: record.id,
         filename,
         contentType: "application/pdf",
         buffer: file.buffer,
@@ -325,19 +331,13 @@ export function registerGoogleRoutes(app: Express) {
         docKind: "report",
         filename,
       });
-      const drain = await drainOutbox({ ids: [item.id] });
 
-      // Re-read outbox row to get resolved Drive metadata.
-      const { db } = await import("../db");
-      const { outboxItems } = await import("@shared/schema");
-      const { eq: _eq } = await import("drizzle-orm");
-      const [updatedItem] = await db.select().from(outboxItems).where(_eq(outboxItems.id, item.id));
       res.json({
-        success: drain.failed === 0,
+        success: true,
+        queued: true,
+        record,
         outboxId: item.id,
-        driveFileId: updatedItem?.resultId ?? null,
-        webViewLink: updatedItem?.resultUrl ?? null,
-        drain,
+        message: "Report saved locally and queued for Google Drive. Open the Admin Outbox to upload.",
       });
     } catch (error: any) {
       console.error("Report upload error:", error);
@@ -434,7 +434,7 @@ export function registerGoogleRoutes(app: Express) {
         buffer: file.buffer,
       });
 
-      // 3) Enqueue Drive upload + drain that one item synchronously to preserve UX
+      // 3) Enqueue Drive upload — enqueue-only. Admin drains via "Upload All".
       const item = await enqueueDriveFile({
         blobId: blob.id,
         facility,
@@ -443,20 +443,17 @@ export function registerGoogleRoutes(app: Express) {
         docKind: docType,
         filename,
       });
-      const drain = await drainOutbox({ ids: [item.id] });
 
       // 4) Coalesced sheet syncs go to the outbox (admin drains via "Upload All")
       await enqueueSheetSync("sheet_billing");
       await enqueueSheetSync("sheet_patients");
 
-      const updated = await storage.getUploadedDocument(record.id) ?? record;
       res.json({
-        success: drain.failed === 0,
-        record: updated,
+        success: true,
+        queued: true,
+        record,
         outboxId: item.id,
-        driveFileId: updated.driveFileId,
-        webViewLink: updated.driveWebViewLink,
-        drain,
+        message: "Document saved locally and queued for Google Drive. Open the Admin Outbox to upload.",
       });
     } catch (error: any) {
       console.error("Document upload error:", error);
