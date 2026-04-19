@@ -158,6 +158,19 @@ export function registerPlexusTasksRoutes(app: Express) {
     }
   });
 
+  app.get("/api/plexus/projects/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      const userId = uid(req);
+      if (!await canViewProject(id, userId)) return res.status(403).json({ error: "Not authorized to view this project" });
+      const project = await storage.getProjectById(id);
+      if (!project) return res.status(404).json({ error: "Project not found" });
+      res.json(project);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.patch("/api/plexus/projects/:id", async (req: Request, res: Response) => {
     try {
       const id = parseInt(String(req.params.id));
@@ -285,6 +298,11 @@ export function registerPlexusTasksRoutes(app: Express) {
       const parsed = createTaskSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
       const userId = uid(req);
+      if (parsed.data.projectId != null) {
+        if (!await canViewProject(parsed.data.projectId, userId)) {
+          return res.status(403).json({ error: "Not authorized to add tasks to this project" });
+        }
+      }
       const task = await storage.createTask({ ...parsed.data, createdByUserId: userId });
       await writeEvent({ taskId: task.id, userId, eventType: "created", payload: { title: task.title } });
       res.status(201).json(task);
@@ -302,6 +320,11 @@ export function registerPlexusTasksRoutes(app: Express) {
       const prev = await storage.getTaskById(id);
       if (!prev) return res.status(404).json({ error: "Task not found" });
       if (!canEditTask(prev, userId)) return res.status(403).json({ error: "Only the task creator or assignee can update this task" });
+      if (parsed.data.projectId != null && parsed.data.projectId !== prev.projectId) {
+        if (!await canViewProject(parsed.data.projectId, userId)) {
+          return res.status(403).json({ error: "Not authorized to move task to this project" });
+        }
+      }
       const task = await storage.updateTask(id, parsed.data);
       if (parsed.data.status && parsed.data.status !== prev.status) {
         await writeEvent({ taskId: id, userId, eventType: "status_changed", payload: { from: prev.status, to: parsed.data.status } });
