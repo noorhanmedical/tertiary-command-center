@@ -1,7 +1,7 @@
 # Ancillary Patient Screening System
 
 ## Overview
-This project is an AI-powered patient screening application designed to analyze clinical data (schedules, past medical history, medications, notes) to qualify patients for diagnostic tests. It aims to aggressively qualify patients for a predefined set of tests based on any reasonable clinical justification provided by an advanced AI model (OpenAI GPT-5.2). The system automates the screening process, generates clinical notes, and integrates with Google Workspace for data synchronization and document management, streamlining medical practice workflows and improving patient care efficiency.
+This project is an AI-powered patient screening application designed to analyze clinical data to qualify patients for diagnostic tests. It aims to aggressively qualify patients for a predefined set of tests based on AI model justifications. The system automates screening, generates clinical notes, and integrates with Google Workspace for data synchronization and document management, streamlining medical practice workflows and improving patient care efficiency. The business vision is to enhance patient care and operational efficiency in medical practices by automating and intelligently streamlining the diagnostic test qualification process.
 
 ## User Preferences
 - Aggressive qualification: qualify for everything unless glaringly inappropriate
@@ -24,88 +24,24 @@ This project is an AI-powered patient screening application designed to analyze 
 - Previous Tests field: required (red asterisk), paired with "Most Recent Date" input in the same section; "No previous tests" checkbox bypasses the requirement; `noPreviousTests` boolean persisted to DB
 
 ## System Architecture
-The application features a React + Vite + Tailwind CSS + Shadcn UI frontend, providing an iOS-style card layout and a modern user experience with a clean, icy blue-white theme. The backend is built with Express.js, handling file parsing, OpenAI integration, and API routing. PostgreSQL, managed with Drizzle ORM, serves as the database, utilizing explicit indexes for optimized performance. The system employs a 3-step draft workflow: build schedule, edit clinical data, and analyze for ancillaries. Core features include tab-based navigation for schedules, a collapsible sidebar for schedule history, and an expandable patient result card view. A service layer encapsulates AI client interactions, data ingestion, and screening logic. Operational robustness is ensured through health checks, graceful shutdown mechanisms, and schema management via Drizzle migrations. Documents are generated client-side and can be exported.
+The application features a React, Vite, Tailwind CSS, and Shadcn UI frontend, providing an iOS-style card layout and a modern user experience with a clean, icy blue-white theme. The backend is built with Express.js, handling file parsing, OpenAI integration, and API routing. PostgreSQL, managed with Drizzle ORM, serves as the database, utilizing explicit indexes for optimized performance.
 
-### Analysis Job Durability and Status Polling (Task #151)
-- **`analysis_jobs` table** (`shared/schema.ts`): id, batchId (FK→screeningBatches, cascade), status (pending|running|completed|failed), totalPatients, completedPatients (atomically incremented), errorMessage, startedAt, completedAt; indexes on batchId and status
-- **Storage methods** (`server/storage.ts`): `createAnalysisJob`, `updateAnalysisJob`, `incrementAnalysisJobProgress` (SQL `+1` for concurrency safety), `getLatestAnalysisJobByBatch`, `failRunningAnalysisJobs`, `purgeOldAnalysisJobs`
-- **Batch analyze route**: Creates an `analysis_jobs` row (status=running) immediately before handing off the async job; increments `completedPatients` after each patient regardless of per-patient success/failure; sets status=completed+completedAt on success; sets status=failed+errorMessage on outer error
-- **Status polling endpoint**: `GET /api/batches/:id/analysis-status` — returns latest analysis_jobs row for that batch plus a computed `progress` string (e.g. "12/20"); returns a synthetic "not_started" shape if no job exists
-- **Startup recovery**: Extended to also call `failRunningAnalysisJobs("Server restarted mid-analysis")` and `purgeOldAnalysisJobs(7)` on boot — no orphan running jobs survive restarts
-- **Frontend polling** (`client/src/pages/home.tsx`): `analyzeAllMutation` now polls `GET /api/batches/:id/analysis-status` every 3 s instead of fetching the full batch; stops when status=completed or failed; invalidates patient list cache on completion
+The system employs a 3-step draft workflow: build schedule, edit clinical data, and analyze for ancillaries. Core features include tab-based navigation for schedules, a collapsible sidebar for schedule history, and an expandable patient result card view. A service layer encapsulates AI client interactions, data ingestion, and screening logic. Operational robustness is ensured through health checks, graceful shutdown mechanisms, and schema management via Drizzle migrations. Documents are generated client-side and can be exported.
 
-### DB Pool and Transaction Safety (Task #150)
-- **Pool config** (`server/db.ts`): max:20, min:2, idleTimeoutMillis:30s, connectionTimeoutMillis:3s; error event listener prevents process crash on dropped client
-- **Startup recovery**: On boot, any batch still in "processing" status (from a crashed run) is automatically reset to "draft" so users can re-run analysis — no manual DB intervention needed
-- **Batch analysis transactions**: The reset+processing transition and the final completed/error transitions are wrapped in `db.transaction()` blocks
-- **Bulk patient import transactions**: File upload and text-paste imports build all rows and insert in a single `db.transaction()` — all rows land together or none do
-- **Billing bulk import transaction**: Google Sheets import accumulates all create/update ops, then executes them in a single `db.transaction()`
-- **Healthz pool telemetry**: `GET /healthz` now returns `{ status:"ok", db:{ total, idle, waiting } }` for ALB/monitoring use
+A pluggable file storage layer (`IFileStorage` interface) supports both Google Drive and AWS S3, allowing for flexible clinical document uploads. The system includes robust analysis job durability with status polling, ensuring long-running analysis processes are resilient to interruptions and provide real-time feedback. Database pool and transaction safety are prioritized for data integrity during bulk operations and critical state changes.
 
-### Canonical Platform Navigation (Task #158)
-A persistent `GlobalNav` left-rail (`client/src/components/GlobalNav.tsx`) is visible on every page with 7 canonical domains + Admin at the bottom:
-- **Schedule** (`/schedule`) — canonical source of `scheduleDate`; was `/`
-- **Outreach Center** (`/outreach`)
-- **Ancillary Docs** (`/documents`)
-- **Billing** (`/billing`)
-- **Team Ops** (`/team-ops`) — stub page
-- **Patient Database** (`/patient-database`) — was `/archive`
-- **Task Brain** (`/task-brain`) — stub page
-- **Admin** (`/admin`) — hub linking to Settings, System Architecture (admin-ops), and future Access Control / Ancillary Definitions / Clinic Settings
-- Redirects: `/` → `/schedule`, `/archive` → `/patient-database`, `/plexus` → `/documents`
-- `HomeSidebar` now shows only "Schedule Views" (Patient History, Patient Directory) and "Schedule History" — global navigation links removed
-- **Canonical date/time rule**: `AppointmentModal` accepts `defaultDate` prop pre-filled from `batch.scheduleDate`; calendar highlights the schedule date; info banner explains the default
+Canonical platform navigation is implemented with a persistent `GlobalNav` left-rail, organizing the application into key domains (Schedule, Outreach Center, Ancillary Docs, Billing, Team Ops, Patient Database, Task Brain, Admin). A connected scheduling system allows for managing ancillary appointments across multiple clinic locations, with a shared `ancillary_appointments` database table and integrated booking functionalities. The Outreach Page provides a daily call-list workflow for clinic coverage teams, aggregating data from existing schedules.
 
-### Frontend Component Structure (Task #144)
-The originally monolithic `client/src/pages/home.tsx` (3,492 lines) has been split into focused components in `client/src/components/`:
-- **PatientCard.tsx**: Patient card with form fields, clinical data entry, paste-to-fill, scheduling button
-- **ClinicalDataEditor.tsx**: Dx/Hx/Rx/Previous Tests section with structured text editors
-- **BatchHeader.tsx**: Schedule header bar with facility, date, clinician, and action buttons
-- **AppointmentModal.tsx**: Calendar-based appointment booking modal
-- **NotesPanelDrawer.tsx**: Completed-tests dialog for marking patients complete and generating ancillary docs
-- **StepTimeline.tsx**: Three-step progress indicator (Add Patients → Clinical Data → Analyze)
-- **ScheduleTile.tsx**: Schedule history tile component
-- **PatientDirectoryView.tsx**: Full patient directory view with search and archive
-- **ResultsView.tsx**: Results/analyze view with PDF export and status management
-- **HomeSidebar.tsx**: Collapsible sidebar with navigation and schedule history
-- **HomeDashboard.tsx**: Home tiles dashboard (New Schedule, Ancillary Docs, Document Upload, etc.)
-- `home.tsx` is now 570 lines (down from 3,492) handling only tab state, shared state, and orchestration
+Authentication and session management are implemented using per-user login sessions with `express-session` and `connect-pg-simple`, replacing API key-based authentication. Passwords are securely hashed with bcrypt, and an admin-only user management system is in place.
 
-### Ancillary Appointment Scheduling (Task #104)
-A connected scheduling system with a single `ancillary_appointments` DB table shared across three surfaces:
-1. **Home page tile** (`/`): "Upcoming Appointments" card showing next N appointments with click-through to `/appointments`
-2. **`/appointments` page**: Three clinic tabs (Taylor Family Practice, NWPG - Spring, NWPG - Veterans), each with a monthly calendar (booking-dot indicators) and a side-by-side BrainWave (1hr) / VitalWave (30min) slot grid. Click a slot to book, click X to cancel.
-3. **Patient card calendar icon**: A calendar button in every patient card's action bar opens a scheduling modal (pick test type, pick date, pick slot, confirm booking). Post-booking badge shows on card.
-- DB table: `ancillary_appointments` (id, patientScreeningId nullable FK, patientName, facility, scheduledDate YYYY-MM-DD, scheduledTime HH:MM 24h, testType, status scheduled|cancelled, createdAt)
-- API: `GET /api/appointments`, `POST /api/appointments`, `PATCH /api/appointments/:id`, `GET /api/appointments/patient/:patientId`
-- Duplicate-slot check on create (409 if same facility+date+time+testType already scheduled)
-
-### Outreach Page
-A daily call-list workflow for clinic coverage teams, reading directly from the canonical schedule (no duplicate data):
-- **`/outreach` page**: Five metric cards (Clinic Coverage, Calls Worked, Scheduled, Pending, Avg Conversion) + a left-panel of clinic coverage cards grouped by facility + a right-panel call list with search.
-- **Server service** (`server/services/outreachService.ts`): `buildOutreachDashboard(storage, today)` — aggregates today's batches via `getAllScreeningBatches` + `getPatientScreeningsByBatch`, groups by `facility`, returns typed `OutreachDashboard`.
-- **API**: `GET /api/outreach/dashboard` — returns `{ today, metrics, coverageCards }`. No new DB table; reads existing `screeningBatches` + `patientScreenings`.
-- **Home tile** + **sidebar link** both wired up at `/outreach`.
-
-## Authentication & Session Management (Task #149)
-Per-user login sessions replace the shared PLEXUS_API_KEY bearer-token approach:
-- **Login page** (`client/src/pages/login.tsx`): Username + password form; shows on any unauthenticated visit.
-- **Session middleware** (`server/index.ts`): `express-session` + `connect-pg-simple` stores sessions in PostgreSQL (`session` table auto-created). Cookie is HTTP-only, 24-hour maxAge.
-- **Auth routes** (`server/routes.ts`): `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` are exempt from requireAuth.
-- **`requireAuth` middleware**: Applied to all other `/api/*` routes; returns 401 if no active session. Shared-schedule GET routes remain public.
-- **bcrypt hashing**: `storage.createUser()` always hashes passwords (cost factor 12). `storage.validateUserPassword()` compares via bcrypt.compare.
-- **First-boot seed**: Server seeds `admin/admin` (bcrypt-hashed) if the users table has zero rows; warns in console to change the password.
-- **Admin account warning**: Toast shown on first admin login directing user to Settings → Change Password.
-- **Change Password** (`client/src/pages/settings.tsx`): `ChangePasswordCard` component backed by `POST /api/auth/change-password`.
-- **User creation** (`POST /api/users`): Admin-only endpoint to create new team member accounts.
-- **Logout button** in `GlobalNav` (bottom of left rail next to username).
-- `client/src/lib/queryClient.ts`: Removed VITE_API_KEY bearer-token headers; all requests use `credentials: "include"` for cookie auth.
+Frontend component structure has been modularized, breaking down a monolithic `home.tsx` into focused, reusable components like `PatientCard.tsx`, `ClinicalDataEditor.tsx`, and `ResultsView.tsx`, improving maintainability and development efficiency.
 
 ## External Dependencies
-- **OpenAI GPT-5.2**: Used for AI-powered patient qualification and clinical note generation.
-- **Google Workspace (Google Sheets, Google Drive)**: Integrated for synchronizing patient and billing data, and for exporting generated clinical notes as Google Docs.
-- **xlsx**: For parsing Excel files during patient data import.
-- **csv-parse**: For parsing CSV files during patient data import.
-- **pdf-parse**: For extracting patient names from uploaded PDF documents.
+- **OpenAI GPT-5.2**: For AI-powered patient qualification and clinical note generation.
+- **Google Workspace (Google Sheets, Google Drive)**: For synchronizing patient and billing data, and exporting clinical notes as Google Docs.
+- **AWS S3**: Optional cloud storage for clinical documents via a pluggable adapter.
+- **xlsx**: For parsing Excel files.
+- **csv-parse**: For parsing CSV files.
+- **pdf-parse**: For extracting patient names from PDF documents.
 - **Zod**: For schema validation on all API routes.
 - **Drizzle ORM**: For interacting with the PostgreSQL database.

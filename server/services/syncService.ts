@@ -194,7 +194,9 @@ export function backgroundSyncBilling(): void {
 }
 
 export async function executeExportNotes(): Promise<ExportNotesResult> {
-  const { uploadTextAsGoogleDoc, ensureStructuredFacilityFolderTree } = await import("../googleDrive");
+  const { getFileStorage, getStorageProvider } = await import("../integrations/fileStorage");
+  const provider = getStorageProvider();
+  const fileStorage = getFileStorage();
   const BATCH_LIMIT = 50;
   const allNotes = await storage.getAllGeneratedNotes();
   const unsynced = allNotes.filter((n) => !n.driveFileId).slice(0, BATCH_LIMIT);
@@ -210,22 +212,41 @@ export async function executeExportNotes(): Promise<ExportNotesResult> {
         .map((s) => `${s.heading}\n${s.body}`)
         .join("\n\n");
       const filename = `${note.patientName} - ${note.title} (${note.scheduleDate || note.generatedAt.toISOString().split("T")[0]})`;
-      let clinicalDocsFolderId: string | undefined;
-      if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES_ALL.includes(note.service)) {
-        const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
-        clinicalDocsFolderId = resolveGeneratedNoteFolderId(tree, note);
+
+      let folder: string | undefined;
+      if (provider === "google_drive") {
+        const { ensureStructuredFacilityFolderTree } = await import("../googleDrive");
+        if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES_ALL.includes(note.service)) {
+          const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
+          folder = resolveGeneratedNoteFolderId(tree, note);
+        }
+      } else {
+        const docKind = (note.docKind || "").trim();
+        const category =
+          docKind === "screening" ? "screening-forms" :
+          docKind === "billing" ? "billing-docs" :
+          docKind === "postProcedureNote" ? "procedure-notes" :
+          docKind === "preProcedureOrder" ? "order-notes" :
+          "clinical-docs";
+        folder = `${note.facility || "unknown"}/${note.service || "unknown"}/${category}`;
       }
-      console.log("[Drive export-note debug]", {
+
+      console.log("[fileStorage export-note debug]", {
         noteId: note.id,
         title: note.title,
         docKind: note.docKind,
         facility: note.facility,
-        patientName: note.patientName,
         service: note.service,
-        clinicalDocsFolderId,
+        folder,
+        provider,
       });
 
-      const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content, clinicalDocsFolderId);
+      const { id: driveFileId, viewUrl: webViewLink } = await fileStorage.uploadFile({
+        filename,
+        content,
+        contentType: "text/plain",
+        folder,
+      });
       await storage.updateGeneratedNoteDriveInfo(note.id, driveFileId, webViewLink);
       results.push({ noteId: note.id, driveFileId, webViewLink });
     } catch (e: any) {

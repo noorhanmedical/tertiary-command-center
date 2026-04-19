@@ -9,5 +9,6 @@ export function getPlatformSettingsSnapshot() {
     teamMembers: TEAM_MEMBERS,
     clinicSpreadsheetConnections: CLINIC_SPREADSHEET_CONNECTIONS,
     sharedCalendarSpreadsheetId: SHARED_CALENDAR_SPREADSHEET_ID,
+    storageProvider: (process.env.STORAGE_PROVIDER || "google_drive") as "google_drive" | "s3",
   };
 }

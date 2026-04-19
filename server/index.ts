@@ -125,12 +125,18 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
-      import("./googleDrive").then(({ validateDriveCredentials, initializeDriveFolderTree }) => {
-        try {
-          validateDriveCredentials();
-        } catch {
+      import("./integrations/fileStorage").then(({ getStorageProvider }) => {
+        if (getStorageProvider() !== "google_drive") {
+          log(`Storage provider: ${getStorageProvider()} — skipping Google Drive folder tree initialization`, "startup");
+          return;
         }
-        initializeDriveFolderTree();
+        import("./googleDrive").then(({ validateDriveCredentials, initializeDriveFolderTree }) => {
+          try {
+            validateDriveCredentials();
+          } catch {
+          }
+          initializeDriveFolderTree();
+        }).catch(() => {});
       }).catch(() => {});
     },
   );

@@ -13,6 +13,7 @@ import {
   Check,
   X,
   Lock,
+  HardDrive,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -58,6 +59,7 @@ type SettingsSnapshot = {
   teamMembers: TeamMember[];
   clinicSpreadsheetConnections: ClinicSpreadsheetConnection[];
   sharedCalendarSpreadsheetId: string;
+  storageProvider?: "google_drive" | "s3";
 };
 
 type OutreachScheduler = {
@@ -437,6 +439,47 @@ export default function SettingsPage() {
           <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
             Shared calendar spreadsheet ID: {data?.sharedCalendarSpreadsheetId || "Not configured"}
           </div>
+        </Card>
+
+        {/* Storage Provider */}
+        <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+          <div className="mb-4 flex items-center gap-2">
+            <HardDrive className="h-5 w-5 text-indigo-600" />
+            <h2 className="text-lg font-semibold text-slate-900">File Storage Provider</h2>
+          </div>
+          <div className="flex items-center gap-3">
+            {data?.storageProvider === "s3" ? (
+              <>
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100">
+                  <HardDrive className="h-5 w-5 text-orange-600" />
+                </div>
+                <div>
+                  <p className="font-semibold text-slate-900">AWS S3</p>
+                  <p className="text-sm text-slate-500">Clinical documents and reports stored in Amazon S3</p>
+                </div>
+                <Badge variant="outline" className="ml-auto rounded-full border-orange-200 bg-orange-50 text-orange-700" data-testid="badge-storage-provider">
+                  S3
+                </Badge>
+              </>
+            ) : (
+              <>
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100">
+                  <HardDrive className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="font-semibold text-slate-900">Google Drive</p>
+                  <p className="text-sm text-slate-500">Clinical documents and reports stored in Google Drive</p>
+                </div>
+                <Badge variant="outline" className="ml-auto rounded-full border-blue-200 bg-blue-50 text-blue-700" data-testid="badge-storage-provider">
+                  Google Drive
+                </Badge>
+              </>
+            )}
+          </div>
+          <p className="mt-3 text-xs text-slate-500">
+            Storage provider is configured via the <code className="rounded bg-slate-100 px-1 py-0.5 font-mono">STORAGE_PROVIDER</code> environment variable
+            (<code className="rounded bg-slate-100 px-1 py-0.5 font-mono">google_drive</code> or <code className="rounded bg-slate-100 px-1 py-0.5 font-mono">s3</code>).
+          </p>
         </Card>
       </div>
     </div>
