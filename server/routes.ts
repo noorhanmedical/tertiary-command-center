@@ -13,6 +13,7 @@ import { registerBillingRoutes } from "./routes/billing";
 import { registerOutreachRoutes } from "./routes/outreach";
 import { registerSettingsRoutes } from "./routes/settings";
 import { registerAppointmentRoutes } from "./routes/appointments";
+import { registerAdminRoutes } from "./routes/admin";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
@@ -178,6 +179,7 @@ export async function registerRoutes(
   registerOutreachRoutes(app);
   registerSettingsRoutes(app);
   registerAppointmentRoutes(app);
+  registerAdminRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {

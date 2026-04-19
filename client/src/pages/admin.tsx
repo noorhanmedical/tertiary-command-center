@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { Shield, Settings, Wrench, Users, ClipboardList, Building2, ChevronRight, ScrollText } from "lucide-react";
+import { Shield, Settings, Wrench, Lock, ClipboardList, Building2, ChevronRight, Users, ScrollText, History } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 const ADMIN_SECTIONS = [
@@ -22,7 +22,7 @@ const ADMIN_SECTIONS = [
   {
     href: "/admin/users",
     icon: Users,
-    iconBg: "bg-amber-100 text-amber-700",
+    iconBg: "bg-purple-100 text-purple-700",
     title: "User Management",
     desc: "Create and remove team accounts, view all users, and manage access.",
     available: true,
@@ -34,6 +34,22 @@ const ADMIN_SECTIONS = [
     title: "Audit Log",
     desc: "A read-only trail of who created, updated, or deleted records — for compliance and dispute resolution.",
     available: true,
+  },
+  {
+    href: "/admin/analysis-jobs",
+    icon: History,
+    iconBg: "bg-indigo-100 text-indigo-700",
+    title: "Analysis Run History",
+    desc: "Audit recent batch analysis runs — timing, patient counts, errors, and performance.",
+    available: true,
+  },
+  {
+    href: "#",
+    icon: Lock,
+    iconBg: "bg-amber-100 text-amber-700",
+    title: "Access Control",
+    desc: "Manage role-based access, permissions, and security settings.",
+    available: false,
   },
   {
     href: "#",

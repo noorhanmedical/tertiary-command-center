@@ -148,6 +148,7 @@ export interface IStorage {
   updateAnalysisJob(id: number, updates: Partial<InsertAnalysisJob>): Promise<AnalysisJob | undefined>;
   incrementAnalysisJobProgress(jobId: number): Promise<void>;
   getLatestAnalysisJobByBatch(batchId: number): Promise<AnalysisJob | undefined>;
+  getRecentAnalysisJobs(limit: number): Promise<Array<AnalysisJob & { batchName: string }>>;
   failRunningAnalysisJobs(errorMessage: string): Promise<void>;
   purgeOldAnalysisJobs(olderThanDays: number): Promise<void>;
 
@@ -554,6 +555,26 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(analysisJobs.startedAt))
       .limit(1);
     return result;
+  }
+
+  async getRecentAnalysisJobs(limit: number): Promise<Array<AnalysisJob & { batchName: string }>> {
+    const rows = await db
+      .select({
+        id: analysisJobs.id,
+        batchId: analysisJobs.batchId,
+        status: analysisJobs.status,
+        totalPatients: analysisJobs.totalPatients,
+        completedPatients: analysisJobs.completedPatients,
+        errorMessage: analysisJobs.errorMessage,
+        startedAt: analysisJobs.startedAt,
+        completedAt: analysisJobs.completedAt,
+        batchName: screeningBatches.name,
+      })
+      .from(analysisJobs)
+      .leftJoin(screeningBatches, eq(analysisJobs.batchId, screeningBatches.id))
+      .orderBy(desc(analysisJobs.startedAt))
+      .limit(limit);
+    return rows.map((r) => ({ ...r, batchName: r.batchName ?? `Batch #${r.batchId}` }));
   }
 
   async failRunningAnalysisJobs(errorMessage: string): Promise<void> {

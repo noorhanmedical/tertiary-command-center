@@ -19,6 +19,7 @@ import AdminOpsPage from "@/pages/admin-ops";
 import AdminPage from "@/pages/admin";
 import AdminUsersPage from "@/pages/admin-users";
 import AuditLogPage from "@/pages/audit-log";
+import AdminAnalysisJobsPage from "@/pages/admin-analysis-jobs";
 import ScheduleDashboardPage from "@/pages/schedule-dashboard";
 import SettingsPage from "@/pages/settings";
 import TeamOpsPage from "@/pages/team-ops";
@@ -83,6 +84,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/audit-log">
                   <AdminGuard user={user}><AuditLogPage /></AdminGuard>
+                </Route>
+                <Route path="/admin/analysis-jobs">
+                  <AdminGuard user={user}><AdminAnalysisJobsPage /></AdminGuard>
                 </Route>
                 <Route path="/admin-ops">
                   <AdminGuard user={user}><AdminOpsPage /></AdminGuard>
