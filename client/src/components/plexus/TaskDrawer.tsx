@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
@@ -26,6 +27,8 @@ import {
   User,
   Plus,
   Send,
+  Check,
+  ChevronDown,
 } from "lucide-react";
 import type { AuthUser } from "@/App";
 import type { PlexusTaskSummary, UserEntry } from "./SchedulerIcon";
@@ -318,6 +321,27 @@ export function TaskDrawer({
     onError: (e: Error) => toast({ title: "Failed to create request", description: e.message, variant: "destructive" }),
   });
 
+  const assignSchedulerMutation = useMutation({
+    mutationFn: async ({ taskId, assignedToUserId }: { taskId: number; assignedToUserId: string | null }) => {
+      const res = await apiRequest("PATCH", `/api/plexus/tasks/${taskId}`, { assignedToUserId });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error ?? "Failed to assign"); }
+      return res.json();
+    },
+    onSuccess: (_, { taskId }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/plexus/tasks", taskId, "events"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plexus/tasks", "patient", patientScreeningId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plexus/tasks/urgent"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
+      toast({ title: "Scheduler updated" });
+    },
+    onError: (e: Error) => toast({ title: "Failed to update scheduler", description: e.message, variant: "destructive" }),
+  });
+
+  const [assignOpen, setAssignOpen] = useState(false);
+  const assignableSchedulers = [...users]
+    .filter((u) => u.active !== false && (u.role === "scheduler" || u.role === "admin"))
+    .sort((a, b) => a.username.localeCompare(b.username));
+
   const logCallOutcomeMutation = useMutation({
     mutationFn: async ({ taskId, outcome, notes }: { taskId: number; outcome: string; notes: string }) => {
       const appointmentStatus = outcome === "scheduled" ? "scheduled" : outcome;
@@ -349,6 +373,7 @@ export function TaskDrawer({
   });
 
   const isScheduler = currentUser?.role === "scheduler" || currentUser?.role === "admin";
+  const canAssign = currentUser?.role === "admin" || currentUser?.role === "clinician" || currentUser?.role === "scheduler";
 
   const timeline: TimelineItem[] = [
     ...events.map((e) => ({
@@ -390,7 +415,78 @@ export function TaskDrawer({
                 {patientName ?? "Patient"}
               </SheetTitle>
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                {assignedUser ? (
+                {activeTask && canAssign ? (
+                  <Popover open={assignOpen} onOpenChange={setAssignOpen}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+                        disabled={assignSchedulerMutation.isPending}
+                        data-testid="drawer-assign-scheduler-trigger"
+                      >
+                        {assignedUser ? (
+                          <>
+                            <div className={`flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold text-white ${colorForUserId(assignedUser.id)}`}>
+                              {getInitials(assignedUser.username)}
+                            </div>
+                            <span>{assignedUser.username}</span>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[9px] text-slate-500">?</div>
+                            <span className="text-slate-500">Assign scheduler</span>
+                          </>
+                        )}
+                        <ChevronDown className="h-3 w-3 text-slate-400" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start" className="w-56 p-1" data-testid="drawer-assign-scheduler-popover">
+                      <div className="max-h-64 overflow-y-auto">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (activeTask && activeTask.assignedToUserId) {
+                              assignSchedulerMutation.mutate({ taskId: activeTask.id, assignedToUserId: null });
+                            }
+                            setAssignOpen(false);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-50"
+                          data-testid="drawer-assign-scheduler-unassign"
+                        >
+                          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[9px] text-slate-500">?</div>
+                          <span className="flex-1">Unassigned</span>
+                          {!activeTask?.assignedToUserId && <Check className="h-3.5 w-3.5 text-blue-500" />}
+                        </button>
+                        {assignableSchedulers.length === 0 ? (
+                          <p className="px-2 py-1.5 text-xs text-slate-400">No schedulers available</p>
+                        ) : assignableSchedulers.map((u) => {
+                          const selected = u.id === activeTask?.assignedToUserId;
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => {
+                                if (activeTask && !selected) {
+                                  assignSchedulerMutation.mutate({ taskId: activeTask.id, assignedToUserId: u.id });
+                                }
+                                setAssignOpen(false);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                              data-testid={`drawer-assign-scheduler-option-${u.id}`}
+                            >
+                              <div className={`flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold text-white ${colorForUserId(u.id)}`}>
+                                {getInitials(u.username)}
+                              </div>
+                              <span className="flex-1 truncate">{u.username}</span>
+                              {u.role === "admin" && <span className="text-[9px] text-slate-400">admin</span>}
+                              {selected && <Check className="h-3.5 w-3.5 text-blue-500" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                ) : assignedUser ? (
                   <div className="flex items-center gap-1.5">
                     <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold text-white ${colorForUserId(assignedUser.id)}`}>
                       {getInitials(assignedUser.username)}

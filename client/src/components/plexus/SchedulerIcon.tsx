@@ -20,7 +20,7 @@ export type PlexusTaskSummary = {
   patientName?: string | null;
 };
 
-export type UserEntry = { id: string; username: string };
+export type UserEntry = { id: string; username: string; role?: string; active?: boolean };
 
 export function getInitials(username: string): string {
   const parts = username.split(/[\s_.-]+/).filter(Boolean);

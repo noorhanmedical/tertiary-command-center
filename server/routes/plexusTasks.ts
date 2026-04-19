@@ -145,7 +145,7 @@ export function registerPlexusTasksRoutes(app: Express) {
   app.get("/api/plexus/users", async (_req, res: Response) => {
     try {
       const users = await storage.getAllUsers();
-      res.json(users.map((u) => ({ id: u.id, username: u.username })));
+      res.json(users.map((u) => ({ id: u.id, username: u.username, role: u.role, active: u.active })));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -441,7 +441,17 @@ export function registerPlexusTasksRoutes(app: Express) {
       const userId = uid(req);
       const prev = await storage.getTaskById(id);
       if (!prev) return res.status(404).json({ error: "Task not found" });
-      if (!await canEditTaskOrCollaborator(id, prev, userId)) return res.status(403).json({ error: "Only the task creator, assignee, or a collaborator can update this task" });
+      const actor = await storage.getUser(userId);
+      const role = actor?.role ?? "";
+      const isAdmin = role === "admin";
+      const onlyAssignmentChange =
+        parsed.data.assignedToUserId !== undefined &&
+        Object.keys(parsed.data).every((k) => k === "assignedToUserId");
+      const canChangeAssignment = isAdmin || role === "clinician" || role === "scheduler";
+      const allowed = isAdmin
+        || (onlyAssignmentChange && canChangeAssignment && await canViewTask(id, userId))
+        || await canEditTaskOrCollaborator(id, prev, userId);
+      if (!allowed) return res.status(403).json({ error: "Only the task creator, assignee, or a collaborator can update this task" });
       if (parsed.data.projectId != null && parsed.data.projectId !== prev.projectId) {
         if (!await canViewProject(parsed.data.projectId, userId)) {
           return res.status(403).json({ error: "Not authorized to move task to this project" });

@@ -252,6 +252,7 @@ export class DatabaseStorage implements IStorage {
     const rows = await db.select({
       id: users.id,
       username: users.username,
+      role: users.role,
       active: users.active,
     }).from(users).orderBy(asc(users.username));
     return rows;
