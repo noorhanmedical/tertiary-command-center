@@ -16,12 +16,6 @@ import {
   CheckSquare,
 } from "lucide-react";
 import { useState, useEffect } from "react";
-import type { PatientScreening, ScreeningBatch } from "@shared/schema";
-
-type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
-
-const TODAY = new Date().toISOString().split("T")[0];
-
 const NAV_ITEMS = [
   { href: "/schedule",          label: "Schedule",            Icon: CalendarDays,  domain: true },
   { href: "/outreach",          label: "Outreach Center",     Icon: Phone,         domain: true },
@@ -68,8 +62,9 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
     return () => window.removeEventListener("resize", handleResize);
   }, [manualOverride]);
 
-  const { data: batches = [] } = useQuery<ScreeningBatchWithPatients[]>({
-    queryKey: ["/api/screening-batches"],
+  const { data: todaySummary } = useQuery<{ patientCount: number; batchCount: number }>({
+    queryKey: ["/api/schedule/today-summary"],
+    refetchInterval: 60_000,
   });
 
   const { data: unreadData } = useQuery<{ count: number }>({
@@ -78,12 +73,7 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
   });
   const unreadCount = unreadData?.count ?? 0;
 
-  const todayCount = batches
-    .filter((b) => {
-      const sd = (b as ScreeningBatch & { scheduleDate?: string }).scheduleDate;
-      return sd === TODAY;
-    })
-    .reduce((sum, b) => sum + (b.patients?.length ?? (b.patientCount ?? 0)), 0);
+  const todayCount = todaySummary?.patientCount ?? 0;
 
   const isActive = (href: string) => {
     if (href === "/schedule") return location === "/schedule" || location === "/";

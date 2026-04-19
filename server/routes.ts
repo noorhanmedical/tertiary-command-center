@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db, pool } from "./db";
 import { patientScreenings, billingRecords, screeningBatches } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql, and } from "drizzle-orm";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import { z } from "zod";
@@ -872,6 +872,22 @@ export async function registerRoutes(
       res.json(payload);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to load schedule dashboard" });
+    }
+  });
+
+  app.get("/api/schedule/today-summary", async (_req, res) => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const [row] = await db
+        .select({
+          batchCount: sql<number>`cast(count(*) as integer)`,
+          patientCount: sql<number>`cast(coalesce(sum(${screeningBatches.patientCount}), 0) as integer)`,
+        })
+        .from(screeningBatches)
+        .where(eq(screeningBatches.scheduleDate, today));
+      res.json({ patientCount: row?.patientCount ?? 0, batchCount: row?.batchCount ?? 0 });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to load today summary" });
     }
   });
 
