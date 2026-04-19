@@ -247,19 +247,21 @@ export default function OutreachPage() {
         </div>
 
         {/* Metrics */}
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-          {METRIC_CARDS.map(({ label, value, Icon, color }) => (
-            <Card key={label} className={`${shellClass()} p-5`}>
-              <div className="flex items-center gap-3">
-                <div className={`rounded-2xl p-2 ${color}`}><Icon className="h-5 w-5" /></div>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">{label}</p>
-                  <p className="mt-1 text-2xl font-semibold text-slate-900">{value}</p>
-                </div>
+        <Card className={`${shellClass()} px-4 py-2`}>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 sm:flex-nowrap sm:divide-x sm:divide-slate-200/70">
+            {METRIC_CARDS.map(({ label, value, Icon, color }) => (
+              <div
+                key={label}
+                className="flex flex-1 items-center gap-2 px-2 py-1 sm:first:pl-0 sm:last:pr-0"
+                data-testid={`metric-${label.toLowerCase().replace(/\s+/g, "-")}`}
+              >
+                <div className={`rounded-lg p-1.5 ${color}`}><Icon className="h-4 w-4" /></div>
+                <span className="text-xs font-medium uppercase tracking-wider text-slate-500">{label}</span>
+                <span className="ml-auto text-base font-semibold text-slate-900">{value}</span>
               </div>
-            </Card>
-          ))}
-        </div>
+            ))}
+          </div>
+        </Card>
 
         {/* Global search */}
         <div className="relative max-w-sm">
