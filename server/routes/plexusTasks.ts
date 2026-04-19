@@ -305,6 +305,9 @@ export function registerPlexusTasksRoutes(app: Express) {
       }
       const task = await storage.createTask({ ...parsed.data, createdByUserId: userId });
       await writeEvent({ taskId: task.id, userId, eventType: "created", payload: { title: task.title } });
+      if (task.assignedToUserId) {
+        await writeEvent({ taskId: task.id, userId, eventType: "assignment_changed", payload: { from: null, to: task.assignedToUserId } });
+      }
       res.status(201).json(task);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -333,6 +336,9 @@ export function registerPlexusTasksRoutes(app: Express) {
           Object.entries(parsed.data).filter(([, v]) => v !== undefined)
         );
         await writeEvent({ taskId: id, userId, eventType: "updated", payload: safePayload });
+      }
+      if (parsed.data.assignedToUserId !== undefined && parsed.data.assignedToUserId !== prev.assignedToUserId) {
+        await writeEvent({ taskId: id, userId, eventType: "assignment_changed", payload: { from: prev.assignedToUserId, to: parsed.data.assignedToUserId } });
       }
       res.json(task);
     } catch (e: any) {

@@ -81,6 +81,7 @@ function TaskRow({
     if (!expanded && unreadCount > 0) {
       apiRequest("POST", `/api/plexus/tasks/${task.id}/read`, {}).catch(() => {});
       qc.invalidateQueries({ queryKey: ["/api/plexus/tasks/unread-count"] });
+      qc.invalidateQueries({ queryKey: ["/api/plexus/tasks/unread-per-task"] });
     }
   }
 
