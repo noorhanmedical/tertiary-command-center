@@ -36,6 +36,13 @@
       "when": 1775838100000,
       "tag": "0004_add_no_previous_tests",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1776574800000,
+      "tag": "0005_add_analysis_jobs",
+      "breakpoints": true
     }
   ]
 }
