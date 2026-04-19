@@ -85,6 +85,7 @@ export const patientScreenings = pgTable("patient_screenings", {
   index("idx_patient_screenings_batch_id").on(table.batchId),
   index("idx_patient_screenings_status").on(table.status),
   index("idx_patient_screenings_appointment_status").on(table.appointmentStatus),
+  index("idx_patient_screenings_name_dob").on(table.name, table.dob),
 ]);
 
 export const insertPatientScreeningSchema = createInsertSchema(patientScreenings).omit({
@@ -108,6 +109,12 @@ export const patientTestHistory = pgTable("patient_test_history", {
 }, (table) => [
   index("idx_patient_test_history_patient_name").on(table.patientName),
   index("idx_patient_test_history_date_of_service").on(table.dateOfService),
+  index("idx_patient_test_history_name_dob_test_dos").on(
+    table.patientName,
+    table.dob,
+    table.testName,
+    table.dateOfService,
+  ),
 ]);
 
 export const insertTestHistorySchema = createInsertSchema(patientTestHistory).omit({
