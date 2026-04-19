@@ -83,89 +83,102 @@ export function backgroundSyncPatients(): void {
 }
 
 export async function executeSyncBilling(): Promise<BillingSyncResult> {
-  const { getOrCreateSpreadsheetInFolder, upsertSheetData } = await import("../integrations/googleSheets");
-  const { getFacilityFolderId } = await import("../integrations/googleDrive");
+  const { getOrCreateSpreadsheet, upsertSheetData } = await import("../integrations/googleSheets");
   const { getSetting, setSetting } = await import("../dbSettings");
   const records = await storage.getAllBillingRecords();
+  const allNotes = await storage.getAllGeneratedNotes();
 
-  const BILLING_HEADERS = ["Date of Service", "Patient Name", "Facility", "Rendering Provider", "Service Type", "Primary Insurance", "Documentation Status", "Claim Status", "Payer Status", "Date Submitted", "Days in A/R", "Follow-Up Date", "Payment Status", "Paid Amount", "Total Charges", "Allowed Amount", "Patient Responsibility", "Adjustment Amount", "Balance Remaining"];
+  // Build a lookup: patientId+service → set of docKinds
+  const noteKindsByPatientService = new Map<string, Set<string>>();
+  for (const n of allNotes) {
+    const key = `${n.patientId}|${n.service}`;
+    if (!noteKindsByPatientService.has(key)) noteKindsByPatientService.set(key, new Set());
+    noteKindsByPatientService.get(key)!.add(n.docKind);
+  }
+
+  function docCheck(r: typeof records[0], docKind: string): string {
+    if (r.patientId === null) return "";
+    const kinds = noteKindsByPatientService.get(`${r.patientId}|${r.service}`);
+    return kinds?.has(docKind) ? "✓" : "";
+  }
+
+  // Exact 20-column layout matching client's "Plexus Billing Tracker"
+  const BILLING_HEADERS = [
+    "DOS", "Test", "Patient", "DOB", "MRN", "Clinician", "Insurance Info",
+    "Screening", "Order Note", "Report", "Procedure Note", "Billing Doc",
+    "Primary Paid Amount", "Insurance Paid Amount", "Secondary Paid Amount",
+    "Patient Responsibility Amount", "Claim Status", "Last Biller Update",
+    "Next Action", "Billing Notes",
+  ];
 
   function toRow(r: typeof records[0]): (string | number)[] {
-    const daysInAR = (() => {
-      if (!r.dateSubmitted) return "";
-      const start = new Date(r.dateSubmitted);
-      if (isNaN(start.getTime())) return "";
-      return Math.max(0, Math.round((Date.now() - start.getTime()) / 86400000)).toString();
-    })();
     return [
-      r.dateOfService ?? "", r.patientName, r.facility ?? "", r.clinician ?? "",
-      r.service, r.insuranceInfo ?? "", r.documentationStatus ?? "", r.billingStatus ?? "",
-      r.response ?? "", r.dateSubmitted ?? "", daysInAR, r.followUpDate ?? "",
-      r.paidStatus ?? "", r.paidAmount ?? "", r.totalCharges ?? "", r.allowedAmount ?? "",
-      r.patientResponsibility ?? "", r.adjustmentAmount ?? "", r.balanceRemaining ?? ""
+      r.dateOfService ?? "",
+      r.service,
+      r.patientName,
+      r.dob ?? "",
+      r.mrn ?? "",
+      r.clinician ?? "",
+      r.insuranceInfo ?? "",
+      docCheck(r, "screening"),
+      docCheck(r, "preProcedureOrder"),
+      docCheck(r, "report"),
+      docCheck(r, "postProcedureNote"),
+      docCheck(r, "billing"),
+      r.paidAmount ?? "",
+      r.insurancePaidAmount ?? "",
+      r.secondaryPaidAmount ?? "",
+      r.patientResponsibility ?? "",
+      r.billingStatus ?? "",
+      r.lastBillerUpdate ?? "",
+      r.nextAction ?? "",
+      r.billingNotes ?? "",
     ];
   }
 
-  const facilityGroups = new Map<string, typeof records>();
-  for (const r of records) {
-    const fac = r.facility || "Unknown Facility";
-    if (!facilityGroups.has(fac)) facilityGroups.set(fac, []);
-    facilityGroups.get(fac)!.push(r);
-  }
+  // Single consolidated sheet for all facilities
+  const masterSid = (await getSetting("GOOGLE_SHEETS_BILLING_ID")) ||
+    (await getSetting("BILLING_SPREADSHEET_ID")) ||
+    process.env.GOOGLE_SHEETS_BILLING_ID || null;
 
-  let totalSynced = 0;
-  let lastSpreadsheetId = "";
-  const facilitySpreadsheetIds: Record<string, string> = {};
-
-  for (const [facility, facRecords] of Array.from(facilityGroups.entries())) {
-    let folderId: string | null = null;
-    try {
-      folderId = await getFacilityFolderId(facility);
-    } catch (e) {
-      console.warn(`Could not get Drive folder for facility ${facility}, skipping folder placement:`, (e as Error).message);
-    }
-
-    const billingSettingKey = `GOOGLE_SHEETS_BILLING_ID_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`;
-    let spreadsheetId: string;
-    if (folderId) {
-      spreadsheetId = await getOrCreateSpreadsheetInFolder(
-        billingSettingKey,
-        `Plexus Billing Tracker — ${facility}`,
-        folderId
-      );
-    } else {
-      const { getOrCreateSpreadsheet } = await import("../integrations/googleSheets");
-      spreadsheetId = await getOrCreateSpreadsheet(billingSettingKey, `Plexus Billing Tracker — ${facility}`);
-    }
-
-    await upsertSheetData(spreadsheetId, "Billing Records", BILLING_HEADERS, facRecords.map(toRow));
-
-    totalSynced += facRecords.length;
-    lastSpreadsheetId = spreadsheetId;
-    facilitySpreadsheetIds[facility] = spreadsheetId;
-    await setSetting(`BILLING_SPREADSHEET_ID_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`, spreadsheetId);
-  }
-
-  const masterSid = (await getSetting("GOOGLE_SHEETS_BILLING_ID")) || process.env.GOOGLE_SHEETS_BILLING_ID || null;
+  let spreadsheetId: string;
   let masterSyncError: string | null = null;
+
   if (masterSid) {
+    spreadsheetId = masterSid;
     try {
-      await upsertSheetData(masterSid, "Billing Records", BILLING_HEADERS, records.map(toRow));
-      await setSetting("GOOGLE_SHEETS_BILLING_ID", masterSid);
+      await upsertSheetData(spreadsheetId, "Billing Records", BILLING_HEADERS, records.map(toRow));
+      await setSetting("GOOGLE_SHEETS_BILLING_ID", spreadsheetId);
+      await setSetting("BILLING_SPREADSHEET_ID", spreadsheetId);
     } catch (e) {
       masterSyncError = (e as Error).message;
-      console.error("Master billing tracker sync failed:", masterSyncError);
+      console.error("Billing tracker sync failed:", masterSyncError);
+    }
+  } else {
+    // Create a new single "Plexus Billing Tracker" sheet
+    spreadsheetId = await getOrCreateSpreadsheet("BILLING_SPREADSHEET_ID", "Plexus Billing Tracker");
+    try {
+      await upsertSheetData(spreadsheetId, "Billing Records", BILLING_HEADERS, records.map(toRow));
+      await setSetting("GOOGLE_SHEETS_BILLING_ID", spreadsheetId);
+      await setSetting("BILLING_SPREADSHEET_ID", spreadsheetId);
+    } catch (e) {
+      masterSyncError = (e as Error).message;
+      console.error("Billing tracker sync failed:", masterSyncError);
     }
   }
 
   const syncedAt = new Date().toISOString();
   billingSyncState.lastSyncedAt = syncedAt;
   await setSetting("BILLING_LAST_SYNCED_AT", syncedAt);
-  const primaryId = masterSid || lastSpreadsheetId || "";
-  if (primaryId) {
-    await setSetting("BILLING_SPREADSHEET_ID", primaryId);
-  }
-  return { spreadsheetId: primaryId, masterSpreadsheetId: masterSid, facilitySpreadsheetIds, recordCount: totalSynced, syncedAt, masterSyncError };
+
+  return {
+    spreadsheetId,
+    masterSpreadsheetId: spreadsheetId,
+    facilitySpreadsheetIds: {},
+    recordCount: records.length,
+    syncedAt,
+    masterSyncError,
+  };
 }
 
 export async function runBillingSyncWithLock(throwOnError: boolean): Promise<BillingSyncResult | null> {

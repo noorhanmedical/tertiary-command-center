@@ -55,6 +55,8 @@ type BillingRecord = {
   facility: string | null;
   dateOfService: string | null;
   patientName: string;
+  dob: string | null;
+  mrn: string | null;
   clinician: string | null;
   insuranceInfo: string | null;
   documentationStatus: string | null;
@@ -65,10 +67,15 @@ type BillingRecord = {
   dateSubmitted: string | null;
   followUpDate: string | null;
   paidAmount: string | null;
+  insurancePaidAmount: string | null;
+  secondaryPaidAmount: string | null;
   totalCharges: string | null;
   allowedAmount: string | null;
   patientResponsibility: string | null;
   adjustmentAmount: string | null;
+  lastBillerUpdate: string | null;
+  nextAction: string | null;
+  billingNotes: string | null;
   createdAt: string;
 };
 
@@ -129,36 +136,11 @@ const DOC_KIND_COLORS: Record<string, string> = {
 // ─── Smart Status Logic ─────────────────────────────────────────────────────
 
 function applySmartStatus(
-  current: Partial<BillingRecord>,
+  _current: Partial<BillingRecord>,
   field: keyof BillingRecord,
   value: string | null
 ): Record<string, string | null> {
-  const updates: Record<string, string | null> = { [field]: value };
-
-  const paidAmount = field === "paidAmount" ? value : current.paidAmount;
-  const balanceRemaining = field === "balanceRemaining" ? value : current.balanceRemaining;
-
-  if (field === "billingStatus") {
-    if (value === "Denied") updates.response = "Denied";
-    else if (value === "Rejected") updates.response = "Rejected";
-  }
-
-  if (field === "paidAmount" || field === "balanceRemaining") {
-    const effectivePaid = parseFloat((field === "paidAmount" ? value : paidAmount) ?? "0") || 0;
-    const effectiveBalance = parseFloat((field === "balanceRemaining" ? value : balanceRemaining) ?? "0") || 0;
-    if (effectiveBalance === 0 && effectivePaid > 0) {
-      updates.paidStatus = "Paid";
-    } else if (effectivePaid > 0 && effectiveBalance > 0) {
-      updates.paidStatus = "Partial";
-    }
-  } else {
-    const paid = parseFloat(paidAmount ?? "0") || 0;
-    const balance = parseFloat(balanceRemaining ?? "0") || 0;
-    if (balance === 0 && paid > 0) updates.paidStatus = "Paid";
-    else if (paid > 0 && balance > 0) updates.paidStatus = "Partial";
-  }
-
-  return updates;
+  return { [field]: value };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -180,13 +162,9 @@ function calcDaysInAR(dateSubmitted: string | null): number | null {
 
 function rowAccentClass(record: BillingRecord): string {
   const cs = record.billingStatus ?? "";
-  const ps = record.paidStatus ?? "";
-  const rs = record.response ?? "";
-  const days = calcDaysInAR(record.dateSubmitted);
-  if (cs === "Denied" || cs === "Rejected" || rs === "Denied" || rs === "Rejected") return "bg-red-50/70 border-l-2 border-l-red-300";
-  if (days !== null && days >= 90) return "bg-red-50/50 border-l-2 border-l-red-200";
-  if (ps === "Paid") return "bg-emerald-50/60 border-l-2 border-l-emerald-300";
-  if (cs === "Pending" || rs === "Pending") return "bg-amber-50/50 border-l-2 border-l-amber-200";
+  if (cs === "Denied" || cs === "Rejected") return "bg-red-50/70 border-l-2 border-l-red-300";
+  if (cs === "Accepted" || cs === "Paid In Full") return "bg-emerald-50/60 border-l-2 border-l-emerald-300";
+  if (cs === "Pending" || cs === "Submitted") return "bg-amber-50/50 border-l-2 border-l-amber-200";
   return "";
 }
 
@@ -611,6 +589,8 @@ function NotesModal({
 
 type AddRowData = {
   patientName: string;
+  dob: string;
+  mrn: string;
   dateOfService: string;
   facility: string;
   clinician: string;
@@ -624,6 +604,8 @@ function AddRowModal({ onClose, onAdd }: {
   onAdd: (data: AddRowData) => void;
 }) {
   const [patientName, setPatientName] = useState("");
+  const [dob, setDob] = useState("");
+  const [mrn, setMrn] = useState("");
   const [dateOfService, setDateOfService] = useState("");
   const [facility, setFacility] = useState("");
   const [clinician, setClinician] = useState("");
@@ -650,7 +632,7 @@ function AddRowModal({ onClose, onAdd }: {
   function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!patientName.trim()) return;
-    onAdd({ patientName: patientName.trim(), dateOfService, facility, clinician, service, insuranceInfo, batchId: selectedBatchId });
+    onAdd({ patientName: patientName.trim(), dob, mrn, dateOfService, facility, clinician, service, insuranceInfo, batchId: selectedBatchId });
     onClose();
   }
 
@@ -685,6 +667,18 @@ function AddRowModal({ onClose, onAdd }: {
             <label className="text-xs font-medium text-slate-600 block mb-1">Patient Name *</label>
             <input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="Full name" autoFocus data-testid="input-add-row-patient-name" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">DOB</label>
+              <input type="date" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                value={dob} onChange={(e) => setDob(e.target.value)} data-testid="input-add-row-dob" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">MRN</label>
+              <input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                value={mrn} onChange={(e) => setMrn(e.target.value)} placeholder="MRN #" data-testid="input-add-row-mrn" />
+            </div>
           </div>
           <div>
             <label className="text-xs font-medium text-slate-600 block mb-1">Date of Service</label>
@@ -739,7 +733,7 @@ function SortIcon({ field, sortField, sortDir }: { field: string; sortField: str
 
 // ─── Main page ───────────────────────────────────────────────────────────────
 
-type SortableField = "facility" | "clinician" | "service" | "billingStatus" | "response" | "paidStatus";
+type SortableField = "clinician" | "service" | "billingStatus" | "insuranceInfo";
 
 export default function BillingPage() {
   const { toast } = useToast();
@@ -756,8 +750,6 @@ export default function BillingPage() {
   const [filterProvider, setFilterProvider] = useState("");
   const [filterService, setFilterService] = useState("");
   const [filterClaimStatus, setFilterClaimStatus] = useState("");
-  const [filterPayerStatus, setFilterPayerStatus] = useState("");
-  const [filterPaymentStatus, setFilterPaymentStatus] = useState("");
 
   const [sortField, setSortField] = useState<SortableField | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -801,7 +793,7 @@ export default function BillingPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (body: { service: string; patientName: string; dateOfService: string | null; facility: string | null; clinician: string | null; insuranceInfo: string | null; batchId?: number | null }) => apiRequest("POST", "/api/billing-records", body),
+    mutationFn: (body: { service: string; patientName: string; dob?: string | null; mrn?: string | null; dateOfService: string | null; facility: string | null; clinician: string | null; insuranceInfo: string | null; batchId?: number | null }) => apiRequest("POST", "/api/billing-records", body),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/billing-records"] }); toast({ title: "Row added" }); },
     onError: (err: Error) => { toast({ title: "Failed to add row", description: err.message, variant: "destructive" }); },
   });
@@ -869,6 +861,8 @@ export default function BillingPage() {
     createMutation.mutate({
       service: data.service || "BrainWave",
       patientName: data.patientName,
+      dob: data.dob || null,
+      mrn: data.mrn || null,
       dateOfService: data.dateOfService || null,
       facility: data.facility || null,
       clinician: data.clinician || null,
@@ -885,12 +879,11 @@ export default function BillingPage() {
   const metrics = useMemo(() => {
     const src = facilityTab === "All" ? records : records.filter(r => r.facility === facilityTab);
     const totalRecords = src.length;
-    const totalCharges = src.reduce((s, r) => s + (parseFloat(r.totalCharges ?? "0") || 0), 0);
-    const totalPaid = src.reduce((s, r) => s + (parseFloat(r.paidAmount ?? "0") || 0), 0);
-    const totalBalance = src.reduce((s, r) => s + (parseFloat(r.balanceRemaining ?? "0") || 0), 0);
-    const arDays = src.map(r => calcDaysInAR(r.dateSubmitted)).filter((d): d is number => d !== null);
-    const avgAR = arDays.length > 0 ? Math.round(arDays.reduce((a, b) => a + b, 0) / arDays.length) : null;
-    return { totalRecords, totalCharges, totalPaid, totalBalance, avgAR };
+    const totalPrimary = src.reduce((s, r) => s + (parseFloat(r.paidAmount ?? "0") || 0), 0);
+    const totalInsurance = src.reduce((s, r) => s + (parseFloat(r.insurancePaidAmount ?? "0") || 0), 0);
+    const totalSecondary = src.reduce((s, r) => s + (parseFloat(r.secondaryPaidAmount ?? "0") || 0), 0);
+    const totalPatientResp = src.reduce((s, r) => s + (parseFloat(r.patientResponsibility ?? "0") || 0), 0);
+    return { totalRecords, totalPrimary, totalInsurance, totalSecondary, totalPatientResp };
   }, [records, facilityTab]);
 
   const filtered = useMemo(() => {
@@ -899,17 +892,13 @@ export default function BillingPage() {
     if (filterProvider) result = result.filter((r) => r.clinician === filterProvider);
     if (filterService) result = result.filter((r) => r.service === filterService);
     if (filterClaimStatus) result = result.filter((r) => r.billingStatus === filterClaimStatus);
-    if (filterPayerStatus) result = result.filter((r) => r.response === filterPayerStatus);
-    if (filterPaymentStatus) result = result.filter((r) => r.paidStatus === filterPaymentStatus);
 
     if (sortField) {
       const fieldMap: Record<SortableField, keyof BillingRecord> = {
-        facility: "facility",
-        clinician: "clinician",
         service: "service",
+        clinician: "clinician",
         billingStatus: "billingStatus",
-        response: "response",
-        paidStatus: "paidStatus",
+        insuranceInfo: "insuranceInfo",
       };
       const key = fieldMap[sortField];
       result = [...result].sort((a, b) => {
@@ -919,7 +908,7 @@ export default function BillingPage() {
       });
     }
     return result;
-  }, [records, facilityTab, filterProvider, filterService, filterClaimStatus, filterPayerStatus, filterPaymentStatus, sortField, sortDir]);
+  }, [records, facilityTab, filterProvider, filterService, filterClaimStatus, sortField, sortDir]);
 
   function toggleSort(field: SortableField) {
     if (sortField === field) {
@@ -942,37 +931,36 @@ export default function BillingPage() {
   }
 
   const sortableHeaders: { label: string; field: SortableField }[] = [
-    { label: "Facility", field: "facility" },
-    { label: "Rendering Provider", field: "clinician" },
-    { label: "Service Type", field: "service" },
+    { label: "Clinician", field: "clinician" },
+    { label: "Test", field: "service" },
     { label: "Claim Status", field: "billingStatus" },
-    { label: "Payer Status", field: "response" },
-    { label: "Payment Status", field: "paidStatus" },
+    { label: "Insurance Info", field: "insuranceInfo" },
   ];
 
   const isSortable = (label: string) => sortableHeaders.some((h) => h.label === label);
   const getSortField = (label: string) => sortableHeaders.find((h) => h.label === label)?.field ?? null;
 
   const columns = [
-    { label: "Date of Service", w: 120 },
-    { label: "Patient Name", w: 150 },
-    { label: "Facility", w: 160 },
-    { label: "Rendering Provider", w: 150 },
-    { label: "Service Type", w: 185 },
-    { label: "Primary Insurance", w: 145 },
-    { label: "Documentation Status", w: 200 },
+    { label: "DOS", w: 110 },
+    { label: "Test", w: 185 },
+    { label: "Patient", w: 150 },
+    { label: "DOB", w: 105 },
+    { label: "MRN", w: 100 },
+    { label: "Clinician", w: 145 },
+    { label: "Insurance Info", w: 160 },
+    { label: "Screening", w: 90, docKind: "screening" },
+    { label: "Order Note", w: 95, docKind: "preProcedureOrder" },
+    { label: "Report", w: 75, docKind: "report" },
+    { label: "Procedure Note", w: 115, docKind: "postProcedureNote" },
+    { label: "Billing Doc", w: 90, docKind: "billing" },
+    { label: "Primary Paid", w: 110 },
+    { label: "Insurance Paid", w: 115 },
+    { label: "Secondary Paid", w: 115 },
+    { label: "Pt Responsibility", w: 130 },
     { label: "Claim Status", w: 130 },
-    { label: "Payer Status", w: 140 },
-    { label: "Date Submitted", w: 130 },
-    { label: "Days in A/R", w: 90 },
-    { label: "Follow-Up Date", w: 130 },
-    { label: "Payment Status", w: 120 },
-    { label: "Paid Amount", w: 110 },
-    { label: "Total Charges", w: 110 },
-    { label: "Allowed Amount", w: 120 },
-    { label: "Patient Responsibility", w: 150 },
-    { label: "Adjustment Amount", w: 135 },
-    { label: "Balance Remaining", w: 135 },
+    { label: "Last Biller Update", w: 145 },
+    { label: "Next Action", w: 140 },
+    { label: "Billing Notes", w: 200 },
     { label: "", w: 48 },
   ];
 
@@ -1053,10 +1041,10 @@ export default function BillingPage() {
         <div className="px-5 pb-3 grid grid-cols-5 gap-3" data-testid="billing-metrics">
           {[
             { icon: Receipt, label: "Total Records", value: String(metrics.totalRecords), color: "text-slate-700", bg: "bg-slate-100" },
-            { icon: TrendingUp, label: "Total Charges", value: fmtMoney(metrics.totalCharges), color: "text-blue-700", bg: "bg-blue-50" },
-            { icon: Wallet, label: "Total Paid", value: fmtMoney(metrics.totalPaid), color: "text-emerald-700", bg: "bg-emerald-50" },
-            { icon: Banknote, label: "Balance Outstanding", value: fmtMoney(metrics.totalBalance), color: "text-amber-700", bg: "bg-amber-50" },
-            { icon: Timer, label: "Avg Days in A/R", value: metrics.avgAR !== null ? `${metrics.avgAR}d` : "—", color: metrics.avgAR !== null && metrics.avgAR >= 90 ? "text-red-700" : "text-slate-700", bg: metrics.avgAR !== null && metrics.avgAR >= 90 ? "bg-red-50" : "bg-slate-100" },
+            { icon: Wallet, label: "Primary Paid", value: fmtMoney(metrics.totalPrimary), color: "text-emerald-700", bg: "bg-emerald-50" },
+            { icon: TrendingUp, label: "Insurance Paid", value: fmtMoney(metrics.totalInsurance), color: "text-blue-700", bg: "bg-blue-50" },
+            { icon: Banknote, label: "Secondary Paid", value: fmtMoney(metrics.totalSecondary), color: "text-violet-700", bg: "bg-violet-50" },
+            { icon: Timer, label: "Pt Responsibility", value: fmtMoney(metrics.totalPatientResp), color: "text-amber-700", bg: "bg-amber-50" },
           ].map(({ icon: Icon, label, value, color, bg }) => (
             <div key={label} className={`rounded-xl px-3.5 py-2.5 ${bg} flex items-center gap-3`} data-testid={`metric-${label.replace(/\s+/g, "-").toLowerCase()}`}>
               <Icon className={`w-4 h-4 shrink-0 ${color}`} />
@@ -1108,12 +1096,10 @@ export default function BillingPage() {
           <FilterPill icon={User} label="Provider" value={filterProvider} options={uniqueProviders} onChange={setFilterProvider} testId="select-filter-provider" />
           <FilterPill icon={Scan} label="Service" value={filterService} options={SERVICE_TYPE_OPTIONS} onChange={setFilterService} testId="select-filter-service" />
           <FilterPill icon={ClipboardList} label="Claim Status" value={filterClaimStatus} options={CLAIM_STATUS_OPTIONS} onChange={setFilterClaimStatus} testId="select-filter-claim-status" />
-          <FilterPill icon={AlertCircle} label="Payer Status" value={filterPayerStatus} options={PAYER_STATUS_OPTIONS} onChange={setFilterPayerStatus} testId="select-filter-payer-status" />
-          <FilterPill icon={Banknote} label="Payment" value={filterPaymentStatus} options={PAYMENT_STATUS_OPTIONS} onChange={setFilterPaymentStatus} testId="select-filter-payment-status" />
-          {(filterProvider || filterService || filterClaimStatus || filterPayerStatus || filterPaymentStatus) && (
+          {(filterProvider || filterService || filterClaimStatus) && (
             <button
               className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-600 px-2.5 py-1 rounded-full border border-red-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-              onClick={() => { setFilterProvider(""); setFilterService(""); setFilterClaimStatus(""); setFilterPayerStatus(""); setFilterPaymentStatus(""); }}
+              onClick={() => { setFilterProvider(""); setFilterService(""); setFilterClaimStatus(""); }}
               data-testid="button-clear-filters">
               <X className="w-3 h-3" />Clear
             </button>
@@ -1165,106 +1151,103 @@ export default function BillingPage() {
               </thead>
               <tbody>
                 {filtered.map((record, ri) => {
-                  const days = calcDaysInAR(record.dateSubmitted);
                   const accent = rowAccentClass(record);
                   const isEven = ri % 2 === 0;
                   const rowBg = accent || (isEven ? "bg-white" : "bg-slate-50/60");
+                  // doc kind check helper — uses allNotes in scope
+                  const hasDocKind = (docKind: string) => {
+                    if (record.patientId === null) return false;
+                    return allNotes.some(n => n.patientId === record.patientId && n.service === record.service && n.docKind === docKind);
+                  };
+                  const docCell = (docKind: string, recordId: number) => (
+                    <td className="px-3 py-2 border-r border-slate-100 align-middle text-center" data-testid={`cell-${docKind}-${recordId}`}>
+                      {hasDocKind(docKind)
+                        ? <span className="text-emerald-600 font-bold">✓</span>
+                        : <span className="text-slate-300">—</span>}
+                    </td>
+                  );
                   return (
                     <tr key={record.id}
                       className={`border-b border-slate-100 hover:bg-blue-50/30 transition-colors ${rowBg}`}
                       data-testid={`billing-row-${record.id}`}>
-                      {/* Date of Service — sticky col 0 */}
+                      {/* DOS — sticky col 0 */}
                       <td className="px-3 py-2 border-r border-slate-100 align-middle"
                         style={{ position: "sticky", left: 0, zIndex: 1, background: isEven ? "white" : "rgb(248 250 252 / 0.6)" }}>
                         <DateCell value={record.dateOfService} recordId={record.id} field="dateOfService" onSave={handleSave} record={record} />
                       </td>
-                      {/* Patient Name — sticky col 1 */}
-                      <td className="px-3 py-2 border-r border-slate-200 align-middle font-medium text-slate-800"
-                        style={{ position: "sticky", left: 120, zIndex: 1, background: isEven ? "white" : "rgb(248 250 252 / 0.6)", boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>
-                        <EditableCell value={record.patientName} recordId={record.id} field="patientName" onSave={handleSave} record={record} />
-                      </td>
-                      {/* Facility */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <DropdownCell value={record.facility} recordId={record.id} field="facility" options={FACILITY_OPTIONS} onSave={handleSave} record={record} badgeStyle={false} />
-                      </td>
-                      {/* Rendering Provider */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <EditableCell value={record.clinician} recordId={record.id} field="clinician" onSave={handleSave} record={record} placeholder="—" />
-                      </td>
-                      {/* Service Type */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                      {/* Test — sticky col 1 */}
+                      <td className="px-3 py-2 border-r border-slate-200 align-middle"
+                        style={{ position: "sticky", left: 110, zIndex: 1, background: isEven ? "white" : "rgb(248 250 252 / 0.6)", boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>
                         <DropdownCell value={record.service} recordId={record.id} field="service" options={SERVICE_TYPE_OPTIONS} onSave={handleSave} record={record} badgeStyle={false} />
                       </td>
-                      {/* Primary Insurance */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <DropdownCell value={record.insuranceInfo} recordId={record.id} field="insuranceInfo" options={PRIMARY_INSURANCE_OPTIONS} onSave={handleSave} record={record} badgeStyle={false} />
-                      </td>
-                      {/* Documentation Status */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                      {/* Patient */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle font-medium text-slate-800">
                         <div className="flex items-center gap-1.5">
-                          <DropdownCell value={record.documentationStatus} recordId={record.id} field="documentationStatus" options={DOC_STATUS_OPTIONS} onSave={handleSave} record={record} />
+                          <EditableCell value={record.patientName} recordId={record.id} field="patientName" onSave={handleSave} record={record} />
                           {hasNotes(record) && (
                             <button
-                              className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 font-medium whitespace-nowrap transition-all"
+                              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 font-medium whitespace-nowrap transition-all"
                               onClick={() => openDocModal(record)}
                               data-testid={`button-doc-${record.id}`}
                             >
-                              <FileText className="w-2.5 h-2.5" />Docs
+                              <FileText className="w-2.5 h-2.5" />
                             </button>
                           )}
                         </div>
+                      </td>
+                      {/* DOB */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <EditableCell value={record.dob} recordId={record.id} field="dob" onSave={handleSave} record={record} placeholder="—" />
+                      </td>
+                      {/* MRN */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <EditableCell value={record.mrn} recordId={record.id} field="mrn" onSave={handleSave} record={record} placeholder="—" />
+                      </td>
+                      {/* Clinician */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <EditableCell value={record.clinician} recordId={record.id} field="clinician" onSave={handleSave} record={record} placeholder="—" />
+                      </td>
+                      {/* Insurance Info */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <DropdownCell value={record.insuranceInfo} recordId={record.id} field="insuranceInfo" options={PRIMARY_INSURANCE_OPTIONS} onSave={handleSave} record={record} badgeStyle={false} />
+                      </td>
+                      {/* Doc status columns — read-only */}
+                      {docCell("screening", record.id)}
+                      {docCell("preProcedureOrder", record.id)}
+                      {docCell("report", record.id)}
+                      {docCell("postProcedureNote", record.id)}
+                      {docCell("billing", record.id)}
+                      {/* Primary Paid Amount */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <NumericCell value={record.paidAmount} recordId={record.id} field="paidAmount" onSave={handleSave} record={record} />
+                      </td>
+                      {/* Insurance Paid Amount */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <NumericCell value={record.insurancePaidAmount} recordId={record.id} field="insurancePaidAmount" onSave={handleSave} record={record} />
+                      </td>
+                      {/* Secondary Paid Amount */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <NumericCell value={record.secondaryPaidAmount} recordId={record.id} field="secondaryPaidAmount" onSave={handleSave} record={record} />
+                      </td>
+                      {/* Patient Responsibility Amount */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <NumericCell value={record.patientResponsibility} recordId={record.id} field="patientResponsibility" onSave={handleSave} record={record} />
                       </td>
                       {/* Claim Status */}
                       <td className="px-3 py-2 border-r border-slate-100 align-middle">
                         <DropdownCell value={record.billingStatus} recordId={record.id} field="billingStatus" options={CLAIM_STATUS_OPTIONS} onSave={handleSave} record={record} />
                       </td>
-                      {/* Payer Status */}
+                      {/* Last Biller Update */}
                       <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <DropdownCell value={record.response} recordId={record.id} field="response" options={PAYER_STATUS_OPTIONS} onSave={handleSave} record={record} />
+                        <EditableCell value={record.lastBillerUpdate} recordId={record.id} field="lastBillerUpdate" onSave={handleSave} record={record} placeholder="—" />
                       </td>
-                      {/* Date Submitted */}
+                      {/* Next Action */}
                       <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <DateCell value={record.dateSubmitted} recordId={record.id} field="dateSubmitted" onSave={handleSave} record={record} />
+                        <EditableCell value={record.nextAction} recordId={record.id} field="nextAction" onSave={handleSave} record={record} placeholder="—" />
                       </td>
-                      {/* Days in A/R — computed */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle text-center" data-testid={`cell-billing-days-ar-${record.id}`}>
-                        {days !== null ? (
-                          <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${days >= 90 ? "bg-red-100 text-red-700" : days >= 30 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{days}d</span>
-                        ) : (
-                          <span className="text-slate-300">—</span>
-                        )}
-                      </td>
-                      {/* Follow-Up Date */}
+                      {/* Billing Notes */}
                       <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <DateCell value={record.followUpDate} recordId={record.id} field="followUpDate" onSave={handleSave} record={record} />
-                      </td>
-                      {/* Payment Status */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <DropdownCell value={record.paidStatus} recordId={record.id} field="paidStatus" options={PAYMENT_STATUS_OPTIONS} onSave={handleSave} record={record} />
-                      </td>
-                      {/* Paid Amount */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <NumericCell value={record.paidAmount} recordId={record.id} field="paidAmount" onSave={handleSave} record={record} />
-                      </td>
-                      {/* Total Charges */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <NumericCell value={record.totalCharges} recordId={record.id} field="totalCharges" onSave={handleSave} record={record} />
-                      </td>
-                      {/* Allowed Amount */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <NumericCell value={record.allowedAmount} recordId={record.id} field="allowedAmount" onSave={handleSave} record={record} />
-                      </td>
-                      {/* Patient Responsibility */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <NumericCell value={record.patientResponsibility} recordId={record.id} field="patientResponsibility" onSave={handleSave} record={record} />
-                      </td>
-                      {/* Adjustment Amount */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <NumericCell value={record.adjustmentAmount} recordId={record.id} field="adjustmentAmount" onSave={handleSave} record={record} />
-                      </td>
-                      {/* Balance Remaining */}
-                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
-                        <NumericCell value={record.balanceRemaining} recordId={record.id} field="balanceRemaining" onSave={handleSave} record={record} />
+                        <EditableCell value={record.billingNotes} recordId={record.id} field="billingNotes" onSave={handleSave} record={record} placeholder="—" />
                       </td>
                       {/* Actions */}
                       <td className="px-2 py-2 align-middle text-center">

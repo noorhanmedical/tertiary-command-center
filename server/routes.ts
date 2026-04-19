@@ -1008,8 +1008,10 @@ export async function registerRoutes(
     dateOfService: z.string().nullable().optional(),
     patientName: z.string().min(1).optional(),
     service: z.string().nullable().optional(),
-    clinician: z.string().nullable().optional(),
     facility: z.string().nullable().optional(),
+    dob: z.string().nullable().optional(),
+    mrn: z.string().nullable().optional(),
+    clinician: z.string().nullable().optional(),
     insuranceInfo: z.string().nullable().optional(),
     documentationStatus: z.string().nullable().optional(),
     billingStatus: z.string().nullable().optional(),
@@ -1019,10 +1021,15 @@ export async function registerRoutes(
     dateSubmitted: z.string().nullable().optional(),
     followUpDate: z.string().nullable().optional(),
     paidAmount: z.string().nullable().optional(),
+    insurancePaidAmount: z.string().nullable().optional(),
+    secondaryPaidAmount: z.string().nullable().optional(),
     totalCharges: z.string().nullable().optional(),
     allowedAmount: z.string().nullable().optional(),
     patientResponsibility: z.string().nullable().optional(),
     adjustmentAmount: z.string().nullable().optional(),
+    lastBillerUpdate: z.string().nullable().optional(),
+    nextAction: z.string().nullable().optional(),
+    billingNotes: z.string().nullable().optional(),
   });
 
   const createBillingRecordSchema = z.object({
@@ -1032,6 +1039,8 @@ export async function registerRoutes(
     facility: z.string().nullable().optional(),
     dateOfService: z.string().nullable().optional(),
     patientName: z.string().min(1),
+    dob: z.string().nullable().optional(),
+    mrn: z.string().nullable().optional(),
     clinician: z.string().nullable().optional(),
     insuranceInfo: z.string().nullable().optional(),
   });
@@ -1040,7 +1049,7 @@ export async function registerRoutes(
     try {
       const parsed = createBillingRecordSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-      const { patientId, batchId, service, facility, patientName, clinician, insuranceInfo } = parsed.data;
+      const { patientId, batchId, service, facility, patientName, dob, mrn, clinician, insuranceInfo } = parsed.data;
       let { dateOfService } = parsed.data;
 
       // Canonical date rule: derive dateOfService from batch.scheduleDate when batchId is
@@ -1059,6 +1068,8 @@ export async function registerRoutes(
         facility: facility ?? null,
         dateOfService: dateOfService ?? null,
         patientName,
+        dob: dob ?? null,
+        mrn: mrn ?? null,
         clinician: clinician ?? null,
         insuranceInfo: insuranceInfo ?? null,
       });
@@ -1102,34 +1113,53 @@ export async function registerRoutes(
       const { readSheetData } = await import("./integrations/googleSheets");
       const { getSetting } = await import("./dbSettings");
 
-      const KNOWN_FACILITIES = [...VALID_FACILITIES];
-
+      // New 20-column layout matching "Plexus Billing Tracker":
+      // 0:DOS, 1:Test, 2:Patient, 3:DOB, 4:MRN, 5:Clinician, 6:Insurance Info,
+      // 7-11: computed doc cols (skip), 12:Primary Paid Amount, 13:Insurance Paid Amount,
+      // 14:Secondary Paid Amount, 15:Patient Responsibility Amount, 16:Claim Status,
+      // 17:Last Biller Update, 18:Next Action, 19:Billing Notes
       const COL_MAP: Record<number, keyof import("../shared/schema").InsertBillingRecord> = {
         0: "dateOfService",
-        1: "patientName",
-        2: "facility",
-        3: "clinician",
-        4: "service",
-        5: "insuranceInfo",
-        6: "documentationStatus",
-        7: "billingStatus",
-        8: "response",
-        9: "dateSubmitted",
-        // 10 = "Days in A/R" (computed, skip)
-        11: "followUpDate",
-        12: "paidStatus",
-        13: "paidAmount",
-        14: "totalCharges",
-        15: "allowedAmount",
-        16: "patientResponsibility",
-        17: "adjustmentAmount",
-        18: "balanceRemaining",
+        1: "service",
+        2: "patientName",
+        3: "dob",
+        4: "mrn",
+        5: "clinician",
+        6: "insuranceInfo",
+        // 7-11 are computed doc status columns — skip
+        12: "paidAmount",
+        13: "insurancePaidAmount",
+        14: "secondaryPaidAmount",
+        15: "patientResponsibility",
+        16: "billingStatus",
+        17: "lastBillerUpdate",
+        18: "nextAction",
+        19: "billingNotes",
       };
+
+      const spreadsheetId = (await getSetting("BILLING_SPREADSHEET_ID")) ||
+        (await getSetting("GOOGLE_SHEETS_BILLING_ID")) ||
+        process.env.GOOGLE_SHEETS_BILLING_ID || null;
+
+      if (!spreadsheetId) {
+        return res.json({ success: true, created: 0, updated: 0, skipped: 0, total: 0, message: "No billing spreadsheet configured." });
+      }
+
+      let rows: string[][];
+      try {
+        rows = await readSheetData(spreadsheetId, "Billing Records");
+      } catch (e) {
+        return res.status(500).json({ error: `Could not read billing sheet: ${(e as Error).message}` });
+      }
+
+      if (rows.length < 2) {
+        return res.json({ success: true, created: 0, updated: 0, skipped: 0, total: 0, message: "Sheet has no data rows." });
+      }
 
       const existingRecords = await storage.getAllBillingRecords();
       const seenKeys = new Set<string>(
         existingRecords.map((r) =>
-          `${r.patientName.toLowerCase()}|${r.dateOfService ?? ""}|${r.service}|${r.facility ?? ""}`
+          `${r.patientName.toLowerCase()}|${r.dateOfService ?? ""}|${r.service}`
         )
       );
       let created = 0;
@@ -1141,76 +1171,55 @@ export async function registerRoutes(
       const createOps: BillingCreateOp[] = [];
       const updateOps: BillingUpdateOp[] = [];
 
-      for (const facility of KNOWN_FACILITIES) {
-        const settingKey = `BILLING_SPREADSHEET_ID_${facility.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_-]/g, "")}`;
-        const spreadsheetId = await getSetting(settingKey);
-        if (!spreadsheetId) continue;
+      const dataRows = rows.slice(1);
 
-        let rows: string[][];
-        try {
-          rows = await readSheetData(spreadsheetId, "Billing Records");
-        } catch (e) {
-          console.warn(`Could not read sheet for ${facility}:`, (e as Error).message);
-          continue;
+      for (const row of dataRows) {
+        const patientName = row[2]?.trim() || "";
+        const service = row[1]?.trim() || "";
+        if (!patientName || !service) { skipped++; continue; }
+
+        const dateOfService = row[0]?.trim() || null;
+        const rowKey = `${patientName.toLowerCase()}|${dateOfService ?? ""}|${service}`;
+
+        const existing = existingRecords.find((r) =>
+          r.patientName.toLowerCase() === patientName.toLowerCase() &&
+          (r.dateOfService ?? "") === (dateOfService ?? "") &&
+          r.service === service
+        );
+
+        const updates: Partial<import("../shared/schema").InsertBillingRecord> = {};
+        for (const [colStr, field] of Object.entries(COL_MAP)) {
+          const val = row[parseInt(colStr)]?.trim() || null;
+          (updates as Record<string, string | null>)[field as string] = val;
         }
 
-        if (rows.length < 2) continue;
-
-        const dataRows = rows.slice(1);
-
-        for (const row of dataRows) {
-          const patientName = row[1]?.trim() || "";
-          const service = row[4]?.trim() || "";
-          if (!patientName || !service) { skipped++; continue; }
-
-          const dateOfService = row[0]?.trim() || null;
-          const rowFacility = row[2]?.trim() || facility;
-          const rowKey = `${patientName.toLowerCase()}|${dateOfService ?? ""}|${service}|${rowFacility}`;
-
-          const existing = existingRecords.find((r) =>
-            r.patientName.toLowerCase() === patientName.toLowerCase() &&
-            (r.dateOfService ?? "") === (dateOfService ?? "") &&
-            r.service === service &&
-            (r.facility ?? "") === rowFacility
-          );
-
-          const updates: Partial<import("../shared/schema").InsertBillingRecord> = {};
-          for (const [colStr, field] of Object.entries(COL_MAP)) {
-            const val = row[parseInt(colStr)]?.trim() || null;
-            (updates as Record<string, string | null>)[field as string] = val;
-          }
-
-          if (existing) {
-            updateOps.push({ id: existing.id, updates });
-            updated++;
-          } else if (!seenKeys.has(rowKey)) {
-            seenKeys.add(rowKey);
-            createOps.push({
-              patientId: null,
-              batchId: null,
-              patientName,
-              service,
-              facility: rowFacility,
-              dateOfService: updates.dateOfService ?? null,
-              clinician: updates.clinician ?? null,
-              insuranceInfo: updates.insuranceInfo ?? null,
-              documentationStatus: updates.documentationStatus ?? null,
-              billingStatus: updates.billingStatus ?? null,
-              response: updates.response ?? null,
-              dateSubmitted: updates.dateSubmitted ?? null,
-              followUpDate: updates.followUpDate ?? null,
-              paidStatus: updates.paidStatus ?? null,
-              paidAmount: updates.paidAmount ?? null,
-              totalCharges: updates.totalCharges ?? null,
-              allowedAmount: updates.allowedAmount ?? null,
-              patientResponsibility: updates.patientResponsibility ?? null,
-              adjustmentAmount: updates.adjustmentAmount ?? null,
-              balanceRemaining: updates.balanceRemaining ?? null,
-            });
-            created++;
-          } else {
-            skipped++;
-          }
+        if (existing) {
+          updateOps.push({ id: existing.id, updates });
+          updated++;
+        } else if (!seenKeys.has(rowKey)) {
+          seenKeys.add(rowKey);
+          createOps.push({
+            patientId: null,
+            batchId: null,
+            patientName,
+            service,
+            dateOfService: updates.dateOfService ?? null,
+            dob: updates.dob ?? null,
+            mrn: updates.mrn ?? null,
+            clinician: updates.clinician ?? null,
+            insuranceInfo: updates.insuranceInfo ?? null,
+            billingStatus: updates.billingStatus ?? null,
+            paidAmount: updates.paidAmount ?? null,
+            insurancePaidAmount: updates.insurancePaidAmount ?? null,
+            secondaryPaidAmount: updates.secondaryPaidAmount ?? null,
+            patientResponsibility: updates.patientResponsibility ?? null,
+            lastBillerUpdate: updates.lastBillerUpdate ?? null,
+            nextAction: updates.nextAction ?? null,
+            billingNotes: updates.billingNotes ?? null,
+          });
+          created++;
+        } else {
+          skipped++;
         }
       }
 
