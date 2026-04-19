@@ -52,6 +52,7 @@ import {
 } from "@/components/clinic-calendar";
 import type { BookingSlot } from "@/components/clinic-calendar";
 import { VALID_FACILITIES } from "@shared/plexus";
+import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -503,6 +504,7 @@ export default function OutreachSchedulerPortalPage() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
+                            <SchedulerIcon patientScreeningId={item.patientId} patientName={item.patientName} size="xs" />
                             <h3 className="text-base font-semibold text-slate-900">{item.patientName}</h3>
                             <Badge className={`rounded-full border text-xs ${statusBadgeClass(item.appointmentStatus)}`} data-testid={`portal-status-badge-${item.patientId}`}>
                               {statusLabel(item.appointmentStatus)}

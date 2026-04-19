@@ -3,6 +3,7 @@ import { Brain, Activity, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { AncillaryAppointment } from "@shared/schema";
+import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -192,6 +193,9 @@ export function SlotGrid({
                 <span className={`font-medium ${appt ? "text-violet-700" : "text-slate-600"}`}>{formatTime12(slot)}</span>
                 {appt ? (
                   <div className="flex items-center gap-1">
+                    {appt.patientScreeningId != null && (
+                      <SchedulerIcon patientScreeningId={appt.patientScreeningId} patientName={appt.patientName} size="xs" />
+                    )}
                     <span className={`text-violet-800 font-semibold truncate ${truncateWidth}`}>{appt.patientName}</span>
                     <button
                       onClick={(e) => { e.stopPropagation(); onCancel(appt); }}
@@ -227,6 +231,9 @@ export function SlotGrid({
                 <span className={`font-medium ${appt ? "text-red-700" : "text-slate-600"}`}>{formatTime12(slot)}</span>
                 {appt ? (
                   <div className="flex items-center gap-1">
+                    {appt.patientScreeningId != null && (
+                      <SchedulerIcon patientScreeningId={appt.patientScreeningId} patientName={appt.patientName} size="xs" />
+                    )}
                     <span className={`text-red-800 font-semibold truncate ${truncateWidth}`}>{appt.patientName}</span>
                     <button
                       onClick={(e) => { e.stopPropagation(); onCancel(appt); }}

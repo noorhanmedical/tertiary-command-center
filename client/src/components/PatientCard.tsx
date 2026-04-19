@@ -11,6 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Check, Loader2, Sparkles, Calendar, Trash2, Plus, X } from "lucide-react";
 import type { AncillaryAppointment, PatientScreening, ScreeningBatch } from "@shared/schema";
 import { getAncillaryCategory, getBadgeColor } from "@/features/schedule/ancillaryMeta";
+import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
 
 import { ANCILLARY_TESTS } from "@shared/plexus";
 import { ClinicalDataEditor } from "@/components/ClinicalDataEditor";
@@ -188,6 +189,7 @@ export function PatientCard({
     <Card className={`overflow-visible ${isCompleted ? "ring-1 ring-emerald-200 dark:ring-emerald-800" : ""}`} data-testid={`card-patient-${patient.id}`}>
       <div className="px-4 py-3 flex items-center justify-between gap-2 border-b flex-wrap">
         <div className="flex items-center gap-3">
+          <SchedulerIcon patientScreeningId={patient.id} patientName={patient.name} size="xs" />
           <div className="flex flex-col gap-1">
             <Input
               placeholder="Patient name"

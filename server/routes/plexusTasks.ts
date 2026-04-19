@@ -18,10 +18,10 @@ type PlexusEventType =
   | "status_changed" | "assignment_changed"
   | "project_created" | "project_updated" | "project_deleted"
   | "collaborator_added" | "collaborator_role_changed"
-  | "message_sent" | "read";
+  | "message_sent" | "read" | "call_logged";
 
 // ── Enum constants (mirror DB check constraints) ───────────────────────────
-const TASK_TYPE = ["task", "subtask", "milestone", "approval"] as const;
+const TASK_TYPE = ["task", "subtask", "milestone", "approval", "urgent_call"] as const;
 const TASK_STATUS = ["open", "in_progress", "done", "closed"] as const;
 const TASK_URGENCY = ["none", "EOD", "within 3 hours", "within 1 hour"] as const;
 const TASK_PRIORITY = ["low", "normal", "high"] as const;
@@ -255,6 +255,26 @@ export function registerPlexusTasksRoutes(app: Express) {
   app.get("/api/plexus/tasks", async (req: Request, res: Response) => {
     try {
       const userId = uid(req);
+      const patientScreeningIdParam = req.query.patientScreeningId;
+      if (patientScreeningIdParam != null) {
+        const patientScreeningId = parseInt(String(patientScreeningIdParam), 10);
+        if (!Number.isFinite(patientScreeningId)) return res.status(400).json({ error: "Invalid patientScreeningId" });
+        const tasks = await storage.getTasksByPatientScreeningId(patientScreeningId);
+        // Apply the same visibility policy as by-patient/:patientId:
+        // only return tasks where the requester is creator, assignee, collaborator, or project member.
+        const visible = (
+          await Promise.all(
+            tasks.map(async (t) => {
+              if (t.createdByUserId === userId || t.assignedToUserId === userId) return t;
+              const collabs = await storage.getCollaborators(t.id);
+              if (collabs.some((c) => c.userId === userId)) return t;
+              if (t.projectId != null && (await canViewProject(t.projectId, userId))) return t;
+              return null;
+            })
+          )
+        ).filter((t): t is typeof tasks[number] => t !== null);
+        return res.json(await enrichWithPatientNames(visible));
+      }
       const [assigned, created] = await Promise.all([
         storage.getTasksByAssignee(userId),
         storage.getTasksByCreator(userId),
@@ -556,6 +576,46 @@ export function registerPlexusTasksRoutes(app: Express) {
       if (!await canViewTask(taskId, userId)) return res.status(403).json({ error: "Not authorized" });
       await storage.markRead(taskId, userId);
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Call outcome logging ──────────────────────────────────────────────────
+  const callOutcomeSchema = z.object({
+    outcome: z.enum(["no_answer", "callback", "scheduled", "declined"]),
+    notes: z.string().optional(),
+    appointmentStatus: z.string().optional(),
+  });
+
+  app.post("/api/plexus/tasks/:id/call-outcome", async (req: Request, res: Response) => {
+    try {
+      const taskId = parseId(req.params.id); if (taskId === null) return res.status(400).json({ error: "Invalid id" });
+      const userId = uid(req);
+      // Only schedulers and admins may log call outcomes
+      const sessionRole = req.session.role;
+      if (sessionRole !== "scheduler" && sessionRole !== "admin") {
+        return res.status(403).json({ error: "Only schedulers and admins can log call outcomes" });
+      }
+      const task = await storage.getTaskById(taskId);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      if (!await canEditTaskOrCollaborator(taskId, task, userId)) return res.status(403).json({ error: "Not authorized" });
+      const parsed = callOutcomeSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
+      const { outcome, notes, appointmentStatus } = parsed.data;
+      const newStatus = outcome === "scheduled" ? "done" : "in_progress";
+      const updatedTask = await storage.updateTask(taskId, { status: newStatus });
+      const eventWrites: Promise<void>[] = [
+        writeEvent({ taskId, userId, eventType: "call_logged", payload: { outcome, notes: notes ?? null } }),
+      ];
+      if (newStatus !== task.status) {
+        eventWrites.push(writeEvent({ taskId, userId, eventType: "status_changed", payload: { from: task.status, to: newStatus } }));
+      }
+      await Promise.all(eventWrites);
+      if (task.patientScreeningId && appointmentStatus) {
+        await storage.updatePatientScreening(task.patientScreeningId, { appointmentStatus });
+      }
+      res.json(updatedTask);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

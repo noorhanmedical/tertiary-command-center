@@ -197,6 +197,7 @@ export interface IStorage {
   // ── Patient search (for task patient-link) ─────────────────────────────
   searchPatientsByName(query: string): Promise<PatientScreening[]>;
   getPatientById(id: number): Promise<PatientScreening | undefined>;
+  getTasksByPatientScreeningId(patientScreeningId: number): Promise<PlexusTask[]>;
 
   // ── Audit Log ────────────────────────────────────────────────────────────
   createAuditLog(record: InsertAuditLog): Promise<AuditLog>;
@@ -890,6 +891,12 @@ export class DatabaseStorage implements IStorage {
   async getPatientById(id: number): Promise<PatientScreening | undefined> {
     const [result] = await db.select().from(patientScreenings).where(eq(patientScreenings.id, id));
     return result;
+  }
+
+  async getTasksByPatientScreeningId(patientScreeningId: number): Promise<PlexusTask[]> {
+    return db.select().from(plexusTasks)
+      .where(eq(plexusTasks.patientScreeningId, patientScreeningId))
+      .orderBy(desc(plexusTasks.createdAt));
   }
 
   async createAuditLog(record: InsertAuditLog): Promise<AuditLog> {
