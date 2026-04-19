@@ -1,0 +1,202 @@
+Pre-Procedure Order Form - Ali imran
+Patient Information
+
+Patient: Ali imran
+
+Plexus ID: 1999-AI-654
+
+Date of Birth: 1999-07-07
+
+Ordering Clinician: McGuire, Amanda H, FNP-BC
+
+NPI: 1407444029
+
+Procedure Ordered:
+
+BrainWave - Comprehensive Assessment
+
+Diagnosis:
+Memory Problems
+Headaches
+Notes:
+
+Patient demonstrates cognitive symptoms affecting memory, attention, and/or functional independence, warranting formal neurocognitive evaluation, EEG with digital quantitative analysis, and auditory evoked potential/otoacoustic testing to evaluate functional impact.
+
+Patient experiences recurrent headaches that interfere with concentration, processing speed, and/or task completion, necessitating cognitive assessment and EEG with digital quantitative analysis to evaluate functional impact.
+
+Click to Sign
+
+Plexus BrainWave Procedure Note
+Patient: Ali imran
+•
+Date of Service: 2026-04-16
+Demographics
+
+Patient Name
+
+Ali imran
+
+Date of Birth
+
+1999-07-07
+
+Sex
+
+Male
+
+Patient MRN (Medical Record Number) from EMR
+
+211654
+
+New Wave Physician Group
+
+13480 Veterans Memorial Dr R1
+
+Houston, TX 77014
+
+Phone: (281) 587-1600
+
+Fax: (832) 698-9568
+
+Ordering Provider Name
+
+McGuire, Amanda H, FNP-BC
+
+NPI
+
+1407444029
+
+Chief Complaint
+
+BrainWave Assessment for Cognitive & Neurological Function
+
+Subjective
+
+Patient presents today for BrainWave assessment. Patient's clinical history was reviewed and appropriateness of studies confirmed. Testing indications include cognitive decline, neurological symptoms, and functional impairment.
+
+Objective
+
+Physical exam not required for this visit
+
+Assessment & Plan
+
+The patient tolerated all procedures well. Neuropsychological testing was performed including assessment of memory, attention, and executive function. EEG/ECG testing was completed with 21-channel cap placement and lead positioning. VEP and AEP studies were conducted to assess visual and auditory evoked potentials. All testing equipment functioned properly and adequate signal quality was maintained throughout. Patient remained stable during all procedures with no adverse events. Results will be interpreted by the reviewing physician and communicated to the ordering clinician. The BrainWave testing was completed successfully.
+
+Order
+
+Plexus BrainWave Test - Pre-Procedure Order
+
+PATIENT INFORMATION
+
+Patient: Ali imran
+
+Plexus ID: 1999-AI-654
+
+DOB: 1999-07-07
+
+Service Date: 2026-04-16
+
+Sex: Male
+
+MRN: 211654
+
+Ordering Clinician: McGuire, Amanda H, FNP-BC
+
+NPI: 1407444029
+
+Date: 4/19/2026
+
+PROCEDURE ORDERED
+
+BrainWave - Comprehensive Assessment
+
+DIAGNOSIS
+
+Memory Problems
+Headaches
+
+CLINICAL NOTES
+
+Patient demonstrates cognitive symptoms affecting memory, attention, and/or functional independence, warranting formal neurocognitive evaluation, EEG with digital quantitative analysis, and auditory evoked potential/otoacoustic testing to evaluate functional impact.
+Patient experiences recurrent headaches that interfere with concentration, processing speed, and/or task completion, necessitating cognitive assessment and EEG with digital quantitative analysis to evaluate functional impact.
+Save Draft
+Click to Sign
+
+Plexus BrainWave Billing Document
+Patient: Ali imran
+•
+Date of Service: 2026-04-16
+Demographics
+
+Patient Name
+
+Ali imran
+
+Date of Birth
+
+1999-07-07
+
+Sex
+
+Male
+
+Patient MRN
+
+211654
+
+Plexus ID
+
+1999-AI-654
+
+New Wave Physician Group
+
+13480 Veterans Memorial Dr R1
+
+Houston, TX 77014
+
+Phone: (281) 587-1600
+
+Fax: (832) 698-9568
+
+Ordering Provider Name
+
+McGuire, Amanda H, FNP-BC
+
+NPI
+
+1407444029
+
+Procedure
+
+Procedure: BrainWave Comprehensive Assessment
+Details: Neuropsychological testing, EEG/ECG, VEP, and AEP studies completed successfully. No complications.
+
+ICD-10 Codes
+• R41.3 Memory Loss
+• G31.84 Mild Cognitive Impairment
+• R41.89 Cognitive symptoms
+• G44.209 Tension-type headache, unspecified
+CPT Codes
+Group 1: Cognitive Function
+• 96132 – Neuropsychological testing evaluation services by physician or other qualified health care professional, first hour
+• 96138 – Neuropsychological test administration and scoring by technician, first 30 minutes
+• 96139 – Neuropsychological test administration and scoring by technician, each additional 30 minutes
+Group 2: Brain Function (EEG)
+• 95816 – Electroencephalogram (EEG); including recording awake and drowsy
+• 95957 – Digital analysis of electroencephalogram (EEG) (eg, for epileptic spike analysis)
+• 93040 – Rhythm ECG, 1-3 leads; with interpretation and report
+Group 3: Visual Processing
+• 95930 – Visual evoked potential (VEP) testing central nervous system, checkerboard or flash
+Group 4: Auditory Processing
+• 92653 – Auditory evoked potentials for evoked response audiometry and/or testing of the central nervous system
+
+Note: Billing codes should be selected based on the actual testing performed. Documentation must support the level of service billed. CPT codes vary based on which testing groups were indicated.
+
+Note: Document will auto-submit when all procedure notes are completed.
+
+Admin can bypass and submit manually if needed.
+
+Save Draft
+Submit to Billing
+View Combined Summary
+
