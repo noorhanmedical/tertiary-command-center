@@ -609,22 +609,48 @@ function NotesModal({
 
 // ─── Add Row Modal ──────────────────────────────────────────────────────────
 
-function AddRowModal({ onClose, onAdd, defaultDate }: {
+type AddRowData = {
+  patientName: string;
+  dateOfService: string;
+  facility: string;
+  clinician: string;
+  service: string;
+  insuranceInfo: string;
+  batchId?: number | null;
+};
+
+function AddRowModal({ onClose, onAdd }: {
   onClose: () => void;
-  onAdd: (data: { patientName: string; dateOfService: string; facility: string; clinician: string; service: string; insuranceInfo: string }) => void;
-  defaultDate?: string;
+  onAdd: (data: AddRowData) => void;
 }) {
   const [patientName, setPatientName] = useState("");
-  const [dateOfService, setDateOfService] = useState(defaultDate || "");
+  const [dateOfService, setDateOfService] = useState("");
   const [facility, setFacility] = useState("");
   const [clinician, setClinician] = useState("");
   const [service, setService] = useState("");
   const [insuranceInfo, setInsuranceInfo] = useState("");
+  const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
+
+  const { data: batches = [] } = useQuery<{ id: number; name: string; scheduleDate: string | null; facility: string | null; clinicianName: string | null }[]>({
+    queryKey: ["/api/screening-batches"],
+  });
+
+  function handleBatchSelect(batchId: number | null) {
+    setSelectedBatchId(batchId);
+    if (batchId) {
+      const batch = batches.find((b) => b.id === batchId);
+      if (batch) {
+        if (batch.scheduleDate) setDateOfService(batch.scheduleDate);
+        if (batch.facility) setFacility(batch.facility);
+        if (batch.clinicianName) setClinician(batch.clinicianName);
+      }
+    }
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!patientName.trim()) return;
-    onAdd({ patientName: patientName.trim(), dateOfService, facility, clinician, service, insuranceInfo });
+    onAdd({ patientName: patientName.trim(), dateOfService, facility, clinician, service, insuranceInfo, batchId: selectedBatchId });
     onClose();
   }
 
@@ -636,6 +662,25 @@ function AddRowModal({ onClose, onAdd, defaultDate }: {
           <button className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600" onClick={onClose}><X className="w-4 h-4" /></button>
         </div>
         <form onSubmit={submit} className="p-5 space-y-3">
+          <div>
+            <label className="text-xs font-medium text-slate-600 block mb-1">Link to Schedule (optional)</label>
+            <select
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              value={selectedBatchId ?? ""}
+              onChange={(e) => handleBatchSelect(e.target.value ? Number(e.target.value) : null)}
+              data-testid="select-add-row-batch"
+            >
+              <option value="">— none (manual entry) —</option>
+              {batches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}{b.scheduleDate ? ` · ${b.scheduleDate}` : ""}
+                </option>
+              ))}
+            </select>
+            {selectedBatchId && (
+              <p className="text-[11px] text-blue-600 mt-1">Date of service will be auto-filled from the selected schedule date.</p>
+            )}
+          </div>
           <div>
             <label className="text-xs font-medium text-slate-600 block mb-1">Patient Name *</label>
             <input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -820,7 +865,7 @@ export default function BillingPage() {
     updateMutation.mutate({ id, updates });
   }
 
-  function handleAddRow(data: { patientName: string; dateOfService: string; facility: string; clinician: string; service: string; insuranceInfo: string }) {
+  function handleAddRow(data: AddRowData) {
     createMutation.mutate({
       service: data.service || "BrainWave",
       patientName: data.patientName,
@@ -828,6 +873,7 @@ export default function BillingPage() {
       facility: data.facility || null,
       clinician: data.clinician || null,
       insuranceInfo: data.insuranceInfo || null,
+      batchId: data.batchId ?? null,
     });
   }
 

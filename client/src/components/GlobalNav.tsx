@@ -85,7 +85,7 @@ export function GlobalNav() {
           return (
             <Link key={href} href={href}>
               <div
-                className={`flex items-center gap-3 px-2 py-2.5 rounded-xl cursor-pointer transition-colors group ${
+                className={`relative flex items-center gap-3 px-2 py-2.5 rounded-xl cursor-pointer transition-colors group ${
                   active
                     ? "bg-white/15 text-white"
                     : "text-white/60 hover:bg-white/8 hover:text-white/90"
