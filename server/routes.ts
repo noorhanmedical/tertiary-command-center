@@ -160,6 +160,9 @@ export async function registerRoutes(
 
   // ─── User management (admin-only) ─────────────────────────────────────────
   app.post("/api/users", async (req, res) => {
+    if (req.session.username !== "admin") {
+      return res.status(403).json({ message: "Forbidden — only the admin account can create users" });
+    }
     const { username, password } = req.body;
     if (!username || !password) {
       return res.status(400).json({ message: "Username and password are required" });
@@ -184,9 +187,7 @@ export async function registerRoutes(
     if (!user) {
       return res.status(401).json({ message: "Current password is incorrect" });
     }
-    const bcrypt = await import("bcryptjs");
-    const hashed = await bcrypt.hash(newPassword, 12);
-    await storage.updateUserPassword(req.session.userId, hashed);
+    await storage.updateUserPassword(req.session.userId, newPassword);
     return res.json({ ok: true });
   });
 

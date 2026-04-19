@@ -25,6 +25,10 @@ app.use(
 
 app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 
+if (!process.env.SESSION_SECRET) {
+  throw new Error("SESSION_SECRET environment variable must be set — refusing to start with an insecure session");
+}
+
 const PgSession = connectPgSimple(session);
 app.use(
   session({
@@ -33,7 +37,7 @@ app.use(
       createTableIfMissing: true,
       tableName: "session",
     }),
-    secret: process.env.SESSION_SECRET || "fallback-dev-secret",
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {

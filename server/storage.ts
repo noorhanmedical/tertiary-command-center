@@ -58,7 +58,7 @@ export interface IStorage {
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   getUserCount(): Promise<number>;
-  updateUserPassword(id: string, hashedPassword: string): Promise<void>;
+  updateUserPassword(id: string, plaintext: string): Promise<void>;
   validateUserPassword(username: string, plaintext: string): Promise<User | null>;
 
   createScreeningBatch(batch: InsertScreeningBatch): Promise<ScreeningBatch>;
@@ -140,8 +140,9 @@ export class DatabaseStorage implements IStorage {
     return result[0]?.count ?? 0;
   }
 
-  async updateUserPassword(id: string, hashedPassword: string): Promise<void> {
-    await db.update(users).set({ password: hashedPassword }).where(eq(users.id, id));
+  async updateUserPassword(id: string, plaintext: string): Promise<void> {
+    const hashed = await bcrypt.hash(plaintext, 12);
+    await db.update(users).set({ password: hashed }).where(eq(users.id, id));
   }
 
   async validateUserPassword(username: string, plaintext: string): Promise<User | null> {
