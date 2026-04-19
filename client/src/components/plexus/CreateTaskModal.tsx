@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
@@ -48,6 +48,12 @@ export function CreateTaskModal({ open, onClose, defaultProjectId }: CreateTaskM
   const [patientSearch, setPatientSearch] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<PatientResult | null>(null);
   const [showPatientResults, setShowPatientResults] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setProjectId(defaultProjectId ? String(defaultProjectId) : "none");
+    }
+  }, [open, defaultProjectId]);
 
   const { data: projects = [] } = useQuery<PlexusProject[]>({
     queryKey: ["/api/plexus/projects"],
