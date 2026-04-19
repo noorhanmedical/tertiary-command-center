@@ -49,6 +49,7 @@ import {
   backgroundSyncBilling,
 } from "./services/syncService";
 import { registerGoogleRoutes } from "./routes/google";
+import { registerPlexusTasksRoutes } from "./routes/plexusTasks";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -161,6 +162,7 @@ export async function registerRoutes(
   registerTestHistoryRoutes(app, { backgroundSyncPatients });
   registerPatientReferenceRoutes(app, { backgroundSyncPatients });
   registerGeneratedNotesRoutes(app);
+  registerPlexusTasksRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {

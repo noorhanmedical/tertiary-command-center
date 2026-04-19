@@ -11,6 +11,12 @@ import {
   ancillaryAppointments,
   outreachSchedulers,
   analysisJobs,
+  plexusProjects,
+  plexusTasks,
+  plexusTaskCollaborators,
+  plexusTaskMessages,
+  plexusTaskEvents,
+  plexusTaskReads,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
@@ -31,11 +37,22 @@ import {
   type InsertOutreachScheduler,
   type AnalysisJob,
   type InsertAnalysisJob,
+  type PlexusProject,
+  type InsertPlexusProject,
+  type PlexusTask,
+  type InsertPlexusTask,
+  type PlexusTaskCollaborator,
+  type InsertPlexusTaskCollaborator,
+  type PlexusTaskMessage,
+  type InsertPlexusTaskMessage,
+  type PlexusTaskEvent,
+  type InsertPlexusTaskEvent,
+  type PlexusTaskRead,
   users,
   type User,
   type InsertUser,
 } from "@shared/schema";
-import { eq, desc, ilike, sql, and, gte, asc } from "drizzle-orm";
+import { eq, desc, ilike, sql, and, gte, asc, ne, inArray } from "drizzle-orm";
 
 function parseTimeToMinutes(time: string | null | undefined): number {
   if (!time) return Infinity;
@@ -126,6 +143,38 @@ export interface IStorage {
   getLatestAnalysisJobByBatch(batchId: number): Promise<AnalysisJob | undefined>;
   failRunningAnalysisJobs(errorMessage: string): Promise<void>;
   purgeOldAnalysisJobs(olderThanDays: number): Promise<void>;
+
+  // ── Plexus Projects ────────────────────────────────────────────────────
+  createProject(record: InsertPlexusProject): Promise<PlexusProject>;
+  getProjects(): Promise<PlexusProject[]>;
+  getProjectById(id: number): Promise<PlexusProject | undefined>;
+  updateProject(id: number, updates: Partial<InsertPlexusProject>): Promise<PlexusProject | undefined>;
+
+  // ── Plexus Tasks ───────────────────────────────────────────────────────
+  createTask(record: InsertPlexusTask): Promise<PlexusTask>;
+  getTaskById(id: number): Promise<PlexusTask | undefined>;
+  getTasksByProject(projectId: number): Promise<PlexusTask[]>;
+  getTasksByAssignee(userId: string): Promise<PlexusTask[]>;
+  getTasksByCreator(userId: string): Promise<PlexusTask[]>;
+  getUrgentTasks(): Promise<PlexusTask[]>;
+  updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
+  getAllUsers(): Promise<User[]>;
+
+  // ── Plexus Collaborators ───────────────────────────────────────────────
+  addCollaborator(record: InsertPlexusTaskCollaborator): Promise<PlexusTaskCollaborator>;
+  getCollaborators(taskId: number): Promise<PlexusTaskCollaborator[]>;
+
+  // ── Plexus Messages ────────────────────────────────────────────────────
+  addMessage(record: InsertPlexusTaskMessage): Promise<PlexusTaskMessage>;
+  getMessages(taskId: number): Promise<PlexusTaskMessage[]>;
+
+  // ── Plexus Events ──────────────────────────────────────────────────────
+  writeEvent(record: InsertPlexusTaskEvent): Promise<PlexusTaskEvent>;
+  getEvents(taskId: number): Promise<PlexusTaskEvent[]>;
+
+  // ── Plexus Reads ───────────────────────────────────────────────────────
+  markRead(taskId: number, userId: string): Promise<void>;
+  getUnreadCount(userId: string): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -471,6 +520,164 @@ export class DatabaseStorage implements IStorage {
         sql`${analysisJobs.completedAt} < ${cutoff}`
       )
     );
+  }
+
+  // ── Plexus Projects ──────────────────────────────────────────────────────────
+  async createProject(record: InsertPlexusProject): Promise<PlexusProject> {
+    const [result] = await db.insert(plexusProjects).values(record).returning();
+    return result;
+  }
+
+  async getProjects(): Promise<PlexusProject[]> {
+    return db.select().from(plexusProjects).orderBy(asc(plexusProjects.title));
+  }
+
+  async getProjectById(id: number): Promise<PlexusProject | undefined> {
+    const [result] = await db.select().from(plexusProjects).where(eq(plexusProjects.id, id));
+    return result;
+  }
+
+  async updateProject(id: number, updates: Partial<InsertPlexusProject>): Promise<PlexusProject | undefined> {
+    const [result] = await db.update(plexusProjects).set(updates).where(eq(plexusProjects.id, id)).returning();
+    return result;
+  }
+
+  // ── Plexus Tasks ─────────────────────────────────────────────────────────────
+  async createTask(record: InsertPlexusTask): Promise<PlexusTask> {
+    const [result] = await db.insert(plexusTasks).values(record).returning();
+    return result;
+  }
+
+  async getTaskById(id: number): Promise<PlexusTask | undefined> {
+    const [result] = await db.select().from(plexusTasks).where(eq(plexusTasks.id, id));
+    return result;
+  }
+
+  async getTasksByProject(projectId: number): Promise<PlexusTask[]> {
+    return db.select().from(plexusTasks)
+      .where(eq(plexusTasks.projectId, projectId))
+      .orderBy(asc(plexusTasks.createdAt));
+  }
+
+  async getTasksByAssignee(userId: string): Promise<PlexusTask[]> {
+    return db.select().from(plexusTasks)
+      .where(and(eq(plexusTasks.assignedToUserId, userId), ne(plexusTasks.status, "closed")))
+      .orderBy(desc(plexusTasks.createdAt));
+  }
+
+  async getTasksByCreator(userId: string): Promise<PlexusTask[]> {
+    return db.select().from(plexusTasks)
+      .where(eq(plexusTasks.createdByUserId, userId))
+      .orderBy(desc(plexusTasks.createdAt));
+  }
+
+  async getUrgentTasks(): Promise<PlexusTask[]> {
+    return db.select().from(plexusTasks)
+      .where(and(
+        ne(plexusTasks.urgency, "none"),
+        ne(plexusTasks.status, "closed"),
+        ne(plexusTasks.status, "done")
+      ))
+      .orderBy(desc(plexusTasks.createdAt));
+  }
+
+  async updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined> {
+    const [result] = await db.update(plexusTasks)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(plexusTasks.id, id))
+      .returning();
+    return result;
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return db.select().from(users).orderBy(asc(users.username));
+  }
+
+  // ── Plexus Collaborators ──────────────────────────────────────────────────────
+  async addCollaborator(record: InsertPlexusTaskCollaborator): Promise<PlexusTaskCollaborator> {
+    const existing = await db.select().from(plexusTaskCollaborators)
+      .where(and(eq(plexusTaskCollaborators.taskId, record.taskId), eq(plexusTaskCollaborators.userId, record.userId)))
+      .limit(1);
+    if (existing.length > 0) {
+      const [updated] = await db.update(plexusTaskCollaborators)
+        .set({ role: record.role })
+        .where(eq(plexusTaskCollaborators.id, existing[0].id))
+        .returning();
+      return updated;
+    }
+    const [result] = await db.insert(plexusTaskCollaborators).values(record).returning();
+    return result;
+  }
+
+  async getCollaborators(taskId: number): Promise<PlexusTaskCollaborator[]> {
+    return db.select().from(plexusTaskCollaborators).where(eq(plexusTaskCollaborators.taskId, taskId));
+  }
+
+  // ── Plexus Messages ───────────────────────────────────────────────────────────
+  async addMessage(record: InsertPlexusTaskMessage): Promise<PlexusTaskMessage> {
+    const [result] = await db.insert(plexusTaskMessages).values(record).returning();
+    await db.update(plexusTasks).set({ updatedAt: new Date() }).where(eq(plexusTasks.id, record.taskId));
+    return result;
+  }
+
+  async getMessages(taskId: number): Promise<PlexusTaskMessage[]> {
+    return db.select().from(plexusTaskMessages)
+      .where(eq(plexusTaskMessages.taskId, taskId))
+      .orderBy(asc(plexusTaskMessages.createdAt));
+  }
+
+  // ── Plexus Events ─────────────────────────────────────────────────────────────
+  async writeEvent(record: InsertPlexusTaskEvent): Promise<PlexusTaskEvent> {
+    const [result] = await db.insert(plexusTaskEvents).values(record).returning();
+    return result;
+  }
+
+  async getEvents(taskId: number): Promise<PlexusTaskEvent[]> {
+    return db.select().from(plexusTaskEvents)
+      .where(eq(plexusTaskEvents.taskId, taskId))
+      .orderBy(asc(plexusTaskEvents.createdAt));
+  }
+
+  // ── Plexus Reads ──────────────────────────────────────────────────────────────
+  async markRead(taskId: number, userId: string): Promise<void> {
+    const existing = await db.select().from(plexusTaskReads)
+      .where(and(eq(plexusTaskReads.taskId, taskId), eq(plexusTaskReads.userId, userId)))
+      .limit(1);
+    if (existing.length > 0) {
+      await db.update(plexusTaskReads)
+        .set({ lastReadAt: new Date() })
+        .where(eq(plexusTaskReads.id, existing[0].id));
+    } else {
+      await db.insert(plexusTaskReads).values({ taskId, userId });
+    }
+  }
+
+  async getUnreadCount(userId: string): Promise<number> {
+    const tasksInvolving = await db.select({ id: plexusTasks.id }).from(plexusTasks)
+      .where(and(
+        ne(plexusTasks.status, "closed"),
+        sql`(${plexusTasks.assignedToUserId} = ${userId} OR ${plexusTasks.createdByUserId} = ${userId})`
+      ));
+    if (tasksInvolving.length === 0) return 0;
+    const taskIds = tasksInvolving.map((t) => t.id);
+    const reads = await db.select().from(plexusTaskReads)
+      .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, taskIds)));
+    const readMap = new Map(reads.map((r) => [r.taskId, r.lastReadAt]));
+    let unread = 0;
+    for (const task of tasksInvolving) {
+      const lastRead = readMap.get(task.id);
+      const msgs = await db.select({ createdAt: plexusTaskMessages.createdAt })
+        .from(plexusTaskMessages)
+        .where(and(
+          eq(plexusTaskMessages.taskId, task.id),
+          sql`${plexusTaskMessages.senderUserId} != ${userId}`
+        ))
+        .limit(1);
+      if (msgs.length > 0 && (!lastRead || msgs[0].createdAt > lastRead)) {
+        unread++;
+      }
+    }
+    return unread;
   }
 }
 

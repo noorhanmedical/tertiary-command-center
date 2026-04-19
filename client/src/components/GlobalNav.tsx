@@ -13,6 +13,7 @@ import {
   ChevronRight,
   LogOut,
   User,
+  CheckSquare,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { PatientScreening, ScreeningBatch } from "@shared/schema";
@@ -22,19 +23,29 @@ type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening
 const TODAY = new Date().toISOString().split("T")[0];
 
 const NAV_ITEMS = [
-  { href: "/schedule",          label: "Schedule",            Icon: CalendarDays, domain: true },
-  { href: "/outreach",          label: "Outreach Center",     Icon: Phone,        domain: true },
-  { href: "/documents",         label: "Ancillary Docs",      Icon: FileText,     domain: true },
-  { href: "/billing",           label: "Billing",             Icon: CreditCard,   domain: true },
-  { href: "/team-ops",          label: "Team Ops",            Icon: Users2,       domain: true },
-  { href: "/patient-database",  label: "Patient Database",    Icon: Database,     domain: true },
-  { href: "/task-brain",        label: "Task Brain",          Icon: Brain,        domain: true },
+  { href: "/schedule",          label: "Schedule",            Icon: CalendarDays,  domain: true },
+  { href: "/outreach",          label: "Outreach Center",     Icon: Phone,         domain: true },
+  { href: "/documents",         label: "Ancillary Docs",      Icon: FileText,      domain: true },
+  { href: "/billing",           label: "Billing",             Icon: CreditCard,    domain: true },
+  { href: "/team-ops",          label: "Team Ops",            Icon: Users2,        domain: true },
+  { href: "/patient-database",  label: "Patient Database",    Icon: Database,      domain: true },
+  { href: "/plexus-tasks",      label: "Plexus Tasks",        Icon: CheckSquare,   domain: true },
+  { href: "/task-brain",        label: "Task Brain",          Icon: Brain,         domain: true },
 ] as const;
 
 function TodayBadge({ count }: { count: number }) {
   if (count === 0) return null;
   return (
     <span className="ml-auto shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-white/20 text-white text-[10px] font-bold flex items-center justify-center leading-none">
+      {count}
+    </span>
+  );
+}
+
+function UnreadBadge({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <span className="ml-auto shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-indigo-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
       {count}
     </span>
   );
@@ -60,6 +71,12 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
   const { data: batches = [] } = useQuery<ScreeningBatchWithPatients[]>({
     queryKey: ["/api/screening-batches"],
   });
+
+  const { data: unreadData } = useQuery<{ count: number }>({
+    queryKey: ["/api/plexus/tasks/unread-count"],
+    refetchInterval: 60_000,
+  });
+  const unreadCount = unreadData?.count ?? 0;
 
   const todayCount = batches
     .filter((b) => {
@@ -97,6 +114,7 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
         {NAV_ITEMS.map(({ href, label, Icon }) => {
           const active = isActive(href);
           const isSchedule = href === "/schedule";
+          const isPlexusTasks = href === "/plexus-tasks";
           return (
             <Link key={href} href={href}>
               <div
@@ -113,10 +131,14 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
                   <>
                     <span className="text-sm font-medium truncate flex-1">{label}</span>
                     {isSchedule && <TodayBadge count={todayCount} />}
+                    {isPlexusTasks && <UnreadBadge count={unreadCount} />}
                   </>
                 )}
                 {collapsed && isSchedule && todayCount > 0 && (
                   <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-400" />
+                )}
+                {collapsed && isPlexusTasks && unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-400" />
                 )}
               </div>
             </Link>
