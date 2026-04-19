@@ -132,6 +132,7 @@ export interface IStorage {
 
   saveUploadedDocument(record: InsertUploadedDocument): Promise<UploadedDocument>;
   getAllUploadedDocuments(): Promise<UploadedDocument[]>;
+  getUploadedDocument(id: number): Promise<UploadedDocument | undefined>;
 
   createAppointment(record: InsertAncillaryAppointment): Promise<AncillaryAppointment>;
   getAppointments(filters?: { facility?: string; date?: string; testType?: string; status?: string }): Promise<AncillaryAppointment[]>;
@@ -463,6 +464,10 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
+  async getUploadedDocument(id: number): Promise<UploadedDocument | undefined> {
+    const [row] = await db.select().from(uploadedDocuments).where(eq(uploadedDocuments.id, id));
+    return row;
+  }
   async getAllUploadedDocuments(): Promise<UploadedDocument[]> {
     return db.select().from(uploadedDocuments).orderBy(desc(uploadedDocuments.uploadedAt));
   }

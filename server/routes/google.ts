@@ -5,9 +5,6 @@ import { VALID_FACILITIES, resolveGeneratedNoteFolderId } from "./helpers";
 import {
   patientsSyncState,
   billingSyncState,
-  backgroundSyncPatients,
-  backgroundSyncBilling,
-  backgroundExportNotes,
   runPatientsSyncWithLock,
   runBillingSyncWithLock,
   runExportNotesWithLock,
@@ -180,9 +177,6 @@ export function registerGoogleRoutes(app: Express) {
 
   app.post("/api/google/drive/export-note", async (req, res) => {
     try {
-      if (!requireDriveProvider(res)) return;
-      if (!await requireDriveConnected(res)) return;
-
       const { noteId } = req.body;
       if (!noteId || typeof noteId !== "number") {
         return res.status(400).json({ error: "noteId is required" });
@@ -191,32 +185,48 @@ export function registerGoogleRoutes(app: Express) {
       const note = await storage.getGeneratedNote(noteId);
       if (!note) return res.status(404).json({ error: "Note not found" });
 
-      const { uploadTextAsGoogleDoc, ensureStructuredFacilityFolderTree } = await import("../integrations/googleDrive");
-
       const sections = (note.sections as { heading: string; body: string }[]) || [];
       const content = sections
         .filter((s) => !s.heading.startsWith("__"))
         .map((s) => `${s.heading}\n${s.body}`)
         .join("\n\n");
-
       const filename = `${note.patientName} - ${note.title} (${note.scheduleDate || note.generatedAt.toISOString().split("T")[0]})`;
 
-      const DRIVE_ANCILLARY_TYPES: readonly string[] = ["BrainWave", "VitalWave", "Ultrasound"];
-      let clinicalDocsFolderId: string | undefined;
-      if (note.facility && note.patientName && note.service && DRIVE_ANCILLARY_TYPES.includes(note.service)) {
-        const tree = await ensureStructuredFacilityFolderTree(note.facility, note.patientName, note.service);
-        clinicalDocsFolderId = resolveGeneratedNoteFolderId(tree, note);
-      }
+      // Blob-first: persist locally before any external call.
+      const { saveBlob } = await import("../services/blobStore");
+      const { enqueueDriveFile, drainOutbox } = await import("../services/outbox");
+      const blob = await saveBlob({
+        ownerType: "generated_note",
+        ownerId: note.id,
+        filename: `${filename}.txt`,
+        contentType: "text/plain",
+        buffer: Buffer.from(content, "utf-8"),
+        isTest: !!(note as any).isTest,
+      });
 
-      const { id: driveFileId, webViewLink } = await uploadTextAsGoogleDoc(filename, content, clinicalDocsFolderId);
+      const ancillary = ["BrainWave", "VitalWave"].includes(note.service)
+        ? note.service
+        : "Ultrasound";
+      const item = await enqueueDriveFile({
+        blobId: blob.id,
+        facility: note.facility ?? null,
+        patientName: note.patientName,
+        ancillaryType: ancillary,
+        docKind: note.docKind ?? "generated_note",
+        filename,
+        isTest: !!(note as any).isTest,
+      });
 
-      const updated = await storage.updateGeneratedNoteDriveInfo(noteId, driveFileId, webViewLink);
-
+      // Synchronously drain just this item so the existing UX (returning Drive URL) is preserved.
+      const drain = await drainOutbox({ ids: [item.id] });
+      const updated = await storage.getGeneratedNote(noteId);
       res.json({
-        success: true,
-        driveFileId,
-        webViewLink,
+        success: drain.failed === 0,
+        outboxId: item.id,
+        driveFileId: updated?.driveFileId ?? null,
+        webViewLink: updated?.driveWebViewLink ?? null,
         note: updated,
+        drain,
       });
     } catch (error: any) {
       console.error("Drive export error:", error);
@@ -295,13 +305,40 @@ export function registerGoogleRoutes(app: Express) {
         return res.status(400).json({ error: "Only PDF files are accepted" });
       }
 
-      const { ensureStructuredFacilityFolderTree, uploadPdfToFolder } = await import("../integrations/googleDrive");
-      const tree = await ensureStructuredFacilityFolderTree(facility, patientName.trim(), ancillaryType);
-
       const filename = file.originalname || `${patientName.trim()} - ${ancillaryType} Report.pdf`;
-      const { id: driveFileId, webViewLink } = await uploadPdfToFolder(filename, file.buffer, tree.reportFolderId);
 
-      res.json({ success: true, driveFileId, webViewLink });
+      // Blob-first: store local, then enqueue + drain.
+      const { saveBlob } = await import("../services/blobStore");
+      const { enqueueDriveFile, drainOutbox } = await import("../services/outbox");
+      const blob = await saveBlob({
+        ownerType: "uploaded_document",
+        ownerId: 0,
+        filename,
+        contentType: "application/pdf",
+        buffer: file.buffer,
+      });
+      const item = await enqueueDriveFile({
+        blobId: blob.id,
+        facility,
+        patientName: patientName.trim(),
+        ancillaryType,
+        docKind: "report",
+        filename,
+      });
+      const drain = await drainOutbox({ ids: [item.id] });
+
+      // Re-read outbox row to get resolved Drive metadata.
+      const { db } = await import("../db");
+      const { outboxItems } = await import("@shared/schema");
+      const { eq: _eq } = await import("drizzle-orm");
+      const [updatedItem] = await db.select().from(outboxItems).where(_eq(outboxItems.id, item.id));
+      res.json({
+        success: drain.failed === 0,
+        outboxId: item.id,
+        driveFileId: updatedItem?.resultId ?? null,
+        webViewLink: updatedItem?.resultUrl ?? null,
+        drain,
+      });
     } catch (error: any) {
       console.error("Report upload error:", error);
       res.status(500).json({ error: error.message });
@@ -375,47 +412,52 @@ export function registerGoogleRoutes(app: Express) {
         docType === "screening_form" ? "Screening Form" :
         "Report";
       const filename = file.originalname || `${patientName.trim()} - ${ancillaryType} ${typeLabel}.pdf`;
-      const provider = getStorageProvider();
-      const fileStorage = getFileStorage();
 
-      let folder: string;
-      if (provider === "google_drive") {
-        const { ensureStructuredFacilityFolderTree } = await import("../integrations/googleDrive");
-        const tree = await ensureStructuredFacilityFolderTree(facility, patientName.trim(), ancillaryType);
-        folder =
-          docType === "informed_consent" ? tree.informedConsentFolderId :
-          docType === "screening_form" ? tree.screeningFormFolderId :
-          tree.reportFolderId;
-      } else {
-        const s3Cat =
-          docType === "informed_consent" ? "informed-consent" :
-          docType === "screening_form" ? "screening-forms" :
-          "report";
-        const safePatient = patientName.trim().replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim().slice(0, 80);
-        folder = `${facility}/${ancillaryType}/${safePatient}/${s3Cat}`;
-      }
-
-      const { id: driveFileId, viewUrl: webViewLink } = await fileStorage.uploadFile({
-        filename,
-        content: file.buffer,
-        contentType: "application/pdf",
-        folder,
-      });
-
+      // 1) Persist DB record (no Drive yet)
       const record = await storage.saveUploadedDocument({
         facility,
         patientName: patientName.trim(),
         ancillaryType,
         docType,
-        driveFileId,
-        driveWebViewLink: webViewLink || null,
+        driveFileId: null,
+        driveWebViewLink: null,
       });
 
-      backgroundSyncPatients();
-      backgroundSyncBilling();
-      void backgroundExportNotes();
+      // 2) Save blob locally (source of truth)
+      const { saveBlob } = await import("../services/blobStore");
+      const { enqueueDriveFile, enqueueSheetSync, drainOutbox } = await import("../services/outbox");
+      const blob = await saveBlob({
+        ownerType: "uploaded_document",
+        ownerId: record.id,
+        filename,
+        contentType: "application/pdf",
+        buffer: file.buffer,
+      });
 
-      res.json({ success: true, record, driveFileId, webViewLink });
+      // 3) Enqueue Drive upload + drain that one item synchronously to preserve UX
+      const item = await enqueueDriveFile({
+        blobId: blob.id,
+        facility,
+        patientName: patientName.trim(),
+        ancillaryType,
+        docKind: docType,
+        filename,
+      });
+      const drain = await drainOutbox({ ids: [item.id] });
+
+      // 4) Coalesced sheet syncs go to the outbox (admin drains via "Upload All")
+      await enqueueSheetSync("sheet_billing");
+      await enqueueSheetSync("sheet_patients");
+
+      const updated = await storage.getUploadedDocument(record.id) ?? record;
+      res.json({
+        success: drain.failed === 0,
+        record: updated,
+        outboxId: item.id,
+        driveFileId: updated.driveFileId,
+        webViewLink: updated.driveWebViewLink,
+        drain,
+      });
     } catch (error: any) {
       console.error("Document upload error:", error);
       res.status(500).json({ error: error.message });

@@ -23,6 +23,12 @@ const TEST_PDF_BYTES = Buffer.from(
   "utf-8",
 );
 
+function requireAdmin(req: any, res: any, next: any) {
+  if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+  if (req.session?.role !== "admin") return res.status(403).json({ message: "Admin only" });
+  return next();
+}
+
 export function registerTestFixtureRoutes(app: Express) {
   app.post("/api/admin/test-fixture/run", requireAdmin, async (req, res) => {
     try {
@@ -41,7 +47,8 @@ export function registerTestFixtureRoutes(app: Express) {
         status: "completed",
         facility,
         scheduleDate: today,
-      });
+        isTest: true,
+      } as any);
 
       // 3) Create patient
       const patient = await storage.createPatientScreening({
@@ -70,7 +77,8 @@ export function registerTestFixtureRoutes(app: Express) {
         status: "completed",
         appointmentStatus: "pending",
         patientType: "visit",
-      });
+        isTest: true,
+      } as any);
 
       // 4) Create billing records
       const tests = patient.qualifyingTests || [];
@@ -89,7 +97,8 @@ export function registerTestFixtureRoutes(app: Express) {
           insuranceInfo: patient.insurance,
           billingStatus: "Not Billed",
           paidStatus: "Unpaid",
-        });
+          isTest: true,
+        } as any);
         billingIds.push(r.id);
       }
 
@@ -108,6 +117,7 @@ export function registerTestFixtureRoutes(app: Express) {
           { heading: "Order", body: `Order ${service} for clinical evaluation.` },
           { heading: "Indication", body: "Test fixture - automated verification only." },
         ],
+        isTest: true,
       }));
       const notes = await storage.saveGeneratedNotes(notesIn as any);
 
@@ -119,7 +129,8 @@ export function registerTestFixtureRoutes(app: Express) {
         docType: "screening_form",
         driveFileId: null,
         driveWebViewLink: null,
-      });
+        isTest: true,
+      } as any);
       const udBlob = await saveBlob({
         ownerType: "uploaded_document",
         ownerId: ud.id,
@@ -211,57 +222,52 @@ function serviceToAncillary(service: string): string {
 }
 
 async function runCleanup() {
-  const removedBlobs = await deleteTestBlobs();
-  const removedOutbox = await deleteTestOutboxItems();
+  // Strict isTest=true cleanup, atomic via transaction. No name-based deletes.
+  return await db.transaction(async (tx) => {
+    const removedOutbox = (await tx.delete(outboxItems)
+      .where(eq(outboxItems.isTest, true))
+      .returning({ id: outboxItems.id })).length;
 
-  // Delete by patient name marker (TestGuy Robot)
-  const patients = await db.select().from(patientScreenings)
-    .where(ilike(patientScreenings.name, TEST_PATIENT_NAME));
-  const patientIds = patients.map((p) => p.id);
+    const blobRows = await tx.select().from(documentBlobs).where(eq(documentBlobs.isTest, true));
+    if (blobRows.length > 0) {
+      const fs = await import("node:fs/promises");
+      for (const r of blobRows) {
+        try { await fs.unlink(r.storagePath); } catch (err: any) {
+          console.error(`[cleanup] unlink test blob ${r.id}:`, err.message);
+        }
+      }
+      await tx.delete(documentBlobs).where(eq(documentBlobs.isTest, true));
+    }
+    const removedBlobs = blobRows.length;
 
-  let removedNotes = 0;
-  let removedBilling = 0;
-  let removedUploadedDocs = 0;
-  let removedPatients = 0;
-  let removedBatches = 0;
+    const removedNotes = (await tx.delete(generatedNotes)
+      .where(eq(generatedNotes.isTest, true))
+      .returning({ id: generatedNotes.id })).length;
 
-  if (patientIds.length > 0) {
-    // generated notes (cascade by patient_id)
-    const gn = await db.delete(generatedNotes)
-      .where(inArray(generatedNotes.patientId, patientIds))
-      .returning({ id: generatedNotes.id });
-    removedNotes = gn.length;
-    const br = await db.delete(billingRecords)
-      .where(inArray(billingRecords.patientId, patientIds))
-      .returning({ id: billingRecords.id });
-    removedBilling = br.length;
-  }
+    const removedBilling = (await tx.delete(billingRecords)
+      .where(eq(billingRecords.isTest, true))
+      .returning({ id: billingRecords.id })).length;
 
-  // uploaded_documents matching by patient name (no FK)
-  const ud = await db.delete(uploadedDocuments)
-    .where(eq(uploadedDocuments.patientName, TEST_PATIENT_NAME))
-    .returning({ id: uploadedDocuments.id });
-  removedUploadedDocs = ud.length;
+    const removedUploadedDocs = (await tx.delete(uploadedDocuments)
+      .where(eq(uploadedDocuments.isTest, true))
+      .returning({ id: uploadedDocuments.id })).length;
 
-  if (patientIds.length > 0) {
-    const ps = await db.delete(patientScreenings)
-      .where(inArray(patientScreenings.id, patientIds))
-      .returning({ id: patientScreenings.id });
-    removedPatients = ps.length;
-  }
+    const removedPatients = (await tx.delete(patientScreenings)
+      .where(eq(patientScreenings.isTest, true))
+      .returning({ id: patientScreenings.id })).length;
 
-  const batches = await db.delete(screeningBatches)
-    .where(eq(screeningBatches.name, TEST_BATCH_NAME))
-    .returning({ id: screeningBatches.id });
-  removedBatches = batches.length;
+    const removedBatches = (await tx.delete(screeningBatches)
+      .where(eq(screeningBatches.isTest, true))
+      .returning({ id: screeningBatches.id })).length;
 
-  return {
-    removedBatches,
-    removedPatients,
-    removedNotes,
-    removedBilling,
-    removedUploadedDocs,
-    removedBlobs,
-    removedOutbox,
-  };
+    return {
+      removedBatches,
+      removedPatients,
+      removedNotes,
+      removedBilling,
+      removedUploadedDocs,
+      removedBlobs,
+      removedOutbox,
+    };
+  });
 }

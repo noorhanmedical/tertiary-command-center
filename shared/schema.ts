@@ -41,6 +41,7 @@ export const screeningBatches = pgTable("screening_batches", {
   scheduleDate: text("schedule_date"),
   assignedSchedulerId: integer("assigned_scheduler_id"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  isTest: boolean("is_test").notNull().default(false),
 }, (table) => [
   index("idx_screening_batches_status").on(table.status),
   index("idx_screening_batches_schedule_date").on(table.scheduleDate),
@@ -79,6 +80,7 @@ export const patientScreenings = pgTable("patient_screenings", {
   appointmentStatus: text("appointment_status").notNull().default("pending"),
   patientType: text("patient_type").notNull().default("visit"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  isTest: boolean("is_test").notNull().default(false),
 }, (table) => [
   index("idx_patient_screenings_batch_id").on(table.batchId),
   index("idx_patient_screenings_status").on(table.status),
@@ -153,6 +155,7 @@ export const generatedNotes = pgTable("generated_notes", {
   generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   driveFileId: text("drive_file_id"),
   driveWebViewLink: text("drive_web_view_link"),
+  isTest: boolean("is_test").notNull().default(false),
 }, (table) => [
   index("idx_generated_notes_patient_id").on(table.patientId),
   index("idx_generated_notes_batch_id").on(table.batchId),
@@ -225,6 +228,7 @@ export const billingRecords = pgTable("billing_records", {
   nextAction: text("next_action"),
   billingNotes: text("billing_notes"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  isTest: boolean("is_test").notNull().default(false),
 }, (table) => [
   index("idx_billing_records_patient_id").on(table.patientId),
   index("idx_billing_records_batch_id").on(table.batchId),
@@ -249,6 +253,7 @@ export const uploadedDocuments = pgTable("uploaded_documents", {
   driveFileId: text("drive_file_id"),
   driveWebViewLink: text("drive_web_view_link"),
   uploadedAt: timestamp("uploaded_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  isTest: boolean("is_test").notNull().default(false),
 });
 
 export const insertUploadedDocumentSchema = createInsertSchema(uploadedDocuments).omit({
