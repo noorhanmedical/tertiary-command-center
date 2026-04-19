@@ -801,7 +801,7 @@ export default function BillingPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (body: Record<string, string | null>) => apiRequest("POST", "/api/billing-records", body),
+    mutationFn: (body: { service: string; patientName: string; dateOfService: string | null; facility: string | null; clinician: string | null; insuranceInfo: string | null; batchId?: number | null }) => apiRequest("POST", "/api/billing-records", body),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/billing-records"] }); toast({ title: "Row added" }); },
     onError: (err: Error) => { toast({ title: "Failed to add row", description: err.message, variant: "destructive" }); },
   });
