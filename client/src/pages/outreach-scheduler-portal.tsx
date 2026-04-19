@@ -179,10 +179,7 @@ export default function OutreachSchedulerPortalPage() {
   const { data: appointments = [] } = useQuery<AncillaryAppointment[]>({
     queryKey: ["/api/appointments", facility],
     queryFn: async () => {
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch(`/api/appointments?facility=${encodeURIComponent(facility!)}`, { headers });
+      const res = await fetch(`/api/appointments?facility=${encodeURIComponent(facility!)}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },

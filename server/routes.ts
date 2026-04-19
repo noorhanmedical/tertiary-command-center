@@ -113,13 +113,6 @@ export async function registerRoutes(
 
   // ─── requireAuth middleware (applied to all other /api/* routes) ───────────
   const requireAuth = (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
-    const EXEMPT_GET_PATHS = [
-      /^\/schedule\/[^/]+$/,
-      /^\/schedule\/[^/]+\/patients$/,
-    ];
-    if (req.method === "GET" && EXEMPT_GET_PATHS.some((re) => re.test(req.path))) {
-      return next();
-    }
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
