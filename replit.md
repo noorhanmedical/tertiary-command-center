@@ -26,6 +26,20 @@ This project is an AI-powered patient screening application designed to analyze 
 ## System Architecture
 The application features a React + Vite + Tailwind CSS + Shadcn UI frontend, providing an iOS-style card layout and a modern user experience with a clean, icy blue-white theme. The backend is built with Express.js, handling file parsing, OpenAI integration, and API routing. PostgreSQL, managed with Drizzle ORM, serves as the database, utilizing explicit indexes for optimized performance. The system employs a 3-step draft workflow: build schedule, edit clinical data, and analyze for ancillaries. Core features include tab-based navigation for schedules, a collapsible sidebar for schedule history, and an expandable patient result card view. A service layer encapsulates AI client interactions, data ingestion, and screening logic. Operational robustness is ensured through health checks, graceful shutdown mechanisms, and schema management via Drizzle migrations. Documents are generated client-side and can be exported.
 
+### Canonical Platform Navigation (Task #158)
+A persistent `GlobalNav` left-rail (`client/src/components/GlobalNav.tsx`) is visible on every page with 7 canonical domains + Admin at the bottom:
+- **Schedule** (`/schedule`) — canonical source of `scheduleDate`; was `/`
+- **Outreach Center** (`/outreach`)
+- **Ancillary Docs** (`/documents`)
+- **Billing** (`/billing`)
+- **Team Ops** (`/team-ops`) — stub page
+- **Patient Database** (`/patient-database`) — was `/archive`
+- **Task Brain** (`/task-brain`) — stub page
+- **Admin** (`/admin`) — hub linking to Settings, System Architecture (admin-ops), and future Access Control / Ancillary Definitions / Clinic Settings
+- Redirects: `/` → `/schedule`, `/archive` → `/patient-database`, `/plexus` → `/documents`
+- `HomeSidebar` now shows only "Schedule Views" (Patient History, Patient Directory) and "Schedule History" — global navigation links removed
+- **Canonical date/time rule**: `AppointmentModal` accepts `defaultDate` prop pre-filled from `batch.scheduleDate`; calendar highlights the schedule date; info banner explains the default
+
 ### Frontend Component Structure (Task #144)
 The originally monolithic `client/src/pages/home.tsx` (3,492 lines) has been split into focused components in `client/src/components/`:
 - **PatientCard.tsx**: Patient card with form fields, clinical data entry, paste-to-fill, scheduling button

@@ -1,5 +1,4 @@
 import type { Dispatch, SetStateAction } from "react";
-import { Link } from "wouter";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +12,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import {
-  Archive, Calendar, CalendarDays, Database, FileText, Loader2, Phone, Plus, Settings, Shield, Trash2, Upload, Users,
+  Calendar, Database, Loader2, Plus, Trash2, Users,
 } from "lucide-react";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 
@@ -56,7 +55,7 @@ export function HomeSidebar({
     <Sidebar collapsible="offcanvas" data-testid="sidebar-history">
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Tools</SidebarGroupLabel>
+          <SidebarGroupLabel>Schedule Views</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
@@ -79,73 +78,10 @@ export function HomeSidebar({
                   <span className="text-sm font-medium">Patient Directory</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild data-testid="sidebar-archive">
-                  <Link href="/archive" onClick={() => setSidebarOpen(false)}>
-                    <Archive className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Patient Archive</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild data-testid="sidebar-documents">
-                  <Link href="/documents" onClick={() => setSidebarOpen(false)}>
-                    <FileText className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Ancillary Documents</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild data-testid="sidebar-document-upload">
-                  <Link href="/document-upload" onClick={() => setSidebarOpen(false)}>
-                    <Upload className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Document Upload</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild data-testid="sidebar-appointments">
-                  <Link href="/appointments" onClick={() => setSidebarOpen(false)}>
-                    <Calendar className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Appointments</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild data-testid="sidebar-schedule-dashboard">
-                  <Link href="/schedule-dashboard" onClick={() => setSidebarOpen(false)}>
-                    <CalendarDays className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Schedule Dashboard</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild data-testid="sidebar-outreach">
-                  <Link href="/outreach" onClick={() => setSidebarOpen(false)}>
-                    <Phone className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Outreach</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild data-testid="sidebar-admin-ops">
-                  <Link href="/admin-ops" onClick={() => setSidebarOpen(false)}>
-                    <Shield className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Admin</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild data-testid="sidebar-settings">
-                  <Link href="/settings" onClick={() => setSidebarOpen(false)}>
-                    <Settings className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Settings</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
         <SidebarGroup>
           <div className="flex items-center justify-between px-2 pt-2 pb-1">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Schedule History</span>

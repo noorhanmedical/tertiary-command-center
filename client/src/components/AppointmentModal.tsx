@@ -6,23 +6,39 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar, ChevronLeft, ChevronRight, Info } from "lucide-react";
 import type { AncillaryAppointment, PatientScreening } from "@shared/schema";
 import { ANCILLARY_TESTS } from "@shared/plexus";
 
 const ALL_AVAILABLE_TESTS: string[] = [...ANCILLARY_TESTS];
 
-export function AppointmentModal({ patient, onClose }: { patient: PatientScreening; onClose: () => void }) {
+interface AppointmentModalProps {
+  patient: PatientScreening;
+  onClose: () => void;
+  defaultDate?: string;
+}
+
+export function AppointmentModal({ patient, onClose, defaultDate }: AppointmentModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const today = new Date();
-  const [calYear, setCalYear] = useState(today.getFullYear());
-  const [calMonth, setCalMonth] = useState(today.getMonth());
-  const [selectedDay, setSelectedDay] = useState<number | null>(null);
+
+  const initFromDefault = (dateStr?: string) => {
+    if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      const [y, m, d] = dateStr.split("-").map(Number);
+      return { year: y, month: (m ?? 1) - 1, day: d ?? null };
+    }
+    const today = new Date();
+    return { year: today.getFullYear(), month: today.getMonth(), day: null };
+  };
+
+  const init = initFromDefault(defaultDate);
+  const [calYear, setCalYear] = useState(init.year);
+  const [calMonth, setCalMonth] = useState(init.month);
+  const [selectedDay, setSelectedDay] = useState<number | null>(init.day);
   const [selectedTestType, setSelectedTestType] = useState<string>(() => {
     const qt = patient.qualifyingTests || [];
-    if (qt.includes("BrainWave")) return "BrainWave";
-    if (qt.includes("VitalWave")) return "VitalWave";
+    if ((qt as string[]).includes("BrainWave")) return "BrainWave";
+    if ((qt as string[]).includes("VitalWave")) return "VitalWave";
     return "BrainWave";
   });
 
@@ -109,11 +125,16 @@ export function AppointmentModal({ patient, onClose }: { patient: PatientScreeni
     return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
   }
 
+  function fmtDate(dateStr: string) {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    return new Date(y, (m ?? 1) - 1, d ?? 1).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  }
+
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
   const firstDow = new Date(calYear, calMonth, 1).getDay();
   const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
+  const todayKey = new Date().toISOString().split("T")[0];
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDow; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
@@ -123,6 +144,8 @@ export function AppointmentModal({ patient, onClose }: { patient: PatientScreeni
   const availTests = patient.qualifyingTests && (patient.qualifyingTests as string[]).length > 0
     ? (patient.qualifyingTests as string[])
     : ALL_AVAILABLE_TESTS;
+
+  const defaultDateKey = defaultDate && /^\d{4}-\d{2}-\d{2}$/.test(defaultDate) ? defaultDate : null;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -135,6 +158,15 @@ export function AppointmentModal({ patient, onClose }: { patient: PatientScreeni
         </DialogHeader>
 
         <div className="space-y-4">
+          {defaultDateKey && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 flex items-start gap-2">
+              <Info className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+              <p className="text-xs text-blue-700">
+                Appointment date defaults to <strong>schedule date ({fmtDate(defaultDateKey)})</strong>. You may select a different date if needed.
+              </p>
+            </div>
+          )}
+
           {scheduledForThisPatient.length > 0 && (
             <div className="bg-primary/5 rounded-lg px-3 py-2 border border-primary/20">
               <p className="text-xs font-semibold text-primary mb-1.5">Existing appointments</p>
@@ -198,6 +230,7 @@ export function AppointmentModal({ patient, onClose }: { patient: PatientScreeni
                   if (!d) return <div key={i} />;
                   const key = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
                   const isToday = key === todayKey;
+                  const isScheduleDate = key === defaultDateKey;
                   const isSel = d === selectedDay;
                   const hasBooking = bookedDates.has(key);
                   return (
@@ -206,7 +239,7 @@ export function AppointmentModal({ patient, onClose }: { patient: PatientScreeni
                       onClick={() => setSelectedDay(d)}
                       data-testid={`modal-cal-day-${d}`}
                       className={`relative flex flex-col items-center justify-center h-8 w-full rounded text-xs font-medium transition-colors
-                        ${isSel ? "bg-primary text-white" : isToday ? "bg-primary/10 text-primary font-bold" : "hover:bg-slate-100 text-slate-700"}`}
+                        ${isSel ? "bg-primary text-white" : isScheduleDate ? "bg-blue-100 text-blue-700 font-bold ring-1 ring-blue-300" : isToday ? "bg-primary/10 text-primary font-bold" : "hover:bg-slate-100 text-slate-700"}`}
                     >
                       {d}
                       {hasBooking && (

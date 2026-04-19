@@ -552,7 +552,13 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
-      {scheduleModalPatient && <AppointmentModal patient={scheduleModalPatient} onClose={() => setScheduleModalPatient(null)} />}
+      {scheduleModalPatient && (
+        <AppointmentModal
+          patient={scheduleModalPatient}
+          onClose={() => setScheduleModalPatient(null)}
+          defaultDate={selectedBatch?.scheduleDate ?? undefined}
+        />
+      )}
     </>
   );
 }
