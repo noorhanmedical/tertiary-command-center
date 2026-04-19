@@ -1,5 +1,5 @@
-import type { PatientTestHistory } from "@shared/schema";
-import { patientKey } from "../lib/patientKey";
+import type { PatientScreening, PatientTestHistory } from "@shared/schema";
+import { canonicalNameKey, normalizeDob, patientKey } from "../lib/patientKey";
 
 export function cooldownMonthsFor(insuranceType: string | null | undefined): number {
   return (insuranceType || "").toLowerCase() === "medicare" ? 12 : 6;
@@ -83,4 +83,137 @@ export function groupHistoryByPatient(records: PatientTestHistory[]): Map<string
     else map.set(k, [r]);
   }
   return map;
+}
+
+export type UnmatchedHistoryReason =
+  | "no_screening"        // No screening exists with this canonical name anywhere
+  | "no_dob_ambiguous"    // History row lacks DOB and >1 screening shares the canonical name in this clinic
+  | "no_dob_cross_clinic" // History row lacks DOB; only matches found in other clinic(s) and not unique
+  | "dob_mismatch";       // Canonical name matches a known screening but DOB differs
+
+export type UnmatchedHistoryRow = {
+  id: number;
+  patientName: string;
+  dob: string | null;
+  testName: string;
+  dateOfService: string;
+  clinic: string | null;
+  reason: UnmatchedHistoryReason;
+  candidateCount: number;
+};
+
+export type ReconciliationResult = {
+  historyByKey: Map<string, PatientTestHistory[]>;
+  unmatched: UnmatchedHistoryRow[];
+  /** History rows reattached via name-only match (DOB missing); useful for surface review. */
+  fuzzyMatched: number;
+};
+
+/**
+ * Attach test history rows to known screening keys, even when the history row
+ * lacks a DOB or uses a name variant. Strategy:
+ *   1. If canonical-name + DOB is already a known screening key, use it (exact).
+ *   2. If history row lacks DOB, look up screenings sharing the canonical name:
+ *        a) restricted to the same clinic — if exactly one, attach to it.
+ *        b) otherwise across all clinics — if exactly one, attach to it.
+ *   3. Otherwise, the history row is left under its own key and reported as
+ *      unmatched with a reason.
+ */
+export function reconcileHistoryToScreenings(
+  history: PatientTestHistory[],
+  screeningsByKey: Map<string, PatientScreening[]>,
+  clinicForScreeningKey: (key: string) => string,
+): ReconciliationResult {
+  const normalizeClinic = (c: string | null | undefined): string =>
+    (c ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
+  // Index screening keys by canonical name -> { normalized clinic -> [keys] }
+  const byCanonical = new Map<string, Map<string, string[]>>();
+  for (const key of Array.from(screeningsByKey.keys())) {
+    const { name } = (function () {
+      const idx = key.indexOf("__");
+      return idx < 0 ? { name: key } : { name: key.slice(0, idx) };
+    })();
+    if (!name) continue;
+    const clinic = normalizeClinic(clinicForScreeningKey(key));
+    let clinicMap = byCanonical.get(name);
+    if (!clinicMap) {
+      clinicMap = new Map();
+      byCanonical.set(name, clinicMap);
+    }
+    const arr = clinicMap.get(clinic);
+    if (arr) arr.push(key);
+    else clinicMap.set(clinic, [key]);
+  }
+
+  const out = new Map<string, PatientTestHistory[]>();
+  const unmatched: UnmatchedHistoryRow[] = [];
+  let fuzzyMatched = 0;
+
+  for (const row of history) {
+    const canonical = canonicalNameKey(row.patientName);
+    const dob = normalizeDob(row.dob);
+    const exactKey = `${canonical}__${dob}`;
+
+    let chosenKey: string | null = null;
+    let reason: UnmatchedHistoryReason | null = null;
+    let candidateCount = 0;
+
+    if (screeningsByKey.has(exactKey)) {
+      chosenKey = exactKey;
+    } else {
+      const clinicMap = byCanonical.get(canonical);
+      if (!clinicMap) {
+        reason = "no_screening";
+      } else if (!dob) {
+        // Try same-clinic single match (clinic strings are normalized for comparison)
+        const sameClinic = clinicMap.get(normalizeClinic(row.clinic)) ?? [];
+        const allKeys: string[] = [];
+        for (const list of Array.from(clinicMap.values())) for (const k of list) allKeys.push(k);
+        if (sameClinic.length === 1) {
+          chosenKey = sameClinic[0];
+          fuzzyMatched++;
+        } else if (sameClinic.length > 1) {
+          reason = "no_dob_ambiguous";
+          candidateCount = sameClinic.length;
+        } else if (allKeys.length === 1) {
+          chosenKey = allKeys[0];
+          fuzzyMatched++;
+        } else {
+          reason = "no_dob_cross_clinic";
+          candidateCount = allKeys.length;
+        }
+      } else {
+        // Has dob but no exact key match while canonical name does exist somewhere
+        reason = "dob_mismatch";
+        let count = 0;
+        for (const list of Array.from(clinicMap.values())) count += list.length;
+        candidateCount = count;
+      }
+    }
+
+    if (chosenKey) {
+      const arr = out.get(chosenKey);
+      if (arr) arr.push(row);
+      else out.set(chosenKey, [row]);
+    } else {
+      // Still group under its own key so the data is preserved for later passes,
+      // but record it for the import report.
+      const arr = out.get(exactKey);
+      if (arr) arr.push(row);
+      else out.set(exactKey, [row]);
+      unmatched.push({
+        id: row.id,
+        patientName: row.patientName,
+        dob: row.dob ?? null,
+        testName: row.testName,
+        dateOfService: row.dateOfService,
+        clinic: row.clinic ?? null,
+        reason: reason ?? "no_screening",
+        candidateCount,
+      });
+    }
+  }
+
+  return { historyByKey: out, unmatched, fuzzyMatched };
 }

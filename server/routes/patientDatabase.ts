@@ -1,8 +1,20 @@
 import type { Express } from "express";
 import { storage } from "../storage";
-import { patientKey, encodePatientKey, decodePatientKey, normalizePatientName, normalizeDob } from "../lib/patientKey";
-import { computeCooldowns, groupHistoryByPatient, type TestCooldownEntry } from "../services/cooldownCanonical";
-import type { PatientScreening, PatientTestHistory, GeneratedNote, ScreeningBatch } from "@shared/schema";
+import {
+  patientKey,
+  encodePatientKey,
+  decodePatientKey,
+  splitPatientKey,
+  normalizePatientName,
+  normalizeDob,
+} from "../lib/patientKey";
+import {
+  computeCooldowns,
+  reconcileHistoryToScreenings,
+  type TestCooldownEntry,
+  type UnmatchedHistoryRow,
+} from "../services/cooldownCanonical";
+import type { PatientScreening, PatientTestHistory, ScreeningBatch } from "@shared/schema";
 
 const UNASSIGNED = "Unassigned";
 
@@ -73,6 +85,9 @@ type AggregatedDataset = {
   screeningsByKey: Map<string, PatientScreening[]>;
   historyByKey: Map<string, PatientTestHistory[]>;
   noteCountByPatientId: Map<number, number>;
+  totalHistoryRows: number;
+  unmatchedHistory: UnmatchedHistoryRow[];
+  fuzzyMatchedHistory: number;
 };
 
 const DATASET_TTL_MS = 30_000;
@@ -102,9 +117,26 @@ async function loadAggregatedDataset(): Promise<AggregatedDataset> {
       else screeningsByKey.set(k, [s]);
     }
 
-    const historyByKey = groupHistoryByPatient(allTestHistory);
+    const clinicForKey = (key: string): string => {
+      const list = screeningsByKey.get(key);
+      if (!list || list.length === 0) return UNASSIGNED;
+      return clinicOf(bestScreening(list), batchById);
+    };
+    const { historyByKey, unmatched, fuzzyMatched } = reconcileHistoryToScreenings(
+      allTestHistory,
+      screeningsByKey,
+      clinicForKey,
+    );
 
-    const ds: AggregatedDataset = { batchById, screeningsByKey, historyByKey, noteCountByPatientId };
+    const ds: AggregatedDataset = {
+      batchById,
+      screeningsByKey,
+      historyByKey,
+      noteCountByPatientId,
+      totalHistoryRows: allTestHistory.length,
+      unmatchedHistory: unmatched,
+      fuzzyMatchedHistory: fuzzyMatched,
+    };
     datasetCache = { value: ds, expires: Date.now() + DATASET_TTL_MS };
     return ds;
   })();
@@ -124,6 +156,7 @@ export function invalidatePatientDatabaseCache(): void {
 const RESPONSE_TTL_MS = 30_000;
 const rosterResponseCache = new Map<string, { value: any; expires: number }>();
 const cooldownSummaryCache = new Map<string, { value: any; expires: number }>();
+const importReportCache = new Map<string, { value: any; expires: number }>();
 
 function cacheGet(map: Map<string, { value: any; expires: number }>, key: string) {
   const hit = map.get(key);
@@ -144,6 +177,7 @@ function cacheSet(map: Map<string, { value: any; expires: number }>, key: string
 function clearResponseCaches(): void {
   rosterResponseCache.clear();
   cooldownSummaryCache.clear();
+  importReportCache.clear();
 }
 
 // External callers (e.g. mutation endpoints) can fully invalidate.
@@ -163,7 +197,14 @@ export function registerPatientDatabaseRoutes(app: Express) {
       const cached = cacheGet(rosterResponseCache, cacheKey);
       if (cached) return res.json(cached);
 
-      const { batchById, screeningsByKey, historyByKey, noteCountByPatientId } = await loadAggregatedDataset();
+      const {
+        batchById,
+        screeningsByKey,
+        historyByKey,
+        noteCountByPatientId,
+        unmatchedHistory,
+        fuzzyMatchedHistory,
+      } = await loadAggregatedDataset();
 
       const now = new Date();
       const ONE_DAY = 1, ONE_WEEK = 7, ONE_MONTH = 30;
@@ -240,7 +281,14 @@ export function registerPatientDatabaseRoutes(app: Express) {
         });
 
       const totalPatients = groups.reduce((s, g) => s + g.patients.length, 0);
-      const payload = { groups, totals: { patients: totalPatients, clinics: groups.length } };
+      const payload = {
+        groups,
+        totals: { patients: totalPatients, clinics: groups.length },
+        importHealth: {
+          unmatchedHistoryCount: unmatchedHistory.length,
+          fuzzyMatchedHistoryCount: fuzzyMatchedHistory,
+        },
+      };
       cacheSet(rosterResponseCache, cacheKey, payload);
       res.json(payload);
     } catch (error: any) {
@@ -299,10 +347,36 @@ export function registerPatientDatabaseRoutes(app: Express) {
     }
   });
 
+  app.get("/api/patients/database/import-report", async (_req, res) => {
+    try {
+      const cacheKey = "default";
+      const cached = cacheGet(importReportCache, cacheKey);
+      if (cached) return res.json(cached);
+
+      const ds = await loadAggregatedDataset();
+      const byReason: Record<string, number> = {};
+      for (const u of ds.unmatchedHistory) byReason[u.reason] = (byReason[u.reason] ?? 0) + 1;
+      const payload = {
+        totals: {
+          historyRows: ds.totalHistoryRows,
+          unmatched: ds.unmatchedHistory.length,
+          fuzzyMatched: ds.fuzzyMatchedHistory,
+        },
+        byReason,
+        unmatched: ds.unmatchedHistory.slice(0, 200),
+      };
+      cacheSet(importReportCache, cacheKey, payload);
+      res.json(payload);
+    } catch (error: any) {
+      console.error("[patient-database/import-report] error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/patients/database/:encodedKey", async (req, res) => {
     try {
       const key = decodePatientKey(req.params.encodedKey);
-      const [_, dobPart] = key.split("__");
+      const { dob: dobPart } = splitPatientKey(key);
 
       const { batchById, screeningsByKey, historyByKey } = await loadAggregatedDataset();
 
