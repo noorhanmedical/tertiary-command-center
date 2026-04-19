@@ -745,6 +745,10 @@ export class DatabaseStorage implements IStorage {
     ]));
   }
 
+  // Canonical unread semantics: counts unread MESSAGES (not tasks).
+  // A message is unread if: user has no read record for the task, OR
+  // the message was sent after the user's last_read_at for that task.
+  // This powers the GlobalNav badge and per-task indicators.
   async getUnreadCount(userId: string): Promise<number> {
     const taskIds = await this._getMemberTaskIds(userId);
     if (taskIds.length === 0) return 0;
