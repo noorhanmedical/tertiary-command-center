@@ -168,7 +168,7 @@ export async function initializeDriveFolderTree(): Promise<void> {
         `Cleared ${driveCleared} folder + ${sheetCleared} spreadsheet stale settings — re-initializing.`
       );
     } else if (envRootId && !cachedRootId) {
-      const orphaned = await deleteSettingsByPrefix("DRIVE_FOLDER_facility_");
+      const orphaned = await deleteSettingsByPrefix("DRIVE_FOLDER_");
       const sheetCleared = await clearSheetSettings();
       if (orphaned + sheetCleared > 0) {
         console.log(`[Drive] Cleared ${orphaned} orphaned folder + ${sheetCleared} spreadsheet settings before fresh init under ${envRootId}.`);
