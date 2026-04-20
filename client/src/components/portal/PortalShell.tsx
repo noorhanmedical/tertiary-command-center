@@ -306,6 +306,62 @@ function PatientUploadCard({ patient }: { patient: TodayPatient }) {
   );
 }
 
+// Compact patient-scoped upload card rendered in the LEFT RAIL when a patient
+// is selected. Mirrors PatientUploadCard but with header + density tuned for
+// the rail. Per spec, the upload affordance lives in the left tools rail —
+// not in the center patient tabs — so it is reachable without opening the
+// patient chart.
+function LeftRailUpload({ patientScreeningId, patientName }: { patientScreeningId: number; patientName: string }) {
+  const { toast } = useToast();
+  const [file, setFile] = useState<File | null>(null);
+  const [kind, setKind] = useState("other");
+  const [busy, setBusy] = useState(false);
+  async function onUpload() {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("patientScreeningId", String(patientScreeningId));
+      fd.append("title", file.name);
+      fd.append("kind", kind);
+      const res = await fetch("/api/portal/uploads", { method: "POST", body: fd, credentials: "include" });
+      if (!res.ok) throw new Error((await res.json()).error || "Upload failed");
+      toast({ title: "Uploaded to chart", description: file.name });
+      setFile(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/patient-documents", patientScreeningId] });
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Card className="p-3" data-testid="left-rail-upload">
+      <div className="text-sm font-semibold mb-2 flex items-center gap-2">
+        <Upload className="h-4 w-4" /> Upload to chart
+      </div>
+      <div className="text-[11px] text-slate-500 mb-2 truncate">For: {patientName}</div>
+      <div className="space-y-2">
+        <Input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} data-testid="leftrail-input-file" />
+        <Select value={kind} onValueChange={setKind}>
+          <SelectTrigger className="h-8 text-xs" data-testid="leftrail-select-kind"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="informed_consent">Informed consent</SelectItem>
+            <SelectItem value="screening_form">Screening form</SelectItem>
+            <SelectItem value="report">Report</SelectItem>
+            <SelectItem value="reference">Reference</SelectItem>
+            <SelectItem value="other">Other</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button size="sm" onClick={onUpload} disabled={!file || busy} className="w-full" data-testid="leftrail-button-upload">
+          <Upload className="mr-1 h-3.5 w-3.5" /> {busy ? "Uploading…" : "Upload"}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function PatientDetail({ patient, role, onConsent }: { patient: TodayPatient; role: Role; onConsent: (testType: string | null) => void }) {
   const { data: docs } = useQuery<PatientDoc[]>({
     queryKey: ["/api/portal/patient-documents", patient.patientScreeningId],
@@ -508,6 +564,19 @@ export function PortalShell({ role }: { role: Role }) {
     enabled: !!facility,
   });
 
+  // Once we have today's schedule for the chosen clinic, fire-and-forget a
+  // POST to ensure tech_assignment Plexus tasks exist for each consent gap.
+  // Read endpoints stay side-effect free; this side-effect lives explicitly
+  // on the client so failures degrade gracefully (toast/log only).
+  useEffect(() => {
+    if (!facility || selectedDate !== todayIso() || !scheduleData?.patients) return;
+    const hasGaps = scheduleData.patients.some((p) => p.consentByTest.some((c) => !c.signed));
+    if (!hasGaps) return;
+    apiRequest("POST", "/api/portal/ensure-tech-tasks", { facility, date: selectedDate })
+      .then(() => queryClient.invalidateQueries({ queryKey: ["/api/portal/my-tasks"] }))
+      .catch(() => { /* best effort */ });
+  }, [facility, selectedDate, scheduleData?.patients?.length]);
+
   const { data: tasksData } = useQuery<{ urgent: PortalTask[]; open: PortalTask[] }>({
     queryKey: ["/api/portal/my-tasks"],
     queryFn: async () => {
@@ -594,6 +663,13 @@ export function PortalShell({ role }: { role: Role }) {
         {/* Left rail: monthly calendar */}
         <div className="space-y-3 overflow-y-auto">
           <MonthlyMiniCalendar facility={facility} selectedDate={selectedDate} onSelect={(d) => { setSelectedDate(d); setCenterMode("patient"); }} />
+
+          {selected && selected.patientScreeningId != null && (
+            <LeftRailUpload
+              patientScreeningId={selected.patientScreeningId}
+              patientName={selected.name}
+            />
+          )}
 
           <Card className="p-3">
             <div className="text-sm font-semibold mb-2 flex items-center gap-2">
@@ -692,7 +768,13 @@ export function PortalShell({ role }: { role: Role }) {
                     data-testid={`patient-row-${p.patientScreeningId ?? p.name}`}
                   >
                     <button
-                      onClick={() => { if (p.patientScreeningId != null) { setSelectedPatientId(p.patientScreeningId); setCenterMode("patient"); } }}
+                      onClick={() => {
+                        if (p.patientScreeningId == null) return;
+                        setSelectedPatientId(p.patientScreeningId);
+                        // Per spec: row click opens the consent panel for this
+                        // patient (the primary in-clinic action).
+                        setCenterMode("consent");
+                      }}
                       className="w-full text-left"
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -703,9 +785,13 @@ export function PortalShell({ role }: { role: Role }) {
                           </div>
                         </div>
                         {p.consentSigned ? (
-                          <span className="shrink-0 w-2 h-2 rounded-full bg-emerald-500" title="Consent on file" data-testid={`pill-consent-${p.patientScreeningId}`} />
+                          <Badge className="bg-emerald-100 text-emerald-700 text-[10px] px-1.5 py-0" data-testid={`pill-consent-${p.patientScreeningId}`}>
+                            <Check className="h-2.5 w-2.5 mr-0.5" /> Consent ✓
+                          </Badge>
                         ) : (
-                          <span className="shrink-0 w-2 h-2 rounded-full bg-amber-500" title="Consent needed" data-testid={`pill-consent-${p.patientScreeningId}`} />
+                          <Badge className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0" data-testid={`pill-consent-${p.patientScreeningId}`}>
+                            <AlertCircle className="h-2.5 w-2.5 mr-0.5" /> Needed
+                          </Badge>
                         )}
                       </div>
                     </button>
@@ -720,16 +806,18 @@ export function PortalShell({ role }: { role: Role }) {
                       >
                         <User className="h-3.5 w-3.5 text-slate-700" />
                       </button>
-                      <button
-                        type="button"
-                        title="Consent"
-                        disabled={p.patientScreeningId == null}
-                        onClick={() => openConsentPane(p)}
-                        className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
-                        data-testid={`row-icon-consent-${p.patientScreeningId}`}
-                      >
-                        <FileSignature className="h-3.5 w-3.5 text-rose-600" />
-                      </button>
+                      {!p.consentSigned && (
+                        <button
+                          type="button"
+                          title="Consent"
+                          disabled={p.patientScreeningId == null}
+                          onClick={() => openConsentPane(p)}
+                          className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
+                          data-testid={`row-icon-consent-${p.patientScreeningId}`}
+                        >
+                          <FileSignature className="h-3.5 w-3.5 text-rose-600" />
+                        </button>
+                      )}
                       <button
                         type="button"
                         title="Plexus PDF"

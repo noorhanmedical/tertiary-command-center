@@ -19,6 +19,7 @@ import {
   PORTAL_OUTREACH_HEAVY_LOAD_THRESHOLD,
   PORTAL_OUTREACH_HEAVY_DAY_CAP_FACTOR,
 } from "@shared/platformSettings";
+import { derivePatientType } from "@shared/patientType";
 
 type ConsentDoc = { id: number; sourceNotes: string | null; createdAt: Date | string; kind: string };
 
@@ -235,48 +236,6 @@ export function registerPortalRoutes(app: Express) {
         (x.time ?? "").localeCompare(y.time ?? "") || x.name.localeCompare(y.name),
       );
 
-      // Side-effect: ensure a tech_assignment Plexus task exists for every
-      // patient with at least one unsigned consent on a same-day appointment.
-      // Idempotent: we check for an open task with taskType=tech_assignment
-      // for this patient + due date == today before creating a new one.
-      if (date === todayIso()) {
-        const facSchedulers = await storage.getOutreachSchedulers();
-        for (const row of out) {
-          if (row.patientScreeningId == null) continue;
-          const hasGap = row.consentByTest.some((c) => !c.signed);
-          if (!hasGap) continue;
-          const existing = await storage.getTasksByPatient(row.patientScreeningId);
-          const already = existing.find(
-            (t) => t.taskType === "tech_assignment" && t.status !== "closed" && t.dueDate === date,
-          );
-          if (already) continue;
-          const assignee = facSchedulers.find(
-            (s) => s.userId && s.facility === row.facility,
-          )?.userId ?? null;
-          // Best-effort: failing to create a tech_assignment task must NOT
-          // break the schedule response. Log and continue.
-          try {
-            await storage.createTask({
-              title: `Consent needed — ${row.name}`,
-              description: `Patient ${row.name} has ${row.consentByTest.filter((c) => !c.signed).length} unsigned consent(s) for today's clinic at ${row.facility}.`,
-              taskType: "tech_assignment",
-              urgency: "EOD",
-              priority: "normal",
-              status: "open",
-              assignedToUserId: assignee,
-              createdByUserId: req.session.userId ?? null,
-              patientScreeningId: row.patientScreeningId,
-              projectId: null,
-              parentTaskId: null,
-              batchId: row.batchId,
-              dueDate: date,
-            });
-          } catch (taskErr) {
-            console.warn("[portal/today-schedule] tech_assignment create failed:", taskErr);
-          }
-        }
-      }
-
       res.json({ date, facility, patients: out });
     } catch (err: any) {
       console.error("[portal/today-schedule]", err);
@@ -337,11 +296,13 @@ export function registerPortalRoutes(app: Express) {
 
       const allBatches = await storage.getAllScreeningBatches();
       const allScheduled = await storage.getAppointments({ status: "scheduled" });
-      const apptsByPatient = new Map<number, { scheduledDate: string }[]>();
+      // Build per-patient appointment list keyed by id (date+status are
+      // sufficient for derivePatientType — the canonical classifier).
+      const apptsByPatient = new Map<number, { scheduledDate: string; status: string }[]>();
       for (const a of allScheduled) {
         if (a.patientScreeningId == null) continue;
         const arr = apptsByPatient.get(a.patientScreeningId) ?? [];
-        arr.push({ scheduledDate: a.scheduledDate });
+        arr.push({ scheduledDate: a.scheduledDate, status: a.status });
         apptsByPatient.set(a.patientScreeningId, arr);
       }
 
@@ -369,10 +330,18 @@ export function registerPortalRoutes(app: Express) {
         const patients = await storage.getPatientScreeningsByBatch(batch.id);
         for (const p of patients) {
           if (p.commitStatus === "Draft") continue;
-          // Only patients tagged as outreach cohort are call-list candidates;
-          // an in-clinic visit patient with no upcoming appt is NOT outreach.
-          if ((p.patientType ?? "visit") !== "outreach") continue;
+          // Use the canonical derivePatientType classifier (same source of
+          // truth used by callListEngine + outreachService). This derives
+          // from live appointments + batch date instead of trusting the
+          // possibly-stale stored column.
           const appts = apptsByPatient.get(p.id) ?? [];
+          const derivedType = derivePatientType({
+            appointments: appts,
+            batchScheduleDate: batchDay,
+            storedPatientType: p.patientType,
+            asOfDate: today,
+          });
+          if (derivedType !== "outreach") continue;
           const hasUpcoming = appts.some((a) => a.scheduledDate >= today && a.scheduledDate <= horizon);
           const batchInWindow = batchDay && batchDay >= today && batchDay <= horizon;
           if (hasUpcoming || batchInWindow) continue;
@@ -463,6 +432,88 @@ export function registerPortalRoutes(app: Express) {
       });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to load outreach list" });
+    }
+  });
+
+  // ── Ensure tech_assignment Plexus tasks for unsigned same-day consents ────
+  // Explicit POST endpoint so reads remain side-effect-free. Idempotent: only
+  // creates when no open tech_assignment task exists for (patient, dueDate).
+  // Assignment is role-aware: prefer an active 'technician' user mapped to
+  // the clinic; fall back to a 'liaison'; if neither exists, leave assignee
+  // null so an admin can pick it up.
+  app.post("/api/portal/ensure-tech-tasks", requirePortalRole, async (req, res) => {
+    try {
+      const facility = String(req.body?.facility ?? "").trim();
+      const date = String(req.body?.date ?? "").trim() || todayIso();
+      if (!facility || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: "facility and date (YYYY-MM-DD) are required" });
+      }
+      const allowed = await allowedFacilities(req);
+      const denied = ensureFacility(allowed, facility);
+      if (denied) return res.status(403).json({ error: denied });
+
+      const conds = [eq(ancillaryAppointments.scheduledDate, date), eq(ancillaryAppointments.facility, facility)];
+      const appts = await db.select().from(ancillaryAppointments).where(and(...conds));
+
+      // Build deterministic role-aware assignee map for this clinic.
+      const schedulers = await storage.getOutreachSchedulers();
+      const facUserIds = schedulers
+        .filter((s) => s.facility === facility && s.userId)
+        .map((s) => s.userId!);
+      const facUsers = facUserIds.length === 0 ? [] : await db
+        .select({ id: usersTable.id, role: usersTable.role, active: usersTable.active })
+        .from(usersTable)
+        .where(and(inArray(usersTable.id, facUserIds), eq(usersTable.active, true)));
+      const techUser = facUsers.find((u) => u.role === "technician");
+      const liaisonUser = facUsers.find((u) => u.role === "liaison");
+      const assignee = techUser?.id ?? liaisonUser?.id ?? null;
+
+      let created = 0;
+      const seenPatients = new Set<number>();
+      for (const a of appts) {
+        if (a.patientScreeningId == null) continue;
+        if (seenPatients.has(a.patientScreeningId)) continue;
+        seenPatients.add(a.patientScreeningId);
+        const docs = await storage.listCurrentDocuments({
+          kind: "informed_consent",
+          patientScreeningId: a.patientScreeningId,
+        });
+        // Group all of today's appointments for this patient
+        const patientAppts = appts.filter((x) => x.patientScreeningId === a.patientScreeningId);
+        const gaps = patientAppts.filter(
+          (x) => !consentForTest(docs as ConsentDoc[], x.testType, date).signed,
+        );
+        if (gaps.length === 0) continue;
+        const existing = await storage.getTasksByPatient(a.patientScreeningId);
+        const already = existing.find(
+          (t) => t.taskType === "tech_assignment" && t.status !== "closed" && t.dueDate === date,
+        );
+        if (already) continue;
+        try {
+          await storage.createTask({
+            title: `Consent needed — ${a.patientName}`,
+            description: `${gaps.length} unsigned consent(s) for ${facility} on ${date}: ${gaps.map((g) => g.testType).join(", ")}`,
+            taskType: "tech_assignment",
+            urgency: "EOD",
+            priority: "normal",
+            status: "open",
+            assignedToUserId: assignee,
+            createdByUserId: req.session.userId ?? null,
+            patientScreeningId: a.patientScreeningId,
+            projectId: null,
+            parentTaskId: null,
+            batchId: null,
+            dueDate: date,
+          });
+          created++;
+        } catch (taskErr) {
+          console.warn("[portal/ensure-tech-tasks] create failed:", taskErr);
+        }
+      }
+      res.json({ created, assignee });
+    } catch (err: any) {
+      console.error("[portal/ensure-tech-tasks]", err);
+      res.status(500).json({ error: err?.message || "Failed to ensure tech tasks" });
     }
   });
 
