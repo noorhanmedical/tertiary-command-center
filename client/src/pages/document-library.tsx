@@ -93,6 +93,7 @@ export default function DocumentLibraryPage() {
 
   const [filterKind, setFilterKind] = useState<string>("all");
   const [filterSurface, setFilterSurface] = useState<string>("all");
+  const [filterPatientId, setFilterPatientId] = useState<string>("");
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -100,6 +101,8 @@ export default function DocumentLibraryPage() {
   const [sigReq, setSigReq] = useState<string>("none");
   const [surfaces, setSurfaces] = useState<string[]>([]);
   const [file, setFile] = useState<File | null>(null);
+  const [uploadPatientId, setUploadPatientId] = useState<string>("");
+  const [uploadFacility, setUploadFacility] = useState<string>("");
 
   const [versionsOpenFor, setVersionsOpenFor] = useState<number | null>(null);
   const [replaceTargetId, setReplaceTargetId] = useState<number | null>(null);
@@ -109,11 +112,13 @@ export default function DocumentLibraryPage() {
   });
 
   const { data: docs = [], isLoading } = useQuery<LibraryDoc[]>({
-    queryKey: ["/api/document-library", filterKind, filterSurface],
+    queryKey: ["/api/document-library", filterKind, filterSurface, filterPatientId],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filterSurface !== "all") params.set("surface", filterSurface);
       else if (filterKind !== "all") params.set("kind", filterKind);
+      const trimmedPid = filterPatientId.trim();
+      if (trimmedPid && /^\d+$/.test(trimmedPid)) params.set("patientId", trimmedPid);
       const res = await fetch(`/api/document-library?${params.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load documents");
       return res.json();
@@ -138,6 +143,10 @@ export default function DocumentLibraryPage() {
       fd.append("kind", kind);
       fd.append("signatureRequirement", sigReq);
       fd.append("surfaces", JSON.stringify(surfaces));
+      const trimmedPid = uploadPatientId.trim();
+      if (trimmedPid && /^\d+$/.test(trimmedPid)) fd.append("patientScreeningId", trimmedPid);
+      const trimmedFac = uploadFacility.trim();
+      if (trimmedFac) fd.append("facility", trimmedFac);
       fd.append("file", file);
       const res = await fetch("/api/document-library", { method: "POST", body: fd, credentials: "include" });
       if (!res.ok) {
@@ -327,6 +336,30 @@ export default function DocumentLibraryPage() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Patient ID (optional)</Label>
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="e.g. 1856"
+                    value={uploadPatientId}
+                    onChange={(e) => setUploadPatientId(e.target.value)}
+                    data-testid="input-upload-patient-id"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Facility (optional)</Label>
+                  <Input
+                    type="text"
+                    placeholder="e.g. Main Clinic"
+                    value={uploadFacility}
+                    onChange={(e) => setUploadFacility(e.target.value)}
+                    data-testid="input-upload-facility"
+                  />
+                </div>
+              </div>
+
               <div className="space-y-1.5">
                 <Label>File</Label>
                 <input
@@ -383,6 +416,15 @@ export default function DocumentLibraryPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <Input
+                type="text"
+                inputMode="numeric"
+                placeholder="Patient ID"
+                value={filterPatientId}
+                onChange={(e) => setFilterPatientId(e.target.value)}
+                className="w-32 h-8 text-xs"
+                data-testid="filter-patient-id"
+              />
               <span className="text-xs text-slate-400 ml-auto">{visibleDocs.length} document{visibleDocs.length !== 1 ? "s" : ""}</span>
             </Card>
 
