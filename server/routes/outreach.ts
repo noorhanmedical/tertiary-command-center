@@ -14,18 +14,25 @@ import { buildOutreachDashboard } from "../services/outreachService";
 // "scheduled".
 function deriveAppointmentStatus(outcome: OutreachCallOutcome): string {
   switch (outcome) {
-    case "scheduled":          return "scheduled";
-    case "callback":           return "callback";
+    case "scheduled":            return "scheduled";
+    case "callback":
+    case "wants_more_info":
+    case "will_think_about_it":
+    case "language_barrier":
+    case "reached":              return "callback";
     case "declined":
-    case "not_interested":     return "declined";
+    case "not_interested":
+    case "refused_dnc":
+    case "wrong_number":
+    case "moved":
+    case "deceased":             return "declined";
     case "no_answer":
     case "voicemail":
-    case "busy":               return "no_answer";
-    case "wrong_number":
-    case "deceased":           return "declined";
-    case "language_barrier":   return "callback";
-    case "reached":            return "callback";
-    default:                   return "pending";
+    case "mailbox_full":
+    case "busy":
+    case "hung_up":
+    case "disconnected":         return "no_answer";
+    default:                     return "pending";
   }
 }
 
@@ -121,11 +128,19 @@ export function registerOutreachRoutes(app: Express) {
       const attemptNumber = parsed.data.attemptNumber ?? prior.length + 1;
       const desiredStatus = deriveAppointmentStatus(parsed.data.outcome);
 
+      // Authorization: only admins may attribute a call to another scheduler.
+      // Non-admins always get their own session id, regardless of body.
+      const isAdmin = sessionRole(req) === "admin";
+      const attributedScheduler =
+        isAdmin && parsed.data.schedulerUserId
+          ? parsed.data.schedulerUserId
+          : userId;
+
       // Atomic: insert call + conditional status update in one transaction.
       const call = await storage.createOutreachCallAtomic(
         {
           ...parsed.data,
-          schedulerUserId: parsed.data.schedulerUserId ?? userId,
+          schedulerUserId: attributedScheduler,
           attemptNumber,
         },
         desiredStatus,

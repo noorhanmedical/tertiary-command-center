@@ -28,6 +28,7 @@ import {
   Keyboard,
   Megaphone,
   TrendingUp,
+  ShieldCheck,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -217,17 +218,27 @@ function formatRelative(iso: string | Date): string {
 // Outcome -> bucket used by the priority sort.
 type CallBucket = "callback_due" | "never_called" | "no_answer" | "contacted" | "scheduled" | "declined";
 
+// "Callback due" includes anything currently overdue OR coming due within
+// the next 30 minutes — matches the spec for the header callback badge.
+const CALLBACK_DUE_WINDOW_MS = 30 * 60 * 1000;
+
+function callbackIsDueSoon(latestCall: OutreachCall | undefined): boolean {
+  if (!latestCall || latestCall.outcome !== "callback" || !latestCall.callbackAt) return false;
+  const due = new Date(latestCall.callbackAt as unknown as string).getTime();
+  return due - Date.now() <= CALLBACK_DUE_WINDOW_MS;
+}
+
+const NO_ANSWER_OUTCOMES = new Set([
+  "no_answer", "voicemail", "mailbox_full", "busy", "hung_up", "disconnected",
+]);
+
 function bucketForItem(item: OutreachCallItem, latestCall: OutreachCall | undefined): CallBucket {
   const status = item.appointmentStatus.toLowerCase();
   if (status === "scheduled") return "scheduled";
   if (status === "declined") return "declined";
-  if (latestCall?.outcome === "callback" && latestCall.callbackAt && new Date(latestCall.callbackAt) <= new Date()) {
-    return "callback_due";
-  }
+  if (callbackIsDueSoon(latestCall)) return "callback_due";
   if (!latestCall) return "never_called";
-  if (status === "no_answer" || latestCall.outcome === "no_answer" || latestCall.outcome === "voicemail" || latestCall.outcome === "busy") {
-    return "no_answer";
-  }
+  if (status === "no_answer" || NO_ANSWER_OUTCOMES.has(latestCall.outcome)) return "no_answer";
   return "contacted";
 }
 
@@ -274,6 +285,8 @@ export default function OutreachSchedulerPortalPage() {
   // Call flow state
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | CallBucket>("all");
+  const [clinicFilter, setClinicFilter] = useState<string | null>(null);
+  const [testFilter, setTestFilter] = useState<string | null>(null);
   const [expandedTimeline, setExpandedTimeline] = useState<Set<number>>(new Set());
   const [scriptOpen, setScriptOpen] = useState(false);
   const [dispositionOpen, setDispositionOpen] = useState(false);
@@ -501,12 +514,26 @@ export default function OutreachSchedulerPortalPage() {
     .filter((a) => a.scheduledDate === todayDateStr && a.status === "scheduled")
     .sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime));
 
-  // Search + filter + priority sort.
+  // Distinct clinic + qualifying-test options for the filter chips.
+  const clinicOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of card?.callList ?? []) if (p.facility) set.add(p.facility);
+    return Array.from(set).sort();
+  }, [card]);
+  const testOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of card?.callList ?? []) for (const t of p.qualifyingTests) set.add(t);
+    return Array.from(set).sort();
+  }, [card]);
+
+  // Search + clinic + test + bucket filter + priority sort.
   const sortedCallList = useMemo(() => {
     const list = card?.callList ?? [];
     const q = search.trim().toLowerCase();
     const filtered = list
       .filter((item) => {
+        if (clinicFilter && item.facility !== clinicFilter) return false;
+        if (testFilter && !item.qualifyingTests.includes(testFilter)) return false;
         if (!q) return true;
         return (
           item.patientName.toLowerCase().includes(q) ||
@@ -527,17 +554,22 @@ export default function OutreachSchedulerPortalPage() {
         if (r !== 0) return r;
         // Callback_due: nearest callback first
         if (a.bucket === "callback_due" && b.bucket === "callback_due" && a.latest?.callbackAt && b.latest?.callbackAt) {
-          return new Date(a.latest.callbackAt).getTime() - new Date(b.latest.callbackAt).getTime();
+          return new Date(a.latest.callbackAt as unknown as string).getTime() - new Date(b.latest.callbackAt as unknown as string).getTime();
         }
         return a.item.patientName.localeCompare(b.item.patientName);
       });
     return filtered;
-  }, [card, search, filter, latestCallByPatient]);
+  }, [card, search, filter, clinicFilter, testFilter, latestCallByPatient]);
 
-  const callbacksDue = useMemo(
-    () => sortedCallList.filter((r) => r.bucket === "callback_due").length,
-    [sortedCallList],
-  );
+  // Header badge: "callbacks due in next 30 min" (or already overdue) — global
+  // across all patients on the call list, not just the current filtered view.
+  const callbacksDue = useMemo(() => {
+    let count = 0;
+    for (const p of card?.callList ?? []) {
+      if (callbackIsDueSoon(latestCallByPatient.get(p.patientId))) count++;
+    }
+    return count;
+  }, [card, latestCallByPatient]);
 
   // Auto-select the top-priority patient if nothing is selected yet.
   useEffect(() => {
@@ -808,8 +840,8 @@ export default function OutreachSchedulerPortalPage() {
               </div>
             </div>
 
-            {/* Filter chips */}
-            <div className="mb-3 flex flex-wrap gap-1.5">
+            {/* Bucket filter chips */}
+            <div className="mb-2 flex flex-wrap gap-1.5">
               {FILTER_CHIPS.map((c) => {
                 const active = filter === c.id;
                 return (
@@ -831,6 +863,74 @@ export default function OutreachSchedulerPortalPage() {
               })}
             </div>
 
+            {/* Clinic + test filter chips */}
+            {(clinicOptions.length > 1 || testOptions.length > 1) && (
+              <div className="mb-3 space-y-1.5">
+                {clinicOptions.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5" data-testid="portal-clinic-filter">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Clinic</span>
+                    <button
+                      type="button"
+                      onClick={() => setClinicFilter(null)}
+                      className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
+                        clinicFilter === null
+                          ? "border-blue-300 bg-blue-100 text-blue-700"
+                          : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                      }`}
+                    >
+                      All
+                    </button>
+                    {clinicOptions.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setClinicFilter(c === clinicFilter ? null : c)}
+                        className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
+                          clinicFilter === c
+                            ? "border-blue-300 bg-blue-100 text-blue-700"
+                            : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                        }`}
+                        data-testid={`portal-clinic-chip-${c.replace(/\s+/g, "-").toLowerCase()}`}
+                      >
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {testOptions.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5" data-testid="portal-test-filter">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Test</span>
+                    <button
+                      type="button"
+                      onClick={() => setTestFilter(null)}
+                      className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
+                        testFilter === null
+                          ? "border-violet-300 bg-violet-100 text-violet-700"
+                          : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                      }`}
+                    >
+                      All
+                    </button>
+                    {testOptions.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setTestFilter(t === testFilter ? null : t)}
+                        className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
+                          testFilter === t
+                            ? "border-violet-300 bg-violet-100 text-violet-700"
+                            : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                        }`}
+                        data-testid={`portal-test-chip-${t.replace(/\s+/g, "-").toLowerCase()}`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {sortedCallList.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-10 text-center text-sm text-slate-500">
                 {search.trim() ? "No patients match this search." : "No patients in this view."}
@@ -841,6 +941,7 @@ export default function OutreachSchedulerPortalPage() {
                   const isSelected = selectedId === item.patientId;
                   const tlOpen = expandedTimeline.has(item.patientId);
                   const calls = callsByPatient[item.patientId] ?? [];
+                  const attemptCount = latest?.attemptNumber ?? calls.length;
                   return (
                     <div
                       key={item.id}
@@ -852,36 +953,66 @@ export default function OutreachSchedulerPortalPage() {
                       ].join(" ")}
                       data-testid={`portal-call-row-${item.patientId}`}
                     >
-                      <button
-                        type="button"
-                        onClick={() => selectPatient(item.patientId)}
-                        className="flex w-full items-start gap-3 text-left"
-                      >
+                      <div className="flex w-full items-start gap-3 text-left">
                         <BucketIndicator bucket={bucket} />
-                        <div className="flex-1 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => selectPatient(item.patientId)}
+                          className="flex-1 min-w-0 text-left"
+                          data-testid={`portal-row-select-${item.patientId}`}
+                        >
                           <div className="flex flex-wrap items-center gap-2">
                             <SchedulerIcon patientScreeningId={item.patientId} patientName={item.patientName} size="xs" />
                             <span className="text-sm font-semibold text-slate-900 truncate">{item.patientName}</span>
                             <Badge className={`rounded-full border text-[10px] ${statusBadgeClass(item.appointmentStatus)}`}>
                               {statusLabel(item.appointmentStatus)}
                             </Badge>
+                            {latest && (
+                              <Badge
+                                className={`rounded-full border text-[10px] ${statusBadgeClass(latest.outcome)}`}
+                                data-testid={`portal-row-last-outcome-${item.patientId}`}
+                              >
+                                Last: {latest.outcome.replace(/_/g, " ")}
+                              </Badge>
+                            )}
+                            {attemptCount > 0 && (
+                              <Badge
+                                className="rounded-full border border-slate-200 bg-slate-50 text-slate-600 text-[10px]"
+                                data-testid={`portal-row-attempts-${item.patientId}`}
+                              >
+                                Attempt #{attemptCount}
+                              </Badge>
+                            )}
                             {bucket === "callback_due" && latest?.callbackAt && (
                               <Badge className="rounded-full border bg-amber-100 text-amber-800 border-amber-200 text-[10px]">
-                                Due {formatRelative(latest.callbackAt)}
+                                Due {formatRelative(latest.callbackAt as unknown as string)}
                               </Badge>
                             )}
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                             <span className="inline-flex items-center gap-0.5"><Building2 className="h-3 w-3" />{item.facility}</span>
                             <span>·</span>
-                            <a
-                              href={`tel:${digitsOnly(item.phoneNumber)}`}
-                              onClick={(e) => e.stopPropagation()}
+                            <span
                               className="inline-flex items-center gap-0.5 text-blue-600 hover:underline"
                               data-testid={`portal-tel-${item.patientId}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.location.href = `tel:${digitsOnly(item.phoneNumber)}`;
+                              }}
                             >
                               <Phone className="h-3 w-3" />{item.phoneNumber}
-                            </a>
+                            </span>
+                            {item.insurance && (
+                              <>
+                                <span>·</span>
+                                <span
+                                  className="inline-flex items-center gap-0.5 text-slate-500"
+                                  data-testid={`portal-row-insurance-${item.patientId}`}
+                                >
+                                  <ShieldCheck className="h-3 w-3" />{item.insurance}
+                                </span>
+                              </>
+                            )}
                             {calls.length > 0 && (
                               <>
                                 <span>·</span>
@@ -901,8 +1032,23 @@ export default function OutreachSchedulerPortalPage() {
                               )}
                             </div>
                           )}
-                        </div>
-                      </button>
+                        </button>
+
+                        {/* Per-row Add to Schedule shortcut */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            selectPatient(item.patientId);
+                            setBookingPanelOpen(true);
+                          }}
+                          title="Add to schedule"
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-violet-200 bg-white text-violet-600 transition hover:border-violet-300 hover:bg-violet-50"
+                          data-testid={`portal-row-add-to-schedule-${item.patientId}`}
+                        >
+                          <CalendarPlus className="h-4 w-4" />
+                        </button>
+                      </div>
 
                       {/* Timeline toggle */}
                       {calls.length > 0 && (

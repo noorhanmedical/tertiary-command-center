@@ -587,16 +587,26 @@ export type InsertPtoRequest = z.infer<typeof insertPtoRequestSchema>;
 // ─── Outreach Calls ──────────────────────────────────────────────────────────
 
 export const OUTREACH_CALL_OUTCOMES = [
+  // Reached / engaged
   "reached",
   "scheduled",
   "callback",
+  "wants_more_info",
+  "will_think_about_it",
   "declined",
   "not_interested",
+  "refused_dnc",
   "language_barrier",
+  // Did not reach
   "no_answer",
   "voicemail",
+  "mailbox_full",
   "busy",
+  "hung_up",
+  "disconnected",
+  // Other / disqualifying
   "wrong_number",
+  "moved",
   "deceased",
 ] as const;
 export type OutreachCallOutcome = typeof OUTREACH_CALL_OUTCOMES[number];

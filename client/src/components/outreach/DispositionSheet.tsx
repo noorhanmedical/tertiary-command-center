@@ -25,6 +25,13 @@ import {
   HelpCircle,
   UserX,
   Hash,
+  Info,
+  Clock,
+  ShieldAlert,
+  Inbox,
+  PhoneForwarded,
+  Unplug,
+  Truck,
 } from "lucide-react";
 import type { OutreachCallOutcome } from "@shared/schema";
 
@@ -37,19 +44,26 @@ type OutcomeDef = {
 
 const OUTCOMES: OutcomeDef[] = [
   // Reached
-  { value: "reached",          label: "Spoke with patient",  Icon: PhoneCall,     group: "reached" },
-  { value: "scheduled",        label: "Scheduled",           Icon: CalendarCheck, group: "reached" },
-  { value: "callback",         label: "Callback later",      Icon: PhoneCall,     group: "reached" },
-  { value: "declined",         label: "Declined",            Icon: XCircle,       group: "reached" },
-  { value: "not_interested",   label: "Not interested",      Icon: Ban,           group: "reached" },
-  { value: "language_barrier", label: "Language barrier",    Icon: Languages,     group: "reached" },
+  { value: "reached",             label: "Spoke with patient",   Icon: PhoneCall,        group: "reached" },
+  { value: "scheduled",           label: "Scheduled",            Icon: CalendarCheck,    group: "reached" },
+  { value: "callback",            label: "Callback later",       Icon: Clock,            group: "reached" },
+  { value: "wants_more_info",     label: "Wants more info",      Icon: Info,             group: "reached" },
+  { value: "will_think_about_it", label: "Will think about it",  Icon: HelpCircle,       group: "reached" },
+  { value: "declined",            label: "Declined",             Icon: XCircle,          group: "reached" },
+  { value: "not_interested",      label: "Not interested",       Icon: Ban,              group: "reached" },
+  { value: "refused_dnc",         label: "Refused (DNC)",        Icon: ShieldAlert,      group: "reached" },
+  { value: "language_barrier",    label: "Language barrier",     Icon: Languages,        group: "reached" },
   // Did not reach
-  { value: "no_answer",        label: "No answer",           Icon: PhoneMissed,   group: "missed" },
-  { value: "voicemail",        label: "Left voicemail",      Icon: Voicemail,     group: "missed" },
-  { value: "busy",             label: "Busy / call dropped", Icon: PhoneOff,      group: "missed" },
+  { value: "no_answer",           label: "No answer",            Icon: PhoneMissed,      group: "missed" },
+  { value: "voicemail",           label: "Left voicemail",       Icon: Voicemail,        group: "missed" },
+  { value: "mailbox_full",        label: "Mailbox full",         Icon: Inbox,            group: "missed" },
+  { value: "busy",                label: "Busy / call dropped",  Icon: PhoneOff,         group: "missed" },
+  { value: "hung_up",             label: "Hung up",              Icon: PhoneForwarded,   group: "missed" },
+  { value: "disconnected",        label: "Number disconnected",  Icon: Unplug,           group: "missed" },
   // Other
-  { value: "wrong_number",     label: "Wrong number",        Icon: Hash,          group: "other" },
-  { value: "deceased",         label: "Deceased",            Icon: UserX,         group: "other" },
+  { value: "wrong_number",        label: "Wrong number",         Icon: Hash,             group: "other" },
+  { value: "moved",               label: "Patient moved",        Icon: Truck,            group: "other" },
+  { value: "deceased",            label: "Deceased",             Icon: UserX,            group: "other" },
 ];
 
 type Props = {
