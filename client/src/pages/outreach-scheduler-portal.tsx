@@ -65,7 +65,6 @@ import {
 import type { BookingSlot } from "@/components/clinic-calendar";
 import { VALID_FACILITIES } from "@shared/plexus";
 import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
-import { PageHeader, HeaderPill, HeaderStatusPill } from "@/components/PageHeader";
 import { TaskDrawer } from "@/components/plexus/TaskDrawer";
 import type { PlexusTaskSummary, UserEntry } from "@/components/plexus/SchedulerIcon";
 import type { AuthUser } from "@/App";
@@ -728,30 +727,46 @@ export default function OutreachSchedulerPortalPage() {
     <div className="min-h-full flex-1 overflow-auto xl:h-full xl:min-h-0 xl:overflow-hidden flex flex-col bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-6 py-6 xl:flex-1 xl:min-h-0">
 
-        <PageHeader
-          variant="light"
-          icon={Phone}
-          titleTestId="text-calendar-header-title"
-          eyebrow={`SCHEDULER · ${card.facility.toUpperCase()}`}
-          title={card.name}
-          subtitle={`${card.totalPatients} patient${card.totalPatients !== 1 ? "s" : ""} on the call list today`}
-          actions={
-            <>
-              <HeaderStatusPill />
-              <button
-                type="button"
-                onClick={() => setShortcutsOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-[11px] text-slate-700 hover:bg-white hover:text-slate-900"
-                data-testid="portal-shortcuts-btn"
+        <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div className="flex min-w-0 items-center gap-3">
+            <Phone className="h-4 w-4 text-slate-400 shrink-0" />
+            <div className="min-w-0">
+              <h1
+                className="truncate text-base font-semibold text-slate-900"
+                data-testid="text-calendar-header-title"
               >
-                <Keyboard className="h-3.5 w-3.5" /> Shortcuts
-              </button>
-              <Link href="/outreach">
-                <HeaderPill icon={<ArrowLeft className="w-3.5 h-3.5" />}>Back to Outreach</HeaderPill>
-              </Link>
-            </>
-          }
-        />
+                {card.name}
+              </h1>
+              <p className="truncate text-xs text-slate-500">
+                {card.facility} · {card.totalPatients} patient{card.totalPatients !== 1 ? "s" : ""} today
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-50 animate-ping" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              System active
+            </span>
+            <button
+              type="button"
+              onClick={() => setShortcutsOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+              data-testid="portal-shortcuts-btn"
+            >
+              <Keyboard className="h-3.5 w-3.5" /> Shortcuts
+            </button>
+            <Link
+              href="/outreach"
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+              data-testid="link-back-outreach"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Back to Outreach
+            </Link>
+          </div>
+        </header>
 
         {/* ── Cockpit grid: 25% / 50% / 25% — exactly three flat panels ── */}
         <div className="grid gap-5 xl:grid-cols-[1fr_2fr_1fr] xl:flex-1 xl:min-h-0">
