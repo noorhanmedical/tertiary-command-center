@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
@@ -234,6 +234,25 @@ export default function PatientDatabasePage() {
   const hasMore = mergedRoster.pagination.hasMore;
   const isLoading = rosterQuery.isLoading;
 
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  const isFetchingNextPage = rosterQuery.isFetchingNextPage;
+  const fetchNextPage = rosterQuery.fetchNextPage;
+  useEffect(() => {
+    const node = loadMoreSentinelRef.current;
+    if (!node || !hasMore || isFetchingNextPage) return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          fetchNextPage();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, isFetchingNextPage, fetchNextPage]);
+
   return (
     <div className="flex flex-col h-full relative z-10">
       <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50 border-b">
@@ -386,7 +405,38 @@ export default function PatientDatabasePage() {
                 );
               })}
               {hasMore && (
-                <div className="flex justify-center py-4">
+                <div className="flex flex-col items-center gap-3 py-4" data-testid="region-load-more">
+                  {rosterQuery.isFetchingNextPage && (
+                    <div className="w-full" data-testid="skeleton-loading-more-patients">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                        {Array.from({ length: 5 }).map((_, i) => (
+                          <Card key={i} className="p-3 h-full animate-pulse">
+                            <div className="flex items-start gap-2 mb-2">
+                              <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-700 shrink-0" />
+                              <div className="min-w-0 flex-1 space-y-1.5">
+                                <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-3/4" />
+                                <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded w-1/2" />
+                              </div>
+                            </div>
+                            <div className="h-4 w-16 bg-slate-200 dark:bg-slate-700 rounded-full mb-2" />
+                            <div className="space-y-1">
+                              <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded w-2/3" />
+                              <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded w-1/2" />
+                            </div>
+                          </Card>
+                        ))}
+                      </div>
+                      <p
+                        className="text-xs text-muted-foreground text-center mt-3 flex items-center justify-center gap-1.5"
+                        data-testid="text-loading-more-patients"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Loading more patients… ({loadedCount} of {totalPatients} loaded)
+                      </p>
+                    </div>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -395,10 +445,15 @@ export default function PatientDatabasePage() {
                     data-testid="button-load-more-patients"
                   >
                     {rosterQuery.isFetchingNextPage ? (
-                      <Loader2 className="w-3 h-3 animate-spin mr-1" />
-                    ) : null}
-                    Load more ({totalPatients - loadedCount} remaining)
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                        Loading more patients…
+                      </>
+                    ) : (
+                      <>Load more ({totalPatients - loadedCount} remaining)</>
+                    )}
                   </Button>
+                  <div ref={loadMoreSentinelRef} aria-hidden className="h-1 w-1" />
                 </div>
               )}
             </div>
