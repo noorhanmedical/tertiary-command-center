@@ -13,6 +13,7 @@ import { registerBillingRoutes } from "./routes/billing";
 import { registerOutreachRoutes } from "./routes/outreach";
 import { registerPtoRoutes } from "./routes/pto";
 import { registerSchedulerAssignmentRoutes } from "./routes/schedulerAssignments";
+import { registerSchedulerAiRoutes } from "./routes/schedulerAi";
 import { startAbsenceWatcher } from "./services/absenceWatcher";
 import { startMorningRebuildScheduler } from "./services/morningRebuildScheduler";
 import { registerSettingsRoutes } from "./routes/settings";
@@ -193,6 +194,7 @@ export async function registerRoutes(
   registerOutreachRoutes(app);
   registerPtoRoutes(app);
   registerSchedulerAssignmentRoutes(app);
+  registerSchedulerAiRoutes(app);
   startAbsenceWatcher();
   startMorningRebuildScheduler();
   registerSettingsRoutes(app);

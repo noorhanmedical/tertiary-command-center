@@ -29,6 +29,11 @@ import {
   Megaphone,
   TrendingUp,
   ShieldCheck,
+  Mic,
+  PauseCircle,
+  Send,
+  Loader2,
+  Wand2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -747,20 +752,47 @@ export default function OutreachSchedulerPortalPage() {
           </p>
         </CalendarPageHeader>
 
-        {/* ── Header metrics strip ────────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="portal-metrics-strip">
-          <MetricTile icon={<Phone className="h-4 w-4" />} label="Calls made today" value={callsMade} accent="bg-blue-50 text-blue-700" />
-          <MetricTile icon={<PhoneCall className="h-4 w-4" />} label="Contacts reached" value={reachedCount} accent="bg-violet-50 text-violet-700" />
-          <MetricTile icon={<CalendarCheck className="h-4 w-4" />} label="Scheduled" value={scheduledFromCalls} accent="bg-emerald-50 text-emerald-700" />
-          <MetricTile icon={<TrendingUp className="h-4 w-4" />} label="Conversion" value={`${conversionPct}%`} accent="bg-amber-50 text-amber-700" badge={callbacksDue > 0 ? `${callbacksDue} callback${callbacksDue !== 1 ? "s" : ""} due` : undefined} />
-        </div>
+        {/* ── Cockpit grid: left tools | center playing field | right calls+tasks ── */}
+        <div className="grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)_400px]">
 
-        {/* ── Main two-pane layout ─────────────────────────────────────── */}
-        <div className="grid gap-5 xl:grid-cols-[420px_1fr]">
-
-          {/* ─── LEFT: Current Call + Today's Schedule + Booking ────── */}
+          {/* ─── LEFT RAIL: combined Tools panel (Schedule + Calling) ─── */}
           <div className="flex flex-col gap-4">
-            {/* Current Call card */}
+            <ToolsPanel
+              facility={card.facility}
+              todayAppointments={todayAppointments}
+              onCancelAppointment={(a) => setCancelTarget(a)}
+              selectedItem={selectedItem}
+              bookingPanelOpen={bookingPanelOpen}
+              setBookingPanelOpen={setBookingPanelOpen}
+              calYear={calYear}
+              calMonth={calMonth}
+              setCalMonth={setCalMonth}
+              setCalYear={setCalYear}
+              selectedDay={selectedDay}
+              setSelectedDay={setSelectedDay}
+              bookedDates={bookedDates}
+              appointments={appointments}
+              selectedDateStr={selectedDateStr}
+              setBookSlot={setBookSlot}
+              setBookName={setBookName}
+              setBookLinkedPatient={setBookLinkedPatient}
+              setBookPatientSearch={setBookPatientSearch}
+              setCancelTarget={setCancelTarget}
+              scrollToSlot={scrollToSlot}
+            />
+          </div>
+
+          {/* ─── CENTER PLAYING FIELD: Current call + AI bar + Mission control ─── */}
+          <div className="flex flex-col gap-4 min-w-0 relative">
+            {/* Floating metrics tile pinned top-right of the playing field */}
+            <FloatingMetricsTile
+              callsMade={callsMade}
+              reachedCount={reachedCount}
+              scheduledFromCalls={scheduledFromCalls}
+              conversionPct={conversionPct}
+              callbacksDue={callbacksDue}
+            />
+
             <CurrentCallCard
               item={selectedItem}
               latestCall={selectedItem ? latestCallByPatient.get(selectedItem.patientId) : undefined}
@@ -786,106 +818,29 @@ export default function OutreachSchedulerPortalPage() {
               }}
             />
 
-            {/* Today's Schedule */}
-            <Card className="rounded-3xl border border-white/60 bg-white/85 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-              <div className="mb-3 flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-emerald-600" />
-                <h2 className="text-sm font-semibold text-slate-800">Today's Schedule</h2>
-                <Badge variant="outline" className="ml-auto rounded-full text-[10px] text-slate-500">
-                  {todayAppointments.length} booked
-                </Badge>
-              </div>
-              {todayAppointments.length === 0 ? (
-                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-6 text-center text-xs italic text-slate-400">
-                  No appointments booked for today yet.
-                </p>
-              ) : (
-                <div className="space-y-1.5">
-                  {todayAppointments.map((a) => (
-                    <div
-                      key={a.id}
-                      className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs"
-                      data-testid={`today-appt-${a.id}`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        {isBrainWave(a.testType) ? <Brain className="h-3.5 w-3.5 text-violet-600 shrink-0" /> : <Activity className="h-3.5 w-3.5 text-rose-700 shrink-0" />}
-                        <span className="font-semibold text-slate-700 shrink-0">{formatTime12(a.scheduledTime)}</span>
-                        <span className="truncate text-slate-600">{a.patientName}</span>
-                      </div>
-                      <Badge className={`shrink-0 text-[9px] ${isBrainWave(a.testType) ? "bg-violet-100 text-violet-700" : "bg-rose-100 text-rose-800"}`}>
-                        {isBrainWave(a.testType) ? "BW" : "VW"}
-                      </Badge>
-                      <button
-                        type="button"
-                        onClick={() => setCancelTarget(a)}
-                        title="Cancel appointment (then re-book from the call list)"
-                        className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-rose-600 transition hover:border-rose-300 hover:bg-rose-50"
-                        data-testid={`today-appt-cancel-${a.id}`}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
-
-            {/* Booking calendar — collapsible */}
-            <Card className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-              <button
-                type="button"
-                onClick={() => setBookingPanelOpen((v) => !v)}
-                className="flex w-full items-center gap-2 px-5 py-4 text-left"
-                data-testid="portal-booking-panel-toggle"
-              >
-                <CalendarPlus className="h-4 w-4 text-blue-600" />
-                <span className="text-sm font-semibold text-slate-800">Booking calendar</span>
-                <Badge variant="outline" className="ml-auto rounded-full text-[10px] text-slate-500">
-                  {card.facility}
-                </Badge>
-                {bookingPanelOpen ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
-              </button>
-              {bookingPanelOpen && (
-                <div className="border-t border-slate-100 px-5 pb-5 pt-4 space-y-4">
-                  <MiniCalendar
-                    year={calYear}
-                    month={calMonth}
-                    onPrev={() => { if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); } else setCalMonth((m) => m - 1); }}
-                    onNext={() => { if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); } else setCalMonth((m) => m + 1); }}
-                    onSelectDay={setSelectedDay}
-                    selectedDay={selectedDay}
-                    bookedDates={bookedDates}
-                    testIdPrefix="portal-cal"
-                  />
-                  {selectedDay && (
-                    <>
-                      <div className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4 text-primary" />
-                        <h3 className="text-sm font-semibold text-slate-800">
-                          {new Date(calYear, calMonth, selectedDay).toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric" })}
-                        </h3>
-                      </div>
-                      <SlotGrid
-                        appointments={appointments}
-                        selectedDate={selectedDateStr!}
-                        onBook={(slot) => { setBookSlot(slot); setBookName(""); setBookLinkedPatient(null); setBookPatientSearch(""); }}
-                        onCancel={(appt) => setCancelTarget(appt)}
-                        testIdPrefix="portal"
-                        availableLabel="Open"
-                        bwBadgeLabel="1 hr"
-                        vwBadgeLabel="30 min"
-                        truncateWidth="max-w-[80px]"
-                        scrollToSlot={scrollToSlot}
-                      />
-                    </>
-                  )}
-                </div>
-              )}
-            </Card>
+            {/* ── Mission Control bar (next/skip/disposition/book + AI ask) ── */}
+            <MissionControlBar
+              selectedItem={selectedItem}
+              onDisposition={() => setDispositionOpen(true)}
+              onBook={() => {
+                if (!selectedItem) return;
+                setBookingPanelOpen(true);
+                setCallListBookPatient(selectedItem);
+                setCallListBookTestType(selectedItem.qualifyingTests.some((t) => isBrainWave(t)) ? "BrainWave" : "VitalWave");
+                setCallListBookTime("");
+              }}
+              onSkip={() => {
+                if (!selectedItem) return;
+                const idx = sortedCallList.findIndex((r) => r.item.patientId === selectedItem.patientId);
+                const next = sortedCallList[idx + 1] ?? sortedCallList[0];
+                if (next) selectPatient(next.item.patientId);
+              }}
+            />
           </div>
 
-          {/* ─── RIGHT: Call list ──────────────────────────────────── */}
-          <Card className="rounded-3xl border border-white/60 bg-white/85 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl flex flex-col" style={{ maxHeight: "calc(100vh - 220px)" }}>
+          {/* ─── RIGHT COLUMN: Call list (top) + Tasks (bottom) ────── */}
+          <div className="flex flex-col gap-4 min-w-0" style={{ maxHeight: "calc(100vh - 220px)" }}>
+            <Card className="rounded-3xl border border-white/60 bg-white/85 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl flex flex-col flex-1 min-h-0">
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <h2 className="text-lg font-semibold text-slate-900">Call list</h2>
               <Badge variant="outline" className="rounded-full text-[11px] text-slate-500">
@@ -1171,11 +1126,9 @@ export default function OutreachSchedulerPortalPage() {
               </div>
             )}
           </Card>
-        </div>
 
-        {/* ── Tasks tile + Urgent panel ───────────────────────────────── */}
-        <div className="grid gap-5 xl:grid-cols-2">
-          <Card className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl" data-testid="portal-tasks-tile">
+          {/* Right-bottom: Tasks (My Work) */}
+          <Card className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl shrink-0" data-testid="portal-tasks-tile">
             <div className="mb-4 flex items-center gap-2">
               <ListTodo className="h-4 w-4 text-violet-600" />
               <h2 className="text-sm font-semibold text-slate-800">My open tasks</h2>
@@ -1279,6 +1232,7 @@ export default function OutreachSchedulerPortalPage() {
               </div>
             )}
           </Card>
+          </div>
         </div>
       </div>
 
@@ -1759,6 +1713,339 @@ function CurrentCallCard({
         >
           Next <ArrowRight className="ml-1 h-4 w-4" /> <kbd className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px]">N</kbd>
         </Button>
+      </div>
+    </Card>
+  );
+}
+
+// ─── Cockpit subcomponents ────────────────────────────────────────────────────
+
+function FloatingMetricsTile({
+  callsMade, reachedCount, scheduledFromCalls, conversionPct, callbacksDue,
+}: {
+  callsMade: number; reachedCount: number; scheduledFromCalls: number;
+  conversionPct: number; callbacksDue: number;
+}) {
+  return (
+    <div
+      className="pointer-events-auto absolute right-2 top-2 z-10 flex items-center gap-3 rounded-2xl border border-white/70 bg-white/90 px-3 py-2 shadow-[0_8px_30px_rgba(15,23,42,0.10)] backdrop-blur-xl"
+      data-testid="portal-floating-metrics"
+    >
+      <Stat icon={<Phone className="h-3.5 w-3.5 text-blue-600" />} label="Calls" value={callsMade} />
+      <Stat icon={<PhoneCall className="h-3.5 w-3.5 text-violet-600" />} label="Reached" value={reachedCount} />
+      <Stat icon={<CalendarCheck className="h-3.5 w-3.5 text-emerald-600" />} label="Booked" value={scheduledFromCalls} />
+      <Stat icon={<TrendingUp className="h-3.5 w-3.5 text-amber-600" />} label="Conv" value={`${conversionPct}%`} />
+      {callbacksDue > 0 && (
+        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+          {callbacksDue} callback{callbacksDue !== 1 ? "s" : ""} due
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; value: number | string }) {
+  return (
+    <div className="flex items-center gap-1.5" data-testid={`metric-${label.toLowerCase()}`}>
+      <span>{icon}</span>
+      <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-slate-500">{label}</span>
+      <span className="text-sm font-semibold text-slate-900">{value}</span>
+    </div>
+  );
+}
+
+function MissionControlBar({
+  selectedItem, onDisposition, onBook, onSkip,
+}: {
+  selectedItem: OutreachCallItem | null;
+  onDisposition: () => void;
+  onBook: () => void;
+  onSkip: () => void;
+}) {
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const ask = async () => {
+    const q = aiQuestion.trim();
+    if (!q) return;
+    setAiLoading(true);
+    setAiError(null);
+    setAiAnswer(null);
+    try {
+      const ctx = selectedItem
+        ? {
+            name: selectedItem.patientName,
+            age: selectedItem.age ?? null,
+            insurance: selectedItem.insurance ?? null,
+            diagnoses: selectedItem.diagnoses ?? null,
+            history: selectedItem.history ?? null,
+            qualifyingTests: selectedItem.qualifyingTests ?? [],
+            previousTests: selectedItem.previousTests ?? null,
+          }
+        : null;
+      const res = await apiRequest("POST", "/api/scheduler-ai/ask", { question: q, patientContext: ctx });
+      const data = await res.json();
+      setAiAnswer(data.answer || "(no answer)");
+    } catch (e: any) {
+      setAiError(e?.message || "Failed to get answer");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  return (
+    <Card
+      className="rounded-3xl border border-white/60 bg-white/90 p-4 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl"
+      data-testid="mission-control-bar"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Mission control</span>
+        <div className="ml-auto flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" disabled={!selectedItem} onClick={onSkip} data-testid="mc-skip">
+            Skip
+          </Button>
+          <Button size="sm" variant="outline" disabled={!selectedItem} onClick={onBook} data-testid="mc-book">
+            <CalendarPlus className="h-3.5 w-3.5 mr-1" /> Book
+          </Button>
+          <Button size="sm" disabled={!selectedItem} onClick={onDisposition} className="bg-indigo-600 hover:bg-indigo-700 text-white" data-testid="mc-disposition">
+            Disposition
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center gap-2 rounded-2xl border border-indigo-100 bg-indigo-50/40 px-3 py-2">
+        <Wand2 className="h-4 w-4 text-indigo-500 shrink-0" />
+        <Input
+          value={aiQuestion}
+          onChange={(e) => setAiQuestion(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
+          placeholder={selectedItem ? `Ask about ${selectedItem.patientName}…` : "Ask the AI co-pilot…"}
+          className="h-8 border-0 bg-transparent text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
+          data-testid="ai-bar-input"
+        />
+        <Button
+          size="sm"
+          onClick={ask}
+          disabled={aiLoading || !aiQuestion.trim()}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white shrink-0"
+          data-testid="ai-bar-send"
+        >
+          {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+      {aiError && (
+        <p className="mt-2 text-xs text-rose-600" data-testid="ai-bar-error">{aiError}</p>
+      )}
+      {aiAnswer && (
+        <div
+          className="mt-2 rounded-xl border border-indigo-100 bg-white px-3 py-2 text-xs leading-relaxed text-slate-700 whitespace-pre-wrap"
+          data-testid="ai-bar-answer"
+        >
+          {aiAnswer}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ToolsPanel(props: {
+  facility: string;
+  todayAppointments: AncillaryAppointment[];
+  onCancelAppointment: (a: AncillaryAppointment) => void;
+  selectedItem: OutreachCallItem | null;
+  bookingPanelOpen: boolean;
+  setBookingPanelOpen: (v: boolean | ((p: boolean) => boolean)) => void;
+  calYear: number;
+  calMonth: number;
+  setCalMonth: (m: number | ((p: number) => number)) => void;
+  setCalYear: (y: number | ((p: number) => number)) => void;
+  selectedDay: number | null;
+  setSelectedDay: (d: number | null) => void;
+  bookedDates: Set<string>;
+  appointments: AncillaryAppointment[];
+  selectedDateStr: string | null;
+  setBookSlot: (s: BookingSlot | null) => void;
+  setBookName: (n: string) => void;
+  setBookLinkedPatient: (p: OutreachCallItem | null) => void;
+  setBookPatientSearch: (s: string) => void;
+  setCancelTarget: (a: AncillaryAppointment | null) => void;
+  scrollToSlot: { time: string; testType: string } | null;
+}) {
+  const {
+    facility, todayAppointments, selectedItem, bookingPanelOpen, setBookingPanelOpen,
+    calYear, calMonth, setCalMonth, setCalYear, selectedDay, setSelectedDay,
+    bookedDates, appointments, selectedDateStr, setBookSlot, setBookName,
+    setBookLinkedPatient, setBookPatientSearch, setCancelTarget, scrollToSlot,
+  } = props;
+
+  const [muted, setMuted] = useState(false);
+  const [held, setHeld] = useState(false);
+  const [dialed, setDialed] = useState("");
+  const phone = selectedItem?.phoneNumber ?? "";
+
+  return (
+    <Card className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl" data-testid="portal-tools-panel">
+      {/* Calling Tools */}
+      <div className="px-5 pt-5">
+        <div className="mb-3 flex items-center gap-2">
+          <Phone className="h-4 w-4 text-blue-600" />
+          <h2 className="text-sm font-semibold text-slate-800">Calling tools</h2>
+          <Badge variant="outline" className="ml-auto rounded-full text-[10px] text-slate-500">RingCentral</Badge>
+        </div>
+        {selectedItem ? (
+          <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-3">
+            <p className="text-xs text-slate-500">Active patient</p>
+            <p className="text-sm font-semibold text-slate-900 truncate">{selectedItem.patientName}</p>
+            <a
+              href={`tel:${digitsOnly(phone)}`}
+              className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-full bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+              data-testid="tools-call-active"
+            >
+              <Phone className="h-3.5 w-3.5" /> Call {phone || "—"}
+            </a>
+          </div>
+        ) : (
+          <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-3 text-center text-[11px] italic text-slate-400">
+            Pick a patient to enable click-to-call.
+          </p>
+        )}
+
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setMuted((v) => !v)}
+            className={`flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1.5 text-[11px] font-medium transition ${
+              muted
+                ? "border-rose-300 bg-rose-100 text-rose-700"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+            data-testid="tools-mute"
+          >
+            <Mic className="h-3.5 w-3.5" /> {muted ? "Unmute" : "Mute"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setHeld((v) => !v)}
+            className={`flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1.5 text-[11px] font-medium transition ${
+              held
+                ? "border-amber-300 bg-amber-100 text-amber-700"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+            data-testid="tools-hold"
+          >
+            <PauseCircle className="h-3.5 w-3.5" /> {held ? "Resume" : "Hold"}
+          </button>
+        </div>
+
+        <div className="mt-3">
+          <Label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Manual dial</Label>
+          <div className="mt-1 flex gap-1.5">
+            <Input
+              value={dialed}
+              onChange={(e) => setDialed(e.target.value)}
+              placeholder="(555) 555-5555"
+              className="h-8 text-sm rounded-xl"
+              data-testid="tools-dial-input"
+            />
+            <a
+              href={dialed ? `tel:${digitsOnly(dialed)}` : undefined}
+              className={`flex h-8 w-8 items-center justify-center rounded-xl ${
+                dialed ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-slate-100 text-slate-300 pointer-events-none"
+              }`}
+              data-testid="tools-dial-go"
+            >
+              <Phone className="h-3.5 w-3.5" />
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div className="my-4 border-t border-slate-100" />
+
+      {/* Today's Schedule */}
+      <div className="px-5">
+        <div className="mb-3 flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-emerald-600" />
+          <h2 className="text-sm font-semibold text-slate-800">Today's Schedule</h2>
+          <Badge variant="outline" className="ml-auto rounded-full text-[10px] text-slate-500">
+            {todayAppointments.length} booked
+          </Badge>
+        </div>
+        {todayAppointments.length === 0 ? (
+          <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-4 text-center text-[11px] italic text-slate-400">
+            No appointments booked yet.
+          </p>
+        ) : (
+          <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+            {todayAppointments.map((a) => (
+              <div
+                key={a.id}
+                className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs"
+                data-testid={`today-appt-${a.id}`}
+              >
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  {isBrainWave(a.testType) ? <Brain className="h-3.5 w-3.5 text-violet-600 shrink-0" /> : <Activity className="h-3.5 w-3.5 text-rose-700 shrink-0" />}
+                  <span className="font-semibold text-slate-700 shrink-0">{formatTime12(a.scheduledTime)}</span>
+                  <span className="truncate text-slate-600">{a.patientName}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCancelTarget(a)}
+                  title="Cancel appointment"
+                  className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-rose-600 transition hover:border-rose-300 hover:bg-rose-50"
+                  data-testid={`today-appt-cancel-${a.id}`}
+                >
+                  Cancel
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Booking calendar - collapsible */}
+      <div className="mt-2">
+        <button
+          type="button"
+          onClick={() => setBookingPanelOpen((v) => !v)}
+          className="flex w-full items-center gap-2 px-5 py-3 text-left border-t border-slate-100"
+          data-testid="portal-booking-panel-toggle"
+        >
+          <CalendarPlus className="h-4 w-4 text-blue-600" />
+          <span className="text-sm font-semibold text-slate-800">Booking calendar</span>
+          <Badge variant="outline" className="ml-auto rounded-full text-[10px] text-slate-500">{facility}</Badge>
+          {bookingPanelOpen ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+        </button>
+        {bookingPanelOpen && (
+          <div className="border-t border-slate-100 px-5 pb-5 pt-3 space-y-3">
+            <MiniCalendar
+              year={calYear}
+              month={calMonth}
+              onPrev={() => { if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); } else setCalMonth((m) => m - 1); }}
+              onNext={() => { if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); } else setCalMonth((m) => m + 1); }}
+              onSelectDay={setSelectedDay}
+              selectedDay={selectedDay}
+              bookedDates={bookedDates}
+              testIdPrefix="portal-cal"
+            />
+            {selectedDay && selectedDateStr && (
+              <SlotGrid
+                appointments={appointments}
+                selectedDate={selectedDateStr}
+                onBook={(slot) => { setBookSlot(slot); setBookName(""); setBookLinkedPatient(null); setBookPatientSearch(""); }}
+                onCancel={(appt) => setCancelTarget(appt)}
+                testIdPrefix="portal"
+                availableLabel="Open"
+                bwBadgeLabel="1 hr"
+                vwBadgeLabel="30 min"
+                truncateWidth="max-w-[80px]"
+                scrollToSlot={scrollToSlot}
+              />
+            )}
+          </div>
+        )}
       </div>
     </Card>
   );
