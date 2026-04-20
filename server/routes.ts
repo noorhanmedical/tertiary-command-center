@@ -10,6 +10,7 @@ import { registerPlexusTasksRoutes } from "./routes/plexusTasks";
 import { registerBatchRoutes } from "./routes/batches";
 import { registerPatientRoutes } from "./routes/patients";
 import { registerBillingRoutes } from "./routes/billing";
+import { registerInvoiceRoutes } from "./routes/invoices";
 import { registerOutreachRoutes } from "./routes/outreach";
 import { registerEmailRoutes } from "./routes/email";
 import { registerPtoRoutes } from "./routes/pto";
@@ -195,6 +196,7 @@ export async function registerRoutes(
   registerPatientDatabaseRoutes(app);
   registerPatientRoutes(app, { backgroundSyncPatients });
   registerBillingRoutes(app, { backgroundSyncBilling });
+  registerInvoiceRoutes(app);
   registerOutreachRoutes(app);
   registerEmailRoutes(app);
   registerPtoRoutes(app);

@@ -12,6 +12,7 @@ import SharedSchedule from "@/pages/shared-schedule";
 import PatientDatabasePage from "@/pages/patient-database";
 import DocumentsPage from "@/pages/documents";
 import BillingPage from "@/pages/billing";
+import InvoicesPage from "@/pages/invoices";
 import DocumentUploadPage from "@/pages/document-upload";
 import AppointmentsPage from "@/pages/appointments";
 import OutreachPage from "@/pages/outreach";
@@ -48,6 +49,13 @@ function AdminGuard({ user, children }: { user: AuthUser; children: React.ReactN
   return <>{children}</>;
 }
 
+function RoleGuard({ user, roles, children }: { user: AuthUser; roles: string[]; children: React.ReactNode }) {
+  if (!user || !roles.includes(user.role)) {
+    return <Redirect to="/home" />;
+  }
+  return <>{children}</>;
+}
+
 function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   return (
     <Switch>
@@ -78,6 +86,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/patient-database" component={PatientDatabasePage} />
                 <Route path="/documents" component={DocumentsPage} />
                 <Route path="/billing" component={BillingPage} />
+                <Route path="/invoices">
+                  <RoleGuard user={user} roles={["admin", "biller"]}><InvoicesPage /></RoleGuard>
+                </Route>
                 <Route path="/document-upload" component={DocumentUploadPage} />
                 <Route path="/appointments" component={AppointmentsPage} />
                 <Route path="/outreach/scheduler/:id" component={OutreachSchedulerPortalPage} />

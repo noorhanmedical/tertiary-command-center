@@ -483,6 +483,58 @@ export const insertOutreachSchedulerSchema = createInsertSchema(outreachSchedule
 export type OutreachScheduler = typeof outreachSchedulers.$inferSelect;
 export type InsertOutreachScheduler = z.infer<typeof insertOutreachSchedulerSchema>;
 
+// ─── Invoices ───────────────────────────────────────────────────────────────
+
+export const INVOICE_STATUSES = ["Draft", "Sent"] as const;
+export type InvoiceStatus = typeof INVOICE_STATUSES[number];
+
+export const invoices = pgTable("invoices", {
+  id: serial("id").primaryKey(),
+  invoiceNumber: text("invoice_number").notNull().unique(),
+  facility: text("facility").notNull(),
+  invoiceDate: text("invoice_date").notNull(),
+  fromDate: text("from_date"),
+  toDate: text("to_date"),
+  status: text("status").notNull().default("Draft"),
+  notes: text("notes"),
+  totalCharges: numeric("total_charges", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalPaid: numeric("total_paid", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalBalance: numeric("total_balance", { precision: 12, scale: 2 }).notNull().default("0"),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_invoices_facility").on(table.facility),
+  index("idx_invoices_status").on(table.status),
+  index("idx_invoices_invoice_date").on(table.invoiceDate),
+]);
+
+export const insertInvoiceSchema = createInsertSchema(invoices).omit({
+  id: true,
+  createdAt: true,
+});
+export type Invoice = typeof invoices.$inferSelect;
+export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
+
+export const invoiceLineItems = pgTable("invoice_line_items", {
+  id: serial("id").primaryKey(),
+  invoiceId: integer("invoice_id").notNull().references(() => invoices.id, { onDelete: "cascade" }),
+  billingRecordId: integer("billing_record_id").references(() => billingRecords.id, { onDelete: "set null" }),
+  patientName: text("patient_name").notNull(),
+  dateOfService: text("date_of_service"),
+  service: text("service").notNull(),
+  mrn: text("mrn"),
+  clinician: text("clinician"),
+  totalCharges: numeric("total_charges", { precision: 10, scale: 2 }),
+  paidAmount: numeric("paid_amount", { precision: 10, scale: 2 }),
+  balanceRemaining: numeric("balance_remaining", { precision: 10, scale: 2 }),
+}, (table) => [
+  index("idx_invoice_line_items_invoice_id").on(table.invoiceId),
+]);
+
+export const insertInvoiceLineItemSchema = createInsertSchema(invoiceLineItems).omit({ id: true });
+export type InvoiceLineItem = typeof invoiceLineItems.$inferSelect;
+export type InsertInvoiceLineItem = z.infer<typeof insertInvoiceLineItemSchema>;
+
 // ─── Document Blobs (local FS-backed file persistence) ──────────────────────
 
 export const documentBlobs = pgTable("document_blobs", {

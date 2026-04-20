@@ -7,6 +7,12 @@ import {
   patientReferenceData,
   generatedNotes,
   billingRecords,
+  invoices,
+  invoiceLineItems,
+  type Invoice,
+  type InsertInvoice,
+  type InvoiceLineItem,
+  type InsertInvoiceLineItem,
   uploadedDocuments,
   ancillaryAppointments,
   outreachSchedulers,
@@ -233,6 +239,18 @@ export interface IStorage {
   createBillingRecord(record: InsertBillingRecord): Promise<BillingRecord>;
   updateBillingRecord(id: number, updates: Partial<InsertBillingRecord>): Promise<BillingRecord | undefined>;
   deleteBillingRecord(id: number): Promise<void>;
+
+  // ── Invoices ────────────────────────────────────────────────────────────
+  getAllInvoices(): Promise<Invoice[]>;
+  getInvoice(id: number): Promise<Invoice | undefined>;
+  getInvoiceLineItems(invoiceId: number): Promise<InvoiceLineItem[]>;
+  createInvoiceWithLineItems(
+    invoice: InsertInvoice,
+    lineItems: Omit<InsertInvoiceLineItem, "invoiceId">[],
+  ): Promise<Invoice>;
+  updateInvoiceStatus(id: number, status: string): Promise<Invoice | undefined>;
+  deleteInvoice(id: number): Promise<void>;
+  getNextInvoiceNumber(): Promise<string>;
 
   saveUploadedDocument(record: InsertUploadedDocument): Promise<UploadedDocument>;
   getAllUploadedDocuments(): Promise<UploadedDocument[]>;
@@ -953,6 +971,62 @@ export class DatabaseStorage implements IStorage {
 
   async deleteBillingRecord(id: number): Promise<void> {
     await db.delete(billingRecords).where(eq(billingRecords.id, id));
+  }
+
+  async getAllInvoices(): Promise<Invoice[]> {
+    return db.select().from(invoices).orderBy(desc(invoices.createdAt));
+  }
+
+  async getInvoice(id: number): Promise<Invoice | undefined> {
+    const [r] = await db.select().from(invoices).where(eq(invoices.id, id));
+    return r;
+  }
+
+  async getInvoiceLineItems(invoiceId: number): Promise<InvoiceLineItem[]> {
+    return db.select().from(invoiceLineItems)
+      .where(eq(invoiceLineItems.invoiceId, invoiceId))
+      .orderBy(asc(invoiceLineItems.id));
+  }
+
+  async createInvoiceWithLineItems(
+    invoice: InsertInvoice,
+    lineItems: Omit<InsertInvoiceLineItem, "invoiceId">[],
+  ): Promise<Invoice> {
+    return await db.transaction(async (tx) => {
+      const [created] = await tx.insert(invoices).values(invoice).returning();
+      if (lineItems.length > 0) {
+        await tx.insert(invoiceLineItems).values(
+          lineItems.map((li) => ({ ...li, invoiceId: created.id })),
+        );
+      }
+      return created;
+    });
+  }
+
+  async updateInvoiceStatus(id: number, status: string): Promise<Invoice | undefined> {
+    const [r] = await db.update(invoices).set({ status }).where(eq(invoices.id, id)).returning();
+    return r;
+  }
+
+  async deleteInvoice(id: number): Promise<void> {
+    await db.delete(invoices).where(eq(invoices.id, id));
+  }
+
+  async getNextInvoiceNumber(): Promise<string> {
+    const year = new Date().getFullYear();
+    const prefix = `INV-${year}-`;
+    const rows = await db.select({ n: invoices.invoiceNumber })
+      .from(invoices)
+      .where(ilike(invoices.invoiceNumber, `${prefix}%`));
+    let max = 0;
+    for (const { n } of rows) {
+      const m = n.match(/-(\d+)$/);
+      if (m) {
+        const v = parseInt(m[1], 10);
+        if (v > max) max = v;
+      }
+    }
+    return `${prefix}${String(max + 1).padStart(4, "0")}`;
   }
 
   async saveUploadedDocument(record: InsertUploadedDocument): Promise<UploadedDocument> {
