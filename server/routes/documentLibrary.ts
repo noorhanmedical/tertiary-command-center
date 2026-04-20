@@ -35,6 +35,15 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 },
 });
 
+// Defense-in-depth auth guard for read endpoints. The platform also mounts a
+// global `requireAuth` middleware on every `/api/*` route in
+// `server/routes.ts`, but enforcing it locally too means any future change to
+// the global pipeline can't accidentally expose patient documents.
+const requireAuth = (req: Request, res: Response, next: NextFunction) => {
+  if (!req.session.userId) return res.status(401).json({ error: "Not authenticated" });
+  return next();
+};
+
 const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
   if (!req.session.userId) return res.status(401).json({ error: "Not authenticated" });
   if (req.session.role !== "admin") {
@@ -131,7 +140,7 @@ function parseSurfacesField(raw: unknown): string[] {
 // (legacy/internal) and `/api/documents-library` (canonical task-spec path).
 function mountRoutes(app: Express, basePath: string) {
   // ── Reads (any authenticated user) ──────────────────────────────────────
-  app.get(basePath, async (req, res) => {
+  app.get(basePath, requireAuth, async (req, res) => {
     try {
       const surfaceParam = typeof req.query.surface === "string" ? req.query.surface : undefined;
       const kindParam = typeof req.query.kind === "string" ? req.query.kind : undefined;
@@ -176,7 +185,7 @@ function mountRoutes(app: Express, basePath: string) {
     }
   });
 
-  app.get(`${basePath}/meta`, (_req, res) => {
+  app.get(`${basePath}/meta`, requireAuth, (_req, res) => {
     res.json({
       kinds: DOCUMENT_KINDS,
       signatureRequirements: DOCUMENT_SIGNATURE_REQUIREMENTS,
@@ -184,7 +193,7 @@ function mountRoutes(app: Express, basePath: string) {
     });
   });
 
-  app.get(`${basePath}/:id`, async (req, res) => {
+  app.get(`${basePath}/:id`, requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
@@ -196,7 +205,7 @@ function mountRoutes(app: Express, basePath: string) {
     }
   });
 
-  app.get(`${basePath}/:id/versions`, async (req, res) => {
+  app.get(`${basePath}/:id/versions`, requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
@@ -210,7 +219,7 @@ function mountRoutes(app: Express, basePath: string) {
     }
   });
 
-  app.get(`${basePath}/:id/file`, async (req, res) => {
+  app.get(`${basePath}/:id/file`, requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
