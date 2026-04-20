@@ -1742,7 +1742,7 @@ function FloatingMetricsTile({
 }) {
   return (
     <div
-      className="pointer-events-auto absolute right-2 top-2 z-10 flex items-center gap-3 rounded-2xl border border-white/70 bg-white/90 px-3 py-2 shadow-[0_8px_30px_rgba(15,23,42,0.10)] backdrop-blur-xl"
+      className="pointer-events-auto inline-flex items-center gap-3 rounded-full border border-white/70 bg-white/95 px-4 py-2 shadow-[0_8px_30px_rgba(15,23,42,0.10)] backdrop-blur-xl"
       data-testid="portal-floating-metrics"
     >
       <Stat icon={<Phone className="h-3.5 w-3.5 text-blue-600" />} label="Calls" value={callsMade} />
@@ -1781,8 +1781,23 @@ function MissionControlBar({
       className="rounded-3xl border border-white/60 bg-white/90 p-4 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl"
       data-testid="mission-control-bar"
     >
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3">
         <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Mission control</span>
+        {selectedItem ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600" data-testid="mc-active-status">
+            <Megaphone className="h-3.5 w-3.5 text-indigo-500" />
+            <span className="font-semibold text-slate-800 truncate max-w-[160px]">{selectedItem.patientName}</span>
+            <span className="text-slate-300">·</span>
+            <span className="inline-flex items-center gap-0.5"><Building2 className="h-3 w-3" />{selectedItem.facility}</span>
+            {selectedItem.qualifyingTests[0] && (
+              <Badge className="rounded-full bg-indigo-100 text-indigo-700 hover:bg-indigo-100 text-[10px]">
+                Next: {selectedItem.qualifyingTests[0]}
+              </Badge>
+            )}
+          </div>
+        ) : (
+          <span className="text-xs italic text-slate-400" data-testid="mc-idle-status">Pick a patient to start</span>
+        )}
         <div className="ml-auto flex flex-wrap gap-2">
           <Button size="sm" variant="outline" disabled={!selectedItem} onClick={onSkip} data-testid="mc-skip">
             Skip

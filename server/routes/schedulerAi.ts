@@ -97,7 +97,7 @@ export function registerSchedulerAiRoutes(app: Express): void {
         "scheduler-ai",
       );
 
-      for await (const chunk of stream as any) {
+      for await (const chunk of stream) {
         const delta = chunk?.choices?.[0]?.delta?.content;
         if (delta) {
           res.write(`data: ${JSON.stringify({ delta })}\n\n`);
