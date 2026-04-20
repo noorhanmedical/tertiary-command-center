@@ -729,7 +729,7 @@ export default function OutreachSchedulerPortalPage() {
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-6 py-6">
 
         <PageHeader
-          variant="dark"
+          variant="light"
           icon={Phone}
           titleTestId="text-calendar-header-title"
           eyebrow={`SCHEDULER · ${card.facility.toUpperCase()}`}
@@ -741,7 +741,7 @@ export default function OutreachSchedulerPortalPage() {
               <button
                 type="button"
                 onClick={() => setShortcutsOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[11px] text-white/85 hover:bg-white/20"
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-[11px] text-slate-700 hover:bg-white hover:text-slate-900"
                 data-testid="portal-shortcuts-btn"
               >
                 <Keyboard className="h-3.5 w-3.5" /> Shortcuts

@@ -231,8 +231,8 @@ export function HeaderPill({ children, onClick, icon, active, testId }: HeaderPi
       data-testid={testId}
       className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-[12px] font-medium transition-colors ${
         active
-          ? "bg-white/15 border-white/30 text-white"
-          : "bg-white/[0.04] border-white/10 text-slate-200 hover:bg-white/10 hover:border-white/20 hover:text-white"
+          ? "bg-slate-900 border-slate-900 text-white"
+          : "bg-white/80 border-slate-200 text-slate-700 hover:bg-white hover:border-slate-300 hover:text-slate-900"
       }`}
     >
       {icon}
@@ -243,10 +243,10 @@ export function HeaderPill({ children, onClick, icon, active, testId }: HeaderPi
 
 export function HeaderStatusPill({ label = "SYSTEM ACTIVE" }: { label?: string }) {
   return (
-    <span className="inline-flex items-center gap-2 text-[11px] font-medium tracking-[0.18em] text-slate-300/90 uppercase">
+    <span className="inline-flex items-center gap-2 text-[11px] font-medium tracking-[0.18em] text-slate-600 uppercase">
       <span className="relative flex h-2 w-2">
         <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-50 animate-ping" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
       </span>
       {label}
     </span>

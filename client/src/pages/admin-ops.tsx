@@ -9,21 +9,13 @@ export default function AdminOpsPage() {
   return (
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
-        <div className="flex items-center gap-3">
-          <Button asChild variant="outline" className="rounded-2xl border-white/60 bg-white/80 backdrop-blur">
-            <Link href="/">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back
-            </Link>
-          </Button>
-          <PageHeader
-            eyebrow="PLEXUS ANCILLARY · ADMIN OPS"
-            icon={Shield}
-            title="Admin Ops"
-            subtitle="Administrative-only surfaces for billing and system configuration."
-            className="flex-1"
-          />
-        </div>
+        <PageHeader
+          backHref="/"
+          eyebrow="PLEXUS ANCILLARY · ADMIN OPS"
+          icon={Shield}
+          title="Admin Ops"
+          subtitle="Administrative-only surfaces for billing and system configuration."
+        />
 
         <div className="grid gap-5 md:grid-cols-2">
           <Link href="/billing">

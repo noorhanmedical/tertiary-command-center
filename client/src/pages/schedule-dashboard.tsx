@@ -129,7 +129,7 @@ export default function ScheduleDashboardPage() {
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[1650px] flex-col gap-6 px-6 py-6">
         <PageHeader
-          variant="dark"
+          variant="light"
           eyebrow="PLEXUS ANCILLARY"
           title="Schedule Dashboard"
           subtitle="Canonical schedule view with clinic tabs, week navigation, month grid, and scheduler coverage."

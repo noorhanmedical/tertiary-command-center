@@ -258,7 +258,7 @@ export default function AppointmentsPage() {
     <div className="min-h-screen bg-[hsl(210,35%,96%)]">
       <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         <PageHeader
-          variant="dark"
+          variant="light"
           icon={Calendar}
           titleTestId="text-calendar-header-title"
           eyebrow="ANCILLARY SCHEDULING"
