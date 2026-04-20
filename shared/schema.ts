@@ -643,3 +643,57 @@ export const insertOutreachCallSchema = createInsertSchema(outreachCalls).omit({
 
 export type OutreachCall = typeof outreachCalls.$inferSelect;
 export type InsertOutreachCall = z.infer<typeof insertOutreachCallSchema>;
+
+// ─── Scheduler Assignments ───────────────────────────────────────────────────
+// One active assignment row per (patient, day). The call-list engine writes
+// these so the same patient isn't double-served, and so reassignment is
+// auditable. `source` records how the assignment came to be; `original_
+// scheduler_id` is set whenever an assignment was reassigned away from
+// someone (PTO, sudden absence, manual move).
+
+export const SCHEDULER_ASSIGNMENT_SOURCES = ["auto", "manual", "reassigned"] as const;
+export type SchedulerAssignmentSource = typeof SCHEDULER_ASSIGNMENT_SOURCES[number];
+
+export const SCHEDULER_ASSIGNMENT_STATUSES = ["active", "completed", "reassigned", "released"] as const;
+export type SchedulerAssignmentStatus = typeof SCHEDULER_ASSIGNMENT_STATUSES[number];
+
+export const schedulerAssignments = pgTable("scheduler_assignments", {
+  id: serial("id").primaryKey(),
+  patientScreeningId: integer("patient_screening_id")
+    .notNull()
+    .references(() => patientScreenings.id, { onDelete: "cascade" }),
+  schedulerId: integer("scheduler_id")
+    .notNull()
+    .references(() => outreachSchedulers.id, { onDelete: "cascade" }),
+  // The day this assignment is for (YYYY-MM-DD). Lets the engine be
+  // idempotent per (facility, day) and lets queries filter to today.
+  asOfDate: text("as_of_date").notNull(),
+  assignedAt: timestamp("assigned_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  source: text("source").notNull().default("auto"),
+  originalSchedulerId: integer("original_scheduler_id").references(
+    (): AnyPgColumn => outreachSchedulers.id,
+    { onDelete: "set null" },
+  ),
+  reason: text("reason"),
+  status: text("status").notNull().default("active"),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  index("idx_scheduler_assignments_scheduler_status")
+    .on(table.schedulerId, table.status),
+  index("idx_scheduler_assignments_patient_status")
+    .on(table.patientScreeningId, table.status),
+  index("idx_scheduler_assignments_as_of_date").on(table.asOfDate),
+]);
+
+export const insertSchedulerAssignmentSchema = createInsertSchema(schedulerAssignments).omit({
+  id: true,
+  assignedAt: true,
+  completedAt: true,
+}).extend({
+  source: z.enum(SCHEDULER_ASSIGNMENT_SOURCES).optional(),
+  status: z.enum(SCHEDULER_ASSIGNMENT_STATUSES).optional(),
+  reason: z.string().max(500).optional().nullable(),
+});
+
+export type SchedulerAssignment = typeof schedulerAssignments.$inferSelect;
+export type InsertSchedulerAssignment = z.infer<typeof insertSchedulerAssignmentSchema>;

@@ -74,6 +74,42 @@ export function registerPtoRoutes(app: Express) {
 
       const updated = await storage.reviewPtoRequest(id, parsed.data.status, req.session.userId!);
       if (!updated) return res.status(404).json({ error: "Request not found" });
+
+      // PTO-driven release + redistribute: when an approval covers today,
+      // immediately reshuffle that scheduler's call list to the rest of
+      // the team and create a Plexus task summarizing what moved.
+      if (parsed.data.status === "approved") {
+        try {
+          const today = new Date().toISOString().slice(0, 10);
+          if (updated.startDate <= today && updated.endDate >= today) {
+            const schedulers = await storage.getOutreachSchedulers();
+            const sched = schedulers.find((s) => s.userId === updated.userId);
+            if (sched) {
+              const { releaseAndRedistribute } = await import("../services/callListEngine");
+              const summary = await releaseAndRedistribute(
+                storage, sched.id, today, `pto_approved:${updated.id}`,
+              );
+              if (summary.released > 0) {
+                await storage.createTask({
+                  title: `PTO redistribute: ${sched.name}`,
+                  description:
+                    `${summary.released} call(s) released from ${sched.name}; ` +
+                    `${summary.reassigned} reassigned to teammates; ` +
+                    `${summary.unassigned} could not be placed (no remaining capacity).`,
+                  taskType: "task",
+                  urgency: summary.unassigned > 0 ? "within 1 hour" : "within 3 hours",
+                  priority: "high",
+                  status: "open",
+                  createdByUserId: req.session.userId!,
+                });
+              }
+            }
+          }
+        } catch (redistributeErr) {
+          // Don't fail the PTO approval if redistribute trips — log and continue.
+          console.error("[pto] redistribute after approve failed:", redistributeErr);
+        }
+      }
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

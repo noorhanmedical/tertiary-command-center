@@ -12,6 +12,7 @@ import {
   outreachSchedulers,
   outreachCalls,
   ptoRequests,
+  schedulerAssignments,
   analysisJobs,
   plexusProjects,
   plexusTasks,
@@ -42,6 +43,8 @@ import {
   type InsertOutreachCall,
   type PtoRequest,
   type InsertPtoRequest,
+  type SchedulerAssignment,
+  type InsertSchedulerAssignment,
   type AnalysisJob,
   type InsertAnalysisJob,
   type PlexusProject,
@@ -249,6 +252,16 @@ export interface IStorage {
   listOutreachCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]>;
   listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]>;
   latestOutreachCallForPatient(patientScreeningId: number): Promise<OutreachCall | undefined>;
+
+  // ── Scheduler Assignments ─────────────────────────────────────────────────
+  createSchedulerAssignment(record: InsertSchedulerAssignment): Promise<SchedulerAssignment>;
+  bulkCreateSchedulerAssignments(records: InsertSchedulerAssignment[]): Promise<SchedulerAssignment[]>;
+  listActiveSchedulerAssignments(filters?: { schedulerId?: number; asOfDate?: string }): Promise<SchedulerAssignment[]>;
+  getActiveAssignmentForPatient(patientScreeningId: number): Promise<SchedulerAssignment | undefined>;
+  releaseSchedulerAssignmentsForScheduler(schedulerId: number, asOfDate: string, reason: string): Promise<SchedulerAssignment[]>;
+  releaseSchedulerAssignmentsByIds(ids: number[], reason: string): Promise<SchedulerAssignment[]>;
+  reassignSchedulerAssignment(id: number, newSchedulerId: number, reason: string): Promise<SchedulerAssignment | undefined>;
+  markSchedulerAssignmentCompleted(patientScreeningId: number): Promise<void>;
 
   // ── PTO Requests ─────────────────────────────────────────────────────────
   createPtoRequest(record: InsertPtoRequest): Promise<PtoRequest>;
@@ -1070,6 +1083,95 @@ export class DatabaseStorage implements IStorage {
   async deleteOutreachScheduler(id: number): Promise<OutreachScheduler | undefined> {
     const [deleted] = await db.delete(outreachSchedulers).where(eq(outreachSchedulers.id, id)).returning();
     return deleted;
+  }
+
+  // ── Scheduler Assignments ─────────────────────────────────────────────────
+  async createSchedulerAssignment(record: InsertSchedulerAssignment): Promise<SchedulerAssignment> {
+    const [row] = await db.insert(schedulerAssignments).values(record).returning();
+    return row;
+  }
+
+  async bulkCreateSchedulerAssignments(records: InsertSchedulerAssignment[]): Promise<SchedulerAssignment[]> {
+    if (records.length === 0) return [];
+    return db.insert(schedulerAssignments).values(records).returning();
+  }
+
+  async listActiveSchedulerAssignments(filters: { schedulerId?: number; asOfDate?: string } = {}): Promise<SchedulerAssignment[]> {
+    const conds = [eq(schedulerAssignments.status, "active")];
+    if (filters.schedulerId != null) conds.push(eq(schedulerAssignments.schedulerId, filters.schedulerId));
+    if (filters.asOfDate) conds.push(eq(schedulerAssignments.asOfDate, filters.asOfDate));
+    return db.select().from(schedulerAssignments)
+      .where(and(...conds))
+      .orderBy(asc(schedulerAssignments.assignedAt));
+  }
+
+  async getActiveAssignmentForPatient(patientScreeningId: number): Promise<SchedulerAssignment | undefined> {
+    const [row] = await db.select().from(schedulerAssignments).where(and(
+      eq(schedulerAssignments.patientScreeningId, patientScreeningId),
+      eq(schedulerAssignments.status, "active"),
+    )).limit(1);
+    return row;
+  }
+
+  async releaseSchedulerAssignmentsForScheduler(
+    schedulerId: number,
+    asOfDate: string,
+    reason: string,
+  ): Promise<SchedulerAssignment[]> {
+    const released = await db.update(schedulerAssignments)
+      .set({ status: "released", reason })
+      .where(and(
+        eq(schedulerAssignments.schedulerId, schedulerId),
+        eq(schedulerAssignments.asOfDate, asOfDate),
+        eq(schedulerAssignments.status, "active"),
+      ))
+      .returning();
+    return released;
+  }
+
+  async releaseSchedulerAssignmentsByIds(ids: number[], reason: string): Promise<SchedulerAssignment[]> {
+    if (ids.length === 0) return [];
+    const released = await db.update(schedulerAssignments)
+      .set({ status: "released", reason })
+      .where(and(
+        inArray(schedulerAssignments.id, ids),
+        eq(schedulerAssignments.status, "active"),
+      ))
+      .returning();
+    return released;
+  }
+
+  async reassignSchedulerAssignment(
+    id: number,
+    newSchedulerId: number,
+    reason: string,
+  ): Promise<SchedulerAssignment | undefined> {
+    return db.transaction(async (tx) => {
+      const [old] = await tx.select().from(schedulerAssignments).where(eq(schedulerAssignments.id, id)).limit(1);
+      if (!old) return undefined;
+      await tx.update(schedulerAssignments)
+        .set({ status: "reassigned", reason })
+        .where(eq(schedulerAssignments.id, id));
+      const [created] = await tx.insert(schedulerAssignments).values({
+        patientScreeningId: old.patientScreeningId,
+        schedulerId: newSchedulerId,
+        asOfDate: old.asOfDate,
+        source: "reassigned",
+        originalSchedulerId: old.schedulerId,
+        reason,
+        status: "active",
+      }).returning();
+      return created;
+    });
+  }
+
+  async markSchedulerAssignmentCompleted(patientScreeningId: number): Promise<void> {
+    await db.update(schedulerAssignments)
+      .set({ status: "completed", completedAt: new Date() })
+      .where(and(
+        eq(schedulerAssignments.patientScreeningId, patientScreeningId),
+        eq(schedulerAssignments.status, "active"),
+      ));
   }
 
   // ── PTO Requests ─────────────────────────────────────────────────────────

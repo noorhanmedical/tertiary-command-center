@@ -72,6 +72,143 @@ type OutreachScheduler = {
 
 const CAPACITY_OPTIONS = [25, 50, 75, 100] as const;
 
+type DistributionRow = {
+  id: number;
+  name: string;
+  facility: string;
+  capacityPercent: number;
+  userId: string | null;
+  onPtoToday: boolean;
+  activeCount: number;
+  reassignedInCount: number;
+};
+
+function CallListDistributionCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useQuery<{ asOfDate: string; rows: DistributionRow[] }>({
+    queryKey: ["/api/scheduler-assignments/dashboard"],
+    refetchInterval: 60_000,
+  });
+
+  const rebuildMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/scheduler-assignments/rebuild", {});
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Rebuild failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-assignments/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-assignments"] });
+      toast({ title: "Call lists rebuilt for today" });
+    },
+    onError: (e: Error) => toast({ title: "Rebuild failed", description: e.message, variant: "destructive" }),
+  });
+
+  const redistributeMutation = useMutation({
+    mutationFn: async (schedulerId: number) => {
+      const res = await apiRequest("POST", "/api/scheduler-assignments/redistribute", {
+        schedulerId,
+        reason: "manual_redistribute",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Redistribute failed");
+      }
+      return res.json();
+    },
+    onSuccess: (summary: { released: number; reassigned: number; unassigned: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-assignments/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-assignments"] });
+      toast({
+        title: "Redistributed",
+        description: `Released ${summary.released}, reassigned ${summary.reassigned}, unplaced ${summary.unassigned}`,
+      });
+    },
+    onError: (e: Error) => toast({ title: "Redistribute failed", description: e.message, variant: "destructive" }),
+  });
+
+  const rows = data?.rows ?? [];
+
+  return (
+    <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <SettingsIcon className="h-5 w-5 text-indigo-600" />
+          <h2 className="text-lg font-semibold text-slate-900">Call-List Distribution</h2>
+          {data?.asOfDate && (
+            <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600">
+              {data.asOfDate}
+            </Badge>
+          )}
+        </div>
+        <Button
+          size="sm"
+          onClick={() => rebuildMutation.mutate()}
+          disabled={rebuildMutation.isPending}
+          className="h-8 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700"
+          data-testid="button-rebuild-distribution"
+        >
+          {rebuildMutation.isPending ? "Rebuilding…" : "Run distribution now"}
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-12 animate-pulse rounded-2xl bg-slate-100" />
+          ))}
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-center text-sm text-slate-400">
+          No schedulers configured yet.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div
+              key={r.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white/80 p-3"
+              data-testid={`distribution-row-${r.id}`}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-900">{r.name}</span>
+                  <Badge className={`rounded-full border text-[10px] ${facilityColor(r.facility)}`}>
+                    {r.facility}
+                  </Badge>
+                  {r.onPtoToday && (
+                    <Badge className="rounded-full border bg-amber-50 text-amber-700 border-amber-200 text-[10px]">
+                      PTO today
+                    </Badge>
+                  )}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  Capacity {r.capacityPercent}% · Active {r.activeCount}
+                  {r.reassignedInCount > 0 && ` · ↩ ${r.reassignedInCount} reassigned in`}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => redistributeMutation.mutate(r.id)}
+                disabled={redistributeMutation.isPending || r.activeCount === 0}
+                className="h-8 rounded-xl text-xs"
+                data-testid={`button-redistribute-${r.id}`}
+              >
+                Redistribute
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function facilityColor(f: string) {
   if (f.includes("Spring")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
   if (f.includes("Veteran")) return "bg-violet-50 text-violet-700 border-violet-200";
@@ -443,6 +580,9 @@ export default function SettingsPage() {
             </Button>
           </div>
         </Card>
+
+        {/* Call-list distribution */}
+        <CallListDistributionCard />
 
         {/* Change Password */}
         <ChangePasswordCard />

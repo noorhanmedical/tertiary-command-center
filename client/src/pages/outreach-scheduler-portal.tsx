@@ -377,6 +377,38 @@ export default function OutreachSchedulerPortalPage() {
   // Per-patient latest call — used for priority sort + bucket badges.
   const patientIds = useMemo(() => (card?.callList ?? []).map((p) => p.patientId), [card]);
 
+  // Active scheduler-engine assignments for today — used to overlay the
+  // "↩ from <name>" lineage pill on rows that were reassigned away from
+  // a teammate (PTO, absence, manual move).
+  const { data: assignmentRows = [] } = useQuery<Array<{
+    id: number;
+    patientScreeningId: number;
+    schedulerId: number;
+    source: string;
+    originalSchedulerId: number | null;
+    reason: string | null;
+  }>>({
+    queryKey: ["/api/scheduler-assignments"],
+    refetchInterval: 60_000,
+  });
+  const assignmentByPatient = useMemo(() => {
+    const m = new Map<number, typeof assignmentRows[number]>();
+    for (const a of assignmentRows) m.set(a.patientScreeningId, a);
+    return m;
+  }, [assignmentRows]);
+
+  // Tiny lookup for scheduler names so the lineage pill can render
+  // "↩ from <name>" instead of an opaque numeric id.
+  const { data: allSchedulerCards = [] } = useQuery<Array<{ id: number; name: string }>>({
+    queryKey: ["/api/outreach/schedulers"],
+    staleTime: 5 * 60 * 1000,
+  });
+  const schedulerNameById = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const sc of allSchedulerCards) m.set(sc.id, sc.name);
+    return m;
+  }, [allSchedulerCards]);
+
   const { data: callsByPatient = {} } = useQuery<Record<number, OutreachCall[]>>({
     queryKey: ["/api/outreach/calls/by-patients", patientIds.join(",")],
     queryFn: async () => {
@@ -1000,6 +1032,20 @@ export default function OutreachSchedulerPortalPage() {
                                 Due {formatRelative(latest.callbackAt as unknown as string)}
                               </Badge>
                             )}
+                            {(() => {
+                              const a = assignmentByPatient.get(item.patientId);
+                              if (!a || a.source !== "reassigned" || !a.originalSchedulerId) return null;
+                              const fromName = schedulerNameById.get(a.originalSchedulerId) ?? `#${a.originalSchedulerId}`;
+                              return (
+                                <Badge
+                                  className="rounded-full border bg-violet-50 text-violet-700 border-violet-200 text-[10px]"
+                                  title={a.reason ?? "Reassigned"}
+                                  data-testid={`portal-row-reassigned-${item.patientId}`}
+                                >
+                                  ↩ from {fromName}
+                                </Badge>
+                              );
+                            })()}
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                             <span className="inline-flex items-center gap-0.5"><Building2 className="h-3 w-3" />{item.facility}</span>
