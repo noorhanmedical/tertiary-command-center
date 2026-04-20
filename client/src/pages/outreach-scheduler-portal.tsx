@@ -34,6 +34,8 @@ import {
   Send,
   Loader2,
   Wand2,
+  Copy,
+  Trash2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -782,16 +784,18 @@ export default function OutreachSchedulerPortalPage() {
             />
           </div>
 
-          {/* ─── CENTER PLAYING FIELD: Current call + AI bar + Mission control ─── */}
-          <div className="flex flex-col gap-4 min-w-0 relative">
-            {/* Floating metrics tile pinned top-right of the playing field */}
-            <FloatingMetricsTile
-              callsMade={callsMade}
-              reachedCount={reachedCount}
-              scheduledFromCalls={scheduledFromCalls}
-              conversionPct={conversionPct}
-              callbacksDue={callbacksDue}
-            />
+          {/* ─── CENTER PLAYING FIELD: Metrics + Current call + AI bar + Mission control ─── */}
+          <div className="flex flex-col gap-4 min-w-0">
+            {/* Sticky top-center metrics pill */}
+            <div className="sticky top-2 z-20 flex justify-center">
+              <FloatingMetricsTile
+                callsMade={callsMade}
+                reachedCount={reachedCount}
+                scheduledFromCalls={scheduledFromCalls}
+                conversionPct={conversionPct}
+                callbacksDue={callbacksDue}
+              />
+            </div>
 
             <CurrentCallCard
               item={selectedItem}
@@ -818,7 +822,17 @@ export default function OutreachSchedulerPortalPage() {
               }}
             />
 
-            {/* ── Mission Control bar (next/skip/disposition/book + AI ask) ── */}
+            {/* ── AI bar (anchored above mission control, with conversation history) ── */}
+            <AiBar
+              selectedItem={selectedItem}
+              callListContext={sortedCallList.slice(0, 25).map(({ item, bucket }) => ({
+                name: item.patientName,
+                bucket,
+                qualifyingTests: item.qualifyingTests,
+              }))}
+            />
+
+            {/* ── Mission Control bar (next/skip/disposition/book) ── */}
             <MissionControlBar
               selectedItem={selectedItem}
               onDisposition={() => setDispositionOpen(true)}
@@ -1762,39 +1776,6 @@ function MissionControlBar({
   onBook: () => void;
   onSkip: () => void;
 }) {
-  const [aiQuestion, setAiQuestion] = useState("");
-  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-
-  const ask = async () => {
-    const q = aiQuestion.trim();
-    if (!q) return;
-    setAiLoading(true);
-    setAiError(null);
-    setAiAnswer(null);
-    try {
-      const ctx = selectedItem
-        ? {
-            name: selectedItem.patientName,
-            age: selectedItem.age ?? null,
-            insurance: selectedItem.insurance ?? null,
-            diagnoses: selectedItem.diagnoses ?? null,
-            history: selectedItem.history ?? null,
-            qualifyingTests: selectedItem.qualifyingTests ?? [],
-            previousTests: selectedItem.previousTests ?? null,
-          }
-        : null;
-      const res = await apiRequest("POST", "/api/scheduler-ai/ask", { question: q, patientContext: ctx });
-      const data = await res.json();
-      setAiAnswer(data.answer || "(no answer)");
-    } catch (e: any) {
-      setAiError(e?.message || "Failed to get answer");
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
   return (
     <Card
       className="rounded-3xl border border-white/60 bg-white/90 p-4 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl"
@@ -1814,9 +1795,154 @@ function MissionControlBar({
           </Button>
         </div>
       </div>
+    </Card>
+  );
+}
 
-      <div className="mt-3 flex items-center gap-2 rounded-2xl border border-indigo-100 bg-indigo-50/40 px-3 py-2">
-        <Wand2 className="h-4 w-4 text-indigo-500 shrink-0" />
+type AiTurn = { role: "user" | "assistant"; content: string };
+
+function AiBar({
+  selectedItem,
+  callListContext,
+}: {
+  selectedItem: OutreachCallItem | null;
+  callListContext: { name: string; bucket: string; qualifyingTests: string[] }[];
+}) {
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [history, setHistory] = useState<AiTurn[]>([]);
+  const [streaming, setStreaming] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (transcriptRef.current) {
+      transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+    }
+  }, [history, streaming]);
+
+  const ask = async () => {
+    const q = aiQuestion.trim();
+    if (!q || streaming) return;
+    setAiError(null);
+    setAiQuestion("");
+    const nextHistory: AiTurn[] = [...history, { role: "user", content: q }, { role: "assistant", content: "" }];
+    setHistory(nextHistory);
+    setStreaming(true);
+
+    const ctx = selectedItem
+      ? {
+          name: selectedItem.patientName,
+          age: selectedItem.age ?? null,
+          insurance: selectedItem.insurance ?? null,
+          diagnoses: selectedItem.diagnoses ?? null,
+          history: selectedItem.history ?? null,
+          qualifyingTests: selectedItem.qualifyingTests ?? [],
+          previousTests: selectedItem.previousTests ?? null,
+        }
+      : null;
+
+    try {
+      const resp = await fetch("/api/scheduler-ai/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          question: q,
+          patientContext: ctx,
+          callListContext,
+          history: history.slice(-10),
+        }),
+      });
+      if (!resp.ok || !resp.body) {
+        const err = await resp.text().catch(() => "Request failed");
+        throw new Error(err.slice(0, 200));
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let acc = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop() ?? "";
+        for (const evt of events) {
+          const line = evt.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          const payload = line.slice(6);
+          if (payload === "[DONE]") continue;
+          try {
+            const parsed = JSON.parse(payload);
+            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.delta) {
+              acc += parsed.delta;
+              setHistory((h) => {
+                const copy = h.slice();
+                const last = copy[copy.length - 1];
+                if (last && last.role === "assistant") {
+                  copy[copy.length - 1] = { ...last, content: acc };
+                }
+                return copy;
+              });
+            }
+          } catch (e: any) {
+            throw e;
+          }
+        }
+      }
+    } catch (e: any) {
+      setAiError(e?.message || "Failed to get answer");
+      setHistory((h) => h.slice(0, -2));
+    } finally {
+      setStreaming(false);
+    }
+  };
+
+  return (
+    <Card
+      className="rounded-3xl border border-indigo-200/60 bg-gradient-to-br from-indigo-50/60 via-white to-white p-4 shadow-[0_18px_60px_rgba(79,70,229,0.10)] backdrop-blur-xl"
+      data-testid="ai-bar"
+    >
+      <div className="flex items-center gap-2">
+        <Wand2 className="h-4 w-4 text-indigo-500" />
+        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-600">AI co-pilot</span>
+        {history.length > 0 && (
+          <button
+            type="button"
+            onClick={() => { setHistory([]); setAiError(null); }}
+            className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+            data-testid="ai-bar-clear"
+          >
+            <Trash2 className="h-3 w-3" /> Clear
+          </button>
+        )}
+      </div>
+
+      {history.length > 0 && (
+        <div
+          ref={transcriptRef}
+          className="mt-2 max-h-48 space-y-2 overflow-y-auto rounded-xl border border-indigo-100 bg-white/80 p-2 text-xs"
+          data-testid="ai-bar-transcript"
+        >
+          {history.map((m, i) => (
+            <div
+              key={i}
+              className={
+                m.role === "user"
+                  ? "rounded-lg bg-indigo-50 px-2 py-1 text-indigo-900"
+                  : "rounded-lg bg-slate-50 px-2 py-1 text-slate-700 whitespace-pre-wrap"
+              }
+              data-testid={`ai-bar-turn-${i}-${m.role}`}
+            >
+              <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">{m.role}</span>
+              <p className="mt-0.5 leading-relaxed">{m.content || (streaming && m.role === "assistant" ? "…" : "")}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-2 flex items-center gap-2 rounded-2xl border border-indigo-100 bg-white/80 px-3 py-2">
         <Input
           value={aiQuestion}
           onChange={(e) => setAiQuestion(e.target.value)}
@@ -1828,23 +1954,15 @@ function MissionControlBar({
         <Button
           size="sm"
           onClick={ask}
-          disabled={aiLoading || !aiQuestion.trim()}
+          disabled={streaming || !aiQuestion.trim()}
           className="bg-indigo-600 hover:bg-indigo-700 text-white shrink-0"
           data-testid="ai-bar-send"
         >
-          {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+          {streaming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
         </Button>
       </div>
       {aiError && (
         <p className="mt-2 text-xs text-rose-600" data-testid="ai-bar-error">{aiError}</p>
-      )}
-      {aiAnswer && (
-        <div
-          className="mt-2 rounded-xl border border-indigo-100 bg-white px-3 py-2 text-xs leading-relaxed text-slate-700 whitespace-pre-wrap"
-          data-testid="ai-bar-answer"
-        >
-          {aiAnswer}
-        </div>
       )}
     </Card>
   );
@@ -1898,13 +2016,24 @@ function ToolsPanel(props: {
           <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-3">
             <p className="text-xs text-slate-500">Active patient</p>
             <p className="text-sm font-semibold text-slate-900 truncate">{selectedItem.patientName}</p>
-            <a
-              href={`tel:${digitsOnly(phone)}`}
-              className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-full bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
-              data-testid="tools-call-active"
-            >
-              <Phone className="h-3.5 w-3.5" /> Call {phone || "—"}
-            </a>
+            <div className="mt-2 flex gap-1.5">
+              <a
+                href={`tel:${digitsOnly(phone)}`}
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+                data-testid="tools-call-active"
+              >
+                <Phone className="h-3.5 w-3.5" /> Call {phone || "—"}
+              </a>
+              <button
+                type="button"
+                onClick={() => { if (phone) navigator.clipboard?.writeText(phone).catch(() => {}); }}
+                title="Copy phone number"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:border-blue-300 hover:bg-blue-50"
+                data-testid="tools-copy-phone"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
         ) : (
           <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-3 text-center text-[11px] italic text-slate-400">
