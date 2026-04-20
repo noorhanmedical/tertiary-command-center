@@ -67,6 +67,100 @@ export function registerInvoiceRoutes(app: Express) {
     }
   });
 
+  app.get("/api/invoices/aging", requireBillerOrAdmin, async (_req, res) => {
+    try {
+      const all = await storage.getAllInvoices();
+      const outstanding = all.filter((i) => num(i.totalBalance) > 0.005);
+
+      const today = new Date();
+      const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+
+      const ageDays = (dateStr: string): number => {
+        const parts = dateStr.split("-").map(Number);
+        if (parts.length !== 3 || parts.some(isNaN)) return 0;
+        const [y, m, d] = parts;
+        const t = Date.UTC(y, m - 1, d);
+        return Math.floor((todayUtc - t) / 86400000);
+      };
+
+      const bucketFor = (days: number): "0-30" | "31-60" | "60+" => {
+        if (days <= 30) return "0-30";
+        if (days <= 60) return "31-60";
+        return "60+";
+      };
+
+      const byClinic = new Map<string, {
+        facility: string;
+        invoiceCount: number;
+        totalBalance: number;
+        buckets: { "0-30": number; "31-60": number; "60+": number };
+        bucketCounts: { "0-30": number; "31-60": number; "60+": number };
+      }>();
+
+      const totals = {
+        totalBalance: 0,
+        invoiceCount: outstanding.length,
+        buckets: { "0-30": 0, "31-60": 0, "60+": 0 } as Record<"0-30" | "31-60" | "60+", number>,
+        bucketCounts: { "0-30": 0, "31-60": 0, "60+": 0 } as Record<"0-30" | "31-60" | "60+", number>,
+      };
+
+      for (const inv of outstanding) {
+        const bal = num(inv.totalBalance);
+        const days = ageDays(inv.invoiceDate);
+        const bucket = bucketFor(days);
+        const facility = inv.facility;
+        let row = byClinic.get(facility);
+        if (!row) {
+          row = {
+            facility,
+            invoiceCount: 0,
+            totalBalance: 0,
+            buckets: { "0-30": 0, "31-60": 0, "60+": 0 },
+            bucketCounts: { "0-30": 0, "31-60": 0, "60+": 0 },
+          };
+          byClinic.set(facility, row);
+        }
+        row.invoiceCount += 1;
+        row.totalBalance += bal;
+        row.buckets[bucket] += bal;
+        row.bucketCounts[bucket] += 1;
+        totals.totalBalance += bal;
+        totals.buckets[bucket] += bal;
+        totals.bucketCounts[bucket] += 1;
+      }
+
+      const clinics = Array.from(byClinic.values())
+        .map((r) => ({
+          facility: r.facility,
+          invoiceCount: r.invoiceCount,
+          totalBalance: r.totalBalance.toFixed(2),
+          buckets: {
+            "0-30": r.buckets["0-30"].toFixed(2),
+            "31-60": r.buckets["31-60"].toFixed(2),
+            "60+": r.buckets["60+"].toFixed(2),
+          },
+          bucketCounts: r.bucketCounts,
+        }))
+        .sort((a, b) => parseFloat(b.totalBalance) - parseFloat(a.totalBalance));
+
+      res.json({
+        clinics,
+        totals: {
+          totalBalance: totals.totalBalance.toFixed(2),
+          invoiceCount: totals.invoiceCount,
+          buckets: {
+            "0-30": totals.buckets["0-30"].toFixed(2),
+            "31-60": totals.buckets["31-60"].toFixed(2),
+            "60+": totals.buckets["60+"].toFixed(2),
+          },
+          bucketCounts: totals.bucketCounts,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/invoices/:id", requireBillerOrAdmin, async (req, res) => {
     try {
       const id = parseInt(req.params.id);

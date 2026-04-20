@@ -10,9 +10,30 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/PageHeader";
-import { Receipt, Plus, Download, ArrowLeft, Send, FileText, Trash2, Mail } from "lucide-react";
+import { Receipt, Plus, Download, ArrowLeft, Send, FileText, Trash2, Mail, TrendingUp, Wallet, AlertTriangle } from "lucide-react";
 import { VALID_FACILITIES, DEFAULT_CLINIC, CLINIC_HUMBLE, formatClinicAddress, type ClinicProfile } from "@shared/plexus";
+
+type AgingBucket = "0-30" | "31-60" | "60+";
+
+type AgingClinicRow = {
+  facility: string;
+  invoiceCount: number;
+  totalBalance: string;
+  buckets: Record<AgingBucket, string>;
+  bucketCounts: Record<AgingBucket, number>;
+};
+
+type AgingResponse = {
+  clinics: AgingClinicRow[];
+  totals: {
+    totalBalance: string;
+    invoiceCount: number;
+    buckets: Record<AgingBucket, string>;
+    bucketCounts: Record<AgingBucket, number>;
+  };
+};
 
 type Invoice = {
   id: number;
@@ -84,27 +105,44 @@ function statusBadgeClass(status: string): string {
 
 export default function InvoicesPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [tab, setTab] = useState<"overview" | "list">("overview");
+  const [filterFacility, setFilterFacility] = useState<string>("");
+  const [filterBucket, setFilterBucket] = useState<AgingBucket | "">("");
 
   if (selectedId != null) {
     return <InvoiceDetail id={selectedId} onBack={() => setSelectedId(null)} />;
   }
-  return <InvoicesList onOpen={(id) => setSelectedId(id)} />;
+  return (
+    <InvoicesShell
+      tab={tab}
+      setTab={setTab}
+      filterFacility={filterFacility}
+      setFilterFacility={setFilterFacility}
+      filterBucket={filterBucket}
+      setFilterBucket={setFilterBucket}
+      onOpen={(id) => setSelectedId(id)}
+    />
+  );
 }
 
-function InvoicesList({ onOpen }: { onOpen: (id: number) => void }) {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
+function InvoicesShell({
+  tab,
+  setTab,
+  filterFacility,
+  setFilterFacility,
+  filterBucket,
+  setFilterBucket,
+  onOpen,
+}: {
+  tab: "overview" | "list";
+  setTab: (t: "overview" | "list") => void;
+  filterFacility: string;
+  setFilterFacility: (v: string) => void;
+  filterBucket: AgingBucket | "";
+  setFilterBucket: (v: AgingBucket | "") => void;
+  onOpen: (id: number) => void;
+}) {
   const [createOpen, setCreateOpen] = useState(false);
-  const [filterFacility, setFilterFacility] = useState<string>("");
-
-  const { data: invoices = [], isLoading } = useQuery<Invoice[]>({
-    queryKey: ["/api/invoices"],
-  });
-
-  const filtered = useMemo(() => {
-    if (!filterFacility) return invoices;
-    return invoices.filter((i) => i.facility === filterFacility);
-  }, [invoices, filterFacility]);
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -122,21 +160,274 @@ function InvoicesList({ onOpen }: { onOpen: (id: number) => void }) {
         }
       />
 
-      <Card className="p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <Label className="text-xs text-slate-500">Filter by clinic:</Label>
-          <Select value={filterFacility || "__all"} onValueChange={(v) => setFilterFacility(v === "__all" ? "" : v)}>
-            <SelectTrigger className="w-64" data-testid="select-filter-facility">
-              <SelectValue placeholder="All clinics" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all">All clinics</SelectItem>
-              {VALID_FACILITIES.map((f) => (
-                <SelectItem key={f} value={f}>{f}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "overview" | "list")}>
+        <TabsList data-testid="tabs-invoices">
+          <TabsTrigger value="overview" data-testid="tab-overview">
+            <TrendingUp className="w-4 h-4 mr-1.5" /> Billing Overview
+          </TabsTrigger>
+          <TabsTrigger value="list" data-testid="tab-list">
+            <FileText className="w-4 h-4 mr-1.5" /> Invoices
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="mt-4">
+          <BillingOverview
+            onSelectClinic={(facility) => {
+              setFilterFacility(facility);
+              setFilterBucket("");
+              setTab("list");
+            }}
+            onSelectBucket={(bucket, facility) => {
+              setFilterBucket(bucket);
+              setFilterFacility(facility ?? "");
+              setTab("list");
+            }}
+          />
+        </TabsContent>
+
+        <TabsContent value="list" className="mt-4">
+          <InvoicesList
+            onOpen={onOpen}
+            filterFacility={filterFacility}
+            setFilterFacility={setFilterFacility}
+            filterBucket={filterBucket}
+            setFilterBucket={setFilterBucket}
+          />
+        </TabsContent>
+      </Tabs>
+
+      <CreateInvoiceDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(id) => { setCreateOpen(false); onOpen(id); }}
+      />
+    </div>
+  );
+}
+
+function bucketForDate(invoiceDate: string): AgingBucket {
+  const parts = invoiceDate.split("-").map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return "0-30";
+  const [y, m, d] = parts;
+  const t = Date.UTC(y, m - 1, d);
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const days = Math.floor((today - t) / 86400000);
+  if (days <= 30) return "0-30";
+  if (days <= 60) return "31-60";
+  return "60+";
+}
+
+function fmtMoneyNum(n: number): string {
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function BillingOverview({
+  onSelectClinic,
+  onSelectBucket,
+}: {
+  onSelectClinic: (facility: string) => void;
+  onSelectBucket: (bucket: AgingBucket, facility?: string) => void;
+}) {
+  const { data, isLoading } = useQuery<AgingResponse>({
+    queryKey: ["/api/invoices/aging"],
+  });
+
+  if (isLoading || !data) {
+    return <div className="py-12 text-center text-slate-400 text-sm">Loading overview…</div>;
+  }
+
+  const { clinics, totals } = data;
+  const totalBal = parseFloat(totals.totalBalance);
+
+  const bucketMeta: { key: AgingBucket; label: string; tone: string; icon: typeof Wallet }[] = [
+    { key: "0-30", label: "0–30 days", tone: "bg-emerald-50 border-emerald-200 text-emerald-800", icon: Wallet },
+    { key: "31-60", label: "31–60 days", tone: "bg-amber-50 border-amber-200 text-amber-800", icon: TrendingUp },
+    { key: "60+", label: "60+ days", tone: "bg-red-50 border-red-200 text-red-800", icon: AlertTriangle },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="p-4" data-testid="card-total-outstanding">
+          <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">Total Outstanding</div>
+          <div className="text-2xl font-bold text-slate-900 tabular-nums" data-testid="text-total-outstanding">
+            {fmtMoneyNum(totalBal)}
+          </div>
+          <div className="text-xs text-slate-500 mt-1">{totals.invoiceCount} unpaid invoice{totals.invoiceCount === 1 ? "" : "s"}</div>
+        </Card>
+        {bucketMeta.map((b) => {
+          const amt = parseFloat(totals.buckets[b.key]);
+          const cnt = totals.bucketCounts[b.key];
+          return (
+            <button
+              key={b.key}
+              type="button"
+              onClick={() => onSelectBucket(b.key)}
+              disabled={cnt === 0}
+              className={`text-left p-4 rounded-lg border transition-all ${b.tone} ${cnt > 0 ? "hover-elevate cursor-pointer" : "opacity-60 cursor-not-allowed"}`}
+              data-testid={`card-bucket-${b.key}`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase tracking-wider font-semibold">{b.label}</div>
+                <b.icon className="w-4 h-4 opacity-70" />
+              </div>
+              <div className="text-2xl font-bold tabular-nums" data-testid={`text-bucket-amount-${b.key}`}>
+                {fmtMoneyNum(amt)}
+              </div>
+              <div className="text-xs opacity-80 mt-1">{cnt} invoice{cnt === 1 ? "" : "s"}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      <Card className="p-0 overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <div className="font-semibold text-slate-800 text-sm">Outstanding Balances by Clinic</div>
+            <div className="text-xs text-slate-500">Click a clinic or aging bucket to filter the invoice list.</div>
+          </div>
         </div>
+        {clinics.length === 0 ? (
+          <div className="py-16 text-center" data-testid="empty-overview">
+            <Wallet className="w-12 h-12 mx-auto text-slate-300 mb-3" />
+            <p className="text-slate-500">No outstanding balances.</p>
+            <p className="text-xs text-slate-400 mt-1">All invoices are paid in full.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-slate-500 border-b border-slate-200 bg-slate-50">
+                  <th className="px-4 py-2.5">Clinic</th>
+                  <th className="px-3 py-2.5 text-right">Invoices</th>
+                  <th className="px-3 py-2.5 text-right">0–30 days</th>
+                  <th className="px-3 py-2.5 text-right">31–60 days</th>
+                  <th className="px-3 py-2.5 text-right">60+ days</th>
+                  <th className="px-4 py-2.5 text-right">Total Outstanding</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clinics.map((c) => (
+                  <tr
+                    key={c.facility}
+                    className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer"
+                    onClick={() => onSelectClinic(c.facility)}
+                    data-testid={`row-overview-${c.facility.replace(/\s+/g, "-")}`}
+                  >
+                    <td className="px-4 py-2.5 font-medium text-slate-900" data-testid={`text-overview-clinic-${c.facility.replace(/\s+/g, "-")}`}>
+                      {c.facility}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{c.invoiceCount}</td>
+                    {(["0-30", "31-60", "60+"] as AgingBucket[]).map((b) => {
+                      const amt = parseFloat(c.buckets[b]);
+                      const cnt = c.bucketCounts[b];
+                      return (
+                        <td key={b} className="px-3 py-2.5 text-right">
+                          {cnt > 0 ? (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); onSelectBucket(b, c.facility); }}
+                              className={`tabular-nums px-2 py-0.5 rounded font-medium hover:underline ${
+                                b === "60+" ? "text-red-700" : b === "31-60" ? "text-amber-700" : "text-slate-700"
+                              }`}
+                              data-testid={`button-overview-bucket-${c.facility.replace(/\s+/g, "-")}-${b}`}
+                            >
+                              {fmtMoneyNum(amt)}
+                            </button>
+                          ) : (
+                            <span className="text-slate-300 tabular-nums">—</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-slate-900" data-testid={`text-overview-total-${c.facility.replace(/\s+/g, "-")}`}>
+                      {fmtMoneyNum(parseFloat(c.totalBalance))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-50 border-t-2 border-slate-200">
+                  <td className="px-4 py-2.5 font-semibold text-slate-700 text-xs uppercase">Total</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-slate-700">{totals.invoiceCount}</td>
+                  {(["0-30", "31-60", "60+"] as AgingBucket[]).map((b) => (
+                    <td key={b} className="px-3 py-2.5 text-right tabular-nums font-semibold text-slate-700">
+                      {fmtMoneyNum(parseFloat(totals.buckets[b]))}
+                    </td>
+                  ))}
+                  <td className="px-4 py-2.5 text-right tabular-nums font-bold text-slate-900">
+                    {fmtMoneyNum(totalBal)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function InvoicesList({
+  onOpen,
+  filterFacility,
+  setFilterFacility,
+  filterBucket,
+  setFilterBucket,
+}: {
+  onOpen: (id: number) => void;
+  filterFacility: string;
+  setFilterFacility: (v: string) => void;
+  filterBucket: AgingBucket | "";
+  setFilterBucket: (v: AgingBucket | "") => void;
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: invoices = [], isLoading } = useQuery<Invoice[]>({
+    queryKey: ["/api/invoices"],
+  });
+
+  const filtered = useMemo(() => {
+    return invoices.filter((i) => {
+      if (filterFacility && i.facility !== filterFacility) return false;
+      if (filterBucket) {
+        if (parseFloat(i.totalBalance) <= 0.005) return false;
+        if (bucketForDate(i.invoiceDate) !== filterBucket) return false;
+      }
+      return true;
+    });
+  }, [invoices, filterFacility, filterBucket]);
+
+  const bucketLabel: Record<AgingBucket, string> = { "0-30": "0–30 days", "31-60": "31–60 days", "60+": "60+ days" };
+
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <Label className="text-xs text-slate-500">Filter by clinic:</Label>
+        <Select value={filterFacility || "__all"} onValueChange={(v) => setFilterFacility(v === "__all" ? "" : v)}>
+          <SelectTrigger className="w-64" data-testid="select-filter-facility">
+            <SelectValue placeholder="All clinics" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all">All clinics</SelectItem>
+            {VALID_FACILITIES.map((f) => (
+              <SelectItem key={f} value={f}>{f}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {filterBucket && (
+          <Badge
+            variant="outline"
+            className="bg-amber-50 border-amber-200 text-amber-800 cursor-pointer hover:bg-amber-100"
+            onClick={() => setFilterBucket("")}
+            data-testid="badge-bucket-filter"
+          >
+            Aging: {bucketLabel[filterBucket]} <span className="ml-1.5 text-amber-600">×</span>
+          </Badge>
+        )}
+      </div>
 
         {isLoading ? (
           <div className="py-12 text-center text-slate-400 text-sm">Loading invoices…</div>
@@ -203,6 +494,7 @@ function InvoicesList({ onOpen }: { onOpen: (id: number) => void }) {
                           apiRequest("DELETE", `/api/invoices/${inv.id}`)
                             .then(() => {
                               queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+                              queryClient.invalidateQueries({ queryKey: ["/api/invoices/aging"] });
                               toast({ title: "Invoice deleted" });
                             })
                             .catch((err) => toast({ title: "Delete failed", description: err.message, variant: "destructive" }));
@@ -218,14 +510,7 @@ function InvoicesList({ onOpen }: { onOpen: (id: number) => void }) {
             </table>
           </div>
         )}
-      </Card>
-
-      <CreateInvoiceDialog
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onCreated={(id) => { setCreateOpen(false); onOpen(id); }}
-      />
-    </div>
+    </Card>
   );
 }
 
@@ -252,6 +537,7 @@ function CreateInvoiceDialog({ open, onClose, onCreated }: { open: boolean; onCl
     },
     onSuccess: (inv) => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices/aging"] });
       toast({ title: "Invoice created", description: inv.invoiceNumber });
       setFacility("");
       setFromDate("");
