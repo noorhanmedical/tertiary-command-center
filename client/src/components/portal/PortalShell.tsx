@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Stethoscope, HeartHandshake, Calendar as CalendarIcon, Phone, FileSignature, Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList } from "lucide-react";
+import {
+  Stethoscope, HeartHandshake, Calendar as CalendarIcon, Phone, FileSignature,
+  Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
+  Sparkles, Send, Minimize2, FileBarChart, FilePlus,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,13 +15,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { VALID_FACILITIES } from "@shared/plexus";
 import { SignaturePad } from "./SignaturePad";
 
 type Role = "technician" | "liaison";
+type CenterMode = "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf";
+
+type ConsentByTest = { testType: string; signed: boolean; documentId: number | null };
 
 type TodayPatient = {
-  patientScreeningId: number;
+  patientScreeningId: number | null;
   name: string;
   dob: string | null;
   time: string | null;
@@ -25,21 +31,21 @@ type TodayPatient = {
   clinicianName: string | null;
   qualifyingTests: string[];
   appointmentStatus: string;
-  commitStatus: string;
-  consentSignedDocumentId: number | null;
+  consentByTest: ConsentByTest[];
   consentSigned: boolean;
   appointments: Array<{ id: number; testType: string; scheduledTime: string; status: string }>;
-  batchId: number;
+  batchId: number | null;
+  plexusPdfUrl: string | null;
+  clinicianPdfUrl: string | null;
+  scheduleUrl: string | null;
 };
 
 type LibraryDoc = {
   id: number;
   title: string;
-  kind: string;
+  description: string | null;
   filename: string;
   contentType: string;
-  surfaces: string[];
-  downloadUrl: string;
 };
 
 type PatientDoc = {
@@ -87,7 +93,7 @@ function MonthlyMiniCalendar({ facility, selectedDate, onSelect }: { facility: s
     return { y: d.getFullYear(), m: d.getMonth() };
   });
   const monthIso = `${cursor.y}-${String(cursor.m + 1).padStart(2, "0")}`;
-  const { data } = useQuery<{ days: { date: string; patientCount: number }[] }>({
+  const { data } = useQuery<{ days: { date: string; appointmentCount: number }[] }>({
     queryKey: ["/api/portal/month-summary", facility, monthIso],
     queryFn: async () => {
       const u = new URL("/api/portal/month-summary", window.location.origin);
@@ -97,9 +103,10 @@ function MonthlyMiniCalendar({ facility, selectedDate, onSelect }: { facility: s
       return res.json();
     },
     refetchInterval: POLL_MS,
+    enabled: !!facility,
   });
   const counts = new Map<string, number>();
-  for (const d of data?.days ?? []) counts.set(d.date, d.patientCount);
+  for (const d of data?.days ?? []) counts.set(d.date, d.appointmentCount);
   const first = new Date(cursor.y, cursor.m, 1);
   const startOffset = first.getDay();
   const lastDate = new Date(cursor.y, cursor.m + 1, 0).getDate();
@@ -146,11 +153,13 @@ function MonthlyMiniCalendar({ facility, selectedDate, onSelect }: { facility: s
 
 function ConsentDialog({
   patient,
+  testType,
   open,
   onOpenChange,
   role,
 }: {
   patient: TodayPatient;
+  testType: string | null;
   open: boolean;
   onOpenChange: (o: boolean) => void;
   role: Role;
@@ -160,11 +169,10 @@ function ConsentDialog({
   const [templateId, setTemplateId] = useState<string>("");
 
   const { data: templates } = useQuery<LibraryDoc[]>({
-    queryKey: ["/api/documents-library", "informed_consent", "tech_consent_picker"],
+    queryKey: ["/api/portal/consent-templates", testType ?? ""],
     queryFn: async () => {
-      const u = new URL("/api/documents-library", window.location.origin);
-      u.searchParams.set("kind", "informed_consent");
-      u.searchParams.set("surface", "tech_consent_picker");
+      const u = new URL("/api/portal/consent-templates", window.location.origin);
+      if (testType) u.searchParams.set("testType", testType);
       const res = await fetch(u.pathname + u.search, { credentials: "include" });
       return res.json();
     },
@@ -178,7 +186,8 @@ function ConsentDialog({
         patientScreeningId: patient.patientScreeningId,
         templateDocumentId: parseInt(templateId, 10),
         signatureDataUrl: signature,
-        signedBy: role === "liaison" ? "patient" : "patient",
+        signedBy: "patient",
+        testType: testType ?? "",
       });
       return res.json();
     },
@@ -195,23 +204,21 @@ function ConsentDialog({
     },
   });
 
-  const pdfTemplates = (templates ?? []).filter((t) => t.contentType === "application/pdf");
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg" data-testid="dialog-consent">
         <DialogHeader>
-          <DialogTitle>Consent — {patient.name}</DialogTitle>
+          <DialogTitle>Consent — {patient.name}{testType ? ` · ${testType}` : ""}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <div>
-            <Label>Consent template</Label>
+            <Label>Consent template{testType ? ` (filtered by ${testType})` : ""}</Label>
             <Select value={templateId} onValueChange={setTemplateId}>
               <SelectTrigger data-testid="select-consent-template">
-                <SelectValue placeholder={pdfTemplates.length === 0 ? "No PDF templates available" : "Choose a consent template"} />
+                <SelectValue placeholder={(templates ?? []).length === 0 ? "No matching templates available" : "Choose a consent template"} />
               </SelectTrigger>
               <SelectContent>
-                {pdfTemplates.map((t) => (
+                {(templates ?? []).map((t) => (
                   <SelectItem key={t.id} value={String(t.id)} data-testid={`option-template-${t.id}`}>{t.title}</SelectItem>
                 ))}
               </SelectContent>
@@ -227,7 +234,7 @@ function ConsentDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)} data-testid="button-consent-cancel">Cancel</Button>
           <Button
             onClick={() => signMutation.mutate()}
-            disabled={!signature || !templateId || signMutation.isPending}
+            disabled={!signature || !templateId || signMutation.isPending || patient.patientScreeningId == null}
             data-testid="button-consent-submit"
           >
             {signMutation.isPending ? "Saving…" : "Sign & save"}
@@ -246,7 +253,7 @@ function PatientUploadCard({ patient }: { patient: TodayPatient }) {
   const [busy, setBusy] = useState(false);
 
   async function onUpload() {
-    if (!file) return;
+    if (!file || patient.patientScreeningId == null) return;
     setBusy(true);
     try {
       const fd = new FormData();
@@ -281,15 +288,14 @@ function PatientUploadCard({ patient }: { patient: TodayPatient }) {
           <SelectItem value="other">Other</SelectItem>
         </SelectContent>
       </Select>
-      <Button onClick={onUpload} disabled={!file || busy} className="w-full" data-testid="button-upload-submit">
+      <Button onClick={onUpload} disabled={!file || busy || patient.patientScreeningId == null} className="w-full" data-testid="button-upload-submit">
         <Upload className="mr-1 h-3.5 w-3.5" /> {busy ? "Uploading…" : "Upload to chart"}
       </Button>
     </div>
   );
 }
 
-function PatientDetail({ patient, role }: { patient: TodayPatient; role: Role }) {
-  const [consentOpen, setConsentOpen] = useState(false);
+function PatientDetail({ patient, role, onConsent }: { patient: TodayPatient; role: Role; onConsent: (testType: string | null) => void }) {
   const { data: docs } = useQuery<PatientDoc[]>({
     queryKey: ["/api/portal/patient-documents", patient.patientScreeningId],
     queryFn: async () => {
@@ -297,6 +303,7 @@ function PatientDetail({ patient, role }: { patient: TodayPatient; role: Role })
       return res.json();
     },
     refetchInterval: POLL_MS,
+    enabled: patient.patientScreeningId != null,
   });
 
   return (
@@ -311,7 +318,7 @@ function PatientDetail({ patient, role }: { patient: TodayPatient; role: Role })
         <div className="flex gap-2">
           {patient.consentSigned ? (
             <Badge className="bg-emerald-100 text-emerald-700" data-testid="badge-consent-signed">
-              <Check className="h-3 w-3 mr-1" /> Consent signed
+              <Check className="h-3 w-3 mr-1" /> All consent signed
             </Badge>
           ) : (
             <Badge className="bg-amber-100 text-amber-800" data-testid="badge-consent-needed">
@@ -330,20 +337,23 @@ function PatientDetail({ patient, role }: { patient: TodayPatient; role: Role })
         </TabsList>
 
         <TabsContent value="consent" className="space-y-3">
-          <Card className="p-4">
-            <div className="flex items-center justify-between">
+          {patient.consentByTest.length === 0 && (
+            <Card className="p-4 text-sm text-slate-500">No tests scheduled for today.</Card>
+          )}
+          {patient.consentByTest.map((c) => (
+            <Card key={c.testType} className="p-4 flex items-center justify-between" data-testid={`consent-row-${c.testType}`}>
               <div>
-                <div className="font-medium">Informed consent</div>
+                <div className="font-medium">{c.testType}</div>
                 <div className="text-sm text-slate-500">
-                  {patient.consentSigned ? "Signed and saved to patient chart." : "No signed consent on file yet."}
+                  {c.signed ? "Consent on file for today." : "No signed consent for this test today."}
                 </div>
               </div>
-              <Button onClick={() => setConsentOpen(true)} data-testid="button-open-consent">
+              <Button onClick={() => onConsent(c.testType)} disabled={patient.patientScreeningId == null} data-testid={`button-sign-${c.testType}`}>
                 <FileSignature className="h-4 w-4 mr-2" />
-                {patient.consentSigned ? "Re-sign" : "Sign now"}
+                {c.signed ? "Re-sign" : "Sign now"}
               </Button>
-            </div>
-          </Card>
+            </Card>
+          ))}
         </TabsContent>
 
         <TabsContent value="documents" className="space-y-2">
@@ -394,16 +404,79 @@ function PatientDetail({ patient, role }: { patient: TodayPatient; role: Role })
           </Card>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
 
-      <ConsentDialog patient={patient} open={consentOpen} onOpenChange={setConsentOpen} role={role} />
+function ExpandedSectionView({ mode, src, title, onClose }: { mode: CenterMode; src: string; title: string; onClose: () => void }) {
+  return (
+    <div className="rounded-2xl border bg-white shadow-sm h-full flex flex-col" data-testid={`expanded-${mode}`}>
+      <div className="flex items-center gap-2 border-b px-4 py-2">
+        <FileBarChart className="h-4 w-4 text-indigo-600" />
+        <h2 className="text-sm font-semibold">{title}</h2>
+        <button
+          type="button"
+          onClick={onClose}
+          className="ml-auto inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs hover:bg-slate-50"
+          data-testid="expanded-close"
+        >
+          <Minimize2 className="h-3.5 w-3.5" /> Collapse
+        </button>
+      </div>
+      <iframe src={src} className="flex-1 w-full" title={title} data-testid={`iframe-${mode}`} />
+    </div>
+  );
+}
+
+function AiBar({ context }: { context: string }) {
+  const [q, setQ] = useState("");
+  const { toast } = useToast();
+  return (
+    <div className="border-t bg-white/80 backdrop-blur-sm px-4 py-3 flex items-center gap-2" data-testid="ai-bar">
+      <Sparkles className="h-4 w-4 text-indigo-600" />
+      <Input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={`Ask about ${context}…`}
+        className="flex-1"
+        data-testid="input-ai-question"
+      />
+      <Button
+        size="sm"
+        disabled={!q.trim()}
+        onClick={() => {
+          toast({ title: "Coming soon", description: "AI assistant will answer questions about this clinic day." });
+          setQ("");
+        }}
+        data-testid="button-ai-send"
+      >
+        <Send className="h-3.5 w-3.5 mr-1" /> Ask
+      </Button>
     </div>
   );
 }
 
 export function PortalShell({ role }: { role: Role }) {
-  const [facility, setFacility] = useState<string>(VALID_FACILITIES[0]);
+  const { data: facData } = useQuery<{ facilities: string[] }>({
+    queryKey: ["/api/portal/my-facilities"],
+    queryFn: async () => {
+      const res = await fetch("/api/portal/my-facilities", { credentials: "include" });
+      return res.json();
+    },
+  });
+  const facilities = facData?.facilities ?? [];
+
+  const [facility, setFacility] = useState<string>("");
+  useEffect(() => {
+    if (!facility && facilities.length > 0) setFacility(facilities[0]);
+  }, [facilities, facility]);
+
   const [selectedDate, setSelectedDate] = useState<string>(todayIso());
   const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
+  const [centerMode, setCenterMode] = useState<CenterMode>("patient");
+  const [centerSrc, setCenterSrc] = useState<string>("");
+  const [centerTitle, setCenterTitle] = useState<string>("");
+  const [consentDialog, setConsentDialog] = useState<{ patient: TodayPatient; testType: string | null } | null>(null);
 
   const { data: scheduleData } = useQuery<{ patients: TodayPatient[] }>({
     queryKey: ["/api/portal/today-schedule", facility, selectedDate],
@@ -415,9 +488,10 @@ export function PortalShell({ role }: { role: Role }) {
       return res.json();
     },
     refetchInterval: POLL_MS,
+    enabled: !!facility,
   });
 
-  const { data: outreachData } = useQuery<{ patients: OutreachItem[] }>({
+  const { data: outreachData } = useQuery<{ patients: OutreachItem[]; heavyDay?: boolean; cap?: number; totalPool?: number }>({
     queryKey: ["/api/portal/outreach-call-list", facility],
     queryFn: async () => {
       const u = new URL("/api/portal/outreach-call-list", window.location.origin);
@@ -426,14 +500,16 @@ export function PortalShell({ role }: { role: Role }) {
       return res.json();
     },
     refetchInterval: POLL_MS,
+    enabled: !!facility,
   });
 
   const patients = scheduleData?.patients ?? [];
   const selected = useMemo(() => patients.find((p) => p.patientScreeningId === selectedPatientId) ?? null, [patients, selectedPatientId]);
 
-  // Auto-select first patient when list loads
   useEffect(() => {
-    if (!selectedPatientId && patients.length > 0) setSelectedPatientId(patients[0].patientScreeningId);
+    if (!selectedPatientId && patients.length > 0 && patients[0].patientScreeningId != null) {
+      setSelectedPatientId(patients[0].patientScreeningId);
+    }
   }, [patients, selectedPatientId]);
 
   const RoleIcon = role === "technician" ? Stethoscope : HeartHandshake;
@@ -442,9 +518,15 @@ export function PortalShell({ role }: { role: Role }) {
     ? "Run today's tests · sign consents · upload chart docs"
     : "Consent patients post-clinician · upload to chart · outreach";
 
+  function openCenterMode(mode: CenterMode, url: string | null, label: string) {
+    if (!url) return;
+    setCenterMode(mode);
+    setCenterSrc(url);
+    setCenterTitle(label);
+  }
+
   return (
     <div className="min-h-full flex flex-col bg-gradient-to-br from-slate-50 via-white to-indigo-50/30" data-testid={`portal-${role}`}>
-      {/* Header */}
       <header className="px-6 py-4 border-b bg-white/70 backdrop-blur-sm">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
@@ -460,19 +542,66 @@ export function PortalShell({ role }: { role: Role }) {
             <Label htmlFor="facility-select" className="text-sm">Clinic</Label>
             <Select value={facility} onValueChange={setFacility}>
               <SelectTrigger id="facility-select" className="w-[220px]" data-testid="select-facility">
-                <SelectValue />
+                <SelectValue placeholder={facilities.length === 0 ? "No clinic assignments" : "Choose clinic"} />
               </SelectTrigger>
               <SelectContent>
-                {VALID_FACILITIES.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                {facilities.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
         </div>
       </header>
 
-      {/* 3-column layout */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[320px_1fr_320px] gap-4 p-4 min-h-0">
-        {/* Left rail: today's schedule + monthly calendar + outreach */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[320px_1fr_340px] gap-4 p-4 min-h-0">
+        {/* Left rail: monthly calendar */}
+        <div className="space-y-3 overflow-y-auto">
+          <MonthlyMiniCalendar facility={facility} selectedDate={selectedDate} onSelect={(d) => { setSelectedDate(d); setCenterMode("patient"); }} />
+
+          <Card className="p-3">
+            <div className="text-sm font-semibold mb-2 flex items-center gap-2">
+              <Phone className="h-4 w-4" /> Outreach call list
+            </div>
+            <div className="text-[11px] text-slate-500 mb-2">
+              Your share{outreachData?.heavyDay ? " (heavy day cap ×1.5)" : ""}
+              {typeof outreachData?.totalPool === "number" ? ` · ${outreachData.totalPool} in pool` : ""}
+            </div>
+            <div className="space-y-1.5 max-h-[40vh] overflow-y-auto">
+              {(outreachData?.patients ?? []).length === 0 && (
+                <div className="text-xs text-slate-500 py-2 text-center">No outreach candidates.</div>
+              )}
+              {(outreachData?.patients ?? []).map((p) => (
+                <div key={p.patientScreeningId} className="rounded-lg border px-2.5 py-2 bg-white" data-testid={`outreach-row-${p.patientScreeningId}`}>
+                  <div className="text-sm font-medium truncate">{p.name}</div>
+                  <div className="text-[11px] text-slate-500">{p.phoneNumber ?? "No phone"} · {p.insurance ?? "—"}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+
+        {/* Center: patient detail OR expanded mode */}
+        <div className="overflow-y-auto min-h-0">
+          {centerMode !== "patient" && centerSrc ? (
+            <div className="h-[70vh]">
+              <ExpandedSectionView mode={centerMode} src={centerSrc} title={centerTitle} onClose={() => setCenterMode("patient")} />
+            </div>
+          ) : selected ? (
+            <PatientDetail
+              patient={selected}
+              role={role}
+              onConsent={(testType) => setConsentDialog({ patient: selected, testType })}
+            />
+          ) : (
+            <div className="h-full flex items-center justify-center text-slate-400" data-testid="empty-state">
+              <div className="text-center">
+                <ClipboardList className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                <div>{facility ? "Select a patient to begin." : "Choose your clinic to get started."}</div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right rail: today's schedule with row icons */}
         <div className="space-y-3 overflow-y-auto">
           <Card className="p-3">
             <div className="flex items-center justify-between mb-2">
@@ -485,79 +614,86 @@ export function PortalShell({ role }: { role: Role }) {
             {patients.length === 0 && (
               <div className="text-xs text-slate-500 py-4 text-center">No patients scheduled.</div>
             )}
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {patients.map((p) => {
                 const isSelected = p.patientScreeningId === selectedPatientId;
                 return (
-                  <button
-                    key={p.patientScreeningId}
-                    onClick={() => setSelectedPatientId(p.patientScreeningId)}
-                    className={`w-full text-left rounded-lg border px-2.5 py-2 transition-colors ${
-                      isSelected ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-slate-50 border-slate-200"
+                  <div
+                    key={(p.patientScreeningId ?? p.name) + ""}
+                    className={`rounded-lg border px-2.5 py-2 transition-colors ${
+                      isSelected ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-slate-50"
                     }`}
-                    data-testid={`patient-row-${p.patientScreeningId}`}
+                    data-testid={`patient-row-${p.patientScreeningId ?? p.name}`}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate">{p.name}</div>
-                        <div className="text-[11px] text-slate-500">
-                          {formatTime(p.time)} · {p.qualifyingTests.length} tests
+                    <button
+                      onClick={() => { if (p.patientScreeningId != null) { setSelectedPatientId(p.patientScreeningId); setCenterMode("patient"); } }}
+                      className="w-full text-left"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium truncate">{p.name}</div>
+                          <div className="text-[11px] text-slate-500">
+                            {formatTime(p.time)} · {p.appointments.length} test{p.appointments.length === 1 ? "" : "s"}
+                          </div>
                         </div>
+                        {p.consentSigned ? (
+                          <span className="shrink-0 w-2 h-2 rounded-full bg-emerald-500" title="Consent on file" data-testid={`pill-consent-${p.patientScreeningId}`} />
+                        ) : (
+                          <span className="shrink-0 w-2 h-2 rounded-full bg-amber-500" title="Consent needed" data-testid={`pill-consent-${p.patientScreeningId}`} />
+                        )}
                       </div>
-                      {p.consentSigned ? (
-                        <span className="shrink-0 w-2 h-2 rounded-full bg-emerald-500" title="Consent signed" data-testid={`pill-consent-${p.patientScreeningId}`} />
-                      ) : (
-                        <span className="shrink-0 w-2 h-2 rounded-full bg-amber-500" title="Consent needed" data-testid={`pill-consent-${p.patientScreeningId}`} />
-                      )}
+                    </button>
+                    <div className="mt-1.5 flex gap-1 justify-end">
+                      <button
+                        type="button"
+                        title="Plexus PDF"
+                        disabled={!p.plexusPdfUrl}
+                        onClick={() => openCenterMode("plexusPdf", p.plexusPdfUrl, `Plexus PDF — ${p.name}`)}
+                        className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
+                        data-testid={`row-icon-plexus-${p.patientScreeningId}`}
+                      >
+                        <FilePlus className="h-3.5 w-3.5 text-violet-600" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Clinician PDF"
+                        disabled={!p.clinicianPdfUrl}
+                        onClick={() => openCenterMode("clinicianPdf", p.clinicianPdfUrl, `Clinician PDF — ${p.name}`)}
+                        className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
+                        data-testid={`row-icon-clinician-${p.patientScreeningId}`}
+                      >
+                        <FileText className="h-3.5 w-3.5 text-emerald-600" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Day schedule"
+                        disabled={!p.scheduleUrl}
+                        onClick={() => openCenterMode("scheduleDay", p.scheduleUrl, `Schedule — ${p.name}`)}
+                        className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
+                        data-testid={`row-icon-schedule-${p.patientScreeningId}`}
+                      >
+                        <CalendarIcon className="h-3.5 w-3.5 text-blue-600" />
+                      </button>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
           </Card>
-          <MonthlyMiniCalendar facility={facility} selectedDate={selectedDate} onSelect={setSelectedDate} />
-        </div>
-
-        {/* Center: patient detail */}
-        <div className="overflow-y-auto">
-          {selected ? (
-            <PatientDetail patient={selected} role={role} />
-          ) : (
-            <div className="h-full flex items-center justify-center text-slate-400" data-testid="empty-state">
-              <div className="text-center">
-                <ClipboardList className="h-10 w-10 mx-auto mb-2 opacity-50" />
-                <div>Select a patient to begin.</div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Right rail: outreach call list */}
-        <div className="space-y-3 overflow-y-auto">
-          <Card className="p-3">
-            <div className="text-sm font-semibold mb-2 flex items-center gap-2">
-              <Phone className="h-4 w-4" /> Outreach call list
-            </div>
-            <div className="text-[11px] text-slate-500 mb-2">
-              Patients without a visit in the next 90 days.
-            </div>
-            <div className="space-y-1.5">
-              {(outreachData?.patients ?? []).length === 0 && (
-                <div className="text-xs text-slate-500 py-2 text-center">No outreach candidates.</div>
-              )}
-              {(outreachData?.patients ?? []).map((p) => (
-                <div key={p.patientScreeningId} className="rounded-lg border border-slate-200 px-2.5 py-2 bg-white" data-testid={`outreach-row-${p.patientScreeningId}`}>
-                  <div className="text-sm font-medium truncate">{p.name}</div>
-                  <div className="text-[11px] text-slate-500">{p.phoneNumber ?? "No phone"} · {p.insurance ?? "—"}</div>
-                  {p.qualifyingTests.length > 0 && (
-                    <div className="text-[10px] text-slate-400 mt-1 truncate">{p.qualifyingTests.join(", ")}</div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </Card>
         </div>
       </div>
+
+      <AiBar context={facility ? `${facility} · ${selectedDate}` : "today's clinic"} />
+
+      {consentDialog && (
+        <ConsentDialog
+          patient={consentDialog.patient}
+          testType={consentDialog.testType}
+          open={!!consentDialog}
+          onOpenChange={(o) => !o && setConsentDialog(null)}
+          role={role}
+        />
+      )}
     </div>
   );
 }
