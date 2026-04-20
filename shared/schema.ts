@@ -538,6 +538,95 @@ export const insertMarketingMaterialSchema = createInsertSchema(marketingMateria
 export type MarketingMaterial = typeof marketingMaterials.$inferSelect;
 export type InsertMarketingMaterial = z.infer<typeof insertMarketingMaterialSchema>;
 
+// ─── Document Library (central, surface-assignable documents) ──────────────
+// One row per logical file uploaded into the library. A new "version" of the
+// same logical document is a brand-new row that points at its predecessor via
+// `supersededByDocumentId` on the OLD row (i.e. old.supersededByDocumentId =
+// new.id). Surfaces the document appears on are stored in
+// `documentSurfaceAssignments` so a single uploaded file can power many parts
+// of the app (technician consent picker, scheduler resources, patient chart…).
+
+export const DOCUMENT_KINDS = [
+  "informed_consent",
+  "screening_form",
+  "marketing",
+  "training",
+  "reference",
+  "clinician_pdf",
+  "report",
+  "other",
+] as const;
+export type DocumentKind = typeof DOCUMENT_KINDS[number];
+
+export const DOCUMENT_SIGNATURE_REQUIREMENTS = ["none", "patient", "clinician", "both"] as const;
+export type DocumentSignatureRequirement = typeof DOCUMENT_SIGNATURE_REQUIREMENTS[number];
+
+export const DOCUMENT_SURFACES = [
+  "tech_consent_picker",
+  "scheduler_resources",
+  "patient_chart",
+  "liaison_drawer",
+  "marketing_hub",
+  "training_library",
+  "internal_reference",
+] as const;
+export type DocumentSurface = typeof DOCUMENT_SURFACES[number];
+
+export const documents = pgTable("documents", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  kind: text("kind").notNull(),
+  signatureRequirement: text("signature_requirement").notNull().default("none"),
+  filename: text("filename").notNull(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  version: integer("version").notNull().default(1),
+  // The id of the doc that REPLACED this one. If null, this row is current.
+  supersededByDocumentId: integer("superseded_by_document_id"),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_documents_kind").on(table.kind),
+  index("idx_documents_created_at").on(table.createdAt),
+  index("idx_documents_superseded").on(table.supersededByDocumentId),
+]);
+
+export const insertDocumentSchema = createInsertSchema(documents).omit({
+  id: true,
+  createdAt: true,
+  version: true,
+  supersededByDocumentId: true,
+}).extend({
+  title: z.string().trim().min(1, "Title is required").max(200),
+  description: z.string().max(1000).optional().default(""),
+  kind: z.enum(DOCUMENT_KINDS),
+  signatureRequirement: z.enum(DOCUMENT_SIGNATURE_REQUIREMENTS).optional(),
+});
+
+export type Document = typeof documents.$inferSelect;
+export type InsertDocument = z.infer<typeof insertDocumentSchema>;
+
+export const documentSurfaceAssignments = pgTable("document_surface_assignments", {
+  id: serial("id").primaryKey(),
+  documentId: integer("document_id").notNull().references(() => documents.id, { onDelete: "cascade" }),
+  surface: text("surface").notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("uq_document_surface_assignments_doc_surface").on(table.documentId, table.surface),
+  index("idx_document_surface_assignments_surface").on(table.surface),
+]);
+
+export const insertDocumentSurfaceAssignmentSchema = createInsertSchema(documentSurfaceAssignments).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  surface: z.enum(DOCUMENT_SURFACES),
+});
+
+export type DocumentSurfaceAssignment = typeof documentSurfaceAssignments.$inferSelect;
+export type InsertDocumentSurfaceAssignment = z.infer<typeof insertDocumentSurfaceAssignmentSchema>;
+
 // ─── Outbox: pending uploads to Google Drive / Sheets ───────────────────────
 
 export const OUTBOX_KINDS = [

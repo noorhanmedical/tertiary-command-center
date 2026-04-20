@@ -24,6 +24,13 @@ import {
   marketingMaterials,
   type MarketingMaterial,
   type InsertMarketingMaterial,
+  documents,
+  documentSurfaceAssignments,
+  type Document,
+  type InsertDocument,
+  type DocumentSurfaceAssignment,
+  type DocumentSurface,
+  type DocumentKind,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
@@ -1713,6 +1720,126 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMarketingMaterial(id: number): Promise<void> {
     await db.delete(marketingMaterials).where(eq(marketingMaterials.id, id));
+  }
+
+  // ── Document Library ─────────────────────────────────────────────────────────
+  // Used by `/api/document-library/*` and any internal surface (technician
+  // consent picker, scheduler resources, etc.) that wants to list documents.
+  async createDocument(record: InsertDocument): Promise<Document> {
+    const [row] = await db.insert(documents).values(record).returning();
+    return row;
+  }
+
+  async getDocument(id: number): Promise<Document | undefined> {
+    const [row] = await db.select().from(documents).where(eq(documents.id, id));
+    return row;
+  }
+
+  // Returns only "current" documents (i.e. not yet superseded). Optionally
+  // filter by kind. Surface filtering is done via getDocumentsForSurface.
+  async listCurrentDocuments(filters?: { kind?: DocumentKind }): Promise<Document[]> {
+    const conditions = [sql`${documents.supersededByDocumentId} IS NULL`];
+    if (filters?.kind) conditions.push(eq(documents.kind, filters.kind));
+    return db.select().from(documents)
+      .where(and(...conditions))
+      .orderBy(desc(documents.createdAt));
+  }
+
+  async getDocumentsForSurface(surface: DocumentSurface): Promise<Document[]> {
+    const rows = await db
+      .select({ doc: documents })
+      .from(documentSurfaceAssignments)
+      .innerJoin(documents, eq(documents.id, documentSurfaceAssignments.documentId))
+      .where(and(
+        eq(documentSurfaceAssignments.surface, surface),
+        sql`${documents.supersededByDocumentId} IS NULL`,
+      ))
+      .orderBy(desc(documents.createdAt));
+    return rows.map((r) => r.doc);
+  }
+
+  // Walks the supersededBy chain backwards to find every prior version of a
+  // logical document. Returns oldest -> newest.
+  async getDocumentVersionChain(currentDocId: number): Promise<Document[]> {
+    const chain: Document[] = [];
+    const seen = new Set<number>();
+    // Walk older versions: find rows whose supersededByDocumentId points at us.
+    let pointerId = currentDocId;
+    while (true) {
+      const [predecessor] = await db.select().from(documents)
+        .where(eq(documents.supersededByDocumentId, pointerId)).limit(1);
+      if (!predecessor || seen.has(predecessor.id)) break;
+      seen.add(predecessor.id);
+      chain.unshift(predecessor);
+      pointerId = predecessor.id;
+    }
+    const [current] = await db.select().from(documents).where(eq(documents.id, currentDocId));
+    if (current) chain.push(current);
+    return chain;
+  }
+
+  // Marks `oldId` as superseded by `newId`, copies the old assignments onto
+  // the new document (so the new version appears wherever the old did),
+  // and bumps the new document's version number to old.version + 1.
+  async supersedeDocument(oldId: number, newId: number): Promise<void> {
+    await db.transaction(async (tx) => {
+      // Lock the old row FOR UPDATE so two concurrent supersede calls can't
+      // both read the same version and produce duplicate version numbers.
+      await tx.execute(sql`SELECT id FROM documents WHERE id = ${oldId} FOR UPDATE`);
+      const [oldDoc] = await tx.select().from(documents).where(eq(documents.id, oldId));
+      if (!oldDoc) throw new Error(`document ${oldId} not found`);
+      if (oldDoc.supersededByDocumentId !== null) {
+        throw new Error(`document ${oldId} is already superseded`);
+      }
+      await tx.update(documents)
+        .set({ supersededByDocumentId: newId })
+        .where(eq(documents.id, oldId));
+      await tx.update(documents)
+        .set({ version: oldDoc.version + 1 })
+        .where(eq(documents.id, newId));
+      const oldAssignments = await tx.select().from(documentSurfaceAssignments)
+        .where(eq(documentSurfaceAssignments.documentId, oldId));
+      for (const a of oldAssignments) {
+        await tx.insert(documentSurfaceAssignments)
+          .values({ documentId: newId, surface: a.surface })
+          .onConflictDoNothing();
+      }
+    });
+  }
+
+  async getDocumentAssignments(documentId: number): Promise<DocumentSurfaceAssignment[]> {
+    return db.select().from(documentSurfaceAssignments)
+      .where(eq(documentSurfaceAssignments.documentId, documentId));
+  }
+
+  async addDocumentAssignment(documentId: number, surface: DocumentSurface): Promise<DocumentSurfaceAssignment> {
+    const [row] = await db.insert(documentSurfaceAssignments)
+      .values({ documentId, surface })
+      .onConflictDoNothing()
+      .returning();
+    if (row) return row;
+    const [existing] = await db.select().from(documentSurfaceAssignments)
+      .where(and(
+        eq(documentSurfaceAssignments.documentId, documentId),
+        eq(documentSurfaceAssignments.surface, surface),
+      ));
+    return existing;
+  }
+
+  async removeDocumentAssignment(documentId: number, surface: DocumentSurface): Promise<void> {
+    await db.delete(documentSurfaceAssignments)
+      .where(and(
+        eq(documentSurfaceAssignments.documentId, documentId),
+        eq(documentSurfaceAssignments.surface, surface),
+      ));
+  }
+
+  async deleteDocument(id: number): Promise<void> {
+    // Detach any successor pointer first so we don't leave dangling FKs.
+    await db.update(documents)
+      .set({ supersededByDocumentId: null })
+      .where(eq(documents.supersededByDocumentId, id));
+    await db.delete(documents).where(eq(documents.id, id));
   }
 }
 
