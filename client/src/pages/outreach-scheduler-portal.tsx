@@ -558,19 +558,15 @@ export default function OutreachSchedulerPortalPage() {
     return Array.from(set).sort();
   }, [card]);
 
-  // ENGINE-DRIVEN OWNERSHIP — when the call-list engine has produced active
-  // assignments for today, the portal honors them as the source of truth for
-  // who owns which patient. This scheduler sees only patients assigned to
-  // them (plus an "Assigned to me" toggle so they can opt back into the full
-  // facility view if they want to help out). When no assignments exist yet
-  // (engine not yet run today), we fall back to the legacy facility list.
+  // ENGINE-DRIVEN OWNERSHIP — assignments are the SOLE source of truth for
+  // who owns which patient on the call list. The /api/scheduler-assignments
+  // endpoint is server-side scoped to the session scheduler, so assignmentRows
+  // already contains only this scheduler's active rows for today. We always
+  // restrict the visible call list to that set — even when it's empty — so a
+  // scheduler with zero assignments never sees the full facility queue.
   const myEngineAssignedIds = useMemo(() => {
-    const myId = parseInt(schedulerId, 10);
-    if (!Number.isFinite(myId)) return null;
-    const mine = assignmentRows.filter((a) => a.schedulerId === myId);
-    if (mine.length === 0) return null;
-    return new Set(mine.map((a) => a.patientScreeningId));
-  }, [assignmentRows, schedulerId]);
+    return new Set(assignmentRows.map((a) => a.patientScreeningId));
+  }, [assignmentRows]);
 
   // Search + clinic + test + bucket filter + priority sort.
   const sortedCallList = useMemo(() => {
@@ -578,8 +574,9 @@ export default function OutreachSchedulerPortalPage() {
     const q = search.trim().toLowerCase();
     const filtered = list
       .filter((item) => {
-        // Engine ownership filter — see myEngineAssignedIds memo above.
-        if (myEngineAssignedIds && !myEngineAssignedIds.has(item.patientId)) return false;
+        // Engine ownership filter — assignments are authoritative. Patients
+        // not on this scheduler's active assignment list are hidden.
+        if (!myEngineAssignedIds.has(item.patientId)) return false;
         if (clinicFilter && item.facility !== clinicFilter) return false;
         if (testFilter && !item.qualifyingTests.includes(testFilter)) return false;
         if (!q) return true;

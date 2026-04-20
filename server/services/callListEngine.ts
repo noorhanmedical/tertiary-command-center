@@ -359,20 +359,26 @@ export async function releaseAndRedistribute(
 
   // URGENT-FIRST: rank released patients by priority before redistributing,
   // so the most time-sensitive (Tier-1 visit-soon) patients are placed first
-  // when remaining capacity is scarce.
+  // when remaining capacity is scarce. We must look up each patient's
+  // batch.scheduleDate so visit urgency is preserved — passing null here
+  // would collapse all released patients into Tier-2 and lose the urgency
+  // signal entirely.
+  const allBatches = await storage.getAllScreeningBatches();
+  const batchById = new Map(allBatches.map((b) => [b.id, b]));
   const releasedPatients = await Promise.all(
     released.map(async (r) => {
       const p = await storage.getPatientScreening(r.patientScreeningId);
-      return { release: r, patient: p };
+      const scheduleDate = p?.batchId ? batchById.get(p.batchId)?.scheduleDate ?? null : null;
+      return { release: r, patient: p, scheduleDate };
     }),
   );
   const releasedRanked = releasedPatients
-    .filter((rp): rp is { release: typeof released[number]; patient: PatientScreening } => !!rp.patient)
+    .filter((rp): rp is { release: typeof released[number]; patient: PatientScreening; scheduleDate: string | null } => !!rp.patient)
     .map((rp) => ({
       ...rp,
       _key: priorityKey({
         patientType: rp.patient.patientType,
-        scheduleDate: null,
+        scheduleDate: rp.scheduleDate,
         insurance: rp.patient.insurance,
         qualifyingTests: rp.patient.qualifyingTests,
         asOfDate,

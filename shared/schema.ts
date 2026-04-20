@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, serial, text, varchar, integer, timestamp, jsonb, index, boolean, numeric, AnyPgColumn } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, varchar, integer, timestamp, jsonb, index, uniqueIndex, boolean, numeric, AnyPgColumn } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -683,6 +683,11 @@ export const schedulerAssignments = pgTable("scheduler_assignments", {
   index("idx_scheduler_assignments_patient_status")
     .on(table.patientScreeningId, table.status),
   index("idx_scheduler_assignments_as_of_date").on(table.asOfDate),
+  // One ACTIVE assignment per (patient,day) — enforces the engine
+  // single-owner invariant at the DB level so race/retry can't duplicate.
+  uniqueIndex("uq_scheduler_assignments_active_per_patient_day")
+    .on(table.patientScreeningId, table.asOfDate)
+    .where(sql`status = 'active'`),
 ]);
 
 export const insertSchedulerAssignmentSchema = createInsertSchema(schedulerAssignments).omit({

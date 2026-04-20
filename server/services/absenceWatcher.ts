@@ -15,12 +15,21 @@
 import { storage } from "../storage";
 import { withAdvisoryLock } from "../lib/advisoryLock";
 import { releaseAndRedistribute } from "./callListEngine";
+import { openai } from "./aiClient";
 
 const TICK_MS = Number(process.env.ABSENCE_TICK_MS ?? 10 * 60 * 1000);
 const STALE_CALL_WINDOW_MIN = Number(process.env.ABSENCE_STALE_CALL_WINDOW_MIN ?? 90);
+// Untouched-assignment age: if the scheduler's OLDEST active assignment was
+// assigned more than this many minutes ago and they have not logged any
+// dispositions on it, we treat the queue as untouched (a stronger absence
+// signal than just "no calls in 90m" — covers schedulers who logged on a
+// stale call early in the day and then went dark).
+const UNTOUCHED_ASSIGNMENT_MIN = Number(process.env.ABSENCE_UNTOUCHED_ASSIGNMENT_MIN ?? 120);
 const BUSINESS_HOUR_START = Number(process.env.ABSENCE_BUSINESS_HOUR_START ?? 9);
 const BUSINESS_HOUR_END = Number(process.env.ABSENCE_BUSINESS_HOUR_END ?? 17);
-const AUTO_EXECUTE_MIN = Number(process.env.ABSENCE_AUTO_EXECUTE_MIN ?? 0);
+// Default 30 min from spec — admin has 30 min to act before auto-exec fires.
+const AUTO_EXECUTE_MIN = Number(process.env.ABSENCE_AUTO_EXECUTE_MIN ?? 30);
+const ENABLE_AI_PROPOSAL = process.env.ABSENCE_AI_PROPOSAL_DISABLED !== "1";
 
 let started = false;
 
@@ -74,7 +83,19 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
       const lastCall = todayCalls[0];
       const lastCallTime = lastCall ? new Date(lastCall.startedAt as unknown as string).getTime() : 0;
       const stale = lastCallTime < cutoff.getTime();
-      if (!stale) continue;
+
+      // Untouched-assignment check: oldest assigned_at age in minutes.
+      const myAssignments = assignments.filter((a) => a.schedulerId === sc.id);
+      const oldestAssignedMs = myAssignments.reduce((acc, a) => {
+        const t = new Date(a.assignedAt as unknown as string).getTime();
+        return isNaN(t) ? acc : Math.min(acc, t);
+      }, Number.POSITIVE_INFINITY);
+      const oldestAgeMin = oldestAssignedMs === Number.POSITIVE_INFINITY
+        ? 0 : (now.getTime() - oldestAssignedMs) / 60_000;
+      const untouched = todayCalls.length === 0 && oldestAgeMin >= UNTOUCHED_ASSIGNMENT_MIN;
+
+      // Trigger if EITHER signal fires.
+      if (!stale && !untouched) continue;
 
       // Already an open absence task?
       const existingTasks = await storage.getUrgentTasks();
@@ -85,6 +106,36 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
       );
       if (dup) continue;
 
+      // AI-generated reassignment narrative (best-effort; falls back to
+      // canonical recommendation text if the model call fails or is disabled).
+      let aiSummary = "Recommend release + redistribute to remaining schedulers.";
+      let aiPlan: { actions: Array<{ type: string; reason: string }> } = {
+        actions: [{ type: "release_and_redistribute", reason: "scheduler unresponsive" }],
+      };
+      if (ENABLE_AI_PROPOSAL && process.env.OPENAI_API_KEY) {
+        try {
+          const prompt = `Scheduler ${sc.name} at ${sc.facility} has ${load} active patient calls ` +
+            `for ${today}. They ${todayCalls.length === 0 ? "have not logged any calls today" : `last logged a call at ${new Date(lastCallTime).toISOString()}`}, ` +
+            `oldest assignment is ${Math.round(oldestAgeMin)} min old. Reply with a JSON object ` +
+            `{"summary":"one sentence","actions":[{"type":"release_and_redistribute","reason":"..."}]}`;
+          const resp = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+              { role: "system", content: "You are an operations assistant. Return ONLY a JSON object." },
+              { role: "user", content: prompt },
+            ],
+            response_format: { type: "json_object" },
+            max_tokens: 200,
+          });
+          const raw = resp.choices?.[0]?.message?.content ?? "";
+          const parsed = JSON.parse(raw);
+          if (typeof parsed.summary === "string") aiSummary = parsed.summary;
+          if (Array.isArray(parsed.actions)) aiPlan = { actions: parsed.actions };
+        } catch (err) {
+          console.warn("[absenceWatcher] AI proposal failed (using fallback):", (err as Error)?.message);
+        }
+      }
+
       const proposal = {
         kind: "absence_alert",
         schedulerId: sc.id,
@@ -93,12 +144,20 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
         asOfDate: today,
         activeAssignments: load,
         lastCallAt: lastCall ? lastCall.startedAt : null,
+        oldestAssignmentAgeMin: Math.round(oldestAgeMin),
+        triggers: { stale, untouched },
+        autoExecuteAtMin: AUTO_EXECUTE_MIN,
+        autoExecuteAt: AUTO_EXECUTE_MIN > 0
+          ? new Date(now.getTime() + AUTO_EXECUTE_MIN * 60_000).toISOString()
+          : null,
         recommended: "release_and_redistribute",
+        aiSummary,
+        aiPlan,
       };
       const description =
-        `Possible absence: ${sc.name} (${sc.facility}) has ${load} active call(s) ` +
-        `but no calls in ${STALE_CALL_WINDOW_MIN} min. Recommend release + redistribute.\n\n` +
-        `<!--proposal:${JSON.stringify(proposal)}-->`;
+        `Possible absence: ${sc.name} (${sc.facility}) has ${load} active call(s). ` +
+        `${aiSummary}\n\nAdmins have ${AUTO_EXECUTE_MIN} min to approve or reject ` +
+        `before auto-execution.\n\n<!--proposal:${JSON.stringify(proposal)}-->`;
 
       await storage.createTask({
         title: `Absence alert: ${sc.name}`,
@@ -109,11 +168,14 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
         status: "open",
       });
 
-      // Optional auto-execute after configured minutes have passed since
-      // the last call. Disabled (0) by default.
-      if (AUTO_EXECUTE_MIN > 0 && lastCallTime > 0) {
-        const minsSinceLast = (now.getTime() - lastCallTime) / 60_000;
-        if (minsSinceLast >= AUTO_EXECUTE_MIN) {
+      // Auto-execute after configured minutes from the FIRST detection
+      // signal: prefer last-call timestamp, otherwise oldest-assignment age.
+      const referenceTime = lastCallTime > 0
+        ? lastCallTime
+        : (oldestAssignedMs === Number.POSITIVE_INFINITY ? 0 : oldestAssignedMs);
+      if (AUTO_EXECUTE_MIN > 0 && referenceTime > 0) {
+        const minsSince = (now.getTime() - referenceTime) / 60_000;
+        if (minsSince >= AUTO_EXECUTE_MIN) {
           try {
             await releaseAndRedistribute(storage, sc.id, today, "absence_auto_execute");
           } catch (err) {
