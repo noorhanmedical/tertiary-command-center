@@ -445,28 +445,6 @@ export default function Home() {
       />
 
       <div className="flex flex-col flex-1 min-w-0 relative bg-background">
-        <div className="bg-[#1e3a5f]/95 backdrop-blur-sm flex items-center gap-0 px-2 shrink-0 overflow-x-auto" data-testid="tab-bar">
-          {tabs.map((tab, i) => {
-            const isActive = i === activeTabIndex;
-            const label = tab.type === "home" ? "Home" : tab.type === "history" ? "Patient History" : tab.type === "references" ? "Patient Directory" : tab.label;
-            return (
-              <div key={`${tab.type}-${tab.type === "schedule" ? tab.batchId : i}`}
-                className={`flex items-center gap-1.5 px-4 py-2 cursor-pointer text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${isActive ? "bg-white/15 text-white border-white" : "text-blue-200/70 border-transparent hover:text-white hover:bg-white/5"}`}
-                onClick={() => setActiveTabIndex(i)} data-testid={`tab-${tab.type}${tab.type === "schedule" ? `-${tab.batchId}` : ""}`}>
-                <span className="truncate max-w-[180px]">{label}</span>
-                {tabs.length > 1 && (
-                  <button className="ml-1 p-0.5 rounded hover:bg-white/20 transition-colors" onClick={(e) => { e.stopPropagation(); closeTab(i); }} data-testid={`button-close-tab-${i}`}>
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          <button className="flex items-center gap-1 px-3 py-2 text-blue-200/60 hover:text-white transition-colors text-sm" onClick={handleNewSchedule} data-testid="button-new-tab">
-            <Plus className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
         {view === "history" ? (
           <div className="flex flex-col h-full relative z-10">
             <div className="flex-1 overflow-auto p-4">

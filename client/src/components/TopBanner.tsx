@@ -15,7 +15,7 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
 
   return (
     <header
-      className="shrink-0 h-14 bg-[#0f1b35] text-white border-b border-black/40 relative overflow-hidden"
+      className="shrink-0 h-20 bg-[#0f1b35] text-white border-b border-black/40 relative overflow-hidden"
       data-testid="top-banner"
     >
       <div
