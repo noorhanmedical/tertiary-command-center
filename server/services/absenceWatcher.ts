@@ -136,10 +136,6 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
       let aiPlan: { actions: Array<{ type: string; reason: string }> } = {
         actions: [{ type: "release_and_redistribute", reason: "scheduler unresponsive" }],
       };
-      // Use the canonical aiClient (which reads AI_INTEGRATIONS_OPENAI_API_KEY
-       // and applies the OpenAI concurrency limiter). Gate strictly on the
-      // configured key so the proposal step is consistent with the rest of
-      // the codebase.
       const aiKeyConfigured = !!(process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY);
       if (ENABLE_AI_PROPOSAL && aiKeyConfigured) {
         try {
@@ -147,8 +143,6 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
             `for ${today}. They ${todayCalls.length === 0 ? "have not logged any calls today" : `last logged a call at ${new Date(lastCallTime).toISOString()}`}, ` +
             `oldest assignment is ${Math.round(oldestAgeMin)} min old. Reply with a JSON object ` +
             `{"summary":"one sentence","actions":[{"type":"release_and_redistribute","reason":"..."}]}`;
-          // Route through withRetry so the call is timed out, retried on
-          // transient errors, and counted by the OpenAI concurrency limiter.
           const resp = await withRetry(() => openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [

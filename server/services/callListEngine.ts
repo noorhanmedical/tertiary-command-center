@@ -55,11 +55,8 @@ export function buildAssignmentsForPool(
     cap.set(sc.id, dailyCapacity(sc, baseDailyTarget));
   }
 
-  // Round-robin allocation, weighted by capacity %. We pick the scheduler
-  // whose load/cap RATIO is currently smallest among those with remaining
-  // capacity — this rotates through the pool while still honoring per-
-  // scheduler capacity weights. Tiebreakers: lower load, then lower id
-  // (deterministic). Saturation breaks the loop.
+  // Capacity-weighted round-robin: pick the scheduler with smallest
+  // load/cap ratio. Tiebreaks: lower load, then lower id.
   const drafts: AssignmentDraft[] = [];
   const orderedSchedulers = [...schedulers].sort((a, b) => a.id - b.id);
   for (const c of candidates) {
@@ -115,9 +112,7 @@ export function rankCandidates(
       });
       let sort = k.sort;
       if (k.tier === 2) {
-        // Tier 2 ordering per spec: insurance, then OLDEST last-contact
-        // first (most overdue patients lead), then qualifying-test count
-        // as the final tiebreak.
+        // Tier 2: insurance → oldest last-contact → qualifying-test count.
         const last = lastContactByPatient.get(row.patient.id) ?? 0;
         const ageDays = last === 0 ? 9999 : Math.max(0, Math.round((asOfMs - last) / 86_400_000));
         sort = [k.sort[0], k.sort[1], -ageDays, k.sort[3]];
@@ -188,11 +183,7 @@ async function gatherEligibleForFacility(
     for (const p of patients) {
       const e = isEligibleForCallList(p);
       if (!e.eligible) continue;
-      // Visit-type patients are gated by the 30-day window. Outreach-type
-      // patients (and visit-type patients whose scheduled visit has already
-      // passed without being scheduled/completed/declined) flow into Tier 2
-      // outreach eligibility — the priorityKey() classifier downgrades them
-      // to tier 2 automatically based on patientType + window.
+      // Outreach-type and past-visit patients flow into Tier 2 via priorityKey().
       const isOutreach = (p.patientType ?? "").toLowerCase() === "outreach";
       const past = isPastVisit(batch.scheduleDate ?? null, asOfDate);
       if (!isOutreach && !inVisitWindow && !past) continue;
@@ -224,11 +215,7 @@ export async function buildDailyAssignments(
   asOfDate: string,
   baseDailyTarget = DEFAULT_BASE_DAILY_TARGET,
 ): Promise<BuildSummary> {
-  // Sweep stale active rows (asOfDate < today) BEFORE reading any state.
-  // This enforces the "one active row per patient at a time" invariant by
-  // making sure prior days' actives can't accumulate forever and can't
-  // collide with today's per-(patient,day) unique index when a patient
-  // recurs across days.
+  // Sweep stale active rows from prior days before reading state.
   await storage.releaseStaleActiveAssignments(asOfDate, "stale_day_sweep");
 
   const [allSchedulers, schedulers, eligibleAll, existingAll] = await Promise.all([
@@ -321,8 +308,7 @@ export async function assignNewlyEligiblePatient(
   asOfDate: string,
   baseDailyTarget = DEFAULT_BASE_DAILY_TARGET,
 ): Promise<SchedulerAssignment | null> {
-  // Date-scoped: a stale active row from a prior day must not block today's
-  // hot-path assignment. The daily build also sweeps such rows.
+  // Date-scoped so a stale prior-day row cannot block today's hot path.
   const existing = await storage.getActiveAssignmentForPatientOnDate(patient.id, asOfDate);
   if (existing) return existing;
   const e = isEligibleForCallList(patient);

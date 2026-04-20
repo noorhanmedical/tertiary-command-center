@@ -1177,10 +1177,7 @@ export class DatabaseStorage implements IStorage {
     return released;
   }
 
-  // Sweep helper: close any active assignment row whose as_of_date is older
-  // than `beforeAsOfDate`. Run at the start of each daily build so stale
-  // active rows from prior days cannot block new-day assignments via the
-  // single-active invariant or the date-scoped hot path.
+  // Close any active row older than `beforeAsOfDate`. Used by daily build sweep.
   async releaseStaleActiveAssignments(beforeAsOfDate: string, reason: string): Promise<number> {
     const released = await db.update(schedulerAssignments)
       .set({ status: "released", reason })

@@ -192,7 +192,6 @@ export function registerOutreachRoutes(app: Express) {
           ? parsed.data.schedulerUserId
           : userId;
 
-      // Atomic: insert call + conditional status update in one transaction.
       const call = await storage.createOutreachCallAtomic(
         {
           ...parsed.data,
@@ -201,6 +200,19 @@ export function registerOutreachRoutes(app: Express) {
         },
         desiredStatus,
       );
+
+      // If the disposition removes the patient from the eligibility pool
+      // (scheduled/declined/dnc/completed), close any active assignment so
+      // the queue reflects the change immediately rather than waiting for
+      // the next daily build.
+      const TERMINAL = new Set(["scheduled", "completed", "declined", "dnc", "do_not_contact", "deceased", "cancelled"]);
+      if (TERMINAL.has(desiredStatus.toLowerCase())) {
+        try {
+          await storage.markSchedulerAssignmentCompleted(parsed.data.patientScreeningId);
+        } catch (err) {
+          console.warn("[outreach] markSchedulerAssignmentCompleted failed:", (err as Error)?.message);
+        }
+      }
 
       res.status(201).json(call);
     } catch (error: any) {
