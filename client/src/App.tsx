@@ -16,6 +16,8 @@ import DocumentUploadPage from "@/pages/document-upload";
 import AppointmentsPage from "@/pages/appointments";
 import OutreachPage from "@/pages/outreach";
 import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
+import TechnicianPortalPage from "@/pages/technician-portal";
+import LiaisonPortalPage from "@/pages/liaison-portal";
 import AdminOpsPage from "@/pages/admin-ops";
 import AdminPage from "@/pages/admin";
 import AdminUsersPage from "@/pages/admin-users";
@@ -80,6 +82,8 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/appointments" component={AppointmentsPage} />
                 <Route path="/outreach/scheduler/:id" component={OutreachSchedulerPortalPage} />
                 <Route path="/outreach" component={OutreachPage} />
+                <Route path="/technician-portal" component={TechnicianPortalPage} />
+                <Route path="/liaison-portal" component={LiaisonPortalPage} />
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">
                   <Redirect to="/plexus-tasks" />

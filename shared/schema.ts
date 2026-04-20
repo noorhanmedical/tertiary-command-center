@@ -10,7 +10,7 @@ export const appSettings = pgTable("app_settings", {
   value: text("value").notNull(),
 });
 
-export const USER_ROLES = ["admin", "clinician", "scheduler", "biller"] as const;
+export const USER_ROLES = ["admin", "clinician", "scheduler", "biller", "technician", "liaison"] as const;
 export type UserRole = typeof USER_ROLES[number];
 
 export const users = pgTable("users", {

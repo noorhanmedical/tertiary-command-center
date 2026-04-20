@@ -14,6 +14,8 @@ import {
   CheckSquare,
   FolderOpen,
   Library,
+  Stethoscope,
+  HeartHandshake,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { AuthUser } from "@/App";
@@ -36,6 +38,8 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/drive",            label: "Plexus Drive",     Icon: FolderOpen,   roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },
+  { href: "/technician-portal", label: "Technician Portal", Icon: Stethoscope,    roles: ["admin", "technician", "liaison"] },
+  { href: "/liaison-portal",    label: "Liaison Portal",    Icon: HeartHandshake, roles: ["admin", "technician", "liaison"] },
 ];
 
 function TodayBadge({ count }: { count: number }) {
