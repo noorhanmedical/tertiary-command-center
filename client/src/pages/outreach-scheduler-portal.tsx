@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -11,17 +11,9 @@ import {
   MapPin,
   X,
   Phone,
-  Clock3,
   Building2,
   Stethoscope,
-  CheckCircle2,
-  PhoneMissed,
-  PhoneCall,
   CalendarCheck,
-  XCircle,
-  RotateCcw,
-  MessageSquare,
-  Save,
   Search,
   ChevronDown,
   ChevronUp,
@@ -29,16 +21,18 @@ import {
   Users,
   ListTodo,
   FileText,
-  Pill,
-  History,
-  ClipboardList,
   Sparkles,
+  PhoneCall,
+  History as HistoryIcon,
+  ArrowRight,
+  Keyboard,
+  Megaphone,
+  TrendingUp,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -49,7 +43,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { apiRequest, queryClient as globalQueryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { AncillaryAppointment } from "@shared/schema";
+import type { AncillaryAppointment, OutreachCall } from "@shared/schema";
 import {
   MiniCalendar,
   SlotGrid,
@@ -67,6 +61,8 @@ import { CalendarPageHeader, HeaderPill, HeaderStatusPill } from "@/components/C
 import { TaskDrawer } from "@/components/plexus/TaskDrawer";
 import type { PlexusTaskSummary, UserEntry } from "@/components/plexus/SchedulerIcon";
 import type { AuthUser } from "@/App";
+import { DispositionSheet } from "@/components/outreach/DispositionSheet";
+import { getScriptForTest, fillScript } from "@/lib/outreachScripts";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -139,42 +135,27 @@ type OutreachDashboard = {
   schedulerCards: OutreachSchedulerCard[];
 };
 
-function formatAppointmentBadge(scheduledDate: string, scheduledTime: string, testType: string): string {
-  const [y, m, d] = scheduledDate.split("-").map(Number);
-  const dateLabel = new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const timeLabel = formatTime12(scheduledTime);
-  const typeLabel = isBrainWave(testType) ? "BrainWave" : "VitalWave";
-  return `${dateLabel} · ${timeLabel} · ${typeLabel}`;
-}
-
-
-// ─── Outcome helpers ───────────────────────────────────────────────────────────
-
-const CALL_OUTCOMES = [
-  { value: "no_answer",  label: "No Answer", Icon: PhoneMissed,  color: "bg-slate-100 text-slate-600 hover:bg-slate-200 border-slate-200" },
-  { value: "callback",   label: "Callback",  Icon: PhoneCall,    color: "bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200" },
-  { value: "scheduled",  label: "Scheduled", Icon: CalendarCheck, color: "bg-green-50 text-green-700 hover:bg-green-100 border-green-200" },
-  { value: "declined",   label: "Declined",  Icon: XCircle,      color: "bg-red-50 text-red-600 hover:bg-red-100 border-red-200" },
-] as const;
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
 function statusBadgeClass(status?: string | null) {
   const n = String(status || "pending").toLowerCase();
-  if (n.includes("scheduled") || n.includes("booked")) return "bg-green-100 text-green-700 border-green-200";
+  if (n.includes("scheduled") || n.includes("booked")) return "bg-emerald-100 text-emerald-700 border-emerald-200";
   if (n.includes("complete")) return "bg-blue-100 text-blue-700 border-blue-200";
-  if (n.includes("cancel") || n.includes("declined")) return "bg-red-100 text-red-700 border-red-200";
+  if (n.includes("decline") || n.includes("cancel")) return "bg-red-100 text-red-700 border-red-200";
   if (n === "no_answer") return "bg-slate-100 text-slate-600 border-slate-200";
   if (n === "callback") return "bg-amber-100 text-amber-700 border-amber-200";
-  return "bg-amber-100 text-amber-700 border-amber-200";
+  return "bg-slate-100 text-slate-600 border-slate-200";
 }
 
 function statusLabel(status?: string | null) {
   const n = String(status || "pending").toLowerCase();
-  if (n === "no_answer") return "No Answer";
+  if (n === "no_answer") return "No answer";
   if (n === "callback") return "Callback";
+  if (n === "pending") return "Not called";
+  if (n === "scheduled") return "Scheduled";
+  if (n === "declined") return "Declined";
   return status || "Pending";
 }
-
-// ─── Urgency helpers ──────────────────────────────────────────────────────────
 
 function urgencyBadgeClass(urgency: string) {
   if (urgency === "EOD") return "bg-amber-100 text-amber-700 border-amber-200";
@@ -194,11 +175,9 @@ function calcTimeRemaining(urgency: string, createdAt: string): string {
   const created = new Date(createdAt).getTime();
   const now = Date.now();
   let deadline: number;
-  if (urgency === "within 1 hour") {
-    deadline = created + 60 * 60 * 1000;
-  } else if (urgency === "within 3 hours") {
-    deadline = created + 3 * 60 * 60 * 1000;
-  } else {
+  if (urgency === "within 1 hour") deadline = created + 60 * 60 * 1000;
+  else if (urgency === "within 3 hours") deadline = created + 3 * 60 * 60 * 1000;
+  else {
     const eod = new Date();
     eod.setHours(17, 0, 0, 0);
     deadline = eod.getTime();
@@ -211,13 +190,72 @@ function calcTimeRemaining(urgency: string, createdAt: string): string {
   return `${mins}m left`;
 }
 
+function digitsOnly(phone: string): string {
+  return (phone || "").replace(/[^0-9+]/g, "");
+}
+
+function formatAppointmentBadge(scheduledDate: string, scheduledTime: string, testType: string): string {
+  const [y, m, d] = scheduledDate.split("-").map(Number);
+  const dateLabel = new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const timeLabel = formatTime12(scheduledTime);
+  const typeLabel = isBrainWave(testType) ? "BrainWave" : "VitalWave";
+  return `${dateLabel} · ${timeLabel} · ${typeLabel}`;
+}
+
+function formatRelative(iso: string | Date): string {
+  const t = (iso instanceof Date ? iso : new Date(iso)).getTime();
+  const diff = Date.now() - t;
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const d = Math.floor(hr / 24);
+  return `${d}d ago`;
+}
+
+// Outcome -> bucket used by the priority sort.
+type CallBucket = "callback_due" | "never_called" | "no_answer" | "contacted" | "scheduled" | "declined";
+
+function bucketForItem(item: OutreachCallItem, latestCall: OutreachCall | undefined): CallBucket {
+  const status = item.appointmentStatus.toLowerCase();
+  if (status === "scheduled") return "scheduled";
+  if (status === "declined") return "declined";
+  if (latestCall?.outcome === "callback" && latestCall.callbackAt && new Date(latestCall.callbackAt) <= new Date()) {
+    return "callback_due";
+  }
+  if (!latestCall) return "never_called";
+  if (status === "no_answer" || latestCall.outcome === "no_answer" || latestCall.outcome === "voicemail" || latestCall.outcome === "busy") {
+    return "no_answer";
+  }
+  return "contacted";
+}
+
+const BUCKET_RANK: Record<CallBucket, number> = {
+  callback_due: 0,
+  never_called: 1,
+  no_answer: 2,
+  contacted: 3,
+  scheduled: 4,
+  declined: 5,
+};
+
+const FILTER_CHIPS: { id: "all" | CallBucket; label: string }[] = [
+  { id: "all",           label: "All" },
+  { id: "callback_due",  label: "Callbacks due" },
+  { id: "never_called",  label: "Never called" },
+  { id: "no_answer",     label: "No answer" },
+  { id: "contacted",     label: "Contacted" },
+  { id: "scheduled",     label: "Scheduled" },
+];
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function OutreachSchedulerPortalPage() {
   const params = useParams<{ id: string }>();
   const schedulerId = params.id ?? "";
 
-  // Calendar state
+  // Calendar (booking) state
   const today = new Date();
   const [calYear, setCalYear] = useState(today.getFullYear());
   const [calMonth, setCalMonth] = useState(today.getMonth());
@@ -231,26 +269,27 @@ export default function OutreachSchedulerPortalPage() {
   const [callListBookTestType, setCallListBookTestType] = useState<"BrainWave" | "VitalWave">("BrainWave");
   const [callListBookTime, setCallListBookTime] = useState<string>("");
   const [scrollToSlot, setScrollToSlot] = useState<{ time: string; testType: string } | null>(null);
+  const [bookingPanelOpen, setBookingPanelOpen] = useState(false);
 
-  // Call list state
+  // Call flow state
   const [search, setSearch] = useState("");
-  const [pendingPatientId, setPendingPatientId] = useState<number | null>(null);
-  const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
-  const [expandedDetails, setExpandedDetails] = useState<Set<number>>(new Set());
-  const [noteDrafts, setNoteDrafts] = useState<Map<number, string>>(new Map());
+  const [filter, setFilter] = useState<"all" | CallBucket>("all");
+  const [expandedTimeline, setExpandedTimeline] = useState<Set<number>>(new Set());
+  const [scriptOpen, setScriptOpen] = useState(false);
+  const [dispositionOpen, setDispositionOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
-  // Tasks tile state
+  // Tasks tile + urgent panel
   const [taskDrawerPatientId, setTaskDrawerPatientId] = useState<number | null>(null);
   const [taskDrawerTasks, setTaskDrawerTasks] = useState<PlexusTaskSummary[]>([]);
   const [taskDrawerPatientName, setTaskDrawerPatientName] = useState<string>("");
-
-  // Urgent panel state
   const [urgentPanelOpen, setUrgentPanelOpen] = useState(true);
 
   const { toast } = useToast();
   const queryClientLocal = useQueryClient();
 
-  // Outreach dashboard (for call list)
+  // ── Queries ─────────────────────────────────────────────────────────────────
   const { data: dashboard, isLoading } = useQuery<OutreachDashboard>({
     queryKey: ["/api/outreach/dashboard"],
     refetchInterval: 60_000,
@@ -263,7 +302,6 @@ export default function OutreachSchedulerPortalPage() {
 
   const facility = card?.facility as Facility | undefined;
 
-  // Appointments (for calendar)
   const { data: appointments = [] } = useQuery<AncillaryAppointment[]>({
     queryKey: ["/api/appointments", facility],
     queryFn: async () => {
@@ -275,19 +313,6 @@ export default function OutreachSchedulerPortalPage() {
     refetchInterval: 30_000,
   });
 
-  // Plexus tasks — "My Work" (open/in_progress)
-  const { data: myWorkTasks = [] } = useQuery<PlexusTaskSummary[]>({
-    queryKey: ["/api/plexus/tasks/my-work"],
-    refetchInterval: 60_000,
-  });
-
-  // Urgent tasks — all non-closed urgent tasks (poll every 30s)
-  const { data: urgentTasks = [] } = useQuery<PlexusTaskSummary[]>({
-    queryKey: ["/api/plexus/tasks/urgent"],
-    refetchInterval: 30_000,
-  });
-
-  // Current user + users list (for TaskDrawer)
   const { data: currentUser } = useQuery<AuthUser>({
     queryKey: ["/api/auth/me"],
     staleTime: 5 * 60 * 1000,
@@ -298,6 +323,14 @@ export default function OutreachSchedulerPortalPage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: myWorkTasks = [] } = useQuery<PlexusTaskSummary[]>({
+    queryKey: ["/api/plexus/tasks/my-work"],
+    refetchInterval: 60_000,
+  });
+  const { data: urgentTasks = [] } = useQuery<PlexusTaskSummary[]>({
+    queryKey: ["/api/plexus/tasks/urgent"],
+    refetchInterval: 30_000,
+  });
   const { data: unreadPerTask = [] } = useQuery<{ taskId: number; unreadCount: number }[]>({
     queryKey: ["/api/plexus/tasks/unread-per-task"],
     refetchInterval: 60_000,
@@ -305,41 +338,117 @@ export default function OutreachSchedulerPortalPage() {
 
   const unreadTaskIds = useMemo(() => {
     const s = new Set<number>();
-    for (const u of unreadPerTask) { if (u.unreadCount > 0) s.add(u.taskId); }
+    for (const u of unreadPerTask) if (u.unreadCount > 0) s.add(u.taskId);
     return s;
   }, [unreadPerTask]);
 
-  // Open tasks from my-work
   const openTasks = useMemo(
     () => myWorkTasks.filter((t) => t.status === "open" || t.status === "in_progress"),
     [myWorkTasks],
   );
 
-  // Book appointment
+  // Today's calls for THIS scheduler — drives the header metrics strip.
+  const { data: todayCalls = [] } = useQuery<OutreachCall[]>({
+    queryKey: ["/api/outreach/calls/today", currentUser?.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/outreach/calls/today?schedulerUserId=${encodeURIComponent(currentUser!.id)}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+    enabled: !!currentUser?.id,
+    refetchInterval: 30_000,
+  });
+
+  // Per-patient latest call — used for priority sort + bucket badges.
+  const patientIds = useMemo(() => (card?.callList ?? []).map((p) => p.patientId), [card]);
+
+  const { data: callsByPatient = {} } = useQuery<Record<number, OutreachCall[]>>({
+    queryKey: ["/api/outreach/calls/by-patients", patientIds.join(",")],
+    queryFn: async () => {
+      // Single bulk fetch — server returns { [id]: OutreachCall[] }.
+      const res = await fetch(`/api/outreach/calls/by-patients?ids=${patientIds.join(",")}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to load calls");
+      return res.json();
+    },
+    enabled: patientIds.length > 0,
+    refetchInterval: 60_000,
+  });
+
+  const latestCallByPatient = useMemo(() => {
+    const m = new Map<number, OutreachCall>();
+    for (const [pid, calls] of Object.entries(callsByPatient)) {
+      if (calls.length > 0) m.set(Number(pid), calls[0]);
+    }
+    return m;
+  }, [callsByPatient]);
+
+  // ── Selected patient (Current Call) — URL hash drives selection ────────────
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  useEffect(() => {
+    function readHash() {
+      const h = window.location.hash.replace(/^#/, "");
+      const m = h.match(/^p(\d+)$/);
+      setSelectedId(m ? Number(m[1]) : null);
+    }
+    readHash();
+    window.addEventListener("hashchange", readHash);
+    return () => window.removeEventListener("hashchange", readHash);
+  }, []);
+
+  function selectPatient(patientId: number | null) {
+    if (patientId == null) {
+      window.location.hash = "";
+    } else {
+      window.location.hash = `p${patientId}`;
+    }
+  }
+
+  // ── Mutations ──────────────────────────────────────────────────────────────
   const bookMutation = useMutation({
     mutationFn: async ({ patientName, testType, scheduledTime, patientId }: { patientName: string; testType: string; scheduledTime: string; patientId?: number }) => {
       const scheduledDate = toDateKey(calYear, calMonth, selectedDay!);
       const res = await apiRequest("POST", "/api/appointments", { patientName, facility, scheduledDate, scheduledTime, testType });
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed to book"); }
       const appt = await res.json();
-      let statusUpdateFailed = false;
+      // Persist a "scheduled" call event so call history reflects the booking.
+      // Booking already succeeded — surface (don't swallow) any logging error
+      // as a non-blocking warning toast so the operator can retry if needed.
       if (patientId != null) {
         try {
-          await apiRequest("PATCH", `/api/patients/${patientId}`, { appointmentStatus: "scheduled" });
-        } catch {
-          statusUpdateFailed = true;
+          const callRes = await apiRequest("POST", "/api/outreach/calls", {
+            patientScreeningId: patientId,
+            outcome: "scheduled",
+            notes: `Booked ${testType} on ${scheduledDate} at ${scheduledTime}`,
+            schedulerUserId: currentUser?.id,
+          });
+          if (!callRes.ok) {
+            const e = await callRes.json().catch(() => ({}));
+            toast({
+              title: "Booking saved, but call history not updated",
+              description: e.error || "You may need to log this call manually.",
+              variant: "destructive",
+            });
+          }
+        } catch (err: any) {
+          toast({
+            title: "Booking saved, but call history not updated",
+            description: err?.message || "You may need to log this call manually.",
+            variant: "destructive",
+          });
         }
       }
-      return { appt, statusUpdateFailed };
+      return appt;
     },
-    onSuccess: ({ statusUpdateFailed }) => {
+    onSuccess: () => {
       queryClientLocal.invalidateQueries({ queryKey: ["/api/appointments"] });
       globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
-      if (statusUpdateFailed) {
-        toast({ title: "Appointment booked", description: "Could not auto-update call-list status — please mark manually.", variant: "destructive" });
-      } else {
-        toast({ title: "Appointment booked" });
-      }
+      globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/by-patients"] });
+      globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/today"] });
+      toast({ title: "Appointment booked" });
       setBookSlot(null);
       setBookName("");
       setBookLinkedPatient(null);
@@ -350,7 +459,6 @@ export default function OutreachSchedulerPortalPage() {
     onError: (e: Error) => toast({ title: "Booking failed", description: e.message, variant: "destructive" }),
   });
 
-  // Cancel appointment
   const cancelMutation = useMutation({
     mutationFn: async (id: number) => {
       const res = await apiRequest("PATCH", `/api/appointments/${id}`, { status: "cancelled" });
@@ -364,31 +472,6 @@ export default function OutreachSchedulerPortalPage() {
     onError: (e: Error) => toast({ title: "Cancel failed", description: e.message, variant: "destructive" }),
   });
 
-  // Update call status
-  const updateStatusMutation = useMutation({
-    mutationFn: ({ patientId, appointmentStatus }: { patientId: number; appointmentStatus: string }) =>
-      apiRequest("PATCH", `/api/patients/${patientId}`, { appointmentStatus }),
-    onMutate: ({ patientId }) => setPendingPatientId(patientId),
-    onError: () => toast({ title: "Update failed", description: "Could not save the call outcome.", variant: "destructive" }),
-    onSettled: () => {
-      setPendingPatientId(null);
-      globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
-    },
-  });
-
-  // Save note
-  const saveNoteMutation = useMutation({
-    mutationFn: ({ patientId, notes }: { patientId: number; notes: string }) =>
-      apiRequest("PATCH", `/api/patients/${patientId}`, { notes }),
-    onSuccess: (_data, { patientId }) => {
-      toast({ title: "Note saved" });
-      setExpandedNotes((prev) => { const n = new Set(prev); n.delete(patientId); return n; });
-      globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
-    },
-    onError: () => toast({ title: "Save failed", description: "Could not save the note.", variant: "destructive" }),
-  });
-
-  // Help (add as collaborator)
   const helpMutation = useMutation({
     mutationFn: async (taskId: number) => {
       const res = await apiRequest("POST", `/api/plexus/tasks/${taskId}/collaborators`, { role: "collaborator" });
@@ -402,98 +485,135 @@ export default function OutreachSchedulerPortalPage() {
     onError: (e: Error) => toast({ title: "Could not join task", description: e.message, variant: "destructive" }),
   });
 
-  function toggleDetails(patientId: number) {
-    setExpandedDetails((prev) => {
-      const next = new Set(prev);
-      if (next.has(patientId)) next.delete(patientId);
-      else next.add(patientId);
-      return next;
-    });
-  }
-
-  function toggleNotes(patientId: number, existingNote: string | null) {
-    setExpandedNotes((prev) => {
-      const next = new Set(prev);
-      if (next.has(patientId)) {
-        next.delete(patientId);
-        setNoteDrafts((d) => { const nd = new Map(d); nd.delete(patientId); return nd; });
-      } else {
-        next.add(patientId);
-        setNoteDrafts((d) => { const nd = new Map(d); nd.set(patientId, existingNote ?? ""); return nd; });
-      }
-      return next;
-    });
-  }
-
   function openTaskDrawer(task: PlexusTaskSummary) {
     setTaskDrawerPatientId(task.patientScreeningId ?? 0);
     setTaskDrawerTasks([task]);
     setTaskDrawerPatientName(task.patientName ?? "");
   }
 
+  // ── Derived data ────────────────────────────────────────────────────────────
   const bookedDates = new Set<string>(
     appointments.filter((a) => a.status === "scheduled").map((a) => a.scheduledDate),
   );
-
   const selectedDateStr = selectedDay ? toDateKey(calYear, calMonth, selectedDay) : null;
-  const dayAppointments = selectedDateStr
-    ? appointments.filter((a) => a.scheduledDate === selectedDateStr && a.status === "scheduled")
-    : [];
+  const todayDateStr = toDateKey(today.getFullYear(), today.getMonth(), today.getDate());
+  const todayAppointments = (appointments || [])
+    .filter((a) => a.scheduledDate === todayDateStr && a.status === "scheduled")
+    .sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime));
 
-  const filteredCallList = useMemo(() => {
-    const q = search.trim().toLowerCase();
+  // Search + filter + priority sort.
+  const sortedCallList = useMemo(() => {
     const list = card?.callList ?? [];
-    if (!q) return list;
-    return list.filter(
-      (item) =>
-        item.patientName.toLowerCase().includes(q) ||
-        item.facility.toLowerCase().includes(q) ||
-        item.providerName.toLowerCase().includes(q) ||
-        item.qualifyingTests.join(" ").toLowerCase().includes(q) ||
-        (item.previousTests ?? "").toLowerCase().includes(q) ||
-        item.priorTestHistory.some((p) => p.testName.toLowerCase().includes(q)) ||
-        (item.diagnoses ?? "").toLowerCase().includes(q) ||
-        (item.insurance ?? "").toLowerCase().includes(q),
-    );
-  }, [search, card]);
+    const q = search.trim().toLowerCase();
+    const filtered = list
+      .filter((item) => {
+        if (!q) return true;
+        return (
+          item.patientName.toLowerCase().includes(q) ||
+          item.facility.toLowerCase().includes(q) ||
+          item.providerName.toLowerCase().includes(q) ||
+          item.qualifyingTests.join(" ").toLowerCase().includes(q) ||
+          (item.diagnoses ?? "").toLowerCase().includes(q) ||
+          (item.insurance ?? "").toLowerCase().includes(q)
+        );
+      })
+      .map((item) => {
+        const latest = latestCallByPatient.get(item.patientId);
+        return { item, latest, bucket: bucketForItem(item, latest) };
+      })
+      .filter(({ bucket }) => filter === "all" || bucket === filter)
+      .sort((a, b) => {
+        const r = BUCKET_RANK[a.bucket] - BUCKET_RANK[b.bucket];
+        if (r !== 0) return r;
+        // Callback_due: nearest callback first
+        if (a.bucket === "callback_due" && b.bucket === "callback_due" && a.latest?.callbackAt && b.latest?.callbackAt) {
+          return new Date(a.latest.callbackAt).getTime() - new Date(b.latest.callbackAt).getTime();
+        }
+        return a.item.patientName.localeCompare(b.item.patientName);
+      });
+    return filtered;
+  }, [card, search, filter, latestCallByPatient]);
 
-  const appointmentByPatientName = useMemo(() => {
-    const map = new Map<string, AncillaryAppointment>();
-    for (const a of appointments) {
-      if (a.status !== "scheduled") continue;
-      const key = a.patientName.trim().toLowerCase();
-      if (!map.has(key)) map.set(key, a);
-    }
-    return map;
-  }, [appointments]);
-
-  const bookedCount = useMemo(
-    () => filteredCallList.filter((item) => appointmentByPatientName.has(item.patientName.trim().toLowerCase())).length,
-    [filteredCallList, appointmentByPatientName],
+  const callbacksDue = useMemo(
+    () => sortedCallList.filter((r) => r.bucket === "callback_due").length,
+    [sortedCallList],
   );
 
-  const scheduledCallListNames = useMemo(() => {
-    const names = new Set<string>();
-    for (const item of card?.callList ?? []) {
-      if (item.appointmentStatus?.toLowerCase() === "scheduled") {
-        names.add(item.patientName.trim().toLowerCase());
+  // Auto-select the top-priority patient if nothing is selected yet.
+  useEffect(() => {
+    if (selectedId == null && sortedCallList.length > 0 && !isLoading) {
+      // No-op; let the user click. (Avoid surprise hash changes.)
+    }
+  }, [selectedId, sortedCallList, isLoading]);
+
+  const selectedItem = useMemo(
+    () => (card?.callList ?? []).find((p) => p.patientId === selectedId) ?? null,
+    [card, selectedId],
+  );
+
+  const selectedCalls = selectedId != null ? callsByPatient[selectedId] ?? [] : [];
+
+  // Header metrics for THIS scheduler today.
+  const callsMade = todayCalls.length;
+  const reachedCount = todayCalls.filter((c) =>
+    ["reached", "scheduled", "callback", "declined", "not_interested", "language_barrier"].includes(c.outcome),
+  ).length;
+  const scheduledFromCalls = todayCalls.filter((c) => c.outcome === "scheduled").length;
+  const conversionPct = callsMade === 0 ? 0 : Math.round((scheduledFromCalls / callsMade) * 100);
+
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      const isTyping = tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable;
+      if (e.key === "/" && !isTyping) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (isTyping) return;
+      if (e.key === "?") {
+        setShortcutsOpen(true);
+        return;
+      }
+      if (!selectedItem) return;
+      if (e.key === "d" || e.key === "D") {
+        e.preventDefault();
+        setDispositionOpen(true);
+      } else if (e.key === "s" || e.key === "S") {
+        e.preventDefault();
+        setBookingPanelOpen(true);
+        setCallListBookPatient(selectedItem);
+        setCallListBookTestType(selectedItem.qualifyingTests.some((t) => isBrainWave(t)) ? "BrainWave" : "VitalWave");
+        setCallListBookTime("");
+      } else if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        const idx = sortedCallList.findIndex((r) => r.item.patientId === selectedItem.patientId);
+        const next = sortedCallList[idx + 1] ?? sortedCallList[0];
+        if (next) selectPatient(next.item.patientId);
       }
     }
-    return names;
-  }, [card?.callList]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedItem, sortedCallList]);
 
-  // Patient search in booking dialog — filtered from call list
+  // Booking dialogs derived state
   const bookPatientResults = useMemo(() => {
     const q = bookPatientSearch.trim().toLowerCase();
     const list = card?.callList ?? [];
     if (!q) return list.slice(0, 8);
     return list.filter((p) => p.patientName.toLowerCase().includes(q)).slice(0, 8);
   }, [bookPatientSearch, card]);
-
-  // Effective name for slot booking
   const effectiveBookName = bookLinkedPatient?.patientName ?? bookName;
+  const scheduledCallListNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const item of card?.callList ?? []) {
+      if (item.appointmentStatus?.toLowerCase() === "scheduled") names.add(item.patientName.trim().toLowerCase());
+    }
+    return names;
+  }, [card?.callList]);
 
-  // Loading / not found states
+  // Loading / not-found
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center text-slate-500 text-sm">
@@ -501,7 +621,6 @@ export default function OutreachSchedulerPortalPage() {
       </div>
     );
   }
-
   if (!card) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 text-slate-500 text-sm">
@@ -513,6 +632,7 @@ export default function OutreachSchedulerPortalPage() {
     );
   }
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-6 py-6">
@@ -523,6 +643,14 @@ export default function OutreachSchedulerPortalPage() {
           actions={
             <>
               <HeaderStatusPill />
+              <button
+                type="button"
+                onClick={() => setShortcutsOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[11px] text-white/85 hover:bg-white/20"
+                data-testid="portal-shortcuts-btn"
+              >
+                <Keyboard className="h-3.5 w-3.5" /> Shortcuts
+              </button>
               <Link href="/outreach">
                 <HeaderPill icon={<ArrowLeft className="w-3.5 h-3.5" />}>Back to Outreach</HeaderPill>
               </Link>
@@ -530,414 +658,290 @@ export default function OutreachSchedulerPortalPage() {
           }
         >
           <p className="mt-2 text-sm text-slate-300/85">
-            {card.totalPatients} patient{card.totalPatients !== 1 ? "s" : ""} today · {card.touchedCount} calls worked · {card.conversionRate}% conversion
+            {card.totalPatients} patient{card.totalPatients !== 1 ? "s" : ""} on the call list today
           </p>
         </CalendarPageHeader>
 
-        {/* Two-panel layout */}
-        <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
+        {/* ── Header metrics strip ────────────────────────────────────── */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="portal-metrics-strip">
+          <MetricTile icon={<Phone className="h-4 w-4" />} label="Calls made today" value={callsMade} accent="bg-blue-50 text-blue-700" />
+          <MetricTile icon={<PhoneCall className="h-4 w-4" />} label="Contacts reached" value={reachedCount} accent="bg-violet-50 text-violet-700" />
+          <MetricTile icon={<CalendarCheck className="h-4 w-4" />} label="Scheduled" value={scheduledFromCalls} accent="bg-emerald-50 text-emerald-700" />
+          <MetricTile icon={<TrendingUp className="h-4 w-4" />} label="Conversion" value={`${conversionPct}%`} accent="bg-amber-50 text-amber-700" badge={callbacksDue > 0 ? `${callbacksDue} callback${callbacksDue !== 1 ? "s" : ""} due` : undefined} />
+        </div>
 
-          {/* ── Left: Calendar panel ─────────────────────────────────── */}
+        {/* ── Main two-pane layout ─────────────────────────────────────── */}
+        <div className="grid gap-5 xl:grid-cols-[420px_1fr]">
+
+          {/* ─── LEFT: Current Call + Today's Schedule + Booking ────── */}
           <div className="flex flex-col gap-4">
-            {/* Mini calendar */}
-            <Card className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-              <div className="mb-4 flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-blue-600" />
-                <h2 className="text-sm font-semibold text-slate-800">Schedule Appointment</h2>
+            {/* Current Call card */}
+            <CurrentCallCard
+              item={selectedItem}
+              latestCall={selectedItem ? latestCallByPatient.get(selectedItem.patientId) : undefined}
+              schedulerName={card.name}
+              facilityName={card.facility}
+              scriptOpen={scriptOpen}
+              setScriptOpen={setScriptOpen}
+              onDisposition={() => setDispositionOpen(true)}
+              onBook={() => {
+                if (!selectedItem) return;
+                setBookingPanelOpen(true);
+                setCallListBookPatient(selectedItem);
+                setCallListBookTestType(selectedItem.qualifyingTests.some((t) => isBrainWave(t)) ? "BrainWave" : "VitalWave");
+                setCallListBookTime("");
+              }}
+              onSkip={() => {
+                if (!selectedItem) return;
+                const idx = sortedCallList.findIndex((r) => r.item.patientId === selectedItem.patientId);
+                const next = sortedCallList[idx + 1] ?? sortedCallList[0];
+                if (next) selectPatient(next.item.patientId);
+              }}
+            />
+
+            {/* Today's Schedule */}
+            <Card className="rounded-3xl border border-white/60 bg-white/85 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+              <div className="mb-3 flex items-center gap-2">
+                <Calendar className="h-4 w-4 text-emerald-600" />
+                <h2 className="text-sm font-semibold text-slate-800">Today's Schedule</h2>
                 <Badge variant="outline" className="ml-auto rounded-full text-[10px] text-slate-500">
-                  {card.facility}
+                  {todayAppointments.length} booked
                 </Badge>
               </div>
-              <MiniCalendar
-                year={calYear}
-                month={calMonth}
-                onPrev={() => {
-                  if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); }
-                  else setCalMonth((m) => m - 1);
-                }}
-                onNext={() => {
-                  if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); }
-                  else setCalMonth((m) => m + 1);
-                }}
-                onSelectDay={setSelectedDay}
-                selectedDay={selectedDay}
-                bookedDates={bookedDates}
-                testIdPrefix="portal-cal"
-              />
-              {selectedDateStr && (
-                <div className="mt-4 border-t border-slate-100 pt-4">
-                  <p className="mb-2 text-xs text-slate-500">Appointments on selected day</p>
-                  {dayAppointments.length === 0 ? (
-                    <p className="text-xs italic text-slate-400">No appointments scheduled</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {dayAppointments.map((a) => (
-                        <div key={a.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
-                          <div>
-                            <span className="font-semibold text-slate-700">{formatTime12(a.scheduledTime)}</span>
-                            <span className="ml-1.5 text-slate-500">{a.patientName}</span>
-                          </div>
-                          <Badge variant="secondary" className={`text-[9px] ${isBrainWave(a.testType) ? "bg-violet-100 text-violet-700" : "bg-rose-100 text-rose-800"}`}>
-                            {isBrainWave(a.testType) ? "BW" : "VW"}
-                          </Badge>
-                        </div>
-                      ))}
+              {todayAppointments.length === 0 ? (
+                <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-6 text-center text-xs italic text-slate-400">
+                  No appointments booked for today yet.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {todayAppointments.map((a) => (
+                    <div
+                      key={a.id}
+                      className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs"
+                      data-testid={`today-appt-${a.id}`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        {isBrainWave(a.testType) ? <Brain className="h-3.5 w-3.5 text-violet-600 shrink-0" /> : <Activity className="h-3.5 w-3.5 text-rose-700 shrink-0" />}
+                        <span className="font-semibold text-slate-700 shrink-0">{formatTime12(a.scheduledTime)}</span>
+                        <span className="truncate text-slate-600">{a.patientName}</span>
+                      </div>
+                      <Badge className={`shrink-0 text-[9px] ${isBrainWave(a.testType) ? "bg-violet-100 text-violet-700" : "bg-rose-100 text-rose-800"}`}>
+                        {isBrainWave(a.testType) ? "BW" : "VW"}
+                      </Badge>
                     </div>
-                  )}
+                  ))}
                 </div>
               )}
             </Card>
 
-            {/* Slot grid */}
-            <Card className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-              {!selectedDay ? (
-                <div className="flex h-28 flex-col items-center justify-center gap-2 text-slate-400">
-                  <Calendar className="h-7 w-7 opacity-40" />
-                  <p className="text-sm">Select a day to view slots</p>
-                </div>
-              ) : (
-                <>
-                  <div className="mb-1 flex items-center gap-2">
-                    <Calendar className="h-4 w-4 text-primary" />
-                    <h3 className="text-sm font-semibold text-slate-800">
-                      {new Date(calYear, calMonth, selectedDay).toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric" })}
-                    </h3>
-                  </div>
-                  <p className="mb-4 text-xs text-slate-500">Click a slot to book · <X className="inline h-3 w-3" /> to cancel</p>
-                  <SlotGrid
-                    appointments={appointments}
-                    selectedDate={selectedDateStr!}
-                    onBook={(slot) => {
-                      setBookSlot(slot);
-                      setBookName("");
-                      setBookLinkedPatient(null);
-                      setBookPatientSearch("");
-                    }}
-                    onCancel={(appt) => setCancelTarget(appt)}
-                    testIdPrefix="portal"
-                    availableLabel="Open"
-                    bwBadgeLabel="1 hr"
-                    vwBadgeLabel="30 min"
-                    truncateWidth="max-w-[80px]"
-                    scrollToSlot={scrollToSlot}
+            {/* Booking calendar — collapsible */}
+            <Card className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+              <button
+                type="button"
+                onClick={() => setBookingPanelOpen((v) => !v)}
+                className="flex w-full items-center gap-2 px-5 py-4 text-left"
+                data-testid="portal-booking-panel-toggle"
+              >
+                <CalendarPlus className="h-4 w-4 text-blue-600" />
+                <span className="text-sm font-semibold text-slate-800">Booking calendar</span>
+                <Badge variant="outline" className="ml-auto rounded-full text-[10px] text-slate-500">
+                  {card.facility}
+                </Badge>
+                {bookingPanelOpen ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+              </button>
+              {bookingPanelOpen && (
+                <div className="border-t border-slate-100 px-5 pb-5 pt-4 space-y-4">
+                  <MiniCalendar
+                    year={calYear}
+                    month={calMonth}
+                    onPrev={() => { if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); } else setCalMonth((m) => m - 1); }}
+                    onNext={() => { if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); } else setCalMonth((m) => m + 1); }}
+                    onSelectDay={setSelectedDay}
+                    selectedDay={selectedDay}
+                    bookedDates={bookedDates}
+                    testIdPrefix="portal-cal"
                   />
-                </>
+                  {selectedDay && (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4 text-primary" />
+                        <h3 className="text-sm font-semibold text-slate-800">
+                          {new Date(calYear, calMonth, selectedDay).toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric" })}
+                        </h3>
+                      </div>
+                      <SlotGrid
+                        appointments={appointments}
+                        selectedDate={selectedDateStr!}
+                        onBook={(slot) => { setBookSlot(slot); setBookName(""); setBookLinkedPatient(null); setBookPatientSearch(""); }}
+                        onCancel={(appt) => setCancelTarget(appt)}
+                        testIdPrefix="portal"
+                        availableLabel="Open"
+                        bwBadgeLabel="1 hr"
+                        vwBadgeLabel="30 min"
+                        truncateWidth="max-w-[80px]"
+                        scrollToSlot={scrollToSlot}
+                      />
+                    </>
+                  )}
+                </div>
               )}
             </Card>
           </div>
 
-          {/* ── Right: Call list ─────────────────────────────────────── */}
-          <Card className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold text-slate-900">Call List</h2>
-                  {bookedCount > 0 && (
-                    <span
-                      className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200"
-                      data-testid="call-list-booked-count"
-                    >
-                      {bookedCount} booked
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-slate-500">Provider shown for ancillary order context.</p>
-              </div>
-              <div className="relative w-full max-w-xs">
+          {/* ─── RIGHT: Call list ──────────────────────────────────── */}
+          <Card className="rounded-3xl border border-white/60 bg-white/85 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl flex flex-col" style={{ maxHeight: "calc(100vh - 220px)" }}>
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              <h2 className="text-lg font-semibold text-slate-900">Call list</h2>
+              <Badge variant="outline" className="rounded-full text-[11px] text-slate-500">
+                {sortedCallList.length} {sortedCallList.length === 1 ? "patient" : "patients"}
+              </Badge>
+              <div className="ml-auto relative w-full max-w-xs">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
+                  ref={searchRef}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search patient, clinic, test…"
+                  placeholder="Search…  (press / )"
                   className="rounded-2xl border-white/60 bg-white/90 pl-9"
                   data-testid="portal-search-input"
                 />
               </div>
             </div>
 
-            {filteredCallList.length === 0 ? (
+            {/* Filter chips */}
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {FILTER_CHIPS.map((c) => {
+                const active = filter === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setFilter(c.id)}
+                    className={[
+                      "rounded-full border px-3 py-1 text-xs font-medium transition",
+                      active
+                        ? "border-indigo-300 bg-indigo-100 text-indigo-700"
+                        : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
+                    ].join(" ")}
+                    data-testid={`portal-filter-${c.id}`}
+                  >
+                    {c.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {sortedCallList.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-10 text-center text-sm text-slate-500">
-                {search.trim()
-                  ? "No patients match this search."
-                  : `No patients scheduled for ${card.name} today.`}
+                {search.trim() ? "No patients match this search." : "No patients in this view."}
               </div>
             ) : (
-              <div className="space-y-3 overflow-y-auto pr-1" style={{ maxHeight: "calc(100vh - 260px)" }}>
-                {filteredCallList.map((item) => {
-                  const isBusy = pendingPatientId === item.patientId && updateStatusMutation.isPending;
-                  const currentStatus = item.appointmentStatus.toLowerCase();
-                  const bookedAppt = appointmentByPatientName.get(item.patientName.trim().toLowerCase()) ?? null;
+              <div className="flex-1 overflow-y-auto pr-1 space-y-2">
+                {sortedCallList.map(({ item, latest, bucket }) => {
+                  const isSelected = selectedId === item.patientId;
+                  const tlOpen = expandedTimeline.has(item.patientId);
+                  const calls = callsByPatient[item.patientId] ?? [];
                   return (
                     <div
                       key={item.id}
-                      className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md"
-                      data-testid={`portal-call-item-${item.patientId}`}
+                      className={[
+                        "rounded-2xl border p-3 transition",
+                        isSelected
+                          ? "border-indigo-300 bg-indigo-50/40 shadow-[0_4px_22px_rgba(79,70,229,0.16)]"
+                          : "border-slate-200/80 bg-white hover:border-indigo-200 hover:bg-indigo-50/20",
+                      ].join(" ")}
+                      data-testid={`portal-call-row-${item.patientId}`}
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
+                      <button
+                        type="button"
+                        onClick={() => selectPatient(item.patientId)}
+                        className="flex w-full items-start gap-3 text-left"
+                      >
+                        <BucketIndicator bucket={bucket} />
+                        <div className="flex-1 min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <SchedulerIcon patientScreeningId={item.patientId} patientName={item.patientName} size="xs" />
-                            <h3 className="text-base font-semibold text-slate-900">{item.patientName}</h3>
-                            <Badge className={`rounded-full border text-xs ${statusBadgeClass(item.appointmentStatus)}`} data-testid={`portal-status-badge-${item.patientId}`}>
+                            <span className="text-sm font-semibold text-slate-900 truncate">{item.patientName}</span>
+                            <Badge className={`rounded-full border text-[10px] ${statusBadgeClass(item.appointmentStatus)}`}>
                               {statusLabel(item.appointmentStatus)}
                             </Badge>
-                            {bookedAppt && (
-                              <button
-                                className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-                                data-testid={`portal-appt-badge-${item.patientId}`}
-                                aria-label={`Jump to booked appointment: ${formatAppointmentBadge(bookedAppt.scheduledDate, bookedAppt.scheduledTime, bookedAppt.testType)}`}
-                                onClick={() => {
-                                  const [y, mo, d] = bookedAppt.scheduledDate.split("-").map(Number);
-                                  setCalYear(y);
-                                  setCalMonth(mo - 1);
-                                  setSelectedDay(d);
-                                  setScrollToSlot({ time: bookedAppt.scheduledTime, testType: bookedAppt.testType });
-                                }}
-                              >
-                                <CalendarCheck className="h-3 w-3 shrink-0" />
-                                Booked: {formatAppointmentBadge(bookedAppt.scheduledDate, bookedAppt.scheduledTime, bookedAppt.testType)}
-                              </button>
+                            {bucket === "callback_due" && latest?.callbackAt && (
+                              <Badge className="rounded-full border bg-amber-100 text-amber-800 border-amber-200 text-[10px]">
+                                Due {formatRelative(latest.callbackAt)}
+                              </Badge>
                             )}
                           </div>
-                          <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
-                            <span className="inline-flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />{item.time}</span>
-                            <span className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5" />{item.facility}</span>
-                            <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{item.phoneNumber}</span>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                            <span className="inline-flex items-center gap-0.5"><Building2 className="h-3 w-3" />{item.facility}</span>
+                            <span>·</span>
+                            <a
+                              href={`tel:${digitsOnly(item.phoneNumber)}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="inline-flex items-center gap-0.5 text-blue-600 hover:underline"
+                              data-testid={`portal-tel-${item.patientId}`}
+                            >
+                              <Phone className="h-3 w-3" />{item.phoneNumber}
+                            </a>
+                            {calls.length > 0 && (
+                              <>
+                                <span>·</span>
+                                <span className="inline-flex items-center gap-0.5">
+                                  <HistoryIcon className="h-3 w-3" />{calls.length} call{calls.length !== 1 ? "s" : ""}
+                                </span>
+                              </>
+                            )}
                           </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 rounded-2xl bg-slate-50 p-3">
-                        <div className="inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
-                          <Stethoscope className="h-3.5 w-3.5" />Provider
-                        </div>
-                        <p className="mt-1 text-sm font-medium text-slate-800">{item.providerName}</p>
-                      </div>
-
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-xs text-slate-600">{item.patientType}</Badge>
-                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-xs text-slate-600">{item.insurance}</Badge>
-                        <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-xs text-slate-600">Batch {item.batchId}</Badge>
-                      </div>
-
-                      {item.qualifyingTests.length > 0 && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {item.qualifyingTests.map((test) => (
-                            <Badge key={`${item.id}-${test}`} className="rounded-full bg-blue-50 text-xs text-blue-700 hover:bg-blue-50">{test}</Badge>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Call outcome actions */}
-                      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                        <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">Outcome</span>
-                        {CALL_OUTCOMES.map(({ value, label, Icon, color }) => {
-                          const isActive = currentStatus === value;
-                          return (
-                            <button
-                              key={value}
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => updateStatusMutation.mutate({ patientId: item.patientId, appointmentStatus: isActive ? "pending" : value })}
-                              className={["inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition", color, isActive ? "ring-2 ring-offset-1 ring-current opacity-100" : "opacity-80", isBusy ? "cursor-not-allowed opacity-50" : "cursor-pointer"].join(" ")}
-                              data-testid={`portal-outcome-${value}-${item.patientId}`}
-                            >
-                              <Icon className="h-3.5 w-3.5" />{label}
-                            </button>
-                          );
-                        })}
-                        {currentStatus !== "pending" && (
-                          <button
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => updateStatusMutation.mutate({ patientId: item.patientId, appointmentStatus: "pending" })}
-                            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500 opacity-70 transition hover:bg-slate-50 hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
-                            data-testid={`portal-outcome-reset-${item.patientId}`}
-                          >
-                            <RotateCcw className="h-3 w-3" />Reset
-                          </button>
-                        )}
-                        <div className="ml-auto flex items-center gap-2">
-                          {currentStatus === "scheduled" ? (
-                            <span
-                              className="inline-flex items-center gap-1.5 rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-medium text-green-700 cursor-default"
-                              title="Already scheduled"
-                              data-testid={`portal-book-patient-${item.patientId}`}
-                            >
-                              <CalendarPlus className="h-3.5 w-3.5" />Already Scheduled
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={!selectedDay}
-                              title={selectedDay ? "Book this patient into a slot" : "Select a day on the calendar first"}
-                              onClick={() => {
-                                setCallListBookPatient(item);
-                                setCallListBookTestType(
-                                  item.qualifyingTests.some((t) => isBrainWave(t)) ? "BrainWave" : "VitalWave"
-                                );
-                                setCallListBookTime("");
-                              }}
-                              className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
-                              data-testid={`portal-book-patient-${item.patientId}`}
-                            >
-                              <CalendarPlus className="h-3.5 w-3.5" />Book
-                            </button>
+                          {item.qualifyingTests.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {item.qualifyingTests.slice(0, 4).map((t) => (
+                                <Badge key={`${item.id}-${t}`} className="rounded-full bg-blue-50 text-blue-700 hover:bg-blue-50 text-[10px]">{t}</Badge>
+                              ))}
+                              {item.qualifyingTests.length > 4 && (
+                                <span className="text-[10px] text-slate-400">+{item.qualifyingTests.length - 4} more</span>
+                              )}
+                            </div>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => toggleDetails(item.patientId)}
-                            className={["inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition", expandedDetails.has(item.patientId) ? "border-slate-300 bg-slate-100 text-slate-700" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"].join(" ")}
-                            data-testid={`portal-details-toggle-${item.patientId}`}
-                          >
-                            <FileText className="h-3.5 w-3.5" />
-                            {expandedDetails.has(item.patientId) ? "Hide details" : "Patient details"}
-                            {expandedDetails.has(item.patientId)
-                              ? <ChevronUp className="h-3 w-3" />
-                              : <ChevronDown className="h-3 w-3" />}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => toggleNotes(item.patientId, item.notes)}
-                            className={["inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition", expandedNotes.has(item.patientId) ? "border-blue-200 bg-blue-50 text-blue-700" : item.notes ? "border-violet-200 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"].join(" ")}
-                            data-testid={`portal-notes-toggle-${item.patientId}`}
-                          >
-                            <MessageSquare className="h-3.5 w-3.5" />
-                            {item.notes && !expandedNotes.has(item.patientId) ? "Note" : "Add note"}
-                          </button>
                         </div>
-                      </div>
+                      </button>
 
-                      {expandedDetails.has(item.patientId) && (
-                        <div
-                          className="mt-3 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 sm:grid-cols-2"
-                          data-testid={`portal-details-panel-${item.patientId}`}
-                        >
-                          <div className="rounded-xl border border-white bg-white p-3">
-                            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Demographics</div>
-                            <dl className="mt-1.5 space-y-0.5 text-xs text-slate-700">
-                              <div><span className="text-slate-500">DOB:</span> <span data-testid={`portal-details-dob-${item.patientId}`}>{item.dob ?? "—"}</span>{item.age != null && <span className="ml-1 text-slate-400">({item.age} yo)</span>}</div>
-                              <div><span className="text-slate-500">Gender:</span> {item.gender ?? "—"}</div>
-                              <div><span className="text-slate-500">Insurance:</span> <span data-testid={`portal-details-insurance-${item.patientId}`}>{item.insurance || "—"}</span></div>
-                              <div><span className="text-slate-500">Phone:</span> {item.phoneNumber}</div>
-                            </dl>
-                          </div>
-
-                          <div className="rounded-xl border border-white bg-white p-3">
-                            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                              <ClipboardList className="h-3 w-3" />Diagnoses
-                            </div>
-                            <p className="mt-1.5 whitespace-pre-wrap text-xs text-slate-700" data-testid={`portal-details-diagnoses-${item.patientId}`}>
-                              {item.diagnoses?.trim() || "None recorded"}
-                            </p>
-                          </div>
-
-                          <div className="rounded-xl border border-white bg-white p-3">
-                            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                              <History className="h-3 w-3" />History
-                            </div>
-                            <p className="mt-1.5 whitespace-pre-wrap text-xs text-slate-700" data-testid={`portal-details-history-${item.patientId}`}>
-                              {item.history?.trim() || "None recorded"}
-                            </p>
-                          </div>
-
-                          <div className="rounded-xl border border-white bg-white p-3">
-                            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                              <Pill className="h-3 w-3" />Medications
-                            </div>
-                            <p className="mt-1.5 whitespace-pre-wrap text-xs text-slate-700" data-testid={`portal-details-medications-${item.patientId}`}>
-                              {item.medications?.trim() || "None recorded"}
-                            </p>
-                          </div>
-
-                          <div className="rounded-xl border border-white bg-white p-3 sm:col-span-2">
-                            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                              <CalendarCheck className="h-3 w-3" />Prior Tests
-                            </div>
-                            {item.noPreviousTests && (
-                              <p className="mt-1.5 text-xs italic text-slate-500" data-testid={`portal-details-no-prior-${item.patientId}`}>
-                                Patient reports no prior testing.
-                              </p>
-                            )}
-                            {item.previousTests && (
-                              <p className="mt-1.5 text-xs text-slate-700" data-testid={`portal-details-screening-prev-${item.patientId}`}>
-                                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">From screening: </span>
-                                {item.previousTests}
-                                {item.previousTestsDate && <span className="text-slate-400"> · {item.previousTestsDate}</span>}
-                              </p>
-                            )}
-                            {item.priorTestHistory.length > 0 && (
-                              <ul className="mt-2 space-y-1 text-xs text-slate-700" data-testid={`portal-details-prior-list-${item.patientId}`}>
-                                {item.priorTestHistory.map((p, i) => (
-                                  <li key={`${item.patientId}-prior-${i}`} className="flex flex-wrap items-center gap-2">
-                                    <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-[10px]">{p.testName}</Badge>
-                                    <span className="text-slate-600">{p.dateOfService}</span>
-                                    {p.clinic && <span className="text-slate-400">· {p.clinic}</span>}
-                                    {p.notes && <span className="text-slate-400 italic">— {p.notes}</span>}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            {!item.noPreviousTests && !item.previousTests && item.priorTestHistory.length === 0 && (
-                              <p className="mt-1.5 text-xs italic text-slate-500">No prior tests on file.</p>
-                            )}
-                          </div>
-
-                          {item.reasoning.length > 0 && (
-                            <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3 sm:col-span-2">
-                              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-700">
-                                <Sparkles className="h-3 w-3" />Why this patient qualifies
-                              </div>
-                              <div className="mt-2 space-y-2" data-testid={`portal-details-reasoning-${item.patientId}`}>
-                                {item.reasoning.map((r, i) => (
-                                  <div key={`${item.patientId}-reason-${i}`} className="rounded-lg border border-amber-100 bg-white p-2">
-                                    <div className="text-[11px] font-semibold text-amber-800">{r.testName}</div>
-                                    {r.text && <p className="mt-0.5 text-xs text-slate-700">{r.text}</p>}
-                                    {r.qualifyingFactors && r.qualifyingFactors.length > 0 && (
-                                      <ul className="mt-1 list-disc pl-4 text-[11px] text-slate-600">
-                                        {r.qualifyingFactors.map((q, qi) => <li key={qi}>{q}</li>)}
-                                      </ul>
-                                    )}
-                                    {r.pearls && r.pearls.length > 0 && (
-                                      <p className="mt-1 text-[11px] italic text-slate-500">Pearls: {r.pearls.join("; ")}</p>
-                                    )}
+                      {/* Timeline toggle */}
+                      {calls.length > 0 && (
+                        <div className="mt-2 border-t border-slate-100 pt-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExpandedTimeline((prev) => {
+                                const n = new Set(prev);
+                                n.has(item.patientId) ? n.delete(item.patientId) : n.add(item.patientId);
+                                return n;
+                              });
+                            }}
+                            className="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-700"
+                            data-testid={`portal-timeline-toggle-${item.patientId}`}
+                          >
+                            <HistoryIcon className="h-3 w-3" />
+                            {tlOpen ? "Hide timeline" : `Show timeline (${calls.length})`}
+                            {tlOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                          </button>
+                          {tlOpen && (
+                            <div className="mt-2 space-y-1.5" data-testid={`portal-timeline-${item.patientId}`}>
+                              {calls.map((c) => (
+                                <div key={c.id} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px]">
+                                  <div className="flex items-center gap-2">
+                                    <Badge className={`rounded-full border text-[9px] ${statusBadgeClass(c.outcome)}`}>{c.outcome.replace("_", " ")}</Badge>
+                                    <span className="text-slate-500">{formatRelative(c.startedAt as unknown as string)}</span>
+                                    <span className="ml-auto text-slate-400">attempt #{c.attemptNumber}</span>
                                   </div>
-                                ))}
-                              </div>
+                                  {c.notes && <p className="mt-1 text-slate-600">{c.notes}</p>}
+                                  {c.callbackAt && (
+                                    <p className="mt-0.5 text-amber-700">
+                                      Callback: {new Date(c.callbackAt as unknown as string).toLocaleString()}
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
                             </div>
                           )}
-                        </div>
-                      )}
-
-                      {expandedNotes.has(item.patientId) && (
-                        <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-3">
-                          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Call Note</p>
-                          <Textarea
-                            value={noteDrafts.get(item.patientId) ?? item.notes ?? ""}
-                            onChange={(e) => setNoteDrafts((prev) => { const next = new Map(prev); next.set(item.patientId, e.target.value); return next; })}
-                            placeholder="e.g. Left voicemail, patient asked to call back Tuesday…"
-                            rows={3}
-                            className="resize-none rounded-xl border-blue-200 bg-white text-sm focus-visible:ring-blue-300"
-                            data-testid={`portal-notes-textarea-${item.patientId}`}
-                          />
-                          <div className="mt-2 flex items-center justify-end gap-2">
-                            <button type="button" onClick={() => toggleNotes(item.patientId, item.notes)} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50" data-testid={`portal-notes-cancel-${item.patientId}`}>Cancel</button>
-                            <button
-                              type="button"
-                              disabled={saveNoteMutation.isPending}
-                              onClick={() => saveNoteMutation.mutate({ patientId: item.patientId, notes: (noteDrafts.get(item.patientId) ?? "").trim() })}
-                              className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
-                              data-testid={`portal-notes-save-${item.patientId}`}
-                            >
-                              <Save className="h-3 w-3" />Save note
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {!expandedNotes.has(item.patientId) && item.notes && (
-                        <div className="mt-2 rounded-xl border border-violet-100 bg-violet-50/60 px-3 py-2 text-xs text-violet-800" data-testid={`portal-notes-preview-${item.patientId}`}>
-                          <span className="mr-1 font-medium text-violet-500">Note:</span>{item.notes}
                         </div>
                       )}
                     </div>
@@ -948,14 +952,12 @@ export default function OutreachSchedulerPortalPage() {
           </Card>
         </div>
 
-        {/* ── Bottom: Tasks tile + Urgent panel ──────────────────────── */}
+        {/* ── Tasks tile + Urgent panel ───────────────────────────────── */}
         <div className="grid gap-5 xl:grid-cols-2">
-
-          {/* Tasks tile */}
           <Card className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl" data-testid="portal-tasks-tile">
             <div className="mb-4 flex items-center gap-2">
               <ListTodo className="h-4 w-4 text-violet-600" />
-              <h2 className="text-sm font-semibold text-slate-800">My Open Tasks</h2>
+              <h2 className="text-sm font-semibold text-slate-800">My open tasks</h2>
               {openTasks.length > 0 && (
                 <Badge className="ml-auto rounded-full bg-violet-100 text-violet-700 text-[10px]">{openTasks.length}</Badge>
               )}
@@ -966,54 +968,40 @@ export default function OutreachSchedulerPortalPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {openTasks.map((task) => {
-                  const hasUnread = unreadTaskIds.has(task.id);
-                  return (
-                    <button
-                      key={task.id}
-                      type="button"
-                      onClick={() => openTaskDrawer(task)}
-                      className="flex w-full items-center gap-3 rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-left transition hover:border-violet-200 hover:bg-violet-50/40"
-                      data-testid={`portal-task-item-${task.id}`}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-sm font-medium text-slate-800">{task.title}</span>
-                          {hasUnread && (
-                            <span className="h-2 w-2 shrink-0 rounded-full bg-blue-500" data-testid={`portal-task-unread-${task.id}`} />
-                          )}
-                        </div>
-                        {task.patientName && (
-                          <p className="mt-0.5 truncate text-xs text-slate-500">{task.patientName}</p>
-                        )}
+                {openTasks.map((task) => (
+                  <button
+                    key={task.id}
+                    type="button"
+                    onClick={() => openTaskDrawer(task)}
+                    className="flex w-full items-center gap-3 rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-left transition hover:border-violet-200 hover:bg-violet-50/40"
+                    data-testid={`portal-task-item-${task.id}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium text-slate-800">{task.title}</span>
+                        {unreadTaskIds.has(task.id) && <span className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />}
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        {task.urgency !== "none" && (
-                          <Badge className={`rounded-full border text-[10px] ${urgencyBadgeClass(task.urgency)}`}>
-                            {urgencyShortLabel(task.urgency)}
-                          </Badge>
-                        )}
-                        <Badge variant="outline" className="rounded-full text-[10px] capitalize text-slate-500">
-                          {task.status.replace("_", " ")}
-                        </Badge>
-                      </div>
-                    </button>
-                  );
-                })}
+                      {task.patientName && <p className="mt-0.5 truncate text-xs text-slate-500">{task.patientName}</p>}
+                    </div>
+                    {task.urgency !== "none" && (
+                      <Badge className={`rounded-full border text-[10px] ${urgencyBadgeClass(task.urgency)}`}>
+                        {urgencyShortLabel(task.urgency)}
+                      </Badge>
+                    )}
+                  </button>
+                ))}
               </div>
             )}
           </Card>
 
-          {/* Urgent requests panel */}
           <Card className="rounded-3xl border border-white/60 bg-white/80 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl" data-testid="portal-urgent-panel">
             <button
               type="button"
               onClick={() => setUrgentPanelOpen((v) => !v)}
               className="flex w-full items-center gap-2 px-5 py-4 text-left"
-              data-testid="portal-urgent-panel-toggle"
             >
               <AlertTriangle className="h-4 w-4 text-orange-500" />
-              <span className="text-sm font-semibold text-slate-800">Urgent Requests</span>
+              <span className="text-sm font-semibold text-slate-800">Urgent requests</span>
               {urgentTasks.length > 0 && (
                 <Badge className="rounded-full bg-orange-100 text-orange-700 text-[10px]">{urgentTasks.length}</Badge>
               )}
@@ -1021,7 +1009,6 @@ export default function OutreachSchedulerPortalPage() {
                 {urgentPanelOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
               </span>
             </button>
-
             {urgentPanelOpen && (
               <div className="border-t border-slate-100 px-5 pb-5 pt-3">
                 {urgentTasks.length === 0 ? (
@@ -1036,11 +1023,7 @@ export default function OutreachSchedulerPortalPage() {
                       const timeRemaining = calcTimeRemaining(task.urgency, task.createdAt);
                       const isOverdue = timeRemaining === "Overdue";
                       return (
-                        <div
-                          key={task.id}
-                          className="rounded-2xl border border-orange-100 bg-orange-50/50 p-3"
-                          data-testid={`portal-urgent-item-${task.id}`}
-                        >
+                        <div key={task.id} className="rounded-2xl border border-orange-100 bg-orange-50/50 p-3" data-testid={`portal-urgent-item-${task.id}`}>
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
@@ -1052,15 +1035,9 @@ export default function OutreachSchedulerPortalPage() {
                                 </span>
                               </div>
                               <p className="mt-1 text-sm font-semibold text-slate-800 truncate">{task.title}</p>
-                              {task.patientName && (
-                                <p className="text-xs text-slate-500">Patient: {task.patientName}</p>
-                              )}
-                              {task.description && (
-                                <p className="mt-1 text-xs text-slate-600 line-clamp-2">{task.description}</p>
-                              )}
+                              {task.patientName && <p className="text-xs text-slate-500">Patient: {task.patientName}</p>}
                               <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
-                                <Users className="h-3 w-3" />
-                                <span>Requested by {requester}</span>
+                                <Users className="h-3 w-3" /><span>Requested by {requester}</span>
                               </div>
                             </div>
                             <Button
@@ -1069,7 +1046,6 @@ export default function OutreachSchedulerPortalPage() {
                               className="shrink-0 rounded-xl border-orange-200 bg-white text-orange-700 hover:bg-orange-50 text-xs h-7 px-3"
                               disabled={helpMutation.isPending}
                               onClick={() => helpMutation.mutate(task.id)}
-                              data-testid={`portal-urgent-help-${task.id}`}
                             >
                               Help
                             </Button>
@@ -1085,10 +1061,37 @@ export default function OutreachSchedulerPortalPage() {
         </div>
       </div>
 
-      {/* Book dialog (slot click) */}
+      {/* Disposition slide-over */}
+      <DispositionSheet
+        open={dispositionOpen}
+        onOpenChange={setDispositionOpen}
+        patientId={selectedItem?.patientId ?? null}
+        patientName={selectedItem?.patientName ?? ""}
+        schedulerUserId={currentUser?.id ?? null}
+      />
+
+      {/* Shortcut help dialog */}
+      <Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base flex items-center gap-2">
+              <Keyboard className="h-4 w-4 text-indigo-600" /> Keyboard shortcuts
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-2 text-sm">
+            <ShortcutRow k="D" desc="Open disposition for selected patient" />
+            <ShortcutRow k="N" desc="Move to next patient in queue" />
+            <ShortcutRow k="S" desc="Open booking calendar for selected patient" />
+            <ShortcutRow k="/" desc="Focus the search box" />
+            <ShortcutRow k="?" desc="Show this help" />
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Slot-click booking dialog (existing flow preserved) */}
       <Dialog open={!!bookSlot} onOpenChange={(open) => { if (!open) { setBookSlot(null); setBookLinkedPatient(null); setBookPatientSearch(""); setBookName(""); } }}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle className="text-base">Book Appointment</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-base">Book appointment</DialogTitle></DialogHeader>
           <div className="space-y-3 py-1">
             <div className="flex items-center gap-2 text-sm text-slate-600">
               {bookSlot?.testType === "BrainWave" ? <Brain className="h-4 w-4 text-violet-600" /> : <Activity className="h-4 w-4 text-rose-700" />}
@@ -1103,19 +1106,12 @@ export default function OutreachSchedulerPortalPage() {
               <Calendar className="h-3.5 w-3.5" />
               <span>{selectedDay ? new Date(calYear, calMonth, selectedDay).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : ""}</span>
             </div>
-
-            {/* Patient picker from call list */}
             <div>
               <Label className="text-xs font-medium text-slate-700">Link patient from call list (optional)</Label>
               {bookLinkedPatient ? (
                 <div className="mt-1 flex items-center justify-between rounded-lg border border-violet-200 bg-violet-50 px-3 py-2">
                   <span className="text-sm font-semibold text-violet-800">{bookLinkedPatient.patientName}</span>
-                  <button
-                    type="button"
-                    onClick={() => { setBookLinkedPatient(null); setBookPatientSearch(""); }}
-                    className="text-violet-400 hover:text-violet-700"
-                    data-testid="portal-book-clear-patient"
-                  >
+                  <button type="button" onClick={() => { setBookLinkedPatient(null); setBookPatientSearch(""); }} className="text-violet-400 hover:text-violet-700">
                     <X className="h-4 w-4" />
                   </button>
                 </div>
@@ -1123,24 +1119,12 @@ export default function OutreachSchedulerPortalPage() {
                 <div className="mt-1 space-y-1">
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                    <Input
-                      value={bookPatientSearch}
-                      onChange={(e) => setBookPatientSearch(e.target.value)}
-                      placeholder="Search call list…"
-                      className="pl-8 text-sm h-8 rounded-xl"
-                      data-testid="portal-book-patient-search"
-                    />
+                    <Input value={bookPatientSearch} onChange={(e) => setBookPatientSearch(e.target.value)} placeholder="Search call list…" className="pl-8 text-sm h-8 rounded-xl" />
                   </div>
                   {bookPatientResults.length > 0 && (
                     <div className="max-h-32 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm">
                       {bookPatientResults.map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => { setBookLinkedPatient(p); setBookName(""); setBookPatientSearch(""); }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-violet-50 border-b border-slate-50 last:border-0"
-                          data-testid={`portal-book-pick-patient-${p.patientId}`}
-                        >
+                        <button key={p.id} type="button" onClick={() => { setBookLinkedPatient(p); setBookName(""); setBookPatientSearch(""); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-violet-50 border-b border-slate-50 last:border-0">
                           <span className="font-medium text-slate-800">{p.patientName}</span>
                           <span className="text-slate-400">{p.facility}</span>
                         </button>
@@ -1150,35 +1134,16 @@ export default function OutreachSchedulerPortalPage() {
                 </div>
               )}
             </div>
-
-            {/* Manual name override when no patient selected */}
             {!bookLinkedPatient && (
               <div>
                 <Label htmlFor="portal-book-name" className="text-xs font-medium text-slate-700">Or enter name manually</Label>
-                <Input
-                  id="portal-book-name"
-                  value={bookName}
-                  onChange={(e) => setBookName(e.target.value)}
-                  placeholder="Patient name"
-                  className="mt-1 text-sm"
-                  data-testid="portal-input-book-name"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && effectiveBookName.trim() && bookSlot && !scheduledCallListNames.has(effectiveBookName.trim().toLowerCase()))
-                      bookMutation.mutate({ patientName: effectiveBookName.trim(), testType: bookSlot.testType, scheduledTime: bookSlot.time });
-                  }}
-                />
+                <Input id="portal-book-name" value={bookName} onChange={(e) => setBookName(e.target.value)} placeholder="Patient name" className="mt-1 text-sm" />
               </div>
             )}
-
             {effectiveBookName.trim() && scheduledCallListNames.has(effectiveBookName.trim().toLowerCase()) && (
-              <div
-                className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800"
-                data-testid="portal-book-already-scheduled-warning"
-              >
+              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
                 <CalendarCheck className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                <span>
-                  <span className="font-semibold">{effectiveBookName.trim()}</span> is already marked as scheduled on the call list. Double-booking is not allowed.
-                </span>
+                <span><span className="font-semibold">{effectiveBookName.trim()}</span> is already marked as scheduled.</span>
               </div>
             )}
           </div>
@@ -1188,9 +1153,8 @@ export default function OutreachSchedulerPortalPage() {
               size="sm"
               disabled={!effectiveBookName.trim() || bookMutation.isPending || scheduledCallListNames.has(effectiveBookName.trim().toLowerCase())}
               onClick={() => bookSlot && bookMutation.mutate({ patientName: effectiveBookName.trim(), testType: bookSlot.testType, scheduledTime: bookSlot.time, patientId: bookLinkedPatient?.patientId })}
-              data-testid="portal-button-confirm-book"
             >
-              {bookMutation.isPending ? "Booking…" : "Confirm Booking"}
+              {bookMutation.isPending ? "Booking…" : "Confirm booking"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1199,97 +1163,67 @@ export default function OutreachSchedulerPortalPage() {
       {/* Cancel dialog */}
       <Dialog open={!!cancelTarget} onOpenChange={(open) => !open && setCancelTarget(null)}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle className="text-base">Cancel Appointment</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-base">Cancel appointment</DialogTitle></DialogHeader>
           <p className="text-sm text-slate-600 py-2">
             Cancel <span className="font-semibold">{cancelTarget?.patientName}</span>'s {cancelTarget?.testType} at {cancelTarget ? formatTime12(cancelTarget.scheduledTime) : ""}?
           </p>
           <DialogFooter>
             <Button variant="ghost" size="sm" onClick={() => setCancelTarget(null)}>Keep</Button>
-            <Button size="sm" variant="destructive" disabled={cancelMutation.isPending} onClick={() => cancelTarget && cancelMutation.mutate(cancelTarget.id)} data-testid="portal-button-confirm-cancel">
-              {cancelMutation.isPending ? "Cancelling…" : "Cancel Appointment"}
+            <Button size="sm" variant="destructive" disabled={cancelMutation.isPending} onClick={() => cancelTarget && cancelMutation.mutate(cancelTarget.id)}>
+              {cancelMutation.isPending ? "Cancelling…" : "Cancel appointment"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Call-list quick-book dialog */}
+      {/* Patient quick-book dialog */}
       {callListBookPatient && (() => {
         const slots = callListBookTestType === "BrainWave" ? BW_SLOTS : VW_SLOTS;
         const bookedTimes = new Set(
           appointments
             .filter((a) => a.scheduledDate === selectedDateStr && a.status === "scheduled" && (callListBookTestType === "BrainWave" ? !isVitalWave(a.testType) : isVitalWave(a.testType)))
-            .map((a) => a.scheduledTime)
+            .map((a) => a.scheduledTime),
         );
         return (
           <Dialog open onOpenChange={(open) => !open && setCallListBookPatient(null)}>
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle className="text-base flex items-center gap-2">
-                  <CalendarPlus className="h-4 w-4 text-blue-600" />
-                  Book Appointment
+                  <CalendarPlus className="h-4 w-4 text-blue-600" />Book appointment
                 </DialogTitle>
               </DialogHeader>
               <div className="space-y-4 py-1">
-                {/* Patient name (pre-filled, read-only) */}
                 <div>
                   <Label className="text-xs font-medium text-slate-700">Patient</Label>
-                  <div className="mt-1 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800" data-testid="portal-callbook-patient-name">
+                  <div className="mt-1 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
                     {callListBookPatient.patientName}
                   </div>
                 </div>
-
-                {/* Date */}
                 <div className="flex items-center gap-2 text-xs text-slate-500">
                   <Calendar className="h-3.5 w-3.5" />
-                  <span data-testid="portal-callbook-date">
-                    {selectedDay
-                      ? new Date(calYear, calMonth, selectedDay).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-                      : "No date selected"}
-                  </span>
+                  <span>{selectedDay ? new Date(calYear, calMonth, selectedDay).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : "Pick a date"}</span>
                   <span className="text-slate-300">·</span>
-                  <MapPin className="h-3.5 w-3.5" />
-                  <span>{facility}</span>
+                  <MapPin className="h-3.5 w-3.5" /><span>{facility}</span>
                 </div>
-
-                {/* Test type toggle */}
                 <div>
-                  <Label className="text-xs font-medium text-slate-700">Test Type</Label>
+                  <Label className="text-xs font-medium text-slate-700">Test type</Label>
                   <div className="mt-1.5 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => { setCallListBookTestType("BrainWave"); setCallListBookTime(""); }}
-                      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${callListBookTestType === "BrainWave" ? "border-violet-300 bg-violet-100 text-violet-700 ring-2 ring-violet-300 ring-offset-1" : "border-slate-200 bg-white text-slate-500 hover:bg-violet-50"}`}
-                      data-testid="portal-callbook-type-brainwave"
-                    >
+                    <button type="button" onClick={() => { setCallListBookTestType("BrainWave"); setCallListBookTime(""); }} className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${callListBookTestType === "BrainWave" ? "border-violet-300 bg-violet-100 text-violet-700 ring-2 ring-violet-300 ring-offset-1" : "border-slate-200 bg-white text-slate-500 hover:bg-violet-50"}`}>
                       <Brain className="h-3.5 w-3.5" />BrainWave
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => { setCallListBookTestType("VitalWave"); setCallListBookTime(""); }}
-                      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${callListBookTestType === "VitalWave" ? "border-rose-400 bg-rose-100 text-rose-800 ring-2 ring-rose-400 ring-offset-1" : "border-slate-200 bg-white text-slate-500 hover:bg-rose-50"}`}
-                      data-testid="portal-callbook-type-vitalwave"
-                    >
+                    <button type="button" onClick={() => { setCallListBookTestType("VitalWave"); setCallListBookTime(""); }} className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${callListBookTestType === "VitalWave" ? "border-rose-400 bg-rose-100 text-rose-800 ring-2 ring-rose-400 ring-offset-1" : "border-slate-200 bg-white text-slate-500 hover:bg-rose-50"}`}>
                       <Activity className="h-3.5 w-3.5" />VitalWave
                     </button>
                   </div>
                 </div>
-
-                {/* Time slot picker */}
                 <div>
-                  <Label className="text-xs font-medium text-slate-700">Time Slot</Label>
+                  <Label className="text-xs font-medium text-slate-700">Time slot</Label>
                   <div className="mt-1.5 grid grid-cols-4 gap-1.5 max-h-48 overflow-y-auto pr-1">
                     {slots.map((slot) => {
                       const isBooked = bookedTimes.has(slot);
                       const isSelected = callListBookTime === slot;
                       return (
-                        <button
-                          key={slot}
-                          type="button"
-                          disabled={isBooked}
-                          onClick={() => setCallListBookTime(slot)}
-                          className={`rounded-lg border py-1.5 text-xs font-medium transition ${isBooked ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300" : isSelected ? "border-blue-400 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:bg-blue-50"}`}
-                          data-testid={`portal-callbook-slot-${slot}`}
-                        >
+                        <button key={slot} type="button" disabled={isBooked} onClick={() => setCallListBookTime(slot)} className={`rounded-lg border py-1.5 text-xs font-medium transition ${isBooked ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300" : isSelected ? "border-blue-400 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:bg-blue-50"}`}>
                           {formatTime12(slot)}
                         </button>
                       );
@@ -1302,15 +1236,14 @@ export default function OutreachSchedulerPortalPage() {
                 <Button
                   size="sm"
                   disabled={!callListBookTime || !selectedDay || bookMutation.isPending}
-                  onClick={() => bookMutation.mutate({
+                  onClick={() => callListBookPatient && bookMutation.mutate({
                     patientName: callListBookPatient.patientName,
                     testType: callListBookTestType,
                     scheduledTime: callListBookTime,
                     patientId: callListBookPatient.patientId,
                   })}
-                  data-testid="portal-callbook-confirm"
                 >
-                  {bookMutation.isPending ? "Booking…" : "Confirm Booking"}
+                  {bookMutation.isPending ? "Booking…" : "Book"}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -1324,11 +1257,229 @@ export default function OutreachSchedulerPortalPage() {
           patientScreeningId={taskDrawerPatientId}
           patientName={taskDrawerPatientName}
           tasks={taskDrawerTasks}
-          currentUser={currentUser}
           users={users}
-          onClose={() => { setTaskDrawerPatientId(null); setTaskDrawerTasks([]); setTaskDrawerPatientName(""); }}
+          currentUser={currentUser}
+          onClose={() => setTaskDrawerPatientId(null)}
         />
       )}
     </div>
+  );
+}
+
+// ─── Subcomponents ────────────────────────────────────────────────────────────
+
+function MetricTile({ icon, label, value, accent, badge }: { icon: React.ReactNode; label: string; value: number | string; accent: string; badge?: string }) {
+  return (
+    <div className="rounded-2xl border border-white/60 bg-white/85 px-4 py-3 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl" data-testid={`metric-tile-${label.replace(/\s+/g, "-").toLowerCase()}`}>
+      <div className="flex items-center gap-2">
+        <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full ${accent}`}>{icon}</span>
+        <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">{label}</span>
+      </div>
+      <div className="mt-1 flex items-baseline gap-2">
+        <span className="text-2xl font-semibold text-slate-900">{value}</span>
+        {badge && (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700" data-testid="metric-tile-badge">
+            {badge}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BucketIndicator({ bucket }: { bucket: CallBucket }) {
+  const map: Record<CallBucket, { color: string; label: string }> = {
+    callback_due:  { color: "bg-amber-400",   label: "Callback due" },
+    never_called:  { color: "bg-indigo-400",  label: "New" },
+    no_answer:     { color: "bg-slate-400",   label: "No answer" },
+    contacted:     { color: "bg-blue-400",    label: "Contacted" },
+    scheduled:     { color: "bg-emerald-500", label: "Scheduled" },
+    declined:      { color: "bg-rose-400",    label: "Declined" },
+  };
+  const cfg = map[bucket];
+  return (
+    <span className="mt-1.5 inline-flex h-2.5 w-2.5 shrink-0 rounded-full" title={cfg.label}>
+      <span className={`h-full w-full rounded-full ${cfg.color}`} />
+    </span>
+  );
+}
+
+function ShortcutRow({ k, desc }: { k: string; desc: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-1.5">
+      <span className="text-slate-700">{desc}</span>
+      <kbd className="rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 shadow-sm">{k}</kbd>
+    </div>
+  );
+}
+
+function CurrentCallCard({
+  item,
+  latestCall,
+  schedulerName,
+  facilityName,
+  scriptOpen,
+  setScriptOpen,
+  onDisposition,
+  onBook,
+  onSkip,
+}: {
+  item: OutreachCallItem | null;
+  latestCall: OutreachCall | undefined;
+  schedulerName: string;
+  facilityName: string;
+  scriptOpen: boolean;
+  setScriptOpen: (v: boolean) => void;
+  onDisposition: () => void;
+  onBook: () => void;
+  onSkip: () => void;
+}) {
+  if (!item) {
+    return (
+      <Card className="rounded-3xl border border-white/60 bg-gradient-to-br from-indigo-50 via-white to-blue-50 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <Megaphone className="h-4 w-4 text-indigo-600" />
+          Current call
+        </div>
+        <p className="mt-2 text-sm text-slate-500">
+          Pick a patient from the call list to start working through the queue.
+        </p>
+      </Card>
+    );
+  }
+
+  const primaryTest = item.qualifyingTests[0];
+  const script = primaryTest ? getScriptForTest(primaryTest) : null;
+  return (
+    <Card className="rounded-3xl border border-indigo-200/70 bg-gradient-to-br from-indigo-50 via-white to-blue-50 p-5 shadow-[0_18px_60px_rgba(79,70,229,0.18)] backdrop-blur-xl" data-testid="current-call-card">
+      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-600">
+        <Megaphone className="h-3.5 w-3.5" />
+        Current call
+      </div>
+      <div className="mt-1 flex flex-wrap items-baseline gap-2">
+        <h2 className="text-xl font-semibold text-slate-900">{item.patientName}</h2>
+        <Badge className={`rounded-full border text-[10px] ${statusBadgeClass(item.appointmentStatus)}`}>
+          {statusLabel(item.appointmentStatus)}
+        </Badge>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+        <a
+          href={`tel:${digitsOnly(item.phoneNumber)}`}
+          className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700"
+          data-testid="current-call-tel"
+        >
+          <Phone className="h-3.5 w-3.5" />Call {item.phoneNumber}
+        </a>
+        <span className="inline-flex items-center gap-0.5"><Building2 className="h-3 w-3" />{item.facility}</span>
+        {item.dob && <span>DOB {item.dob}</span>}
+        {item.age != null && <span>· {item.age} y/o</span>}
+      </div>
+
+      <div className="mt-3 rounded-xl bg-white/70 p-3">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 inline-flex items-center gap-1">
+          <Stethoscope className="h-3 w-3" />Provider · {item.providerName}
+        </div>
+        {item.qualifyingTests.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {item.qualifyingTests.map((t) => (
+              <Badge key={`cur-${t}`} className="rounded-full bg-indigo-100 text-indigo-700 hover:bg-indigo-100 text-[11px]">{t}</Badge>
+            ))}
+          </div>
+        )}
+        {(item.diagnoses?.trim() || item.history?.trim()) && (
+          <div className="mt-2 grid gap-2 text-[11px] text-slate-600 sm:grid-cols-2">
+            {item.diagnoses?.trim() && (
+              <div><span className="font-semibold text-slate-500">Dx:</span> <span className="line-clamp-2">{item.diagnoses}</span></div>
+            )}
+            {item.history?.trim() && (
+              <div><span className="font-semibold text-slate-500">Hx:</span> <span className="line-clamp-2">{item.history}</span></div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Scripts */}
+      {script && primaryTest && (
+        <div className="mt-3 rounded-xl border border-indigo-100 bg-white/80 p-3" data-testid="current-call-script">
+          <button
+            type="button"
+            onClick={() => setScriptOpen(!scriptOpen)}
+            className="flex w-full items-center gap-2 text-left"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
+            <span className="text-xs font-semibold text-indigo-700">Script · {primaryTest}</span>
+            <span className="ml-auto text-slate-400">{scriptOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}</span>
+          </button>
+          {scriptOpen && (
+            <div className="mt-2 space-y-2 text-xs text-slate-700">
+              <div className="rounded-lg bg-slate-50 p-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Intro</p>
+                <p className="mt-1 leading-relaxed">
+                  {fillScript(script.intro, {
+                    name: item.patientName.split(" ")[0],
+                    scheduler: schedulerName,
+                    clinic: facilityName,
+                    provider: item.providerName,
+                  })}
+                </p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Why this matters</p>
+                <p className="mt-1 leading-relaxed">{script.whyThisMatters}</p>
+              </div>
+              {script.objections.length > 0 && (
+                <div className="rounded-lg bg-slate-50 p-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">If they say…</p>
+                  <ul className="mt-1 space-y-1">
+                    {script.objections.map((o, i) => (
+                      <li key={i} className="leading-relaxed">
+                        <span className="font-semibold text-slate-600">"{o.objection}"</span> → <span>{o.response}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Last call summary */}
+      {latestCall && (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 p-2.5 text-[11px] text-slate-600">
+          <span className="font-semibold text-slate-500">Last attempt:</span>{" "}
+          <Badge className={`rounded-full border text-[10px] ${statusBadgeClass(latestCall.outcome)}`}>{latestCall.outcome.replace("_", " ")}</Badge>
+          <span className="ml-1">· {formatRelative(latestCall.startedAt as unknown as string)}</span>
+          {latestCall.notes && <p className="mt-1 italic text-slate-500">"{latestCall.notes}"</p>}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="mt-4 flex flex-wrap gap-2 border-t border-indigo-100 pt-3">
+        <Button
+          onClick={onDisposition}
+          className="rounded-full bg-indigo-600 px-4 text-white hover:bg-indigo-700"
+          data-testid="current-call-disposition"
+        >
+          <FileText className="mr-1 h-4 w-4" /> Disposition <kbd className="ml-2 rounded bg-indigo-700 px-1.5 py-0.5 text-[10px]">D</kbd>
+        </Button>
+        <Button
+          variant="outline"
+          onClick={onBook}
+          className="rounded-full border-blue-300 text-blue-700 hover:bg-blue-50"
+          data-testid="current-call-book"
+        >
+          <CalendarPlus className="mr-1 h-4 w-4" /> Book slot <kbd className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px]">S</kbd>
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={onSkip}
+          className="ml-auto rounded-full text-slate-500"
+          data-testid="current-call-next"
+        >
+          Next <ArrowRight className="ml-1 h-4 w-4" /> <kbd className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px]">N</kbd>
+        </Button>
+      </div>
+    </Card>
   );
 }

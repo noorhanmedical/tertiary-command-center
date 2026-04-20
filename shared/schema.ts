@@ -583,3 +583,53 @@ export const insertPtoRequestSchema = createInsertSchema(ptoRequests).omit({
 
 export type PtoRequest = typeof ptoRequests.$inferSelect;
 export type InsertPtoRequest = z.infer<typeof insertPtoRequestSchema>;
+
+// ─── Outreach Calls ──────────────────────────────────────────────────────────
+
+export const OUTREACH_CALL_OUTCOMES = [
+  "reached",
+  "scheduled",
+  "callback",
+  "declined",
+  "not_interested",
+  "language_barrier",
+  "no_answer",
+  "voicemail",
+  "busy",
+  "wrong_number",
+  "deceased",
+] as const;
+export type OutreachCallOutcome = typeof OUTREACH_CALL_OUTCOMES[number];
+
+export const outreachCalls = pgTable("outreach_calls", {
+  id: serial("id").primaryKey(),
+  patientScreeningId: integer("patient_screening_id")
+    .notNull()
+    .references(() => patientScreenings.id, { onDelete: "cascade" }),
+  schedulerUserId: varchar("scheduler_user_id").references(() => users.id, { onDelete: "set null" }),
+  startedAt: timestamp("started_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  outcome: text("outcome").notNull(),
+  notes: text("notes"),
+  callbackAt: timestamp("callback_at"),
+  attemptNumber: integer("attempt_number").notNull().default(1),
+  durationSeconds: integer("duration_seconds"),
+}, (table) => [
+  index("idx_outreach_calls_patient").on(table.patientScreeningId),
+  index("idx_outreach_calls_scheduler").on(table.schedulerUserId),
+  index("idx_outreach_calls_started_at").on(table.startedAt),
+  index("idx_outreach_calls_callback_at").on(table.callbackAt),
+]);
+
+export const insertOutreachCallSchema = createInsertSchema(outreachCalls).omit({
+  id: true,
+  startedAt: true,
+}).extend({
+  outcome: z.enum(OUTREACH_CALL_OUTCOMES),
+  notes: z.string().max(2000).optional().nullable(),
+  callbackAt: z.coerce.date().optional().nullable(),
+  attemptNumber: z.number().int().min(1).optional(),
+  durationSeconds: z.number().int().min(0).max(86_400).optional().nullable(),
+});
+
+export type OutreachCall = typeof outreachCalls.$inferSelect;
+export type InsertOutreachCall = z.infer<typeof insertOutreachCallSchema>;

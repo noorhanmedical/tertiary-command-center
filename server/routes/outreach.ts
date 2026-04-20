@@ -1,8 +1,43 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { storage } from "../storage";
 import { VALID_FACILITIES } from "./helpers";
-import { insertOutreachSchedulerSchema } from "../../shared/schema";
+import {
+  insertOutreachSchedulerSchema,
+  insertOutreachCallSchema,
+  type OutreachCallOutcome,
+} from "../../shared/schema";
 import { buildOutreachDashboard } from "../services/outreachService";
+
+// Map a call outcome to the denormalized appointmentStatus bucket on
+// patient_screenings. Manual booking still owns the canonical "scheduled"
+// state; we never overwrite "scheduled" except when the outcome itself is
+// "scheduled".
+function deriveAppointmentStatus(outcome: OutreachCallOutcome): string {
+  switch (outcome) {
+    case "scheduled":          return "scheduled";
+    case "callback":           return "callback";
+    case "declined":
+    case "not_interested":     return "declined";
+    case "no_answer":
+    case "voicemail":
+    case "busy":               return "no_answer";
+    case "wrong_number":
+    case "deceased":           return "declined";
+    case "language_barrier":   return "callback";
+    case "reached":            return "callback";
+    default:                   return "pending";
+  }
+}
+
+function sessionUserId(req: Request): string | null {
+  const sess = (req as Request & { session?: { userId?: string } }).session;
+  return sess?.userId ?? null;
+}
+
+function sessionRole(req: Request): string | null {
+  const sess = (req as Request & { session?: { role?: string } }).session;
+  return sess?.role ?? null;
+}
 
 export function registerOutreachRoutes(app: Express) {
   app.get("/api/outreach/dashboard", async (_req, res) => {
@@ -65,6 +100,93 @@ export function registerOutreachRoutes(app: Express) {
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── Outreach Calls ─────────────────────────────────────────────────────────
+
+  app.post("/api/outreach/calls", async (req, res) => {
+    try {
+      const userId = sessionUserId(req);
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const parsed = insertOutreachCallSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+      const patient = await storage.getPatientScreening(parsed.data.patientScreeningId);
+      if (!patient) return res.status(404).json({ error: "Patient screening not found" });
+
+      const prior = await storage.listOutreachCallsForPatient(parsed.data.patientScreeningId);
+      const attemptNumber = parsed.data.attemptNumber ?? prior.length + 1;
+      const desiredStatus = deriveAppointmentStatus(parsed.data.outcome);
+
+      // Atomic: insert call + conditional status update in one transaction.
+      const call = await storage.createOutreachCallAtomic(
+        {
+          ...parsed.data,
+          schedulerUserId: parsed.data.schedulerUserId ?? userId,
+          attemptNumber,
+        },
+        desiredStatus,
+      );
+
+      res.status(201).json(call);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to create call" });
+    }
+  });
+
+  app.get("/api/outreach/calls", async (req, res) => {
+    try {
+      if (!sessionUserId(req)) return res.status(401).json({ error: "Not authenticated" });
+      const patientScreeningIdStr = String(req.query.patientScreeningId ?? "");
+      const patientScreeningId = parseInt(patientScreeningIdStr, 10);
+      if (!Number.isFinite(patientScreeningId)) {
+        return res.status(400).json({ error: "patientScreeningId required" });
+      }
+      const calls = await storage.listOutreachCallsForPatient(patientScreeningId);
+      res.json(calls);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to list calls" });
+    }
+  });
+
+  // Bulk: ?ids=1,2,3 → { [patientScreeningId]: OutreachCall[] }
+  app.get("/api/outreach/calls/by-patients", async (req, res) => {
+    try {
+      if (!sessionUserId(req)) return res.status(401).json({ error: "Not authenticated" });
+      const idsStr = String(req.query.ids ?? "");
+      const ids = idsStr
+        .split(",")
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((n) => Number.isFinite(n));
+      if (ids.length === 0) return res.json({});
+      const all = await storage.listOutreachCallsForPatients(ids);
+      const grouped: Record<number, typeof all> = {};
+      for (const id of ids) grouped[id] = [];
+      for (const c of all) (grouped[c.patientScreeningId] ??= []).push(c);
+      // Calls are already returned ordered desc by startedAt by the storage layer.
+      res.json(grouped);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to list calls" });
+    }
+  });
+
+  app.get("/api/outreach/calls/today", async (req, res) => {
+    try {
+      const sessionId = sessionUserId(req);
+      if (!sessionId) return res.status(401).json({ error: "Not authenticated" });
+      // Only admins may query another scheduler's calls; everyone else is
+      // forced to their own session id (prevents cross-user PII exposure).
+      const requested = String(req.query.schedulerUserId ?? "");
+      const isAdmin = sessionRole(req) === "admin";
+      const userId = (isAdmin && requested) ? requested : sessionId;
+      const today = new Date().toISOString().slice(0, 10);
+      const calls = await storage.listOutreachCallsForSchedulerToday(userId, today);
+      res.json(calls);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to list calls" });
     }
   });
 

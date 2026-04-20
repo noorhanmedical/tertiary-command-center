@@ -10,6 +10,7 @@ import {
   uploadedDocuments,
   ancillaryAppointments,
   outreachSchedulers,
+  outreachCalls,
   ptoRequests,
   analysisJobs,
   plexusProjects,
@@ -37,6 +38,8 @@ import {
   type InsertAncillaryAppointment,
   type OutreachScheduler,
   type InsertOutreachScheduler,
+  type OutreachCall,
+  type InsertOutreachCall,
   type PtoRequest,
   type InsertPtoRequest,
   type AnalysisJob,
@@ -232,6 +235,20 @@ export interface IStorage {
   createOutreachScheduler(record: InsertOutreachScheduler): Promise<OutreachScheduler>;
   updateOutreachScheduler(id: number, updates: Partial<InsertOutreachScheduler>): Promise<OutreachScheduler | undefined>;
   deleteOutreachScheduler(id: number): Promise<OutreachScheduler | undefined>;
+
+  // ── Outreach Calls (persistent call history) ──────────────────────────────
+  createOutreachCall(record: InsertOutreachCall): Promise<OutreachCall>;
+  // Atomic: insert call + (conditionally) update patient appointmentStatus
+  // in a single transaction so concurrent writes can't downgrade a
+  // "scheduled" patient between the SELECT and the UPDATE.
+  createOutreachCallAtomic(
+    record: InsertOutreachCall,
+    desiredStatus: string,
+  ): Promise<OutreachCall>;
+  listOutreachCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]>;
+  listOutreachCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]>;
+  listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]>;
+  latestOutreachCallForPatient(patientScreeningId: number): Promise<OutreachCall | undefined>;
 
   // ── PTO Requests ─────────────────────────────────────────────────────────
   createPtoRequest(record: InsertPtoRequest): Promise<PtoRequest>;
@@ -975,6 +992,79 @@ export class DatabaseStorage implements IStorage {
       .where(eq(outreachSchedulers.id, id))
       .returning();
     return result;
+  }
+
+  async createOutreachCall(record: InsertOutreachCall): Promise<OutreachCall> {
+    const [result] = await db.insert(outreachCalls).values({
+      ...record,
+      callbackAt: record.callbackAt ?? null,
+      durationSeconds: record.durationSeconds ?? null,
+    }).returning();
+    return result;
+  }
+
+  async createOutreachCallAtomic(
+    record: InsertOutreachCall,
+    desiredStatus: string,
+  ): Promise<OutreachCall> {
+    return await db.transaction(async (tx) => {
+      const [call] = await tx.insert(outreachCalls).values({
+        ...record,
+        callbackAt: record.callbackAt ?? null,
+        durationSeconds: record.durationSeconds ?? null,
+      }).returning();
+
+      // SQL-level guard: never downgrade a "scheduled" patient unless the
+      // new status is also "scheduled". This is atomic against concurrent
+      // writers because the predicate runs inside the same transaction.
+      if (desiredStatus === "scheduled") {
+        await tx.update(patientScreenings)
+          .set({ appointmentStatus: desiredStatus })
+          .where(eq(patientScreenings.id, record.patientScreeningId));
+      } else {
+        await tx.update(patientScreenings)
+          .set({ appointmentStatus: desiredStatus })
+          .where(and(
+            eq(patientScreenings.id, record.patientScreeningId),
+            ne(patientScreenings.appointmentStatus, "scheduled"),
+          ));
+      }
+
+      return call;
+    });
+  }
+
+  async listOutreachCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]> {
+    return db.select().from(outreachCalls)
+      .where(eq(outreachCalls.patientScreeningId, patientScreeningId))
+      .orderBy(desc(outreachCalls.startedAt));
+  }
+
+  async listOutreachCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]> {
+    if (patientScreeningIds.length === 0) return [];
+    return db.select().from(outreachCalls)
+      .where(inArray(outreachCalls.patientScreeningId, patientScreeningIds))
+      .orderBy(desc(outreachCalls.startedAt));
+  }
+
+  async listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]> {
+    const startOfDay = new Date(`${todayIso}T00:00:00.000Z`);
+    const endOfDay = new Date(`${todayIso}T23:59:59.999Z`);
+    return db.select().from(outreachCalls)
+      .where(and(
+        eq(outreachCalls.schedulerUserId, schedulerUserId),
+        gte(outreachCalls.startedAt, startOfDay),
+        lte(outreachCalls.startedAt, endOfDay),
+      ))
+      .orderBy(desc(outreachCalls.startedAt));
+  }
+
+  async latestOutreachCallForPatient(patientScreeningId: number): Promise<OutreachCall | undefined> {
+    const [row] = await db.select().from(outreachCalls)
+      .where(eq(outreachCalls.patientScreeningId, patientScreeningId))
+      .orderBy(desc(outreachCalls.startedAt))
+      .limit(1);
+    return row;
   }
 
   async deleteOutreachScheduler(id: number): Promise<OutreachScheduler | undefined> {
