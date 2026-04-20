@@ -52,7 +52,7 @@ export function BatchHeader({
         <div className="flex items-center gap-2">
           <SidebarTrigger data-testid="button-sidebar-toggle" />
           <div>
-            <h1 className="text-base font-bold tracking-tight" data-testid="text-schedule-name">{selectedBatch?.name || "Loading..."}</h1>
+            <h1 className="text-[28px] leading-tight font-bold tracking-tight" data-testid="text-schedule-name">{selectedBatch?.name || "Loading..."}</h1>
             <div className="flex items-center gap-1 mt-0.5">
               <input
                 type="text"

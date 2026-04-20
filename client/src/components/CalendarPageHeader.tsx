@@ -102,7 +102,7 @@ export function CalendarPageHeader({
             </div>
           )}
           <h1
-            className="text-2xl sm:text-3xl font-semibold text-white tracking-tight mt-1"
+            className="text-[28px] sm:text-[32px] leading-tight font-bold text-white tracking-tight mt-1"
             data-testid="text-calendar-header-title"
           >
             {title}

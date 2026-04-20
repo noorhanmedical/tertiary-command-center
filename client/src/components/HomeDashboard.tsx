@@ -74,62 +74,64 @@ export function HomeDashboard({
                 <Activity className="w-9 h-9 text-white" />
               </div>
               <div>
-                <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-foreground" data-testid="text-home-heading">Plexus</h2>
-                <p className="text-sm text-slate-500 dark:text-muted-foreground mt-0.5 tracking-wide uppercase font-medium">Ancillary Screening</p>
+                <h2 className="text-[32px] leading-tight font-bold tracking-tight text-slate-900 dark:text-foreground" data-testid="text-home-heading">Plexus</h2>
+                <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-1 tracking-wider uppercase font-semibold">Ancillary Screening</p>
               </div>
             </div>
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
             <Card
-              className={`group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03] ${isCreatingBatch ? "pointer-events-none opacity-60" : ""}`}
+              className={`glass-tile glass-tile-interactive group cursor-pointer ${isCreatingBatch ? "pointer-events-none opacity-60" : ""}`}
               onClick={onNewSchedule}
               data-testid="tile-new-schedule"
             >
-              <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                {isCreatingBatch ? <Loader2 className="w-14 h-14 text-indigo-500 animate-spin" strokeWidth={1.75} /> : <Plus className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />}
-                <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-new-schedule">New Schedule</span>
+              <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                {isCreatingBatch
+                  ? <Loader2 className="glass-tile-icon w-14 h-14 text-indigo-900 animate-spin" strokeWidth={1.5} />
+                  : <Plus className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
+                <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-new-schedule">New Schedule</span>
               </div>
             </Card>
             <Card
-              className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
+              className="glass-tile glass-tile-interactive group cursor-pointer"
               onClick={() => setLocation("/documents")}
               data-testid="tile-documents"
             >
-              <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                <FileText className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
+              <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                <FileText className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
               </div>
             </Card>
             <Link href="/document-upload">
-              <Card className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]" data-testid="tile-document-upload">
-                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                  <Upload className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                  <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-document-upload">Document Upload</span>
+              <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-document-upload">
+                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                  <Upload className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-document-upload">Document Upload</span>
                 </div>
               </Card>
             </Link>
             <Card
-              className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
+              className="glass-tile glass-tile-interactive group cursor-pointer"
               onClick={onOpenDir}
               data-testid="tile-patient-directory"
             >
-              <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                <Users className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
+              <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                <Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
               </div>
             </Card>
             <Link href="/outreach">
-              <Card className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]" data-testid="tile-outreach">
-                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                  <Phone className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                  <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach">Outreach</span>
+              <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-outreach">
+                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                  <Phone className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach">Outreach</span>
                 </div>
               </Card>
             </Link>
           </div>
 
-          <Card className="rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm mt-4" data-testid="tile-schedule-dashboard-inline">
+          <Card className="glass-tile mt-4" data-testid="tile-schedule-dashboard-inline">
             <div className="p-5">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
@@ -137,8 +139,8 @@ export function HomeDashboard({
                     <CalendarDays className="w-5 h-5 text-blue-600" strokeWidth={1.75} />
                   </div>
                   <div>
-                    <span className="text-base font-bold text-slate-800 dark:text-foreground">Schedule Dashboard</span>
-                    <p className="text-xs text-slate-500">Live clinic schedule</p>
+                    <span className="text-[18px] font-semibold text-slate-800 dark:text-foreground">Schedule Dashboard</span>
+                    <p className="text-[12px] text-slate-500 mt-0.5">Live clinic schedule</p>
                   </div>
                 </div>
                 <Link href="/schedule-dashboard">

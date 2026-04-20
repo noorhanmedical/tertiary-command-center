@@ -186,7 +186,7 @@ export function PatientCard({
   useEffect(() => { setLocalNoPrevTests(patient.noPreviousTests || false); }, [patient.noPreviousTests]);
 
   return (
-    <Card className={`overflow-visible ${isCompleted ? "ring-1 ring-emerald-200 dark:ring-emerald-800" : ""}`} data-testid={`card-patient-${patient.id}`}>
+    <Card className={`glass-tile glass-tile-interactive ${isCompleted ? "ring-1 ring-emerald-200 dark:ring-emerald-800" : ""}`} data-testid={`card-patient-${patient.id}`}>
       <div className="px-4 py-3 flex items-center justify-between gap-2 border-b flex-wrap">
         <div className="flex items-center gap-3">
           <SchedulerIcon patientScreeningId={patient.id} patientName={patient.name} size="xs" />
