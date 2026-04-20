@@ -46,6 +46,7 @@ type CooldownSummary = {
   oneDay: number; oneWeek: number; oneMonth: number;
   totals: { patients: number; clinics: number };
   byClinic: Array<{ clinic: string; oneDay: number; oneWeek: number; oneMonth: number }>;
+  allClinics: string[];
 };
 
 type TestCooldown = {
@@ -108,19 +109,25 @@ export default function PatientDatabasePage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [clinicFilter, setClinicFilter] = useState<string>("");
   const [windowFilter, setWindowFilter] = useState<"" | "1d" | "1w" | "1m">("");
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
   const [openProfileKey, setOpenProfileKey] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
 
   const PAGE_SIZE = 100;
   const rosterQuery = useInfiniteQuery<RosterResponse>({
-    queryKey: ["/api/patients/database", { search, clinic: clinicFilter, cooldownWindow: windowFilter, pageSize: PAGE_SIZE }],
+    queryKey: ["/api/patients/database", { search: debouncedSearch, clinic: clinicFilter, cooldownWindow: windowFilter, pageSize: PAGE_SIZE }],
     initialPageParam: 1,
     queryFn: async ({ pageParam }) => {
       const params = new URLSearchParams();
-      if (search) params.set("search", search);
+      if (debouncedSearch) params.set("search", debouncedSearch);
       if (clinicFilter) params.set("clinic", clinicFilter);
       if (windowFilter) params.set("cooldownWindow", windowFilter);
       params.set("page", String(pageParam ?? 1));
@@ -223,10 +230,14 @@ export default function PatientDatabasePage() {
     onError: (e: unknown) => toast({ title: "Import failed", description: e instanceof Error ? e.message : "Import failed", variant: "destructive" }),
   });
 
-  const allClinics = useMemo(
-    () => mergedRoster.clinicTotals.map((c) => c.clinic),
-    [mergedRoster.clinicTotals],
-  );
+  // Use the unfiltered list of all clinics (from the cooldown summary endpoint)
+  // so the chip row stays stable when the user picks a clinic. Falls back to
+  // the per-page clinicTotals while the summary is loading.
+  const allClinics = useMemo(() => {
+    const fromSummary = summaryQuery.data?.allClinics;
+    if (fromSummary && fromSummary.length > 0) return fromSummary;
+    return mergedRoster.clinicTotals.map((c) => c.clinic);
+  }, [summaryQuery.data?.allClinics, mergedRoster.clinicTotals]);
 
   const totalPatients = mergedRoster.totals.patients;
   const totalClinics = mergedRoster.totals.clinics;
@@ -349,9 +360,24 @@ export default function PatientDatabasePage() {
           {isLoading ? (
             <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : mergedRoster.groups.length === 0 ? (
-            <div className="text-center py-20 text-muted-foreground">
+            <div className="text-center py-20 text-muted-foreground" data-testid="empty-roster">
               <Users className="w-12 h-12 mx-auto mb-4 opacity-30" />
-              <p className="text-base">No patients match your filters.</p>
+              {debouncedSearch || clinicFilter || windowFilter ? (
+                <>
+                  <p className="text-base">No patients match your filters.</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-4"
+                    onClick={() => { setSearch(""); setClinicFilter(""); setWindowFilter(""); }}
+                    data-testid="button-clear-all-filters"
+                  >
+                    Clear filters
+                  </Button>
+                </>
+              ) : (
+                <p className="text-base">No patients yet. Import test history or add a schedule to get started.</p>
+              )}
             </div>
           ) : (
             <div className="space-y-6">

@@ -196,6 +196,7 @@ export function registerPatientDatabaseRoutes(app: Express) {
         oneMonth: dashboard.counts.oneMonth,
         totals: dashboard.totals,
         byClinic: dashboard.byClinic,
+        allClinics: dashboard.allClinics,
       };
       cacheSet(cooldownSummaryCache, cacheKey, payload);
       res.json(payload);

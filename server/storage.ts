@@ -205,7 +205,7 @@ export interface IStorage {
   // test history and generated notes). These let the roster/cooldown
   // endpoints scale without pulling whole tables into Node memory.
   getPatientRosterAggregates(filters?: PatientRosterAggregateFilters): Promise<PatientRosterAggregateResult>;
-  getPatientCooldownDashboard(): Promise<{ totals: PatientGroupTotals; counts: { oneDay: number; oneWeek: number; oneMonth: number }; byClinic: PatientCooldownClinicCount[] }>;
+  getPatientCooldownDashboard(): Promise<{ totals: PatientGroupTotals; counts: { oneDay: number; oneWeek: number; oneMonth: number }; byClinic: PatientCooldownClinicCount[]; allClinics: string[] }>;
   getPatientHistoryImportReport(sampleLimit: number): Promise<{ totalHistoryRows: number; unmatchedCount: number; unmatched: UnmatchedHistoryReportRow[] }>;
   getPatientGroupScreenings(name: string, dob: string | null): Promise<PatientScreening[]>;
   getPatientGroupTestHistory(name: string, dob: string | null): Promise<PatientTestHistory[]>;
@@ -689,6 +689,7 @@ export class DatabaseStorage implements IStorage {
     totals: PatientGroupTotals;
     counts: { oneDay: number; oneWeek: number; oneMonth: number };
     byClinic: PatientCooldownClinicCount[];
+    allClinics: string[];
   }> {
     const result = await db.execute(sql`
       WITH patient_clinic AS (
@@ -748,10 +749,15 @@ export class DatabaseStorage implements IStorage {
             HAVING COUNT(*) FILTER (WHERE days_until <= 30) > 0
             ORDER BY clinic
           ) t
-        ), '[]'::json) AS by_clinic
+        ), '[]'::json) AS by_clinic,
+        COALESCE((
+          SELECT json_agg(clinic ORDER BY (clinic = 'Unassigned'), clinic ASC)
+          FROM (SELECT DISTINCT clinic FROM patient_clinic) c
+        ), '[]'::json) AS all_clinics
     `);
     const row: any = (result.rows as any[])[0] ?? {};
     const byClinic = Array.isArray(row.by_clinic) ? row.by_clinic : [];
+    const allClinics = Array.isArray(row.all_clinics) ? row.all_clinics : [];
     return {
       totals: {
         patients: Number(row.total_patients ?? 0),
@@ -768,6 +774,7 @@ export class DatabaseStorage implements IStorage {
         oneWeek: Number(c.one_week ?? 0),
         oneMonth: Number(c.one_month ?? 0),
       })),
+      allClinics: allClinics.map((c: any) => String(c ?? "Unassigned")),
     };
   }
 
