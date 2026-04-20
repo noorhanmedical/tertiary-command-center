@@ -94,10 +94,42 @@ export function registerSchedulerAssignmentRoutes(app: Express) {
     }
   });
 
+  // POST approve a pending absence-alert proposal — executes the embedded
+  // release+redistribute and resolves the underlying Plexus task. Admin-only.
+  app.post("/api/scheduler-assignments/approve-absence", async (req, res) => {
+    try {
+      if (sessionRole(req) !== "admin") return res.status(403).json({ error: "Admin access required" });
+      const parsed = z.object({
+        taskId: z.number().int().positive(),
+      }).safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      const task = await storage.getTaskById(parsed.data.taskId);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+      if (task.taskType !== "absence_alert") return res.status(400).json({ error: "Not an absence_alert task" });
+      const m = (task.description ?? "").match(/<!--proposal:(\{[\s\S]*?\})-->/);
+      if (!m) return res.status(400).json({ error: "No proposal found in task" });
+      let proposal: { schedulerId?: number; asOfDate?: string };
+      try { proposal = JSON.parse(m[1]); } catch { return res.status(400).json({ error: "Invalid proposal JSON" }); }
+      if (!proposal.schedulerId || !proposal.asOfDate) {
+        return res.status(400).json({ error: "Proposal missing schedulerId/asOfDate" });
+      }
+      const summary = await releaseAndRedistribute(
+        storage,
+        proposal.schedulerId,
+        proposal.asOfDate,
+        "absence_admin_approved",
+      );
+      await storage.updateTask(parsed.data.taskId, { status: "resolved" });
+      res.json({ summary });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Approve failed" });
+    }
+  });
+
   // GET admin dashboard surface — per-scheduler queue depth + today's stats.
   app.get("/api/scheduler-assignments/dashboard", async (req, res) => {
     try {
-      if (!sessionUserId(req)) return res.status(401).json({ error: "Not authenticated" });
+      if (sessionRole(req) !== "admin") return res.status(403).json({ error: "Admin access required" });
       const asOfDate = String(req.query.asOfDate ?? todayIso());
       const [schedulers, assignments, ptoToday] = await Promise.all([
         storage.getOutreachSchedulers(),

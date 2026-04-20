@@ -170,7 +170,8 @@ export async function buildDailyAssignments(
   asOfDate: string,
   baseDailyTarget = DEFAULT_BASE_DAILY_TARGET,
 ): Promise<BuildSummary> {
-  const [schedulers, eligibleAll, existing] = await Promise.all([
+  const [allSchedulers, schedulers, eligibleAll, existingAll] = await Promise.all([
+    storage.getOutreachSchedulers(),
     activeSchedulersForToday(storage, facility, asOfDate),
     gatherEligibleForFacility(storage, facility, asOfDate),
     storage.listActiveSchedulerAssignments({ asOfDate }),
@@ -179,14 +180,25 @@ export async function buildDailyAssignments(
   const eligibleByPatient = new Map<number, EligibleCandidate>();
   for (const c of eligibleAll) eligibleByPatient.set(c.patient.id, c);
 
-  const schedulerIds = new Set(schedulers.map((s) => s.id));
+  const facilitySchedulerIds = new Set(allSchedulers.filter((s) => s.facility === facility).map((s) => s.id));
+  const activeSchedulerIds = new Set(schedulers.map((s) => s.id));
 
-  // Filter existing: keep only those whose patient is still eligible and
-  // whose scheduler is still active today.
+  // FACILITY SCOPING — only consider assignments whose scheduler belongs to
+  // this facility. Releasing rows tied to other facilities' schedulers would
+  // be a cross-facility data corruption bug.
+  const facilityExisting = existingAll.filter((ex) => facilitySchedulerIds.has(ex.schedulerId));
+
+  // Patients with active assignments anywhere (other facility too) must NOT
+  // be re-assigned in this facility's pool.
+  const patientsAssignedElsewhere = new Set(
+    existingAll.filter((ex) => !facilitySchedulerIds.has(ex.schedulerId)).map((ex) => ex.patientScreeningId),
+  );
+
+  // Within facility: keep eligible+still-active pairs, release the rest.
   const keep: SchedulerAssignment[] = [];
   const release: SchedulerAssignment[] = [];
-  for (const ex of existing) {
-    if (eligibleByPatient.has(ex.patientScreeningId) && schedulerIds.has(ex.schedulerId)) {
+  for (const ex of facilityExisting) {
+    if (eligibleByPatient.has(ex.patientScreeningId) && activeSchedulerIds.has(ex.schedulerId)) {
       keep.push(ex);
     } else {
       release.push(ex);
@@ -194,7 +206,9 @@ export async function buildDailyAssignments(
   }
 
   const keptPatients = new Set(keep.map((k) => k.patientScreeningId));
-  const remainingPool = eligibleAll.filter((c) => !keptPatients.has(c.patient.id));
+  const remainingPool = eligibleAll.filter(
+    (c) => !keptPatients.has(c.patient.id) && !patientsAssignedElsewhere.has(c.patient.id),
+  );
   const ranked = rankCandidates(remainingPool, asOfDate);
 
   // Subtract kept-load from each scheduler's capacity before greedy fill.
@@ -303,8 +317,31 @@ export async function releaseAndRedistribute(
   const load = new Map<number, number>();
   for (const a of existingDay) load.set(a.schedulerId, (load.get(a.schedulerId) ?? 0) + 1);
 
+  // URGENT-FIRST: rank released patients by priority before redistributing,
+  // so the most time-sensitive (Tier-1 visit-soon) patients are placed first
+  // when remaining capacity is scarce.
+  const releasedPatients = await Promise.all(
+    released.map(async (r) => {
+      const p = await storage.getPatientScreening(r.patientScreeningId);
+      return { release: r, patient: p };
+    }),
+  );
+  const releasedRanked = releasedPatients
+    .filter((rp): rp is { release: typeof released[number]; patient: PatientScreening } => !!rp.patient)
+    .map((rp) => ({
+      ...rp,
+      _key: priorityKey({
+        patientType: rp.patient.patientType,
+        scheduleDate: null,
+        insurance: rp.patient.insurance,
+        qualifyingTests: rp.patient.qualifyingTests,
+        asOfDate,
+      }).sort,
+    }))
+    .sort((a, b) => comparePriority(a._key, b._key));
+
   let reassigned = 0;
-  for (const r of released) {
+  for (const { release: r } of releasedRanked) {
     let best: OutreachScheduler | null = null;
     let bestRemaining = -1;
     for (const sc of activeToday) {

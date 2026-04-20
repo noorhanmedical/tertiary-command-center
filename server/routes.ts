@@ -14,6 +14,7 @@ import { registerOutreachRoutes } from "./routes/outreach";
 import { registerPtoRoutes } from "./routes/pto";
 import { registerSchedulerAssignmentRoutes } from "./routes/schedulerAssignments";
 import { startAbsenceWatcher } from "./services/absenceWatcher";
+import { startMorningRebuildScheduler } from "./services/morningRebuildScheduler";
 import { registerSettingsRoutes } from "./routes/settings";
 import { registerAppointmentRoutes } from "./routes/appointments";
 import { registerAdminRoutes } from "./routes/admin";
@@ -193,6 +194,7 @@ export async function registerRoutes(
   registerPtoRoutes(app);
   registerSchedulerAssignmentRoutes(app);
   startAbsenceWatcher();
+  startMorningRebuildScheduler();
   registerSettingsRoutes(app);
   registerAppointmentRoutes(app);
   registerAdminRoutes(app);

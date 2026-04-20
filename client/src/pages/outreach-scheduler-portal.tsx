@@ -558,12 +558,28 @@ export default function OutreachSchedulerPortalPage() {
     return Array.from(set).sort();
   }, [card]);
 
+  // ENGINE-DRIVEN OWNERSHIP — when the call-list engine has produced active
+  // assignments for today, the portal honors them as the source of truth for
+  // who owns which patient. This scheduler sees only patients assigned to
+  // them (plus an "Assigned to me" toggle so they can opt back into the full
+  // facility view if they want to help out). When no assignments exist yet
+  // (engine not yet run today), we fall back to the legacy facility list.
+  const myEngineAssignedIds = useMemo(() => {
+    const myId = parseInt(schedulerId, 10);
+    if (!Number.isFinite(myId)) return null;
+    const mine = assignmentRows.filter((a) => a.schedulerId === myId);
+    if (mine.length === 0) return null;
+    return new Set(mine.map((a) => a.patientScreeningId));
+  }, [assignmentRows, schedulerId]);
+
   // Search + clinic + test + bucket filter + priority sort.
   const sortedCallList = useMemo(() => {
     const list = card?.callList ?? [];
     const q = search.trim().toLowerCase();
     const filtered = list
       .filter((item) => {
+        // Engine ownership filter — see myEngineAssignedIds memo above.
+        if (myEngineAssignedIds && !myEngineAssignedIds.has(item.patientId)) return false;
         if (clinicFilter && item.facility !== clinicFilter) return false;
         if (testFilter && !item.qualifyingTests.includes(testFilter)) return false;
         if (!q) return true;
@@ -591,7 +607,7 @@ export default function OutreachSchedulerPortalPage() {
         return a.item.patientName.localeCompare(b.item.patientName);
       });
     return filtered;
-  }, [card, search, filter, clinicFilter, testFilter, latestCallByPatient]);
+  }, [card, search, filter, clinicFilter, testFilter, latestCallByPatient, myEngineAssignedIds]);
 
   // Header badge: "callbacks due in next 30 min" (or already overdue) — global
   // across all patients on the call list, not just the current filtered view.
@@ -619,6 +635,11 @@ export default function OutreachSchedulerPortalPage() {
   );
 
   const selectedCalls = selectedId != null ? callsByPatient[selectedId] ?? [] : [];
+  const selectedAssignment = selectedId != null ? assignmentByPatient.get(selectedId) ?? null : null;
+  const selectedLineageFromName =
+    selectedAssignment?.source === "reassigned" && selectedAssignment.originalSchedulerId
+      ? schedulerNameById.get(selectedAssignment.originalSchedulerId) ?? `#${selectedAssignment.originalSchedulerId}`
+      : null;
 
   // Header metrics for THIS scheduler today.
   const callsMade = todayCalls.length;
@@ -748,6 +769,8 @@ export default function OutreachSchedulerPortalPage() {
               latestCall={selectedItem ? latestCallByPatient.get(selectedItem.patientId) : undefined}
               schedulerName={card.name}
               facilityName={card.facility}
+              lineageFromName={selectedLineageFromName}
+              lineageReason={selectedAssignment?.reason ?? null}
               scriptOpen={scriptOpen}
               setScriptOpen={setScriptOpen}
               onDisposition={() => setDispositionOpen(true)}
@@ -1524,6 +1547,8 @@ function CurrentCallCard({
   latestCall,
   schedulerName,
   facilityName,
+  lineageFromName,
+  lineageReason,
   scriptOpen,
   setScriptOpen,
   onDisposition,
@@ -1534,6 +1559,8 @@ function CurrentCallCard({
   latestCall: OutreachCall | undefined;
   schedulerName: string;
   facilityName: string;
+  lineageFromName: string | null;
+  lineageReason: string | null;
   scriptOpen: boolean;
   setScriptOpen: (v: boolean) => void;
   onDisposition: () => void;
@@ -1567,6 +1594,15 @@ function CurrentCallCard({
         <Badge className={`rounded-full border text-[10px] ${statusBadgeClass(item.appointmentStatus)}`}>
           {statusLabel(item.appointmentStatus)}
         </Badge>
+        {lineageFromName && (
+          <Badge
+            className="rounded-full border bg-violet-50 text-violet-700 border-violet-200 text-[10px]"
+            data-testid="current-call-reassigned-from"
+            title={lineageReason ?? "Reassigned"}
+          >
+            ↩ from {lineageFromName}
+          </Badge>
+        )}
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-600">
         <a
