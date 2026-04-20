@@ -141,33 +141,27 @@ function mountRoutes(app: Express, basePath: string) {
         return res.status(400).json({ error: "patientId must be a number" });
       }
 
-      let docs: Document[];
-      if (surfaceParam) {
-        if (!DOCUMENT_SURFACES.includes(surfaceParam as DocumentSurface)) {
-          return res.status(400).json({ error: `unknown surface: ${surfaceParam}` });
-        }
-        docs = await storage.getDocumentsForSurface(surfaceParam as DocumentSurface, {
-          patientScreeningId: typeof patientScreeningId === "number" ? patientScreeningId : undefined,
-        });
-      } else {
-        const kind = kindParam && DOCUMENT_KINDS.includes(kindParam as DocumentKind)
-          ? (kindParam as DocumentKind)
-          : undefined;
-        docs = await storage.listCurrentDocuments({
-          kind,
-          patientScreeningId: typeof patientScreeningId === "number" ? patientScreeningId : undefined,
-        });
+      if (surfaceParam && !DOCUMENT_SURFACES.includes(surfaceParam as DocumentSurface)) {
+        return res.status(400).json({ error: `unknown surface: ${surfaceParam}` });
       }
+      if (kindParam && !DOCUMENT_KINDS.includes(kindParam as DocumentKind)) {
+        return res.status(400).json({ error: `unknown kind: ${kindParam}` });
+      }
+      const docs = await storage.listCurrentDocuments({
+        surface: surfaceParam ? (surfaceParam as DocumentSurface) : undefined,
+        kind: kindParam ? (kindParam as DocumentKind) : undefined,
+        patientScreeningId: typeof patientScreeningId === "number" ? patientScreeningId : undefined,
+      });
       const shaped = await Promise.all(docs.map((d) => shapeDocument(d, basePath)));
 
       // ── Backward-compat adapter ───────────────────────────────────────
-      // If the caller is asking about the patient_chart surface (or simply
-      // the patient_chart kind has no other library entries yet), fold any
-      // matching legacy `uploaded_documents` rows in so existing data isn't
-      // invisible to the library. This is a read-only adapter — it never
-      // copies rows into the new tables.
-      const wantsPatientChart = surfaceParam === "patient_chart" || (!surfaceParam && !!patientIdParam);
-      if (wantsPatientChart) {
+      // Legacy `uploaded_documents` rows only carry a `patientName` string,
+      // not a `patientScreeningId`, so they cannot be safely scoped to a
+      // single chart. To avoid leaking documents across patients, only fold
+      // them in when no `patientId` is given AND the caller is explicitly
+      // asking for the patient_chart surface (i.e. an admin browsing all
+      // patient documents). Patient-specific reads omit them entirely.
+      if (!patientIdParam && surfaceParam === "patient_chart") {
         const legacyRows = await db.select().from(uploadedDocuments)
           .where(eq(uploadedDocuments.isTest, false))
           .orderBy(desc(uploadedDocuments.uploadedAt))
@@ -206,6 +200,8 @@ function mountRoutes(app: Express, basePath: string) {
     try {
       const id = parseInt(req.params.id, 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
+      const head = await storage.getDocument(id);
+      if (!head || head.deletedAt !== null) return res.status(404).json({ error: "Not found" });
       const chain = await storage.getDocumentVersionChain(id);
       const shaped = await Promise.all(chain.map((d) => shapeDocument(d, basePath)));
       res.json(shaped);
@@ -220,6 +216,8 @@ function mountRoutes(app: Express, basePath: string) {
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
       const doc = await storage.getDocument(id);
       if (!doc) return res.status(404).json({ error: "Not found" });
+      // Soft-deleted docs must not be retrievable by direct id either.
+      if (doc.deletedAt !== null) return res.status(404).json({ error: "Not found" });
 
       const blob = await getLatestBlobForOwner("library_document", doc.id);
       if (!blob) return res.status(404).json({ error: "File not found" });

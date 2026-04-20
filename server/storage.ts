@@ -1735,49 +1735,51 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  // Returns only "current" documents (i.e. not yet superseded and not
-  // soft-deleted). Optional filters: kind, patientScreeningId. Surface
-  // filtering is done via getDocumentsForSurface.
+  // Returns "current" documents (not superseded, not soft-deleted) matching
+  // the supplied filters. `kind`, `surface` and `patientScreeningId` are
+  // additive — any combination is supported server-side. Patient-scoped
+  // docs are excluded by default; they only appear when `patientScreeningId`
+  // is explicitly provided.
   async listCurrentDocuments(filters?: {
     kind?: DocumentKind;
-    patientScreeningId?: number | null;
+    surface?: DocumentSurface;
+    patientScreeningId?: number;
   }): Promise<Document[]> {
     const conditions = [
       sql`${documents.supersededByDocumentId} IS NULL`,
       sql`${documents.deletedAt} IS NULL`,
     ];
     if (filters?.kind) conditions.push(eq(documents.kind, filters.kind));
-    if (filters?.patientScreeningId === null) {
-      conditions.push(sql`${documents.patientScreeningId} IS NULL`);
-    } else if (typeof filters?.patientScreeningId === "number") {
+    if (typeof filters?.patientScreeningId === "number") {
       conditions.push(eq(documents.patientScreeningId, filters.patientScreeningId));
+    } else {
+      // Default: hide patient-scoped docs from general/library reads.
+      conditions.push(sql`${documents.patientScreeningId} IS NULL`);
+    }
+    if (filters?.surface) {
+      const rows = await db
+        .select({ doc: documents })
+        .from(documentSurfaceAssignments)
+        .innerJoin(documents, eq(documents.id, documentSurfaceAssignments.documentId))
+        .where(and(eq(documentSurfaceAssignments.surface, filters.surface), ...conditions))
+        .orderBy(desc(documents.createdAt));
+      return rows.map((r) => r.doc);
     }
     return db.select().from(documents)
       .where(and(...conditions))
       .orderBy(desc(documents.createdAt));
   }
 
+  // Thin wrapper kept for callers that only care about a single surface.
   async getDocumentsForSurface(
     surface: DocumentSurface,
-    opts?: { patientScreeningId?: number | null },
+    opts?: { patientScreeningId?: number; kind?: DocumentKind },
   ): Promise<Document[]> {
-    const conditions = [
-      eq(documentSurfaceAssignments.surface, surface),
-      sql`${documents.supersededByDocumentId} IS NULL`,
-      sql`${documents.deletedAt} IS NULL`,
-    ];
-    if (opts?.patientScreeningId === null) {
-      conditions.push(sql`${documents.patientScreeningId} IS NULL`);
-    } else if (typeof opts?.patientScreeningId === "number") {
-      conditions.push(eq(documents.patientScreeningId, opts.patientScreeningId));
-    }
-    const rows = await db
-      .select({ doc: documents })
-      .from(documentSurfaceAssignments)
-      .innerJoin(documents, eq(documents.id, documentSurfaceAssignments.documentId))
-      .where(and(...conditions))
-      .orderBy(desc(documents.createdAt));
-    return rows.map((r) => r.doc);
+    return this.listCurrentDocuments({
+      surface,
+      kind: opts?.kind,
+      patientScreeningId: opts?.patientScreeningId,
+    });
   }
 
   // Walks the supersededBy chain backwards to find every prior version of a
