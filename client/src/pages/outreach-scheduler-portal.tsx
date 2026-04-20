@@ -304,7 +304,6 @@ export default function OutreachSchedulerPortalPage() {
   const [taskDrawerPatientId, setTaskDrawerPatientId] = useState<number | null>(null);
   const [taskDrawerTasks, setTaskDrawerTasks] = useState<PlexusTaskSummary[]>([]);
   const [taskDrawerPatientName, setTaskDrawerPatientName] = useState<string>("");
-  const [urgentPanelOpen, setUrgentPanelOpen] = useState(true);
 
   const { toast } = useToast();
   const queryClientLocal = useQueryClient();
@@ -754,11 +753,11 @@ export default function OutreachSchedulerPortalPage() {
           </p>
         </CalendarPageHeader>
 
-        {/* ── Cockpit grid: left tools | center playing field | right calls+tasks ── */}
-        <div className="grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)_400px]">
+        {/* ── Cockpit grid: 25% / 50% / 25% — exactly three flat panels ── */}
+        <div className="grid gap-5 xl:grid-cols-[1fr_2fr_1fr]">
 
-          {/* ─── LEFT RAIL: combined Tools panel (Schedule + Calling) ─── */}
-          <div className="flex flex-col gap-4">
+          {/* ─── LEFT PANEL: Today's schedule + Calling tools + Booking calendar ─── */}
+          <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden divide-y divide-slate-100/80 self-start">
             <ToolsPanel
               facility={card.facility}
               todayAppointments={todayAppointments}
@@ -784,9 +783,9 @@ export default function OutreachSchedulerPortalPage() {
             />
           </div>
 
-          {/* ─── CENTER PLAYING FIELD: Metrics + Current call + AI bar + Mission control ─── */}
-          <div className="flex flex-col gap-4 min-w-0">
-            {/* Sticky top-center metrics pill */}
+          {/* ─── CENTER PANEL: Active patient + AI co-pilot + Mission control (sticky metrics float above) ─── */}
+          <div className="min-w-0 flex flex-col gap-4">
+            {/* Sticky top-center metrics pill — floats above the panel */}
             <div className="sticky top-2 z-20 flex justify-center">
               <FloatingMetricsTile
                 callsMade={callsMade}
@@ -797,6 +796,7 @@ export default function OutreachSchedulerPortalPage() {
               />
             </div>
 
+            <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden divide-y divide-slate-100/80">
             <CurrentCallCard
               item={selectedItem}
               latestCall={selectedItem ? latestCallByPatient.get(selectedItem.patientId) : undefined}
@@ -850,11 +850,12 @@ export default function OutreachSchedulerPortalPage() {
                 if (next) selectPatient(next.item.patientId);
               }}
             />
+            </div>
           </div>
 
-          {/* ─── RIGHT COLUMN: Call list (top) + Tasks (bottom) ────── */}
-          <div className="flex flex-col gap-4 min-w-0" style={{ maxHeight: "calc(100vh - 220px)" }}>
-            <Card className="rounded-3xl border border-white/60 bg-white/85 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl flex flex-col flex-1 min-h-0">
+          {/* ─── RIGHT PANEL: Call list + Tasks (Urgent folded in) ────── */}
+          <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden divide-y divide-slate-100/80 flex flex-col min-w-0" style={{ maxHeight: "calc(100vh - 220px)" }}>
+            <div className="px-5 pt-5 pb-4 flex flex-col flex-1 min-h-0">
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <h2 className="text-lg font-semibold text-slate-900">Call list</h2>
               <Badge variant="outline" className="rounded-full text-[11px] text-slate-500">
@@ -1139,11 +1140,59 @@ export default function OutreachSchedulerPortalPage() {
                 })}
               </div>
             )}
-          </Card>
+          </div>
 
-          {/* Right-bottom: Tasks (My Work) */}
-          <Card className="rounded-3xl border border-white/60 bg-white/80 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl shrink-0" data-testid="portal-tasks-tile">
-            <div className="mb-4 flex items-center gap-2">
+          {/* Tasks section — Urgent items folded inline at top, then My open tasks */}
+          <div className="px-5 py-4 shrink-0" data-testid="portal-tasks-tile">
+            {urgentTasks.length > 0 && (
+              <div className="mb-4" data-testid="portal-urgent-panel">
+                <div className="mb-2 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-orange-500" />
+                  <h2 className="text-sm font-semibold text-slate-800">Urgent requests</h2>
+                  <Badge className="ml-auto rounded-full bg-orange-100 text-orange-700 text-[10px]">{urgentTasks.length}</Badge>
+                </div>
+                <div className="space-y-2">
+                  {urgentTasks.map((task) => {
+                    const userMap = new Map<string, UserEntry>(users.map((u) => [u.id, u]));
+                    const requester = task.createdByUserId ? (userMap.get(task.createdByUserId)?.username ?? task.createdByUserId) : "Unknown";
+                    const timeRemaining = calcTimeRemaining(task.urgency, task.createdAt);
+                    const isOverdue = timeRemaining === "Overdue";
+                    return (
+                      <div key={task.id} className="rounded-2xl border border-orange-100 bg-orange-50/50 p-3" data-testid={`portal-urgent-item-${task.id}`}>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge className={`rounded-full border text-[10px] ${urgencyBadgeClass(task.urgency)}`}>
+                                {urgencyShortLabel(task.urgency)}
+                              </Badge>
+                              <span className={`text-xs font-medium ${isOverdue ? "text-red-600" : "text-orange-700"}`}>
+                                <Clock className="inline h-3 w-3 mr-0.5" />{timeRemaining}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-sm font-semibold text-slate-800 truncate">{task.title}</p>
+                            {task.patientName && <p className="text-xs text-slate-500">Patient: {task.patientName}</p>}
+                            <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
+                              <Users className="h-3 w-3" /><span>Requested by {requester}</span>
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="shrink-0 rounded-xl border-orange-200 bg-white text-orange-700 hover:bg-orange-50 text-xs h-7 px-3"
+                            disabled={helpMutation.isPending}
+                            onClick={() => helpMutation.mutate(task.id)}
+                          >
+                            Help
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="mb-3 flex items-center gap-2">
               <ListTodo className="h-4 w-4 text-violet-600" />
               <h2 className="text-sm font-semibold text-slate-800">My open tasks</h2>
               {openTasks.length > 0 && (
@@ -1180,72 +1229,7 @@ export default function OutreachSchedulerPortalPage() {
                 ))}
               </div>
             )}
-          </Card>
-
-          <Card className="rounded-3xl border border-white/60 bg-white/80 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl" data-testid="portal-urgent-panel">
-            <button
-              type="button"
-              onClick={() => setUrgentPanelOpen((v) => !v)}
-              className="flex w-full items-center gap-2 px-5 py-4 text-left"
-            >
-              <AlertTriangle className="h-4 w-4 text-orange-500" />
-              <span className="text-sm font-semibold text-slate-800">Urgent requests</span>
-              {urgentTasks.length > 0 && (
-                <Badge className="rounded-full bg-orange-100 text-orange-700 text-[10px]">{urgentTasks.length}</Badge>
-              )}
-              <span className="ml-auto text-slate-400">
-                {urgentPanelOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </span>
-            </button>
-            {urgentPanelOpen && (
-              <div className="border-t border-slate-100 px-5 pb-5 pt-3">
-                {urgentTasks.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-400">
-                    No urgent requests at this time
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {urgentTasks.map((task) => {
-                      const userMap = new Map<string, UserEntry>(users.map((u) => [u.id, u]));
-                      const requester = task.createdByUserId ? (userMap.get(task.createdByUserId)?.username ?? task.createdByUserId) : "Unknown";
-                      const timeRemaining = calcTimeRemaining(task.urgency, task.createdAt);
-                      const isOverdue = timeRemaining === "Overdue";
-                      return (
-                        <div key={task.id} className="rounded-2xl border border-orange-100 bg-orange-50/50 p-3" data-testid={`portal-urgent-item-${task.id}`}>
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Badge className={`rounded-full border text-[10px] ${urgencyBadgeClass(task.urgency)}`}>
-                                  {urgencyShortLabel(task.urgency)}
-                                </Badge>
-                                <span className={`text-xs font-medium ${isOverdue ? "text-red-600" : "text-orange-700"}`}>
-                                  <Clock className="inline h-3 w-3 mr-0.5" />{timeRemaining}
-                                </span>
-                              </div>
-                              <p className="mt-1 text-sm font-semibold text-slate-800 truncate">{task.title}</p>
-                              {task.patientName && <p className="text-xs text-slate-500">Patient: {task.patientName}</p>}
-                              <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
-                                <Users className="h-3 w-3" /><span>Requested by {requester}</span>
-                              </div>
-                            </div>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="shrink-0 rounded-xl border-orange-200 bg-white text-orange-700 hover:bg-orange-50 text-xs h-7 px-3"
-                              disabled={helpMutation.isPending}
-                              onClick={() => helpMutation.mutate(task.id)}
-                            >
-                              Help
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-          </Card>
+          </div>
           </div>
         </div>
       </div>
@@ -1532,22 +1516,22 @@ function CurrentCallCard({
 }) {
   if (!item) {
     return (
-      <Card className="rounded-3xl border border-white/60 bg-gradient-to-br from-indigo-50 via-white to-blue-50 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-        <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-          <Megaphone className="h-4 w-4 text-indigo-600" />
+      <div className="px-5 py-5 bg-gradient-to-br from-indigo-50/60 via-transparent to-blue-50/40">
+        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-600">
+          <Megaphone className="h-3.5 w-3.5" />
           Current call
         </div>
         <p className="mt-2 text-sm text-slate-500">
           Pick a patient from the call list to start working through the queue.
         </p>
-      </Card>
+      </div>
     );
   }
 
   const primaryTest = item.qualifyingTests[0];
   const script = primaryTest ? getScriptForTest(primaryTest) : null;
   return (
-    <Card className="rounded-3xl border border-indigo-200/70 bg-gradient-to-br from-indigo-50 via-white to-blue-50 p-5 shadow-[0_18px_60px_rgba(79,70,229,0.18)] backdrop-blur-xl" data-testid="current-call-card">
+    <div className="px-5 py-5 bg-gradient-to-br from-indigo-50/60 via-transparent to-blue-50/40" data-testid="current-call-card">
       <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-600">
         <Megaphone className="h-3.5 w-3.5" />
         Current call
@@ -1703,7 +1687,7 @@ function CurrentCallCard({
       )}
 
       {/* Actions */}
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-indigo-100 pt-3">
+      <div className="mt-4 flex flex-wrap gap-2 border-t border-indigo-100/60 pt-3">
         <Button
           onClick={onDisposition}
           className="rounded-full bg-indigo-600 px-4 text-white hover:bg-indigo-700"
@@ -1728,7 +1712,7 @@ function CurrentCallCard({
           Next <ArrowRight className="ml-1 h-4 w-4" /> <kbd className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px]">N</kbd>
         </Button>
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -1777,8 +1761,8 @@ function MissionControlBar({
   onSkip: () => void;
 }) {
   return (
-    <Card
-      className="rounded-3xl border border-white/60 bg-white/90 p-4 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl"
+    <div
+      className="px-5 py-4"
       data-testid="mission-control-bar"
     >
       <div className="flex flex-wrap items-center gap-3">
@@ -1810,7 +1794,7 @@ function MissionControlBar({
           </Button>
         </div>
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -1915,8 +1899,8 @@ function AiBar({
   };
 
   return (
-    <Card
-      className="rounded-3xl border border-indigo-200/60 bg-gradient-to-br from-indigo-50/60 via-white to-white p-4 shadow-[0_18px_60px_rgba(79,70,229,0.10)] backdrop-blur-xl"
+    <div
+      className="px-5 py-4 bg-gradient-to-br from-indigo-50/40 via-transparent to-transparent"
       data-testid="ai-bar"
     >
       <div className="flex items-center gap-2">
@@ -1979,7 +1963,7 @@ function AiBar({
       {aiError && (
         <p className="mt-2 text-xs text-rose-600" data-testid="ai-bar-error">{aiError}</p>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -2019,9 +2003,9 @@ function ToolsPanel(props: {
   const phone = selectedItem?.phoneNumber ?? "";
 
   return (
-    <Card className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl" data-testid="portal-tools-panel">
+    <div data-testid="portal-tools-panel" className="contents">
       {/* Calling Tools */}
-      <div className="px-5 pt-5">
+      <div className="px-5 pt-5 pb-4">
         <div className="mb-3 flex items-center gap-2">
           <Phone className="h-4 w-4 text-blue-600" />
           <h2 className="text-sm font-semibold text-slate-800">Calling tools</h2>
@@ -2106,10 +2090,8 @@ function ToolsPanel(props: {
         </div>
       </div>
 
-      <div className="my-4 border-t border-slate-100" />
-
       {/* Today's Schedule */}
-      <div className="px-5">
+      <div className="px-5 py-4">
         <div className="mb-3 flex items-center gap-2">
           <Calendar className="h-4 w-4 text-emerald-600" />
           <h2 className="text-sm font-semibold text-slate-800">Today's Schedule</h2>
@@ -2150,11 +2132,11 @@ function ToolsPanel(props: {
       </div>
 
       {/* Booking calendar - collapsible */}
-      <div className="mt-2">
+      <div>
         <button
           type="button"
           onClick={() => setBookingPanelOpen((v) => !v)}
-          className="flex w-full items-center gap-2 px-5 py-3 text-left border-t border-slate-100"
+          className="flex w-full items-center gap-2 px-5 py-3 text-left"
           data-testid="portal-booking-panel-toggle"
         >
           <CalendarPlus className="h-4 w-4 text-blue-600" />
@@ -2163,7 +2145,7 @@ function ToolsPanel(props: {
           {bookingPanelOpen ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
         </button>
         {bookingPanelOpen && (
-          <div className="border-t border-slate-100 px-5 pb-5 pt-3 space-y-3">
+          <div className="px-5 pb-5 pt-1 space-y-3">
             <MiniCalendar
               year={calYear}
               month={calMonth}
@@ -2191,6 +2173,6 @@ function ToolsPanel(props: {
           </div>
         )}
       </div>
-    </Card>
+    </div>
   );
 }
