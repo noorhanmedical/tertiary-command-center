@@ -100,7 +100,10 @@ export async function registerRoutes(
     return res.json({ id: req.session.userId, username: req.session.username, role: req.session.role ?? "clinician" });
   });
 
-  // ─── /api/healthz — pool telemetry (exempt from auth) ─────────────────────
+  // ─── /api/healthz — pool telemetry (exempt from auth, debug-friendly) ────
+  // Liveness/readiness endpoints (/healthz, /readyz) are mounted in index.ts
+  // before session middleware. This one returns pool stats and is intentionally
+  // mounted before the auth gate so operators can curl it without a session.
   app.get("/api/healthz", async (_req, res) => {
     try {
       const { sql } = await import("drizzle-orm");
@@ -203,23 +206,8 @@ export async function registerRoutes(
     console.error("[auth] Failed to seed default admin account:", seedErr.message);
   }
 
-  // ─── Health check (exempt from auth) ──────────────────────────────────────
-  app.get("/healthz", async (_req, res) => {
-    try {
-      const { sql } = await import("drizzle-orm");
-      await db.execute(sql`SELECT 1`);
-      res.json({
-        status: "ok",
-        db: {
-          total: pool.totalCount,
-          idle: pool.idleCount,
-          waiting: pool.waitingCount,
-        },
-      });
-    } catch {
-      res.status(503).json({ status: "error", db: false });
-    }
-  });
+  // Note: /healthz and /readyz are mounted in server/index.ts before session
+  // middleware so they are cheap and unauthenticated for the load balancer.
 
   // ─── User management (admin-only) ─────────────────────────────────────────
   app.get("/api/users", requireAdmin, async (_req, res) => {

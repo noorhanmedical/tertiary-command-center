@@ -1,5 +1,6 @@
 import { storage } from "../storage";
 import { resolveGeneratedNoteFolderId } from "../routes/helpers";
+import { withAdvisoryLock } from "../lib/advisoryLock";
 
 export interface PatientsSyncResult {
   spreadsheetId: string;
@@ -28,9 +29,9 @@ export interface ExportNotesResult {
 export const patientsSyncState = { lastSyncedAt: null as string | null };
 export const billingSyncState = { lastSyncedAt: null as string | null };
 
-const patientsSyncLock = { running: false, pending: false };
-const billingSyncLock = { running: false, pending: false };
-const exportNotesLock = { running: false, pending: false };
+const PATIENTS_SYNC_LOCK = "plexus.sync.patients";
+const BILLING_SYNC_LOCK = "plexus.sync.billing";
+const EXPORT_NOTES_LOCK = "plexus.sync.notes_export";
 
 export async function executeSyncPatients(): Promise<PatientsSyncResult> {
   const { getOrCreateSpreadsheet, upsertSheetData } = await import("../integrations/googleSheets");
@@ -58,23 +59,17 @@ export async function executeSyncPatients(): Promise<PatientsSyncResult> {
 }
 
 export async function runPatientsSyncWithLock(throwOnError: boolean): Promise<PatientsSyncResult | null> {
-  if (patientsSyncLock.running) {
-    patientsSyncLock.pending = true;
-    return null;
-  }
-  patientsSyncLock.running = true;
   try {
-    return await executeSyncPatients();
+    const { acquired, result } = await withAdvisoryLock(PATIENTS_SYNC_LOCK, executeSyncPatients);
+    if (!acquired) {
+      console.log("[sync] patients sync already running on another instance — skipping");
+      return null;
+    }
+    return result;
   } catch (err) {
     if (throwOnError) throw err;
     console.warn("Background patient sync skipped:", (err as Error).message);
     return null;
-  } finally {
-    patientsSyncLock.running = false;
-    if (patientsSyncLock.pending) {
-      patientsSyncLock.pending = false;
-      void runPatientsSyncWithLock(false);
-    }
   }
 }
 
@@ -182,23 +177,17 @@ export async function executeSyncBilling(): Promise<BillingSyncResult> {
 }
 
 export async function runBillingSyncWithLock(throwOnError: boolean): Promise<BillingSyncResult | null> {
-  if (billingSyncLock.running) {
-    billingSyncLock.pending = true;
-    return null;
-  }
-  billingSyncLock.running = true;
   try {
-    return await executeSyncBilling();
+    const { acquired, result } = await withAdvisoryLock(BILLING_SYNC_LOCK, executeSyncBilling);
+    if (!acquired) {
+      console.log("[sync] billing sync already running on another instance — skipping");
+      return null;
+    }
+    return result;
   } catch (err) {
     if (throwOnError) throw err;
     console.warn("Background billing sync skipped:", (err as Error).message);
     return null;
-  } finally {
-    billingSyncLock.running = false;
-    if (billingSyncLock.pending) {
-      billingSyncLock.pending = false;
-      void runBillingSyncWithLock(false);
-    }
   }
 }
 
@@ -264,23 +253,17 @@ export async function executeExportNotes(): Promise<ExportNotesResult> {
 }
 
 export async function runExportNotesWithLock(throwOnError: boolean): Promise<ExportNotesResult | null> {
-  if (exportNotesLock.running) {
-    exportNotesLock.pending = true;
-    return null;
-  }
-  exportNotesLock.running = true;
   try {
-    return await executeExportNotes();
+    const { acquired, result } = await withAdvisoryLock(EXPORT_NOTES_LOCK, executeExportNotes);
+    if (!acquired) {
+      console.log("[sync] notes export already running on another instance — skipping");
+      return null;
+    }
+    return result;
   } catch (err) {
     if (throwOnError) throw err;
     console.warn("Background notes export skipped:", (err as Error).message);
     return null;
-  } finally {
-    exportNotesLock.running = false;
-    if (exportNotesLock.pending) {
-      exportNotesLock.pending = false;
-      void runExportNotesWithLock(false);
-    }
   }
 }
 

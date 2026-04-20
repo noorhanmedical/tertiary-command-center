@@ -4,10 +4,15 @@ import { S3FileStorage } from "./s3FileStorage";
 
 export type { IFileStorage, UploadFileParams, FileUploadResult, FileListItem };
 
-export function getStorageProvider(): "google_drive" | "s3" {
+export type StorageProvider = "google_drive" | "s3";
+
+export function getStorageProvider(): StorageProvider {
   const p = process.env.STORAGE_PROVIDER || "google_drive";
   return p === "s3" ? "s3" : "google_drive";
 }
+
+// Note: production-only `STORAGE_PROVIDER=s3` enforcement lives in
+// `server/lib/validateEnv.ts` (single source of truth, called at boot).
 
 let _instance: IFileStorage | null = null;
 

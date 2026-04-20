@@ -11,6 +11,16 @@ async function ensureDir(dir: string) {
   await fs.mkdir(dir, { recursive: true });
 }
 
+function assertLocalBlobsAllowed() {
+  if (process.env.NODE_ENV === "production" && process.env.STORAGE_PROVIDER !== "s3") {
+    throw new Error(
+      "Refusing to write document blobs to the local filesystem in production. " +
+      "Set STORAGE_PROVIDER=s3 (and AWS_REGION / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / S3_BUCKET_NAME) " +
+      "to enable durable document storage.",
+    );
+  }
+}
+
 export interface SaveBlobInput {
   ownerType: "uploaded_document" | "generated_note" | "test_fixture";
   ownerId: number;
@@ -21,6 +31,7 @@ export interface SaveBlobInput {
 }
 
 export async function saveBlob(input: SaveBlobInput): Promise<DocumentBlob> {
+  assertLocalBlobsAllowed();
   const sha256 = crypto.createHash("sha256").update(input.buffer).digest("hex");
   const subdir = path.join(STORAGE_ROOT, input.ownerType, sha256.slice(0, 2));
   await ensureDir(subdir);

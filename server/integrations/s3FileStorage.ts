@@ -15,17 +15,29 @@ export class S3FileStorage implements IFileStorage {
     const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
     const bucket = process.env.S3_BUCKET_NAME;
 
-    if (!region || !accessKeyId || !secretAccessKey || !bucket) {
+    if (!region || !bucket) {
       throw new Error(
-        "S3 storage provider requires AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and S3_BUCKET_NAME environment variables"
+        "S3 storage provider requires AWS_REGION and S3_BUCKET_NAME. " +
+        "Provide AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY for static credentials, " +
+        "or omit both and run under an IAM task/instance role for the SDK's default credential chain."
+      );
+    }
+
+    if ((accessKeyId && !secretAccessKey) || (!accessKeyId && secretAccessKey)) {
+      throw new Error(
+        "S3 storage provider received only one of AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY — set both or neither."
       );
     }
 
     this.bucket = bucket;
-    this.client = new S3Client({
-      region,
-      credentials: { accessKeyId, secretAccessKey },
-    });
+    // When both keys are set, use them explicitly. Otherwise let the AWS SDK
+    // walk its default credential chain (env → shared file → ECS task role →
+    // EC2 instance role) so ECS Fargate task roles work out of the box.
+    this.client = new S3Client(
+      accessKeyId && secretAccessKey
+        ? { region, credentials: { accessKeyId, secretAccessKey } }
+        : { region }
+    );
   }
 
   async uploadFile({ filename, content, contentType, folder }: UploadFileParams): Promise<FileUploadResult> {
