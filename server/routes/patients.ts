@@ -14,6 +14,7 @@ import {
 import { normalizeInsuranceType } from "../services/ingest";
 import { logAudit } from "../services/auditService";
 import { invalidatePatientDatabase } from "./patientDatabase";
+import { assignNewlyEligiblePatient } from "../services/callListEngine";
 
 type BackgroundSyncPatients = () => void | Promise<void>;
 
@@ -168,6 +169,16 @@ export function registerPatientRoutes(
       });
 
       invalidatePatientDatabase();
+
+      // Mid-day eligibility hook: if this patient just became call-eligible
+      // (status=completed + qualifying tests), slot them into today's
+      // assignment queue without waiting for the next morning rebuild.
+      if (updated && qualTests.length > 0 && updated.facility) {
+        const today = new Date().toISOString().slice(0, 10);
+        assignNewlyEligiblePatient(storage, updated, updated.facility, today)
+          .catch((err) => console.warn("[patients] assignNewlyEligiblePatient failed:", err?.message));
+      }
+
       res.json(updated);
     } catch (error: any) {
       console.error("Per-patient analysis error:", error);
