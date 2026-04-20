@@ -525,7 +525,9 @@ export function registerPortalRoutes(app: Express) {
     try {
       const userId = req.session.userId!;
       const all = await storage.getTasksByAssignee(userId);
-      const open = all.filter((t) => t.status !== "closed");
+      // Portal right-rail surfaces only portal-relevant work (consent gaps);
+      // unrelated taskTypes belong on the global Plexus pages.
+      const open = all.filter((t) => t.status !== "closed" && t.taskType === "tech_assignment");
       const urgent = open.filter((t) => t.urgency === "now" || t.urgency === "EOD");
       const rest = open.filter((t) => !urgent.includes(t));
       res.json({
