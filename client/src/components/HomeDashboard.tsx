@@ -1,3 +1,4 @@
+import { useState, useMemo, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -5,11 +6,9 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
   Activity, CalendarDays, ChevronLeft, ChevronRight, Clock, FileText, Loader2, Phone, Plus, Upload, Users,
 } from "lucide-react";
-import { QualificationModeSettings } from "@/components/QualificationModeSettings";
-import { PlexusDrive } from "@/components/PlexusDrive";
-import { ScheduleTile } from "@/components/ScheduleTile";
 
-type ClinicMonthCell = { isoDate: string; patientCount: number; ancillaryCount: number };
+type DayPatient = { id: number; name: string; time: string | null; ancillaries: string[] };
+type ClinicMonthCell = { isoDate: string; patientCount: number; ancillaryCount: number; patients?: DayPatient[] };
 type ClinicTab = {
   clinicKey: string;
   clinicLabel: string;
@@ -39,6 +38,20 @@ interface HomeDashboardProps {
   isCreatingBatch: boolean;
 }
 
+function formatTime12(time24: string | null): string {
+  if (!time24) return "";
+  const [h, m] = time24.split(":").map(Number);
+  if (Number.isNaN(h)) return time24;
+  return `${h % 12 || 12}:${String(m || 0).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+}
+
+function formatDayHeader(iso: string, today: string): string {
+  const d = new Date(iso + "T00:00:00");
+  const label = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  if (iso === today) return `Today — ${label}`;
+  return label;
+}
+
 export function HomeDashboard({
   batches,
   dashboardData,
@@ -53,11 +66,35 @@ export function HomeDashboard({
   isCreatingBatch,
 }: HomeDashboardProps) {
   const [, setLocation] = useLocation();
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const dashboardClinicTabs = dashboardData?.clinicTabs || [];
   const activeDashboardClinic =
     dashboardClinicTabs.find((t) => t.clinicKey === dashboardClinicKey) ||
     dashboardClinicTabs[0] || null;
+
+  const today = dashboardData?.today ?? "";
+  const effectiveSelectedDate = selectedDate ?? today;
+
+  useEffect(() => {
+    if (!selectedDate && today) setSelectedDate(today);
+  }, [today, selectedDate]);
+
+  const selectedDayPatients = useMemo<DayPatient[]>(() => {
+    if (!effectiveSelectedDate || !activeDashboardClinic) return [];
+    const cell = activeDashboardClinic.monthCells.find((c) => c.isoDate === effectiveSelectedDate);
+    return cell?.patients ?? [];
+  }, [effectiveSelectedDate, activeDashboardClinic]);
+
+  const selectedDayAncillaryBreakdown = useMemo<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    for (const p of selectedDayPatients) {
+      for (const a of p.ancillaries) {
+        map[a] = (map[a] || 0) + 1;
+      }
+    }
+    return map;
+  }, [selectedDayPatients]);
 
   return (
     <div className="flex flex-col h-full">
@@ -227,19 +264,25 @@ export function HomeDashboard({
                   <div className="grid grid-cols-7 gap-1 mb-4">
                     {activeDashboardClinic.monthCells.map((cell) => {
                       const isToday = cell.isoDate === dashboardData?.today;
+                      const isSelected = cell.isoDate === effectiveSelectedDate;
                       const cellMonth = cell.isoDate.slice(0, 7);
                       const displayMonth = dashboardData?.weekStart?.slice(0, 7);
                       const isCurrentMonth = cellMonth === displayMonth;
                       const dayNum = parseInt(cell.isoDate.split("-")[2], 10);
                       return (
-                        <div
+                        <button
+                          type="button"
                           key={cell.isoDate}
-                          className={`rounded-2xl p-2 min-h-[80px] flex flex-col transition-colors ${
-                            isCurrentMonth
-                              ? "bg-white border border-slate-200/70 hover:bg-slate-50"
-                              : "bg-slate-50/40 border border-transparent"
+                          onClick={() => setSelectedDate(cell.isoDate)}
+                          className={`text-left rounded-2xl p-2 min-h-[80px] flex flex-col transition-colors cursor-pointer ${
+                            isSelected
+                              ? "bg-indigo-50 border-2 border-indigo-400 shadow-sm"
+                              : isCurrentMonth
+                                ? "bg-white border border-slate-200/70 hover:bg-slate-50 hover:border-slate-300"
+                                : "bg-slate-50/40 border border-transparent hover:bg-slate-100/60"
                           }`}
                           data-testid={`dashboard-month-cell-${cell.isoDate}`}
+                          aria-pressed={isSelected}
                         >
                           <div className="flex items-center justify-between mb-1">
                             <span className={`inline-flex items-center justify-center min-w-[1.75rem] h-7 px-1 rounded-2xl text-sm font-semibold ${
@@ -263,16 +306,60 @@ export function HomeDashboard({
                               )}
                             </div>
                           )}
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
                 </>
               )}
 
-              <div className="border-t border-slate-100 pt-3">
-                <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Upcoming Appointments</p>
-                <ScheduleTile />
+              <div className="border-t border-slate-100 pt-3" data-testid="panel-day-detail">
+                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                  <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider" data-testid="text-day-detail-header">
+                    {effectiveSelectedDate ? formatDayHeader(effectiveSelectedDate, today) : "Selected Day"}
+                    {activeDashboardClinic && (
+                      <span className="ml-2 text-slate-400 normal-case">· {activeDashboardClinic.clinicLabel}</span>
+                    )}
+                  </p>
+                  {Object.keys(selectedDayAncillaryBreakdown).length > 0 && (
+                    <div className="flex flex-wrap gap-1" data-testid="day-ancillary-breakdown">
+                      {Object.entries(selectedDayAncillaryBreakdown).map(([test, n]) => (
+                        <span key={test} className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700">
+                          {test} <span className="text-violet-500">×{n}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {selectedDayPatients.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-slate-400" data-testid="text-day-empty">
+                    No patients scheduled for this day.
+                  </div>
+                ) : (
+                  <div className="space-y-1" data-testid="list-day-patients">
+                    {selectedDayPatients.map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex items-center gap-3 px-3 py-2 rounded-xl bg-white border border-slate-100 hover:bg-slate-50 transition-colors"
+                        data-testid={`day-patient-row-${p.id}`}
+                      >
+                        <span className="text-xs font-semibold text-primary w-16 shrink-0 tabular-nums">
+                          {formatTime12(p.time) || "—"}
+                        </span>
+                        <span className="text-xs font-medium text-slate-800 flex-1 truncate" data-testid={`text-day-patient-name-${p.id}`}>{p.name || "(unnamed)"}</span>
+                        {p.ancillaries.length > 0 && (
+                          <div className="flex flex-wrap gap-1 justify-end shrink-0 max-w-[60%]">
+                            {p.ancillaries.map((a, i) => (
+                              <span key={`${p.id}-${a}-${i}`} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">
+                                {a}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </Card>
@@ -291,9 +378,6 @@ export function HomeDashboard({
               </Button>
             </div>
           )}
-
-          <QualificationModeSettings />
-          <PlexusDrive />
         </div>
       </main>
     </div>

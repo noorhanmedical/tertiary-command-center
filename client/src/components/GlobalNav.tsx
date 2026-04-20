@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CheckSquare,
+  FolderOpen,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { AuthUser } from "@/App";
@@ -32,6 +33,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/team-ops",         label: "Team Ops",         Icon: Users2,       roles: ["admin"] },
   { href: "/patient-database", label: "Patient Database", Icon: Database,     roles: ["admin", "clinician", "biller"] },
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
+  { href: "/drive",            label: "Plexus Drive",     Icon: FolderOpen,   roles: ["admin", "clinician", "scheduler", "biller"] },
 ];
 
 function TodayBadge({ count }: { count: number }) {

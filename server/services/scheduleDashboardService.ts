@@ -107,6 +107,7 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
         isoDate: iso,
         patientCount: 0,
         ancillaryCount: 0,
+        patients: [] as { id: number; name: string; time: string | null; ancillaries: string[] }[],
       })),
     });
   }
@@ -133,6 +134,7 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
           isoDate: iso,
           patientCount: 0,
           ancillaryCount: 0,
+          patients: [] as { id: number; name: string; time: string | null; ancillaries: string[] }[],
         })),
       });
     }
@@ -170,6 +172,12 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
       if (monthCell) {
         monthCell.patientCount += 1;
         monthCell.ancillaryCount += count;
+        monthCell.patients.push({
+          id: patient.id,
+          name: s(patient.name),
+          time: patient.time ?? null,
+          ancillaries: tests.map((t) => s(t)).filter(Boolean),
+        });
       }
     }
   }
