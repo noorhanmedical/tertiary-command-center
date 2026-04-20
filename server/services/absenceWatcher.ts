@@ -97,14 +97,40 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
       // Trigger if EITHER signal fires.
       if (!stale && !untouched) continue;
 
-      // Already an open absence task?
+      // Find any open absence task for this scheduler+day. If one exists,
+      // we DO NOT create another — but we DO consider it for auto-execution
+      // once the approval window has elapsed since the alert was created.
+      // If no task exists yet, we create the alert first; auto-exec will
+      // be considered on the next tick after the window passes.
       const existingTasks = await storage.getUrgentTasks();
-      const dup = existingTasks.find((t) =>
+      const existingAlert = existingTasks.find((t) =>
         t.taskType === "absence_alert" && t.status !== "resolved" &&
         (t.description ?? "").includes(`"schedulerId":${sc.id}`) &&
         (t.description ?? "").includes(`"asOfDate":"${today}"`),
       );
-      if (dup) continue;
+      if (existingAlert) {
+        // Approval window check: only auto-execute after AUTO_EXECUTE_MIN
+        // minutes have elapsed since the alert was created AND the alert
+        // is still unacted (status === 'open'). This guarantees admin gets
+        // the full window to approve/reject before automation kicks in.
+        if (
+          AUTO_EXECUTE_MIN > 0 &&
+          existingAlert.status === "open" &&
+          existingAlert.createdAt
+        ) {
+          const alertAgeMin =
+            (now.getTime() - new Date(existingAlert.createdAt as unknown as string).getTime()) / 60_000;
+          if (alertAgeMin >= AUTO_EXECUTE_MIN) {
+            try {
+              await releaseAndRedistribute(storage, sc.id, today, "absence_auto_execute");
+              await storage.updateTask(existingAlert.id, { status: "resolved" });
+            } catch (err) {
+              console.error("[absenceWatcher] auto-execute failed:", err);
+            }
+          }
+        }
+        continue;
+      }
 
       // AI-generated reassignment narrative (best-effort; falls back to
       // canonical recommendation text if the model call fails or is disabled).
@@ -168,21 +194,9 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
         status: "open",
       });
 
-      // Auto-execute after configured minutes from the FIRST detection
-      // signal: prefer last-call timestamp, otherwise oldest-assignment age.
-      const referenceTime = lastCallTime > 0
-        ? lastCallTime
-        : (oldestAssignedMs === Number.POSITIVE_INFINITY ? 0 : oldestAssignedMs);
-      if (AUTO_EXECUTE_MIN > 0 && referenceTime > 0) {
-        const minsSince = (now.getTime() - referenceTime) / 60_000;
-        if (minsSince >= AUTO_EXECUTE_MIN) {
-          try {
-            await releaseAndRedistribute(storage, sc.id, today, "absence_auto_execute");
-          } catch (err) {
-            console.error("[absenceWatcher] auto-execute failed:", err);
-          }
-        }
-      }
+      // First detection: alert is just created — auto-execution is deferred
+      // to the NEXT tick that finds the alert still open and past the window.
+      // This guarantees admins always get the full approval window.
     }
   });
 }

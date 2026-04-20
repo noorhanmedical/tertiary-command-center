@@ -81,7 +81,19 @@ type DistributionRow = {
   onPtoToday: boolean;
   activeCount: number;
   reassignedInCount: number;
+  lastCallAt: string | null;
 };
+
+function formatLastActivity(iso: string | null): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "—";
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h ${mins % 60}m ago`;
+}
 
 function CallListDistributionCard() {
   const { toast } = useToast();
@@ -186,9 +198,10 @@ function CallListDistributionCard() {
                     </Badge>
                   )}
                 </div>
-                <div className="mt-1 text-[11px] text-slate-500">
-                  Capacity {r.capacityPercent}% · Active {r.activeCount}
+                <div className="mt-1 text-[11px] text-slate-500" data-testid={`distribution-meta-${r.id}`}>
+                  Capacity {r.capacityPercent}% · Queue {r.activeCount}
                   {r.reassignedInCount > 0 && ` · ↩ ${r.reassignedInCount} reassigned in`}
+                  {` · Last activity ${formatLastActivity(r.lastCallAt)}`}
                 </div>
               </div>
               <Button

@@ -150,16 +150,39 @@ function normalizeReasoning(raw: unknown, qualifyingTests: string[]): ReasoningE
   return out;
 }
 
+// Visit window for the dashboard call list. Aligned with the call-list
+// engine's CALL_LIST_VISIT_WINDOW_DAYS so patients whose visits are within
+// the next N days surface to the assigned scheduler. Outreach-type patients
+// (no scheduleDate gating) always surface.
+const DASHBOARD_VISIT_WINDOW_DAYS = Number(process.env.CALL_LIST_VISIT_WINDOW_DAYS ?? 30);
+
+function withinDashboardWindow(scheduleDate: string, today: string): boolean {
+  if (!scheduleDate) return true;
+  if (scheduleDate < today) return false;
+  const start = new Date(`${today}T00:00:00Z`).getTime();
+  const dest = new Date(`${scheduleDate}T00:00:00Z`).getTime();
+  if (isNaN(start) || isNaN(dest)) return false;
+  return Math.round((dest - start) / 86_400_000) <= DASHBOARD_VISIT_WINDOW_DAYS;
+}
+
 export async function buildOutreachDashboard(
   storage: IStorage,
   today: string,
 ): Promise<OutreachDashboard> {
-  const [batches, schedulers, todayAppointments, allHistory] = await Promise.all([
+  const [batches, schedulers, todayAppointments, allHistory, activeAssignments] = await Promise.all([
     storage.getAllScreeningBatches(),
     storage.getOutreachSchedulers(),
     storage.getAppointments({ date: today, status: "scheduled" }),
     storage.getAllTestHistory(),
+    storage.listActiveSchedulerAssignments({ asOfDate: today }),
   ]);
+
+  // Build patient->scheduler ownership map from active engine assignments.
+  // When an active row exists, it is the source of truth for ownership and
+  // overrides the hash-based fallback below.
+  const assignedSchedulerByPatient = new Map<number, number>();
+  for (const a of activeAssignments) assignedSchedulerByPatient.set(a.patientScreeningId, a.schedulerId);
+  const schedulerById = new Map(schedulers.map((s) => [s.id, s]));
 
   // Group history by canonical patient key for fast lookup.
   const historyByKey = new Map<string, PatientTestHistory[]>();
@@ -202,7 +225,7 @@ export async function buildOutreachDashboard(
 
   for (const batch of batches) {
     const batchDay = canonicalDay(batch.scheduleDate);
-    if (batchDay && batchDay !== today) continue;
+    const inWindow = withinDashboardWindow(batchDay, today);
 
     const patients: PatientScreening[] = await storage.getPatientScreeningsByBatch(batch.id);
     const facility = s(batch.facility) || "Unassigned Facility";
@@ -214,8 +237,22 @@ export async function buildOutreachDashboard(
     }
 
     for (const patient of patients) {
+      // Engine assignment is authoritative; otherwise gate by visit window
+      // (outreach-type patients bypass the window entirely).
+      const isOutreach = (s(patient.patientType) || "visit").toLowerCase() === "outreach";
+      const hasAssignment = assignedSchedulerByPatient.has(patient.id);
+      if (!hasAssignment && !isOutreach && !inWindow) continue;
+
       let owner: { name: string; facility: string; capacityPercent: number };
-      if (pool.length === 0) {
+      const assignedSchedId = assignedSchedulerByPatient.get(patient.id);
+      const assignedSched = assignedSchedId ? schedulerById.get(assignedSchedId) : undefined;
+      if (assignedSched) {
+        owner = {
+          name: assignedSched.name,
+          facility: assignedSched.facility,
+          capacityPercent: assignedSched.capacityPercent ?? 100,
+        };
+      } else if (pool.length === 0) {
         owner = { name: "Unassigned", facility, capacityPercent: 0 };
       } else {
         const picked = pickSchedulerForPatient(patient.id, pool);
