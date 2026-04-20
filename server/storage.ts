@@ -266,6 +266,7 @@ export interface IStorage {
   getActiveAssignmentForPatientOnDate(patientScreeningId: number, asOfDate: string): Promise<SchedulerAssignment | undefined>;
   releaseSchedulerAssignmentsForScheduler(schedulerId: number, asOfDate: string, reason: string): Promise<SchedulerAssignment[]>;
   releaseSchedulerAssignmentsByIds(ids: number[], reason: string): Promise<SchedulerAssignment[]>;
+  releaseStaleActiveAssignments(beforeAsOfDate: string, reason: string): Promise<number>;
   reassignSchedulerAssignment(id: number, newSchedulerId: number, reason: string): Promise<SchedulerAssignment | undefined>;
   markSchedulerAssignmentCompleted(patientScreeningId: number): Promise<void>;
 
@@ -1174,6 +1175,21 @@ export class DatabaseStorage implements IStorage {
       ))
       .returning();
     return released;
+  }
+
+  // Sweep helper: close any active assignment row whose as_of_date is older
+  // than `beforeAsOfDate`. Run at the start of each daily build so stale
+  // active rows from prior days cannot block new-day assignments via the
+  // single-active invariant or the date-scoped hot path.
+  async releaseStaleActiveAssignments(beforeAsOfDate: string, reason: string): Promise<number> {
+    const released = await db.update(schedulerAssignments)
+      .set({ status: "released", reason })
+      .where(and(
+        eq(schedulerAssignments.status, "active"),
+        sql`${schedulerAssignments.asOfDate} < ${beforeAsOfDate}`,
+      ))
+      .returning({ id: schedulerAssignments.id });
+    return released.length;
   }
 
   async releaseSchedulerAssignmentsByIds(ids: number[], reason: string): Promise<SchedulerAssignment[]> {
