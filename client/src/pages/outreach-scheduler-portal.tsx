@@ -65,7 +65,7 @@ import {
 import type { BookingSlot } from "@/components/clinic-calendar";
 import { VALID_FACILITIES } from "@shared/plexus";
 import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
-import { CalendarPageHeader, HeaderPill, HeaderStatusPill } from "@/components/CalendarPageHeader";
+import { PageHeader, HeaderPill, HeaderStatusPill } from "@/components/PageHeader";
 import { TaskDrawer } from "@/components/plexus/TaskDrawer";
 import type { PlexusTaskSummary, UserEntry } from "@/components/plexus/SchedulerIcon";
 import type { AuthUser } from "@/App";
@@ -728,9 +728,13 @@ export default function OutreachSchedulerPortalPage() {
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-6 py-6">
 
-        <CalendarPageHeader
+        <PageHeader
+          variant="dark"
+          icon={Phone}
+          titleTestId="text-calendar-header-title"
           eyebrow={`SCHEDULER · ${card.facility.toUpperCase()}`}
           title={card.name}
+          subtitle={`${card.totalPatients} patient${card.totalPatients !== 1 ? "s" : ""} on the call list today`}
           actions={
             <>
               <HeaderStatusPill />
@@ -747,11 +751,7 @@ export default function OutreachSchedulerPortalPage() {
               </Link>
             </>
           }
-        >
-          <p className="mt-2 text-sm text-slate-300/85">
-            {card.totalPatients} patient{card.totalPatients !== 1 ? "s" : ""} on the call list today
-          </p>
-        </CalendarPageHeader>
+        />
 
         {/* ── Cockpit grid: 25% / 50% / 25% — exactly three flat panels ── */}
         <div className="grid gap-5 xl:grid-cols-[1fr_2fr_1fr]">

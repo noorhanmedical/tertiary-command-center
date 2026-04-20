@@ -3,6 +3,7 @@ import { ArrowLeft, CreditCard, Settings as SettingsIcon, Shield, Sparkles } fro
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { QualificationModeSettings } from "@/components/QualificationModeSettings";
+import { PageHeader } from "@/components/PageHeader";
 
 export default function AdminOpsPage() {
   return (
@@ -15,15 +16,12 @@ export default function AdminOpsPage() {
               Back
             </Link>
           </Button>
-          <div className="flex items-center gap-2">
-            <div className="rounded-2xl bg-slate-900/5 p-2 text-slate-700">
-              <Shield className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Admin Ops</h1>
-              <p className="text-sm text-slate-600">Administrative-only surfaces for billing and system configuration.</p>
-            </div>
-          </div>
+          <PageHeader
+            icon={Shield}
+            title="Admin Ops"
+            subtitle="Administrative-only surfaces for billing and system configuration."
+            className="flex-1"
+          />
         </div>
 
         <div className="grid gap-5 md:grid-cols-2">

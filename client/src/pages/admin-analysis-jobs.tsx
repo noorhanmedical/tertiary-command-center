@@ -4,6 +4,7 @@ import { History, ArrowLeft, CheckCircle2, XCircle, Loader2, Clock, AlertTriangl
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/PageHeader";
 
 type AnalysisJobRow = {
   id: number;
@@ -79,22 +80,13 @@ export default function AdminAnalysisJobsPage() {
   return (
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
-        <div className="flex items-center gap-3">
-          <Link href="/admin" data-testid="link-back-admin">
-            <button className="rounded-xl p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition">
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-          </Link>
-          <div className="rounded-2xl bg-indigo-100 p-3 text-indigo-700">
-            <History className="h-6 w-6" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Analysis Run History</h1>
-            <p className="text-sm text-slate-600">
-              Recent batch analysis runs — up to 7 days of history. Older runs are auto-purged.
-            </p>
-          </div>
-        </div>
+        <PageHeader
+          backHref="/admin"
+          icon={History}
+          iconAccent="bg-indigo-100 text-indigo-700"
+          title="Analysis Run History"
+          subtitle="Recent batch analysis runs — up to 7 days of history. Older runs are auto-purged."
+        />
 
         {isLoading && (
           <Card className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl">

@@ -43,6 +43,7 @@ import {
   resolveClinicianNpi,
 } from "@shared/plexus";
 import { apiRequest } from "@/lib/queryClient";
+import { PageHeader } from "@/components/PageHeader";
 
 type Step = "patient" | "service" | "screening" | "documents";
 
@@ -214,15 +215,13 @@ export default function PlexusPage() {
             Back
           </Button>
           <div className="h-5 w-px bg-slate-200 dark:bg-border" />
-          <ClipboardList className="w-5 h-5 text-primary" />
-          <div>
-            <h1 className="text-base font-bold tracking-tight text-slate-900 dark:text-foreground">
-              Plexus Documents
-            </h1>
-            <p className="text-xs text-slate-500 dark:text-muted-foreground">
-              Generate pre-procedure, post-procedure, and billing documents
-            </p>
-          </div>
+          <PageHeader
+            icon={ClipboardList}
+            iconAccent="bg-primary/10 text-primary"
+            title="Plexus Documents"
+            subtitle="Generate pre-procedure, post-procedure, and billing documents"
+            className="!bg-transparent !border-0 !shadow-none !backdrop-blur-0 [&>div]:!p-0 flex-1"
+          />
         </div>
 
         <div className="max-w-4xl mx-auto px-4 pb-3">

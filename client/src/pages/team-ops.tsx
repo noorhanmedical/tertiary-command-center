@@ -56,6 +56,7 @@ import {
 import { Calendar as CalendarPicker } from "@/components/ui/calendar";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { PageHeader } from "@/components/PageHeader";
 import type {
   OutreachScheduler,
   AncillaryAppointment,
@@ -396,29 +397,24 @@ export default function TeamOpsPage() {
       <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
 
         {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="rounded-2xl bg-violet-600/10 p-3 text-violet-700">
-              <Users2 className="h-6 w-6" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Team Ops</h1>
-              <p className="text-sm text-slate-600">
-                Staffing command center — who's on, who's off, and who's covering what.
-              </p>
-            </div>
-          </div>
-          {activeTab === "coverage" && (
-            <Button
-              data-testid="button-add-scheduler"
-              onClick={openAddDialog}
-              className="rounded-2xl bg-violet-600 hover:bg-violet-700 text-white gap-2"
-            >
-              <Plus className="h-4 w-4" />
-              Assign Scheduler
-            </Button>
-          )}
-        </div>
+        <PageHeader
+          icon={Users2}
+          iconAccent="bg-violet-600/10 text-violet-700"
+          title="Team Ops"
+          subtitle="Staffing command center — who's on, who's off, and who's covering what."
+          actions={
+            activeTab === "coverage" ? (
+              <Button
+                data-testid="button-add-scheduler"
+                onClick={openAddDialog}
+                className="rounded-2xl bg-violet-600 hover:bg-violet-700 text-white gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                Assign Scheduler
+              </Button>
+            ) : null
+          }
+        />
 
         {/* Metrics strip */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

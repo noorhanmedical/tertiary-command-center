@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Upload, FileText, CheckCircle, ExternalLink, Loader2, ScanText, ClipboardList } from "lucide-react";
 import { VALID_FACILITIES } from "@shared/plexus";
+import { PageHeader } from "@/components/PageHeader";
 
 const ANCILLARY_TYPES = ["BrainWave", "VitalWave", "Ultrasound"] as const;
 
@@ -260,15 +261,13 @@ export default function DocumentUploadPage() {
   return (
     <div className="flex-1 overflow-y-auto p-6 bg-[hsl(210,35%,96%)]">
       <div className="max-w-5xl mx-auto">
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-1">
-            <Upload className="w-7 h-7 text-indigo-600" />
-            <h1 className="text-2xl font-bold text-slate-900">Document Upload</h1>
-          </div>
-          <p className="text-sm text-slate-500 ml-10">
-            Upload patient reports, informed consent forms, and screening forms to Google Drive. Patient names are auto-extracted via AI.
-          </p>
-        </div>
+        <PageHeader
+          icon={Upload}
+          iconAccent="bg-indigo-100 text-indigo-700"
+          title="Document Upload"
+          subtitle="Upload patient reports, informed consent forms, and screening forms to Google Drive. Patient names are auto-extracted via AI."
+          className="mb-8"
+        />
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           <UploadCard

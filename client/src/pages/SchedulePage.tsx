@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Calendar as CalendarIcon, Users, Building2, Filter, X } from "lucide-react";
+import { Calendar as CalendarIcon, CalendarDays, Users, Building2, Filter, X } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -99,10 +100,14 @@ export default function SchedulePage() {
   return (
     <div className="min-h-full bg-gradient-to-br from-slate-50 via-white to-blue-50/40">
       <div className="mx-auto max-w-[1400px] px-6 py-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-slate-900" data-testid="text-page-title">Global Schedule</h1>
-          <p className="text-sm text-slate-600 mt-1">All screening batches across every clinic.</p>
-        </div>
+        <PageHeader
+          icon={CalendarDays}
+          iconAccent="bg-blue-600/10 text-blue-700"
+          title="Global Schedule"
+          subtitle="All screening batches across every clinic."
+          titleTestId="text-page-title"
+          className="mb-6"
+        />
 
         <Card className="p-4 mb-6">
           <div className="flex items-center gap-2 mb-3 text-sm font-medium text-slate-700">

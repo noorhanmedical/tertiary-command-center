@@ -29,6 +29,7 @@ import {
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { VALID_FACILITIES } from "@shared/plexus";
+import { PageHeader } from "@/components/PageHeader";
 
 const FACILITIES = VALID_FACILITIES;
 type Facility = (typeof VALID_FACILITIES)[number];
@@ -387,15 +388,12 @@ export default function SettingsPage() {
                 Back
               </Link>
             </Button>
-            <div className="flex items-center gap-2">
-              <div className="rounded-2xl bg-slate-900/5 p-2 text-slate-700">
-                <SettingsIcon className="h-5 w-5" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Settings</h1>
-                <p className="text-sm text-slate-600">Team members, patient databases, and clinic spreadsheet connections.</p>
-              </div>
-            </div>
+            <PageHeader
+              icon={SettingsIcon}
+              title="Settings"
+              subtitle="Team members, patient databases, and clinic spreadsheet connections."
+              className="flex-1"
+            />
           </div>
         </div>
 

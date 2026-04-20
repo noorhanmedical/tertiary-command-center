@@ -44,6 +44,7 @@ import {
   Download,
 } from "lucide-react";
 import { SiGooglesheets, SiGoogledrive } from "react-icons/si";
+import { PageHeader } from "@/components/PageHeader";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -970,15 +971,14 @@ export default function BillingPage() {
               </Button>
             </Link>
             <div className="h-5 w-px bg-slate-200" />
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
-                <DollarSign className="w-4 h-4 text-emerald-700" />
-              </div>
-              <div>
-                <h1 className="text-base font-bold text-slate-900 leading-none" data-testid="text-billing-title">Billing Tracker</h1>
-                <p className="text-[11px] text-slate-400 mt-0.5">Ancillary service claims &amp; payments</p>
-              </div>
-            </div>
+            <PageHeader
+              icon={DollarSign}
+              iconAccent="bg-emerald-100 text-emerald-700"
+              title="Billing Tracker"
+              subtitle="Ancillary service claims & payments"
+              titleTestId="text-billing-title"
+              className="!bg-transparent !border-0 !shadow-none !backdrop-blur-0 [&>div]:!p-0"
+            />
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
             <Button size="sm" variant="outline" onClick={() => syncBillingMutation.mutate()} disabled={syncBillingMutation.isPending || importFromSheetMutation.isPending}

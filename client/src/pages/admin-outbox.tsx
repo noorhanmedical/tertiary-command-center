@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { PageHeader } from "@/components/PageHeader";
 import {
   Inbox,
   CloudUpload,
@@ -104,24 +105,23 @@ export default function AdminOutboxPage() {
   return (
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
-        <div className="flex items-center gap-3">
-          <div className="rounded-2xl bg-blue-100 p-3 text-blue-700"><Inbox className="h-6 w-6" /></div>
-          <div className="flex-1">
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Admin Outbox</h1>
-            <p className="text-sm text-slate-600">
-              All Drive uploads and Sheet syncs are queued here. Files are saved locally first, then uploaded with one click.
-            </p>
-          </div>
-          <Button
-            onClick={() => drainAll.mutate()}
-            disabled={drainAll.isPending || summary.pending + summary.failed === 0}
-            className="bg-blue-600 hover:bg-blue-700 text-white"
-            data-testid="button-upload-all"
-          >
-            {drainAll.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CloudUpload className="h-4 w-4 mr-2" />}
-            Upload All ({summary.pending + summary.failed})
-          </Button>
-        </div>
+        <PageHeader
+          icon={Inbox}
+          iconAccent="bg-blue-100 text-blue-700"
+          title="Admin Outbox"
+          subtitle="All Drive uploads and Sheet syncs are queued here. Files are saved locally first, then uploaded with one click."
+          actions={
+            <Button
+              onClick={() => drainAll.mutate()}
+              disabled={drainAll.isPending || summary.pending + summary.failed === 0}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              data-testid="button-upload-all"
+            >
+              {drainAll.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CloudUpload className="h-4 w-4 mr-2" />}
+              Upload All ({summary.pending + summary.failed})
+            </Button>
+          }
+        />
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {([

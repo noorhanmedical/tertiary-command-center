@@ -14,6 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/PageHeader";
 
 type OutreachSchedulerCard = {
   id: string;
@@ -81,27 +82,18 @@ export default function OutreachPage() {
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6 px-6 py-6">
 
         {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <Button asChild variant="outline" className="rounded-2xl border-white/60 bg-white/80 backdrop-blur">
-              <Link href="/"><ArrowLeft className="mr-2 h-4 w-4" />Back</Link>
-            </Button>
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="rounded-2xl bg-blue-600/10 p-2 text-blue-700">
-                  <Phone className="h-5 w-5" />
-                </div>
-                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Outreach</h1>
-              </div>
-              <p className="mt-1 text-sm text-slate-600">
-                Pick a scheduler to open their portal.
-              </p>
-            </div>
-          </div>
-          <Badge variant="outline" className="rounded-full border-blue-200 bg-blue-50 px-3 py-1 text-blue-700">
-            {formatDisplayDate(data?.today)}
-          </Badge>
-        </div>
+        <PageHeader
+          backHref="/"
+          icon={Phone}
+          iconAccent="bg-blue-600/10 text-blue-700"
+          title="Outreach"
+          subtitle="Pick a scheduler to open their portal."
+          actions={
+            <Badge variant="outline" className="rounded-full border-blue-200 bg-blue-50 px-3 py-1 text-blue-700">
+              {formatDisplayDate(data?.today)}
+            </Badge>
+          }
+        />
 
         {/* Metrics */}
         <Card className={`${shellClass()} px-4 py-2`}>

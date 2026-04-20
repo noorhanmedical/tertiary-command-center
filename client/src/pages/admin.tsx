@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/PageHeader";
 
 const ADMIN_SECTIONS = [
   { href: "/settings", icon: Settings, iconBg: "bg-blue-100 text-blue-700",
@@ -63,13 +64,11 @@ export default function AdminPage() {
   return (
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
-        <div className="flex items-center gap-3">
-          <div className="rounded-2xl bg-slate-900/8 p-3 text-slate-700"><Shield className="h-6 w-6" /></div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Admin</h1>
-            <p className="text-sm text-slate-600">System configuration, access control, and administrative surfaces.</p>
-          </div>
-        </div>
+        <PageHeader
+          icon={Shield}
+          title="Admin"
+          subtitle="System configuration, access control, and administrative surfaces."
+        />
 
         <Card className="rounded-3xl border border-white/60 bg-white/85 p-5 shadow">
           <div className="flex items-start gap-4">

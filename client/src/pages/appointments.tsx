@@ -17,7 +17,7 @@ import {
   Activity,
   ArrowLeft,
 } from "lucide-react";
-import { CalendarPageHeader, HeaderPill, HeaderStatusPill } from "@/components/CalendarPageHeader";
+import { PageHeader, HeaderPill, HeaderStatusPill } from "@/components/PageHeader";
 import type { AncillaryAppointment } from "@shared/schema";
 import { Link } from "wouter";
 import {
@@ -257,9 +257,13 @@ export default function AppointmentsPage() {
   return (
     <div className="min-h-screen bg-[hsl(210,35%,96%)]">
       <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        <CalendarPageHeader
+        <PageHeader
+          variant="dark"
+          icon={Calendar}
+          titleTestId="text-calendar-header-title"
           eyebrow="ANCILLARY SCHEDULING"
           title="Ancillary Appointments"
+          subtitle="Schedule BrainWave and VitalWave appointments by clinic."
           actions={
             <>
               <HeaderStatusPill />
@@ -268,11 +272,7 @@ export default function AppointmentsPage() {
               </Link>
             </>
           }
-        >
-          <p className="text-sm text-slate-300/85 mt-2">
-            Schedule BrainWave and VitalWave appointments by clinic.
-          </p>
-        </CalendarPageHeader>
+        />
 
         <div className="flex gap-1 bg-white rounded-xl border border-slate-200 p-1 w-fit shadow-sm">
           {FACILITIES.map((f) => (

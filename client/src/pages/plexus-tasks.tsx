@@ -31,6 +31,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { PlexusProject } from "@shared/schema";
 import type { AuthUser } from "@/App";
+import { PageHeader } from "@/components/PageHeader";
 
 type PlexusTask = import("@shared/schema").PlexusTask & {
   patientName?: string | null;
@@ -842,29 +843,32 @@ export default function PlexusTasksPage() {
 
       {/* Main content */}
       <main className="flex-1 overflow-y-auto p-6 min-w-0">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-slate-900">
-              {view === "my-work" && "My Work"}
-              {view === "projects" && "Projects"}
-              {view === "sent" && "Sent"}
-            </h2>
-            <p className="text-sm text-slate-500">
-              {view === "my-work" && "Tasks assigned to you, grouped by project and sorted by urgency"}
-              {view === "projects" && "All projects and their task lists"}
-              {view === "sent" && "Tasks you created and their current state"}
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            className="rounded-2xl border-indigo-200 text-indigo-700 hover:bg-indigo-50"
-            onClick={() => openCreateFor()}
-            data-testid="button-create-task-header"
-          >
-            <Plus className="h-4 w-4 mr-1.5" />
-            New Task
-          </Button>
-        </div>
+        <PageHeader
+          icon={NAV.find((n) => n.id === view)?.Icon}
+          iconAccent="bg-indigo-600/10 text-indigo-700"
+          title={
+            view === "my-work" ? "My Work"
+            : view === "projects" ? "Projects"
+            : "Sent"
+          }
+          subtitle={
+            view === "my-work" ? "Tasks assigned to you, grouped by project and sorted by urgency"
+            : view === "projects" ? "All projects and their task lists"
+            : "Tasks you created and their current state"
+          }
+          className="mb-6"
+          actions={
+            <Button
+              variant="outline"
+              className="rounded-2xl border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+              onClick={() => openCreateFor()}
+              data-testid="button-create-task-header"
+            >
+              <Plus className="h-4 w-4 mr-1.5" />
+              New Task
+            </Button>
+          }
+        />
 
         <OverdueAlert />
 

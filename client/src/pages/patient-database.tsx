@@ -14,6 +14,7 @@ import {
   Loader2, Search, Database, Users, Building2, Clock, CheckCircle2, AlertTriangle,
   Calendar, FileText, Stethoscope, Upload, Phone, Shield, ExternalLink, X,
 } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
 
 type RosterPatient = {
   key: string;
@@ -266,30 +267,19 @@ export default function PatientDatabasePage() {
 
   return (
     <div className="flex flex-col h-full relative z-10">
-      <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50 border-b">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3">
-            <Database className="w-5 h-5 text-slate-600" />
-            <div>
-              <h1 className="text-base font-bold tracking-tight">Patient Database</h1>
-              <p className="text-xs text-muted-foreground" data-testid="text-roster-summary">
-                {totalPatients} patient{totalPatients !== 1 ? "s" : ""} · {totalClinics} clinic{totalClinics !== 1 ? "s" : ""}
-                {hasMore || loadedCount < totalPatients ? (
-                  <span className="ml-1" data-testid="text-roster-loaded">(showing {loadedCount})</span>
-                ) : null}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-1.5" data-testid="button-import-test-history">
-              <Upload className="w-3.5 h-3.5" />Import test history
-            </Button>
-          </div>
-        </div>
-      </header>
-
       <main className="flex-1 overflow-auto p-4">
         <div className="max-w-6xl mx-auto space-y-4">
+          <PageHeader
+            icon={Database}
+            iconAccent="bg-slate-900/8 text-slate-700"
+            title="Patient Database"
+            subtitle={`${totalPatients} patient${totalPatients !== 1 ? "s" : ""} · ${totalClinics} clinic${totalClinics !== 1 ? "s" : ""}${hasMore || loadedCount < totalPatients ? ` (showing ${loadedCount})` : ""}`}
+            actions={
+              <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-1.5" data-testid="button-import-test-history">
+                <Upload className="w-3.5 h-3.5" />Import test history
+              </Button>
+            }
+          />
           {/* Cooldown dashboard */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {([

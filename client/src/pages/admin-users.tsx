@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { PageHeader } from "@/components/PageHeader";
 
 type TeamUser = { id: string; username: string; active: boolean };
 
@@ -128,20 +129,13 @@ export default function AdminUsersPage() {
   return (
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[900px] flex-col gap-6 px-6 py-6">
-        <div className="flex items-center gap-3">
-          <Link href="/admin">
-            <Button variant="ghost" size="icon" className="rounded-xl" data-testid="button-back-admin">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-          <div className="rounded-2xl bg-amber-100 p-3 text-amber-700">
-            <Users className="h-6 w-6" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">User Management</h1>
-            <p className="text-sm text-slate-600">Create and manage team accounts.</p>
-          </div>
-          <div className="ml-auto">
+        <PageHeader
+          backHref="/admin"
+          icon={Users}
+          iconAccent="bg-amber-100 text-amber-700"
+          title="User Management"
+          subtitle="Create and manage team accounts."
+          actions={
             <Button
               onClick={() => { setAddOpen(true); setFieldError(null); setUsername(""); setPassword(""); }}
               data-testid="button-add-user"
@@ -150,8 +144,8 @@ export default function AdminUsersPage() {
               <Plus className="h-4 w-4" />
               Add User
             </Button>
-          </div>
-        </div>
+          }
+        />
 
         <Card className="rounded-3xl border border-white/60 bg-white/75 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl overflow-hidden">
           {isLoading ? (

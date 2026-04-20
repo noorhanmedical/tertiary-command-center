@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import type { AuditLog } from "@shared/schema";
+import { PageHeader } from "@/components/PageHeader";
 
 const ACTION_COLORS: Record<string, string> = {
   create: "bg-emerald-100 text-emerald-700",
@@ -75,17 +76,11 @@ export default function AuditLogPage() {
           <span className="text-slate-700 font-medium">Audit Log</span>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="rounded-2xl bg-slate-900/8 p-3 text-slate-700">
-            <Shield className="h-6 w-6" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Audit Log</h1>
-            <p className="text-sm text-slate-600">
-              A read-only record of who changed what and when.
-            </p>
-          </div>
-        </div>
+        <PageHeader
+          icon={Shield}
+          title="Audit Log"
+          subtitle="A read-only record of who changed what and when."
+        />
 
         <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl">
           <div className="flex flex-wrap gap-3 items-end">
