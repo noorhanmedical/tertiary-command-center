@@ -21,15 +21,15 @@ type SchedulePatient = {
   appointmentStatus?: string | null;
 };
 
-function s(v: unknown): string {
+export function s(v: unknown): string {
   return v == null ? "" : String(v).trim();
 }
 
-function canonicalDay(v?: string | null): string {
+export function canonicalDay(v?: string | null): string {
   return s(v).slice(0, 10);
 }
 
-function startOfWeekIso(baseIso: string): string {
+export function startOfWeekIso(baseIso: string): string {
   const [year, month, day] = baseIso.split("-").map(Number);
   const date = new Date(year, (month || 1) - 1, day || 1);
   const weekday = date.getDay();
@@ -41,7 +41,7 @@ function startOfWeekIso(baseIso: string): string {
   return `${y}-${m}-${d}`;
 }
 
-function addDaysIso(iso: string, days: number): string {
+export function addDaysIso(iso: string, days: number): string {
   const [year, month, day] = iso.split("-").map(Number);
   const date = new Date(year, (month || 1) - 1, day || 1);
   date.setDate(date.getDate() + days);
@@ -51,7 +51,7 @@ function addDaysIso(iso: string, days: number): string {
   return `${y}-${m}-${d}`;
 }
 
-function monthGridDates(baseIso: string): string[] {
+export function monthGridDates(baseIso: string): string[] {
   const [year, month] = baseIso.split("-").map(Number);
   const first = new Date(year, (month || 1) - 1, 1);
   const weekday = first.getDay();
@@ -66,7 +66,7 @@ function monthGridDates(baseIso: string): string[] {
   return out;
 }
 
-function ancillaryCounts(tests: string[]): Record<string, number> {
+export function ancillaryCounts(tests: string[]): Record<string, number> {
   const map: Record<string, number> = {};
   for (const test of tests) {
     const key = s(test);
