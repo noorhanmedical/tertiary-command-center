@@ -23,6 +23,7 @@ import { registerAdminRoutes } from "./routes/admin";
 import { registerOutboxRoutes } from "./routes/outbox";
 import { registerPatientDatabaseRoutes } from "./routes/patientDatabase";
 import { registerTestFixtureRoutes } from "./routes/testFixture";
+import { registerMarketingMaterialRoutes } from "./routes/marketingMaterials";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
@@ -204,6 +205,7 @@ export async function registerRoutes(
   registerAdminRoutes(app);
   registerOutboxRoutes(app);
   registerTestFixtureRoutes(app);
+  registerMarketingMaterialRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {

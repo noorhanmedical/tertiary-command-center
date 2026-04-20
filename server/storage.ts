@@ -21,6 +21,9 @@ import {
   plexusTaskEvents,
   plexusTaskReads,
   auditLog,
+  marketingMaterials,
+  type MarketingMaterial,
+  type InsertMarketingMaterial,
   type ScreeningBatch,
   type InsertScreeningBatch,
   type PatientScreening,
@@ -341,6 +344,15 @@ export interface IStorage {
     toDate?: Date;
     limit?: number;
   }): Promise<AuditLog[]>;
+
+  getAllMarketingMaterials(): Promise<MarketingMaterial[]>;
+  getMarketingMaterial(id: number): Promise<MarketingMaterial | undefined>;
+  createMarketingMaterial(record: InsertMarketingMaterial): Promise<MarketingMaterial>;
+  updateMarketingMaterialStorage(
+    id: number,
+    patch: { storagePath: string; sha256: string; filename: string; sizeBytes: number },
+  ): Promise<MarketingMaterial>;
+  deleteMarketingMaterial(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1675,6 +1687,32 @@ export class DatabaseStorage implements IStorage {
       .limit(filters?.limit ?? 200);
 
     return query;
+  }
+
+  async getAllMarketingMaterials(): Promise<MarketingMaterial[]> {
+    return db.select().from(marketingMaterials).orderBy(desc(marketingMaterials.createdAt));
+  }
+
+  async getMarketingMaterial(id: number): Promise<MarketingMaterial | undefined> {
+    const [row] = await db.select().from(marketingMaterials).where(eq(marketingMaterials.id, id));
+    return row;
+  }
+
+  async createMarketingMaterial(record: InsertMarketingMaterial): Promise<MarketingMaterial> {
+    const [row] = await db.insert(marketingMaterials).values(record).returning();
+    return row;
+  }
+
+  async updateMarketingMaterialStorage(
+    id: number,
+    patch: { storagePath: string; sha256: string; filename: string; sizeBytes: number },
+  ): Promise<MarketingMaterial> {
+    const [row] = await db.update(marketingMaterials).set(patch).where(eq(marketingMaterials.id, id)).returning();
+    return row;
+  }
+
+  async deleteMarketingMaterial(id: number): Promise<void> {
+    await db.delete(marketingMaterials).where(eq(marketingMaterials.id, id));
   }
 }
 

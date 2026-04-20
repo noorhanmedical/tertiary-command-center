@@ -509,6 +509,35 @@ export const insertDocumentBlobSchema = createInsertSchema(documentBlobs).omit({
 export type DocumentBlob = typeof documentBlobs.$inferSelect;
 export type InsertDocumentBlob = z.infer<typeof insertDocumentBlobSchema>;
 
+// ─── Marketing Materials (catalog used by the Communication Hub) ────────────
+
+export const marketingMaterials = pgTable("marketing_materials", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  filename: text("filename").notNull(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  storagePath: text("storage_path").notNull(),
+  sha256: text("sha256").notNull(),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_marketing_materials_created_at").on(table.createdAt),
+  index("idx_marketing_materials_sha256").on(table.sha256),
+]);
+
+export const insertMarketingMaterialSchema = createInsertSchema(marketingMaterials).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  title: z.string().trim().min(1, "Title is required").max(200),
+  description: z.string().max(1000).optional().default(""),
+});
+
+export type MarketingMaterial = typeof marketingMaterials.$inferSelect;
+export type InsertMarketingMaterial = z.infer<typeof insertMarketingMaterialSchema>;
+
 // ─── Outbox: pending uploads to Google Drive / Sheets ───────────────────────
 
 export const OUTBOX_KINDS = [

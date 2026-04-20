@@ -22,7 +22,7 @@ function assertLocalBlobsAllowed() {
 }
 
 export interface SaveBlobInput {
-  ownerType: "uploaded_document" | "generated_note" | "test_fixture";
+  ownerType: "uploaded_document" | "generated_note" | "test_fixture" | "marketing_material";
   ownerId: number;
   filename: string;
   contentType: string;
