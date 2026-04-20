@@ -262,15 +262,6 @@ const BUCKET_RANK: Record<CallBucket, number> = {
   declined: 5,
 };
 
-const FILTER_CHIPS: { id: "all" | CallBucket; label: string }[] = [
-  { id: "all",           label: "All" },
-  { id: "callback_due",  label: "Callbacks due" },
-  { id: "never_called",  label: "Never called" },
-  { id: "no_answer",     label: "No answer" },
-  { id: "contacted",     label: "Contacted" },
-  { id: "scheduled",     label: "Scheduled" },
-];
-
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function OutreachSchedulerPortalPage() {
@@ -295,23 +286,22 @@ export default function OutreachSchedulerPortalPage() {
   const [expandedSection, setExpandedSection] = useState<"calendar" | "email" | "materials" | "callList" | "tasks" | "currentCall" | null>(null);
 
   // Playfield tabs (persist across patient changes; per-patient labeled)
-  type PlayfieldTabKind = "currentCall" | "calendar" | "email" | "materials" | "callList" | "tasks" | "thread";
+  type ExpandedKind = "currentCall" | "calendar" | "email" | "materials" | "callList" | "tasks";
+  type PlayfieldTabKind = ExpandedKind | "thread";
   type PlayfieldTab = { id: string; kind: PlayfieldTabKind; patientId?: number; patientName?: string; label: string };
+  function tabKindToExpanded(kind: PlayfieldTabKind): ExpandedKind | null {
+    return kind === "thread" ? null : kind;
+  }
   const [playfieldTabs, setPlayfieldTabs] = useState<PlayfieldTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   // Floating iOS-style messages popout
   const [messagesOpen, setMessagesOpen] = useState(false);
 
   // Call flow state
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | CallBucket>("all");
-  const [clinicFilter, setClinicFilter] = useState<string | null>(null);
-  const [testFilter, setTestFilter] = useState<string | null>(null);
   const [expandedTimeline, setExpandedTimeline] = useState<Set<number>>(new Set());
   const [scriptOpen, setScriptOpen] = useState(false);
   const [dispositionOpen, setDispositionOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const searchRef = useRef<HTMLInputElement>(null);
 
   // Tasks tile + urgent panel
   const [taskDrawerPatientId, setTaskDrawerPatientId] = useState<number | null>(null);
@@ -568,7 +558,7 @@ export default function OutreachSchedulerPortalPage() {
     const label = patientName ? `${labelBase[kind]} · ${patientName}` : labelBase[kind];
     setPlayfieldTabs((prev) => (prev.some((t) => t.id === id) ? prev : [...prev, { id, kind, patientId, patientName, label }]));
     setActiveTabId(id);
-    setExpandedSection(kind === "thread" ? null : (kind as any));
+    setExpandedSection(tabKindToExpanded(kind));
   }
   function closePlayfieldTab(id: string) {
     setPlayfieldTabs((prev) => {
@@ -576,7 +566,7 @@ export default function OutreachSchedulerPortalPage() {
       if (activeTabId === id) {
         const fallback = next[next.length - 1] ?? null;
         setActiveTabId(fallback?.id ?? null);
-        setExpandedSection(fallback ? (fallback.kind === "thread" ? null : (fallback.kind as any)) : null);
+        setExpandedSection(fallback ? tabKindToExpanded(fallback.kind) : null);
       }
       return next;
     });
@@ -592,18 +582,6 @@ export default function OutreachSchedulerPortalPage() {
     .filter((a) => a.scheduledDate === todayDateStr && a.status === "scheduled")
     .sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime));
 
-  // Distinct clinic + qualifying-test options for the filter chips.
-  const clinicOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const p of card?.callList ?? []) if (p.facility) set.add(p.facility);
-    return Array.from(set).sort();
-  }, [card]);
-  const testOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const p of card?.callList ?? []) for (const t of p.qualifyingTests) set.add(t);
-    return Array.from(set).sort();
-  }, [card]);
-
   // ENGINE-DRIVEN OWNERSHIP — assignments are the SOLE source of truth for
   // who owns which patient on the call list. The /api/scheduler-assignments
   // endpoint is server-side scoped to the session scheduler, so assignmentRows
@@ -614,43 +592,25 @@ export default function OutreachSchedulerPortalPage() {
     return new Set(assignmentRows.map((a) => a.patientScreeningId));
   }, [assignmentRows]);
 
-  // Search + clinic + test + bucket filter + priority sort.
+  // Engine-ownership scoped + priority sort. (Filter chrome removed — list is
+  // unfiltered apart from assignment ownership.)
   const sortedCallList = useMemo(() => {
     const list = card?.callList ?? [];
-    const q = search.trim().toLowerCase();
-    const filtered = list
-      .filter((item) => {
-        // Engine ownership filter — assignments are authoritative. Patients
-        // not on this scheduler's active assignment list are hidden.
-        if (!myEngineAssignedIds.has(item.patientId)) return false;
-        if (clinicFilter && item.facility !== clinicFilter) return false;
-        if (testFilter && !item.qualifyingTests.includes(testFilter)) return false;
-        if (!q) return true;
-        return (
-          item.patientName.toLowerCase().includes(q) ||
-          item.facility.toLowerCase().includes(q) ||
-          item.providerName.toLowerCase().includes(q) ||
-          item.qualifyingTests.join(" ").toLowerCase().includes(q) ||
-          (item.diagnoses ?? "").toLowerCase().includes(q) ||
-          (item.insurance ?? "").toLowerCase().includes(q)
-        );
-      })
+    return list
+      .filter((item) => myEngineAssignedIds.has(item.patientId))
       .map((item) => {
         const latest = latestCallByPatient.get(item.patientId);
         return { item, latest, bucket: bucketForItem(item, latest) };
       })
-      .filter(({ bucket }) => filter === "all" || bucket === filter)
       .sort((a, b) => {
         const r = BUCKET_RANK[a.bucket] - BUCKET_RANK[b.bucket];
         if (r !== 0) return r;
-        // Callback_due: nearest callback first
         if (a.bucket === "callback_due" && b.bucket === "callback_due" && a.latest?.callbackAt && b.latest?.callbackAt) {
           return new Date(a.latest.callbackAt as unknown as string).getTime() - new Date(b.latest.callbackAt as unknown as string).getTime();
         }
         return a.item.patientName.localeCompare(b.item.patientName);
       });
-    return filtered;
-  }, [card, search, filter, clinicFilter, testFilter, latestCallByPatient, myEngineAssignedIds]);
+  }, [card, latestCallByPatient, myEngineAssignedIds]);
 
   // Header badge: "callbacks due in next 30 min" (or already overdue) — global
   // across all patients on the call list, not just the current filtered view.
@@ -697,11 +657,6 @@ export default function OutreachSchedulerPortalPage() {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
       const isTyping = tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable;
-      if (e.key === "/" && !isTyping) {
-        e.preventDefault();
-        searchRef.current?.focus();
-        return;
-      }
       if (isTyping) return;
       if (e.key === "?") {
         setShortcutsOpen(true);
@@ -960,7 +915,7 @@ export default function OutreachSchedulerPortalPage() {
                         type="button"
                         onClick={() => {
                           setActiveTabId(tab.id);
-                          setExpandedSection(tab.kind === "thread" ? null : (tab.kind as any));
+                          setExpandedSection(tabKindToExpanded(tab.kind));
                           if (tab.patientId) selectPatient(tab.patientId);
                         }}
                         className="font-medium truncate max-w-[180px]"
