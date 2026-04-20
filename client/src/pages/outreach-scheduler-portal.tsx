@@ -1538,6 +1538,27 @@ function CurrentCallCard({
         )}
       </div>
 
+      {/* AI reasoning summary — why this patient qualifies */}
+      {item.reasoning?.length > 0 && (
+        <div
+          className="mt-3 rounded-xl border border-indigo-100 bg-white/80 p-3 text-[11px] text-slate-700"
+          data-testid="current-call-reasoning"
+        >
+          <div className="flex items-center gap-1.5 text-indigo-600">
+            <Sparkles className="h-3 w-3" />
+            <span className="font-semibold uppercase tracking-[0.14em] text-[10px]">Why this patient qualifies</span>
+          </div>
+          <ul className="mt-1.5 space-y-1.5">
+            {item.reasoning.slice(0, 3).map((r, i) => (
+              <li key={`reason-${i}`}>
+                <span className="font-semibold text-indigo-700">{r.testName}:</span>{" "}
+                <span className="leading-relaxed line-clamp-3">{r.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Prior tests / cooldown reasoning summary */}
       {(item.previousTests || item.previousTestsDate) && (
         <div
