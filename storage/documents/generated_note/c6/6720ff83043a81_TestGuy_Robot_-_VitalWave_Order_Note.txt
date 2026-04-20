@@ -1,0 +1,8 @@
+Patient
+TestGuy Robot (TEST FIXTURE)
+
+Order
+Order VitalWave for clinical evaluation.
+
+Indication
+Test fixture - automated verification only.
