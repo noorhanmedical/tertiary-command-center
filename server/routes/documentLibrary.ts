@@ -287,10 +287,38 @@ function mountRoutes(app: Express, basePath: string) {
       // Soft-deleted docs must not be retrievable by direct id either.
       if (doc.deletedAt !== null) return res.status(404).json({ error: "Not found" });
 
-      const blob = await getLatestBlobForOwner("library_document", doc.id);
-      if (!blob) return res.status(404).json({ error: "File not found" });
+      let blob = await getLatestBlobForOwner("library_document", doc.id);
+
+      // Legacy fallback: rows back-filled from `uploaded_documents` have no
+      // library_document blob of their own — their bytes still live under
+      // ownerType "uploaded_document". Resolve via the source_notes pointer.
+      let legacyDriveLink: string | null = null;
+      if (!blob && doc.sourceNotes && doc.sourceNotes.startsWith(LEGACY_SOURCE_PREFIX)) {
+        const legacyIdStr = doc.sourceNotes.slice(LEGACY_SOURCE_PREFIX.length);
+        const legacyId = parseInt(legacyIdStr, 10);
+        if (!Number.isNaN(legacyId)) {
+          blob = await getLatestBlobForOwner("uploaded_document", legacyId);
+          if (!blob) {
+            const legacyRow = await db.select()
+              .from(uploadedDocuments)
+              .where(eq(uploadedDocuments.id, legacyId))
+              .limit(1);
+            legacyDriveLink = legacyRow[0]?.driveWebViewLink ?? null;
+          }
+        }
+      }
+
+      if (!blob) {
+        // Final fallback: redirect to the Drive web-view link if the legacy
+        // row only ever had cloud-hosted bytes.
+        if (legacyDriveLink) return res.redirect(legacyDriveLink);
+        return res.status(404).json({ error: "File not found" });
+      }
       const data = await readBlob(blob.id);
-      if (!data) return res.status(404).json({ error: "File not found" });
+      if (!data) {
+        if (legacyDriveLink) return res.redirect(legacyDriveLink);
+        return res.status(404).json({ error: "File not found" });
+      }
 
       const inline = req.query.disposition === "inline";
       res.setHeader("Content-Type", data.blob.contentType);
