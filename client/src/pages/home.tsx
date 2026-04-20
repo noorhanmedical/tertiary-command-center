@@ -273,9 +273,15 @@ export default function Home() {
     setAnalyzingPatients((prev) => new Set(prev).add(patientId));
     try {
       const res = await apiRequest("POST", `/api/patients/${patientId}/analyze`);
-      await res.json();
+      const body = await res.json().catch(() => ({}));
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-      toast({ title: "Patient analyzed" });
+      queryClient.invalidateQueries({ queryKey: ["/api/schedule/dashboard"] });
+      const handoff = body?.autoCommittedSchedulerName
+        ? `Sent to ${body.autoCommittedSchedulerName}.`
+        : body?.commitStatus && body.commitStatus !== "Draft"
+          ? "Sent to schedulers."
+          : undefined;
+      toast({ title: "Patient analyzed", description: handoff });
     } catch (err: unknown) {
       toast({ title: "Analysis failed", description: err instanceof Error ? err.message : "Analysis failed", variant: "destructive" });
     } finally {

@@ -1037,9 +1037,19 @@ export class DatabaseStorage implements IStorage {
       // SQL-level guard: never downgrade a "scheduled" patient unless the
       // new status is also "scheduled". This is atomic against concurrent
       // writers because the predicate runs inside the same transaction.
+      // Commit-status transition rules (never downgrade):
+      //   • desiredStatus "scheduled" → commitStatus "Scheduled"
+      //   • otherwise (any outreach touch) → commitStatus "WithScheduler"
+      //     unless the patient is already Scheduled.
+      // Draft is intentionally left untouched here — the outreach service
+      // already filters Drafts out, so a call against a Draft would be an
+      // upstream bug we don't want to silently paper over.
       if (desiredStatus === "scheduled") {
         await tx.update(patientScreenings)
-          .set({ appointmentStatus: desiredStatus })
+          .set({
+            appointmentStatus: desiredStatus,
+            commitStatus: "Scheduled",
+          })
           .where(eq(patientScreenings.id, record.patientScreeningId));
       } else {
         await tx.update(patientScreenings)
@@ -1047,6 +1057,12 @@ export class DatabaseStorage implements IStorage {
           .where(and(
             eq(patientScreenings.id, record.patientScreeningId),
             ne(patientScreenings.appointmentStatus, "scheduled"),
+          ));
+        await tx.update(patientScreenings)
+          .set({ commitStatus: "WithScheduler" })
+          .where(and(
+            eq(patientScreenings.id, record.patientScreeningId),
+            inArray(patientScreenings.commitStatus, ["Ready"]),
           ));
       }
 

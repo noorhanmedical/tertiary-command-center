@@ -16,6 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarPageHeader, HeaderPill, HeaderStatusPill } from "@/components/CalendarPageHeader";
 
 type TeamMember = {
@@ -28,6 +29,7 @@ type ClinicDay = {
   isoDate: string;
   patientCount: number;
   ancillaryCount: number;
+  newCommittedToday: number;
   ancillaryBreakdown: Record<string, number>;
   providerNames: string[];
 };
@@ -36,6 +38,20 @@ type ClinicMonthCell = {
   isoDate: string;
   patientCount: number;
   ancillaryCount: number;
+  newCommittedToday: number;
+};
+
+type RecentlyCommittedEntry = {
+  patientId: number;
+  patientName: string;
+  batchId: number;
+  clinicLabel: string;
+  clinicKey: string;
+  isoDate: string;
+  committedAt: string;
+  committedByUserId: string | null;
+  committerName: string | null;
+  schedulerName: string | null;
 };
 
 type ClinicTab = {
@@ -55,6 +71,9 @@ type DashboardResponse = {
   previousWeekStart: string;
   nextWeekStart: string;
   sharedCalendarSpreadsheetId: string;
+  recentlyCommitted: RecentlyCommittedEntry[];
+  committedTodayDetails: RecentlyCommittedEntry[];
+  newCommittedTodayTotal: number;
   dailySnapshot: {
     totalAncillariesScheduled: number;
     ancillaryBreakdown: Record<string, number>;
@@ -333,25 +352,145 @@ export default function ScheduleDashboardPage() {
                 </div>
 
                 <div className="grid grid-cols-7 gap-2">
-                  {selectedClinic.monthCells.map((cell) => (
-                    <div key={cell.isoDate} className="min-h-[92px] rounded-2xl border border-slate-200 bg-slate-50 p-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-semibold text-slate-900">{formatMonthDay(cell.isoDate)}</span>
-                        {selectedClinic.scheduler ? (
-                          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-blue-100 text-[10px] font-semibold text-blue-700">
-                            {selectedClinic.scheduler.initials}
-                          </div>
-                        ) : null}
+                  {selectedClinic.monthCells.map((cell) => {
+                    const cellCommits = (data?.committedTodayDetails ?? []).filter(
+                      (c) => c.clinicKey === selectedClinic.clinicKey && c.isoDate === cell.isoDate,
+                    );
+                    return (
+                      <div
+                        key={cell.isoDate}
+                        className="min-h-[92px] rounded-2xl border border-slate-200 bg-slate-50 p-2"
+                        data-testid={`month-cell-${cell.isoDate}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-slate-900">{formatMonthDay(cell.isoDate)}</span>
+                          {cell.newCommittedToday > 0 ? (
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center justify-center rounded-full bg-violet-600 px-1.5 h-5 text-[10px] font-semibold text-white shadow-sm hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-300"
+                                  title={`${cell.newCommittedToday} newly committed today — click for details`}
+                                  data-testid={`badge-new-today-${cell.isoDate}`}
+                                >
+                                  +{cell.newCommittedToday} new
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent
+                                align="end"
+                                className="w-72 p-0"
+                                data-testid={`popover-new-today-${cell.isoDate}`}
+                              >
+                                <div className="border-b border-slate-100 px-3 py-2">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                    Newly committed
+                                  </p>
+                                  <p className="text-sm font-semibold text-slate-900">
+                                    {selectedClinic.clinicLabel} • {formatMonthDay(cell.isoDate)}
+                                  </p>
+                                </div>
+                                {cellCommits.length === 0 ? (
+                                  <div className="px-3 py-3 text-xs text-slate-500">
+                                    Newly committed today, but full details aren't loaded yet — refresh to see names.
+                                  </div>
+                                ) : (
+                                  <ul className="max-h-64 divide-y divide-slate-100 overflow-auto">
+                                    {cellCommits.map((c) => {
+                                      const t = new Date(c.committedAt).toLocaleTimeString(undefined, {
+                                        hour: "numeric",
+                                        minute: "2-digit",
+                                      });
+                                      return (
+                                        <li
+                                          key={`${c.patientId}-${c.committedAt}`}
+                                          className="px-3 py-2"
+                                          data-testid={`row-cell-commit-${c.patientId}`}
+                                        >
+                                          <Link href={`/schedule/${c.batchId}`}>
+                                            <a className="text-sm font-semibold text-indigo-700 hover:underline">
+                                              {c.patientName}
+                                            </a>
+                                          </Link>
+                                          <p className="text-[11px] text-slate-500">
+                                            Sent by {c.committerName ?? "system"} at {t}
+                                          </p>
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+                                )}
+                              </PopoverContent>
+                            </Popover>
+                          ) : selectedClinic.scheduler ? (
+                            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-blue-100 text-[10px] font-semibold text-blue-700">
+                              {selectedClinic.scheduler.initials}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="mt-2 space-y-1 text-xs text-slate-600">
+                          <p>Pts: {cell.patientCount}</p>
+                          <p>Anc: {cell.ancillaryCount}</p>
+                        </div>
                       </div>
-                      <div className="mt-2 space-y-1 text-xs text-slate-600">
-                        <p>Pts: {cell.patientCount}</p>
-                        <p>Anc: {cell.ancillaryCount}</p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>
+          )}
+        </Card>
+
+        <Card
+          className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl"
+          data-testid="card-recently-committed"
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">Recently committed today</h3>
+              <p className="text-sm text-slate-500">
+                Patients newly handed off to schedulers across all clinics.
+              </p>
+            </div>
+            <Badge className="rounded-full bg-violet-100 text-violet-700 hover:bg-violet-100">
+              {data?.newCommittedTodayTotal ?? 0} new today
+            </Badge>
+          </div>
+          {(data?.recentlyCommitted ?? []).length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-center text-sm text-slate-500" data-testid="text-no-recent-commits">
+              Nothing committed yet today — when a patient is sent to schedulers it will appear here.
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white">
+              {(data?.recentlyCommitted ?? []).map((entry) => {
+                const time = new Date(entry.committedAt).toLocaleTimeString(undefined, {
+                  hour: "numeric",
+                  minute: "2-digit",
+                });
+                return (
+                  <li
+                    key={`${entry.patientId}-${entry.committedAt}`}
+                    className="flex items-center justify-between gap-3 px-4 py-3"
+                    data-testid={`row-recent-commit-${entry.patientId}`}
+                  >
+                    <div className="min-w-0">
+                      <Link href={`/schedule/${entry.batchId}`}>
+                        <a
+                          className="text-sm font-semibold text-indigo-700 hover:underline truncate block"
+                          data-testid={`link-recent-patient-${entry.patientId}`}
+                        >
+                          {entry.patientName}
+                        </a>
+                      </Link>
+                      <p className="text-xs text-slate-500 truncate">
+                        {entry.clinicLabel}
+                        {entry.schedulerName ? ` • ${entry.schedulerName}` : ""}
+                      </p>
+                    </div>
+                    <div className="text-xs text-slate-500 shrink-0">{time}</div>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </Card>
       </div>

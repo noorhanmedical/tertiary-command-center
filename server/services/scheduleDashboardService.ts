@@ -19,7 +19,12 @@ type SchedulePatient = {
   patientType?: string | null;
   qualifyingTests?: string[] | null;
   appointmentStatus?: string | null;
+  commitStatus?: string | null;
+  committedAt?: Date | string | null;
+  committedByUserId?: string | null;
 };
+
+const RECENTLY_COMMITTED_LIMIT = 12;
 
 export function s(v: unknown): string {
   return v == null ? "" : String(v).trim();
@@ -87,6 +92,19 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
   const todaysAncillaryCounts: Record<string, number> = {};
   let todaysAncillaryTotal = 0;
   const clinicMap = new Map<string, any>();
+  type CommitEntry = {
+    patientId: number;
+    patientName: string;
+    batchId: number;
+    clinicLabel: string;
+    clinicKey: string;
+    isoDate: string;
+    committedAt: string;
+    committedByUserId: string | null;
+    committerName: string | null;
+    schedulerName: string | null;
+  };
+  const recentlyCommitted: CommitEntry[] = [];
 
   for (const connection of CLINIC_SPREADSHEET_CONNECTIONS) {
     clinicMap.set(connection.clinicLabel, {
@@ -100,6 +118,7 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
         isoDate: iso,
         patientCount: 0,
         ancillaryCount: 0,
+        newCommittedToday: 0,
         ancillaryBreakdown: {},
         providerNames: [],
       })),
@@ -107,6 +126,7 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
         isoDate: iso,
         patientCount: 0,
         ancillaryCount: 0,
+        newCommittedToday: 0,
         patients: [] as { id: number; name: string; time: string | null; ancillaries: string[] }[],
       })),
     });
@@ -127,6 +147,7 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
           isoDate: iso,
           patientCount: 0,
           ancillaryCount: 0,
+          newCommittedToday: 0,
           ancillaryBreakdown: {},
           providerNames: [],
         })),
@@ -134,6 +155,7 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
           isoDate: iso,
           patientCount: 0,
           ancillaryCount: 0,
+          newCommittedToday: 0,
           patients: [] as { id: number; name: string; time: string | null; ancillaries: string[] }[],
         })),
       });
@@ -145,6 +167,29 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
     for (const patient of patients) {
       const tests = Array.isArray(patient.qualifyingTests) ? patient.qualifyingTests.filter(Boolean) : [];
       const count = tests.length;
+      const committedAtIso = patient.committedAt
+        ? canonicalDay(typeof patient.committedAt === "string" ? patient.committedAt : patient.committedAt.toISOString())
+        : null;
+      const isCommitted = patient.commitStatus && patient.commitStatus !== "Draft";
+      const newToday = isCommitted && committedAtIso === today;
+      if (newToday) {
+        recentlyCommitted.push({
+          patientId: patient.id,
+          patientName: patient.name,
+          batchId: batch.id,
+          clinicLabel: facility,
+          clinicKey: clinicEntry.clinicKey,
+          isoDate: batchDay,
+          committedAt: typeof patient.committedAt === "string"
+            ? patient.committedAt
+            : patient.committedAt!.toISOString(),
+          committedByUserId: patient.committedByUserId ?? null,
+          // committerName is filled in below in a single batched user lookup
+          // so we don't issue a query per patient.
+          committerName: null,
+          schedulerName: clinicEntry.scheduler?.name ?? null,
+        });
+      }
 
       if (batchDay === today) {
         todaysAncillaryTotal += count;
@@ -158,6 +203,7 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
       if (weekCell) {
         weekCell.patientCount += 1;
         weekCell.ancillaryCount += count;
+        if (newToday) weekCell.newCommittedToday += 1;
         const counts = ancillaryCounts(tests);
         for (const [testName, num] of Object.entries(counts)) {
           weekCell.ancillaryBreakdown[testName] = (weekCell.ancillaryBreakdown[testName] || 0) + num;
@@ -172,6 +218,7 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
       if (monthCell) {
         monthCell.patientCount += 1;
         monthCell.ancillaryCount += count;
+        if (newToday) monthCell.newCommittedToday += 1;
         monthCell.patients.push({
           id: patient.id,
           name: s(patient.name),
@@ -186,12 +233,46 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
     a.clinicLabel.localeCompare(b.clinicLabel),
   );
 
+  // Single batched lookup of committer usernames so the global feed and
+  // any drill-in views can attribute the commit by name without N queries.
+  const committerIds = Array.from(
+    new Set(
+      recentlyCommitted
+        .map((entry) => entry.committedByUserId)
+        .filter((id): id is string => !!id),
+    ),
+  );
+  if (committerIds.length > 0) {
+    const users = await Promise.all(committerIds.map((id) => storage.getUser(id)));
+    const nameById = new Map<string, string>();
+    for (const u of users) if (u) nameById.set(u.id, u.username);
+    for (const entry of recentlyCommitted) {
+      if (entry.committedByUserId) {
+        entry.committerName = nameById.get(entry.committedByUserId) ?? null;
+      }
+    }
+  }
+
+  // Two views over the same dataset:
+  //   • recentlyCommitted: capped feed for the compact "Recently committed
+  //     today" panel on the dashboard.
+  //   • committedTodayDetails: full uncapped list so per-cell drill-in
+  //     popovers always show every patient committed for that clinic+day,
+  //     regardless of how many global commits exist today.
+  const allCommittedToday = [...recentlyCommitted].sort((a, b) =>
+    b.committedAt.localeCompare(a.committedAt),
+  );
+  const sortedRecentlyCommitted = allCommittedToday.slice(0, RECENTLY_COMMITTED_LIMIT);
+
   return {
     today,
     weekStart,
     previousWeekStart: addDaysIso(weekStart, -7),
     nextWeekStart: addDaysIso(weekStart, 7),
     sharedCalendarSpreadsheetId: SHARED_CALENDAR_SPREADSHEET_ID,
+    recentlyCommitted: sortedRecentlyCommitted,
+    committedTodayDetails: allCommittedToday,
+    newCommittedTodayTotal: recentlyCommitted.length,
     dailySnapshot: {
       totalAncillariesScheduled: todaysAncillaryTotal,
       ancillaryBreakdown: todaysAncillaryCounts,

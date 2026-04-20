@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Check, Loader2, Sparkles, Calendar, Trash2, Plus, X } from "lucide-react";
+import { Check, Loader2, Sparkles, Calendar, Trash2, Plus, X, Send, Undo2 } from "lucide-react";
 import type { AncillaryAppointment, PatientScreening, ScreeningBatch } from "@shared/schema";
+import { COMMIT_RECALL_WINDOW_MS } from "@shared/schema";
 import { getAncillaryCategory, getBadgeColor } from "@/features/schedule/ancillaryMeta";
 import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
 
@@ -91,6 +92,20 @@ function getInitials(name: string): string {
     .join("");
 }
 
+function commitStatusStyle(status: string): string {
+  switch (status) {
+    case "Ready": return "bg-blue-100 text-blue-800 border border-blue-200";
+    case "WithScheduler": return "bg-amber-100 text-amber-800 border border-amber-200";
+    case "Scheduled": return "bg-emerald-100 text-emerald-800 border border-emerald-200";
+    default: return "bg-slate-100 text-slate-700 border border-slate-200";
+  }
+}
+
+function commitStatusLabel(status: string): string {
+  if (status === "WithScheduler") return "With Scheduler";
+  return status || "Draft";
+}
+
 export function PatientCard({
   patient,
   isAnalyzing,
@@ -101,11 +116,75 @@ export function PatientCard({
   schedulerName,
 }: PatientCardProps) {
   const isCompleted = patient.status === "completed";
+  const commitStatus = patient.commitStatus || "Draft";
+  const isDraft = commitStatus === "Draft";
+
+  // Recall window: only show "Recall" while still Ready and within 5 min of
+  // committedAt. Re-render every 15s so the button auto-hides on expiry.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (commitStatus !== "Ready") return;
+    const id = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(id);
+  }, [commitStatus]);
+  const committedAtMs = patient.committedAt ? new Date(patient.committedAt).getTime() : 0;
+  const inRecallWindow = commitStatus === "Ready" && committedAtMs > 0 && now - committedAtMs <= COMMIT_RECALL_WINDOW_MS;
+
+  const [isCommitting, setIsCommitting] = useState(false);
+  const [isRecalling, setIsRecalling] = useState(false);
+
   const serverTests = patient.qualifyingTests || [];
   const [localTests, setLocalTests] = useState<string[]>(serverTests);
   const [generatingTests, setGeneratingTests] = useState<Set<string>>(new Set());
   const cardQueryClient = useQueryClient();
   const { toast: cardToast } = useToast();
+
+  const handleCommit = useCallback(async () => {
+    setIsCommitting(true);
+    try {
+      const res = await apiRequest("POST", `/api/patients/${patient.id}/commit`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Commit failed");
+      cardQueryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+      cardQueryClient.invalidateQueries({ queryKey: ["/api/schedule/dashboard"] });
+      const target = data.schedulerName ? ` to ${data.schedulerName}` : "";
+      cardToast({
+        title: "Sent to schedulers",
+        description: `${patient.name} is now visible${target}.`,
+      });
+    } catch (err: unknown) {
+      cardToast({
+        title: "Could not send to schedulers",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCommitting(false);
+    }
+  }, [patient.id, patient.batchId, patient.name, cardQueryClient, cardToast]);
+
+  const handleRecall = useCallback(async () => {
+    setIsRecalling(true);
+    try {
+      const res = await apiRequest("POST", `/api/patients/${patient.id}/recall`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Recall failed");
+      cardQueryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+      cardQueryClient.invalidateQueries({ queryKey: ["/api/schedule/dashboard"] });
+      cardToast({
+        title: "Recalled",
+        description: `${patient.name} is back as a draft and hidden from schedulers.`,
+      });
+    } catch (err: unknown) {
+      cardToast({
+        title: "Could not recall",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRecalling(false);
+    }
+  }, [patient.id, patient.batchId, patient.name, cardQueryClient, cardToast]);
 
   const { data: patientAppts = [] } = useQuery<AncillaryAppointment[]>({
     queryKey: ["/api/appointments/patient", patient.id],
@@ -241,6 +320,13 @@ export function PatientCard({
               <Check className="w-3 h-3 text-emerald-500" /> Analyzed
             </Badge>
           )}
+          <span
+            className={`text-[10px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 ${commitStatusStyle(commitStatus)}`}
+            title={`Commit status: ${commitStatusLabel(commitStatus)}`}
+            data-testid={`pill-commit-status-${patient.id}`}
+          >
+            {commitStatusLabel(commitStatus)}
+          </span>
           {schedulerName && (
             <span
               title={`Scheduler: ${schedulerName}`}
@@ -272,6 +358,34 @@ export function PatientCard({
                 <Calendar className="w-2.5 h-2.5" />
                 Scheduled {scheduledAppt.scheduledDate}
               </span>
+            )}
+            {isDraft && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCommit}
+                disabled={isCommitting}
+                className="gap-1.5"
+                data-testid={`button-commit-${patient.id}`}
+                title="Send to Schedulers (requires name, DOB, and phone)"
+              >
+                {isCommitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                Send to Schedulers
+              </Button>
+            )}
+            {inRecallWindow && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRecall}
+                disabled={isRecalling}
+                className="gap-1.5 text-amber-700 hover:text-amber-800"
+                data-testid={`button-recall-${patient.id}`}
+                title="Recall from schedulers (within 5 minutes)"
+              >
+                {isRecalling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />}
+                Recall
+              </Button>
             )}
             <Button
               variant="ghost"

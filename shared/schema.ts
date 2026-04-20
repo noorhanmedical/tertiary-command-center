@@ -79,6 +79,9 @@ export const patientScreenings = pgTable("patient_screenings", {
   status: text("status").notNull().default("pending"),
   appointmentStatus: text("appointment_status").notNull().default("pending"),
   patientType: text("patient_type").notNull().default("visit"),
+  commitStatus: text("commit_status").notNull().default("Draft"),
+  committedAt: timestamp("committed_at"),
+  committedByUserId: varchar("committed_by_user_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   isTest: boolean("is_test").notNull().default(false),
 }, (table) => [
@@ -86,7 +89,16 @@ export const patientScreenings = pgTable("patient_screenings", {
   index("idx_patient_screenings_status").on(table.status),
   index("idx_patient_screenings_appointment_status").on(table.appointmentStatus),
   index("idx_patient_screenings_name_dob").on(table.name, table.dob),
+  index("idx_patient_screenings_commit_status").on(table.commitStatus),
+  index("idx_patient_screenings_committed_at").on(table.committedAt),
 ]);
+
+export const COMMIT_STATUSES = ["Draft", "Ready", "WithScheduler", "Scheduled"] as const;
+export type CommitStatus = typeof COMMIT_STATUSES[number];
+
+/** Recall window in milliseconds — adders can undo a commit within this
+ *  many ms of committedAt; after that the commit is locked in. */
+export const COMMIT_RECALL_WINDOW_MS = 5 * 60 * 1000;
 
 export const insertPatientScreeningSchema = createInsertSchema(patientScreenings).omit({
   id: true,

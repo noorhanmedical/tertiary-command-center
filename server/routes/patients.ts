@@ -15,6 +15,7 @@ import { normalizeInsuranceType } from "../services/ingest";
 import { logAudit } from "../services/auditService";
 import { invalidatePatientDatabase } from "./patientDatabase";
 import { assignNewlyEligiblePatient } from "../services/callListEngine";
+import { commitPatient, recallPatient } from "../services/patientCommitService";
 
 type BackgroundSyncPatients = () => void | Promise<void>;
 
@@ -168,21 +169,105 @@ export function registerPatientRoutes(
         status: "completed",
       });
 
+      // Auto-commit on successful AI analysis: Draft → Ready so the
+      // assigned scheduler immediately sees the patient in their call
+      // list. Already-committed patients are unchanged (no downgrade).
+      let finalPatient = updated;
+      let schedulerName: string | null = null;
+      try {
+        const result = await commitPatient(id, req.session.userId ?? null, { auto: true });
+        if (result.ok) {
+          finalPatient = result.data.patient;
+          schedulerName = result.data.schedulerName;
+        }
+      } catch (commitErr) {
+        console.error("Auto-commit after analyze failed:", commitErr);
+      }
+
       invalidatePatientDatabase();
 
       // Mid-day eligibility hook: if this patient just became call-eligible
       // (status=completed + qualifying tests), slot them into today's
       // assignment queue without waiting for the next morning rebuild.
-      if (updated && qualTests.length > 0 && updated.facility) {
+      // Use finalPatient (post-auto-commit) so the engine sees the latest
+      // state including commitStatus/committedAt.
+      if (finalPatient && qualTests.length > 0 && finalPatient.facility) {
         const today = new Date().toISOString().slice(0, 10);
-        assignNewlyEligiblePatient(storage, updated, updated.facility, today)
+        assignNewlyEligiblePatient(storage, finalPatient, finalPatient.facility, today)
           .catch((err) => console.warn("[patients] assignNewlyEligiblePatient failed:", err?.message));
       }
 
-      res.json(updated);
+      res.json({ ...finalPatient, autoCommittedSchedulerName: schedulerName });
     } catch (error: any) {
       console.error("Per-patient analysis error:", error);
       res.status(500).json({ error: error.message || "Analysis failed" });
+    }
+  });
+
+  // Manual commit (Send to Schedulers): used when AI analysis was skipped.
+  // Enforces required-field gate (name/dob/phone) so a half-filled draft
+  // never lands in a scheduler's call list.
+  app.post("/api/patients/:id/commit", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid patient id" });
+
+      const result = await commitPatient(id, req.session.userId ?? null, { auto: false });
+      if (!result.ok) {
+        if (result.error.code === "not_found") return res.status(404).json({ error: "Patient not found" });
+        if (result.error.code === "validation") {
+          return res.status(400).json({
+            error: `Cannot send to schedulers — missing required field${result.error.missing.length === 1 ? "" : "s"}: ${result.error.missing.join(", ")}`,
+            missing: result.error.missing,
+          });
+        }
+        return res.status(409).json({ error: "Patient already committed" });
+      }
+
+      void logAudit(req, "commit", "patient", id, { schedulerName: result.data.schedulerName });
+      invalidatePatientDatabase();
+      res.json({ ...result.data.patient, schedulerName: result.data.schedulerName });
+    } catch (error: any) {
+      console.error("Patient commit error:", error);
+      res.status(500).json({ error: error.message || "Commit failed" });
+    }
+  });
+
+  // Recall a freshly-committed patient back to Draft. Only works inside the
+  // recall window (5 min) and only while still Ready (not yet touched).
+  app.post("/api/patients/:id/recall", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid patient id" });
+
+      const sessionUserId = req.session.userId ?? null;
+      if (!sessionUserId) return res.status(401).json({ error: "Not authenticated" });
+
+      // Adder-only recall: only the user who pressed "Send to Schedulers"
+      // (or auto-commit attribution) can pull a patient back. Admins may
+      // override. This prevents drive-by recalls from other team members
+      // observing the dashboard.
+      const existing = await storage.getPatientScreening(id);
+      if (!existing) return res.status(404).json({ error: "Patient not found" });
+      const isAdmin = req.session.role === "admin";
+      if (!isAdmin && existing.committedByUserId && existing.committedByUserId !== sessionUserId) {
+        return res.status(403).json({ error: "Only the user who committed this patient can recall it" });
+      }
+
+      const result = await recallPatient(id);
+      if (!result.ok) {
+        if (result.error.code === "not_found") return res.status(404).json({ error: "Patient not found" });
+        if (result.error.code === "not_committed") return res.status(400).json({ error: "Patient is still a Draft" });
+        if (result.error.code === "window_elapsed") return res.status(409).json({ error: "Recall window has elapsed" });
+        return res.status(409).json({ error: `Cannot recall — patient is now ${result.error.status}` });
+      }
+
+      void logAudit(req, "recall", "patient", id, null);
+      invalidatePatientDatabase();
+      res.json(result.data);
+    } catch (error: any) {
+      console.error("Patient recall error:", error);
+      res.status(500).json({ error: error.message || "Recall failed" });
     }
   });
 

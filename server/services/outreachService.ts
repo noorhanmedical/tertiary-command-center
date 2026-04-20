@@ -237,6 +237,12 @@ export async function buildOutreachDashboard(
     }
 
     for (const patient of patients) {
+      // HARD GATE: Drafts must never leak into a scheduler's call list.
+      // Only patients that have been committed (Ready or later) are
+      // visible here. Legacy data was backfilled by migration 0013 so
+      // existing patients keep their place.
+      if (patient.commitStatus === "Draft") continue;
+
       // Engine assignment is authoritative; otherwise gate by visit window
       // (outreach-type patients bypass the window entirely).
       const isOutreach = (s(patient.patientType) || "visit").toLowerCase() === "outreach";

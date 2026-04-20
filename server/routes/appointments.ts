@@ -63,6 +63,14 @@ export function registerAppointmentRoutes(app: Express) {
         testType,
         status: "scheduled",
       });
+      // Booking an ancillary appointment locks the patient into the
+      // Scheduled commit status so the recall window can no longer apply.
+      if (patientScreeningId != null) {
+        await storage.updatePatientScreening(patientScreeningId, {
+          commitStatus: "Scheduled",
+          appointmentStatus: "scheduled",
+        });
+      }
       void logAudit(req, "create", "appointment", appt.id, { patientName, facility, scheduledDate, scheduledTime, testType });
       res.json(appt);
     } catch (error: any) {
