@@ -478,11 +478,14 @@ export default function Home() {
                   title="Patient Test History"
                   subtitle={`${testHistory.length} record${testHistory.length === 1 ? "" : "s"}`}
                   actions={
-                    testHistory.length > 0 ? (
-                      <Button variant="outline" size="sm" onClick={() => { if (confirm("Clear all test history records?")) clearHistoryMutation.mutate(); }} className="gap-1.5 text-red-600" data-testid="button-clear-history">
-                        <Trash2 className="w-3.5 h-3.5" /> Clear All
-                      </Button>
-                    ) : undefined
+                    <>
+                      <SidebarTrigger data-testid="button-sidebar-toggle-history" />
+                      {testHistory.length > 0 && (
+                        <Button variant="outline" size="sm" onClick={() => { if (confirm("Clear all test history records?")) clearHistoryMutation.mutate(); }} className="gap-1.5 text-red-600" data-testid="button-clear-history">
+                          <Trash2 className="w-3.5 h-3.5" /> Clear All
+                        </Button>
+                      )}
+                    </>
                   }
                 />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
