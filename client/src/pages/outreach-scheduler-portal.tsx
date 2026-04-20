@@ -34,6 +34,7 @@ import {
   Wand2,
   Trash2,
   Mail,
+  MessageCircle,
   Maximize2,
   Minimize2,
 } from "lucide-react";
@@ -293,6 +294,14 @@ export default function OutreachSchedulerPortalPage() {
   const [bookingPanelOpen, setBookingPanelOpen] = useState(false);
   const [expandedSection, setExpandedSection] = useState<"calendar" | "email" | "materials" | "callList" | "tasks" | "currentCall" | null>(null);
 
+  // Playfield tabs (persist across patient changes; per-patient labeled)
+  type PlayfieldTabKind = "currentCall" | "calendar" | "email" | "materials" | "callList" | "tasks" | "thread";
+  type PlayfieldTab = { id: string; kind: PlayfieldTabKind; patientId?: number; patientName?: string; label: string };
+  const [playfieldTabs, setPlayfieldTabs] = useState<PlayfieldTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // Floating iOS-style messages popout
+  const [messagesOpen, setMessagesOpen] = useState(false);
+
   // Call flow state
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | CallBucket>("all");
@@ -549,6 +558,30 @@ export default function OutreachSchedulerPortalPage() {
     setTaskDrawerPatientName(task.patientName ?? "");
   }
 
+  function openPlayfieldTab(opts: { kind: PlayfieldTabKind; patientId?: number; patientName?: string; threadId?: string }) {
+    const { kind, patientId, patientName, threadId } = opts;
+    const id = `${kind}:${threadId ?? patientId ?? "global"}`;
+    const labelBase: Record<PlayfieldTabKind, string> = {
+      currentCall: "Call", calendar: "Calendar", email: "Email", materials: "Materials",
+      callList: "Call list", tasks: "Tasks", thread: "Thread",
+    };
+    const label = patientName ? `${labelBase[kind]} · ${patientName}` : labelBase[kind];
+    setPlayfieldTabs((prev) => (prev.some((t) => t.id === id) ? prev : [...prev, { id, kind, patientId, patientName, label }]));
+    setActiveTabId(id);
+    setExpandedSection(kind === "thread" ? null : (kind as any));
+  }
+  function closePlayfieldTab(id: string) {
+    setPlayfieldTabs((prev) => {
+      const next = prev.filter((t) => t.id !== id);
+      if (activeTabId === id) {
+        const fallback = next[next.length - 1] ?? null;
+        setActiveTabId(fallback?.id ?? null);
+        setExpandedSection(fallback ? (fallback.kind === "thread" ? null : (fallback.kind as any)) : null);
+      }
+      return next;
+    });
+  }
+
   // ── Derived data ────────────────────────────────────────────────────────────
   const bookedDates = new Set<string>(
     appointments.filter((a) => a.status === "scheduled").map((a) => a.scheduledDate),
@@ -776,10 +809,41 @@ export default function OutreachSchedulerPortalPage() {
           </div>
         </header>
 
-        {/* ── Cockpit grid: 25% / 50% / 25% — exactly three flat panels ── */}
-        <div className="grid gap-5 xl:grid-cols-[1fr_2fr_1fr] xl:flex-1 xl:min-h-0">
+        {/* ── Cockpit grid: icon rail + tools + playfield + call list ── */}
+        <div className="grid gap-5 xl:grid-cols-[64px_280px_1fr_360px] xl:flex-1 xl:min-h-0">
 
-          {/* ─── LEFT PANEL: Tri-clinic calendar + Communication hub ─── */}
+          {/* ─── ICON RAIL: Email · Materials · Messages ─── */}
+          <div className="hidden xl:flex flex-col items-center gap-3 rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl py-4">
+            <button
+              type="button"
+              title="Email"
+              onClick={() => openPlayfieldTab({ kind: "email" })}
+              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-600"
+              data-testid="portal-icon-email"
+            >
+              <Mail className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              title="Marketing materials"
+              onClick={() => openPlayfieldTab({ kind: "materials" })}
+              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 hover:border-violet-300 hover:text-violet-600"
+              data-testid="portal-icon-materials"
+            >
+              <FileText className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              title="Messages"
+              onClick={() => setMessagesOpen((v) => !v)}
+              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:text-emerald-600"
+              data-testid="portal-icon-messages"
+            >
+              <MessageCircle className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* ─── LEFT PANEL: Tri-clinic calendar + Communication hub + Tasks ─── */}
           <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl divide-y divide-slate-100/80 overflow-hidden xl:flex xl:flex-col xl:min-h-0 xl:overflow-y-auto">
             <ToolsPanel
               facility={card.facility}
@@ -806,10 +870,67 @@ export default function OutreachSchedulerPortalPage() {
               expandedSection={expandedSection}
               setExpandedSection={setExpandedSection}
             />
+
+            {/* ── Tasks list (no tile chrome — flat list) ── */}
+            <div className="px-4 pt-3 pb-4 flex flex-col min-h-0" data-testid="portal-left-tasks">
+              <div className="mb-2 flex items-center gap-2">
+                <ListTodo className="h-4 w-4 text-violet-600" />
+                <h2 className="text-sm font-semibold text-slate-800">Tasks</h2>
+                {(urgentTasks.length + openTasks.length) > 0 && (
+                  <Badge className="rounded-full bg-violet-100 text-violet-700 text-[10px]">
+                    {urgentTasks.length + openTasks.length}
+                  </Badge>
+                )}
+                <button
+                  type="button"
+                  onClick={() => openPlayfieldTab({ kind: "tasks" })}
+                  title="Open in playing field"
+                  className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
+                  data-testid="portal-expand-left-tasks"
+                >
+                  <Maximize2 className="h-3 w-3" />
+                </button>
+              </div>
+              {(urgentTasks.length + openTasks.length) === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-5 text-center text-xs text-slate-400">
+                  No open tasks
+                </div>
+              ) : (
+                <div className="space-y-1.5 overflow-y-auto pr-1 max-h-[340px]">
+                  {[
+                    ...urgentTasks.map((t) => ({ task: t, isUrgent: true as const })),
+                    ...openTasks
+                      .filter((t) => !urgentTasks.some((u) => u.id === t.id))
+                      .map((t) => ({ task: t, isUrgent: false as const })),
+                  ].map(({ task, isUrgent }) => (
+                    <button
+                      key={task.id}
+                      type="button"
+                      onClick={() => openTaskDrawer(task)}
+                      className={`flex w-full items-start gap-2 rounded-xl border px-2.5 py-2 text-left transition ${
+                        isUrgent
+                          ? "border-orange-200 bg-orange-50/40 hover:border-orange-300"
+                          : "border-slate-100 bg-white hover:border-violet-200"
+                      }`}
+                      data-testid={`portal-left-task-${task.id}`}
+                    >
+                      {isUrgent && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-orange-500 ring-2 ring-orange-200" />}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate text-xs font-medium text-slate-800">{task.title}</span>
+                          {unreadTaskIds.has(task.id) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />}
+                        </div>
+                        {task.patientName && <p className="mt-0.5 truncate text-[11px] text-slate-500">{task.patientName}</p>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* ─── CENTER PANEL: Active patient + AI co-pilot + Mission control (sticky metrics float above) ─── */}
-          <div className="min-w-0 flex flex-col gap-4 xl:min-h-0">
+          {/* ─── CENTER PANEL: Full-bleed playfield with tabs + floating AI bar ─── */}
+          <div className="min-w-0 flex flex-col gap-2 xl:min-h-0 relative">
             {/* Sticky top-center metrics pill — floats above the panel */}
             <div className="sticky top-2 z-20 flex justify-center">
               <FloatingMetricsTile
@@ -821,7 +942,48 @@ export default function OutreachSchedulerPortalPage() {
               />
             </div>
 
-            <div className="flex flex-col gap-4 xl:flex-1 xl:min-h-0">
+            {/* ── Playfield tabs strip ── */}
+            {playfieldTabs.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 px-1" data-testid="portal-playfield-tabs">
+                {playfieldTabs.map((tab) => {
+                  const isActive = tab.id === activeTabId;
+                  return (
+                    <div
+                      key={tab.id}
+                      className={`group inline-flex items-center gap-1 rounded-t-xl border px-3 py-1.5 text-xs transition ${
+                        isActive
+                          ? "border-indigo-300 bg-white text-indigo-700 shadow-sm"
+                          : "border-slate-200 bg-white/60 text-slate-600 hover:bg-white"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTabId(tab.id);
+                          setExpandedSection(tab.kind === "thread" ? null : (tab.kind as any));
+                          if (tab.patientId) selectPatient(tab.patientId);
+                        }}
+                        className="font-medium truncate max-w-[180px]"
+                        data-testid={`portal-tab-${tab.id}`}
+                      >
+                        {tab.label}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); closePlayfieldTab(tab.id); }}
+                        className="rounded-full p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                        data-testid={`portal-tab-close-${tab.id}`}
+                        title="Close tab"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-4 xl:flex-1 xl:min-h-0 relative pb-24">
               {expandedSection ? (
                 <div className="flex-1 min-h-0 overflow-y-auto">
                   <ExpandedSectionView
@@ -874,7 +1036,7 @@ export default function OutreachSchedulerPortalPage() {
                     lineageReason={selectedAssignment?.reason ?? null}
                     scriptOpen={scriptOpen}
                     setScriptOpen={setScriptOpen}
-                    onExpand={() => setExpandedSection("currentCall")}
+                    onExpand={() => openPlayfieldTab({ kind: "currentCall", patientId: selectedItem?.patientId, patientName: selectedItem?.patientName })}
                     onDisposition={() => setDispositionOpen(true)}
                     onBook={() => {
                       if (!selectedItem) return;
@@ -912,22 +1074,26 @@ export default function OutreachSchedulerPortalPage() {
                 </div>
               )}
 
-              {/* ── AI bar (anchored at the bottom of the playing field, full-width) ── */}
-              <AiBar
-                selectedItem={selectedItem}
-                callListContext={sortedCallList.slice(0, 25).map(({ item, bucket }) => ({
-                  name: item.patientName,
-                  bucket,
-                  qualifyingTests: item.qualifyingTests,
-                }))}
-              />
+            </div>
+            {/* ── Floating Plexus AI bar (does not displace playfield content) ── */}
+            <div className="absolute left-2 right-2 bottom-2 z-30 pointer-events-none" data-testid="portal-ai-bar-floating">
+              <div className="pointer-events-auto rounded-2xl bg-white/90 backdrop-blur-xl border border-white/60 shadow-[0_18px_60px_rgba(15,23,42,0.18)]">
+                <AiBar
+                  selectedItem={selectedItem}
+                  callListContext={sortedCallList.slice(0, 25).map(({ item, bucket }) => ({
+                    name: item.patientName,
+                    bucket,
+                    qualifyingTests: item.qualifyingTests,
+                  }))}
+                />
+              </div>
             </div>
           </div>
 
-          {/* ─── RIGHT PANEL: Call list (2/3) + Tasks (1/3) ────── */}
-          <div className="min-w-0 grid grid-rows-[2fr_1fr] gap-5 max-h-[calc(100vh-220px)] xl:max-h-none xl:min-h-0">
+          {/* ─── RIGHT PANEL: Call list (full height) ────── */}
+          <div className="min-w-0 flex flex-col max-h-[calc(100vh-140px)] xl:max-h-none xl:min-h-0">
 
-          {/* Call list — top 2/3 */}
+          {/* Call list — full height */}
           <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden flex flex-col min-h-0">
             <div className="px-5 pt-5 pb-4 flex flex-col flex-1 min-h-0">
             <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -937,119 +1103,18 @@ export default function OutreachSchedulerPortalPage() {
               </Badge>
               <button
                 type="button"
-                onClick={() => setExpandedSection("callList")}
+                onClick={() => openPlayfieldTab({ kind: "callList" })}
                 title="Expand to playing field"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
+                className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
                 data-testid="portal-expand-call-list"
               >
                 <Maximize2 className="h-3.5 w-3.5" />
               </button>
-              <div className="ml-auto relative w-full max-w-xs">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <Input
-                  ref={searchRef}
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search…  (press / )"
-                  className="rounded-2xl border-white/60 bg-white/90 pl-9"
-                  data-testid="portal-search-input"
-                />
-              </div>
             </div>
 
-            {/* Bucket filter chips */}
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {FILTER_CHIPS.map((c) => {
-                const active = filter === c.id;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => setFilter(c.id)}
-                    className={[
-                      "rounded-full border px-3 py-1 text-xs font-medium transition",
-                      active
-                        ? "border-indigo-300 bg-indigo-100 text-indigo-700"
-                        : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
-                    ].join(" ")}
-                    data-testid={`portal-filter-${c.id}`}
-                  >
-                    {c.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Clinic + test filter chips */}
-            {(clinicOptions.length > 1 || testOptions.length > 1) && (
-              <div className="mb-3 space-y-1.5">
-                {clinicOptions.length > 1 && (
-                  <div className="flex flex-wrap items-center gap-1.5" data-testid="portal-clinic-filter">
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Clinic</span>
-                    <button
-                      type="button"
-                      onClick={() => setClinicFilter(null)}
-                      className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
-                        clinicFilter === null
-                          ? "border-blue-300 bg-blue-100 text-blue-700"
-                          : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
-                      }`}
-                    >
-                      All
-                    </button>
-                    {clinicOptions.map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => setClinicFilter(c === clinicFilter ? null : c)}
-                        className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
-                          clinicFilter === c
-                            ? "border-blue-300 bg-blue-100 text-blue-700"
-                            : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
-                        }`}
-                        data-testid={`portal-clinic-chip-${c.replace(/\s+/g, "-").toLowerCase()}`}
-                      >
-                        {c}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {testOptions.length > 1 && (
-                  <div className="flex flex-wrap items-center gap-1.5" data-testid="portal-test-filter">
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Test</span>
-                    <button
-                      type="button"
-                      onClick={() => setTestFilter(null)}
-                      className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
-                        testFilter === null
-                          ? "border-violet-300 bg-violet-100 text-violet-700"
-                          : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
-                      }`}
-                    >
-                      All
-                    </button>
-                    {testOptions.map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setTestFilter(t === testFilter ? null : t)}
-                        className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
-                          testFilter === t
-                            ? "border-violet-300 bg-violet-100 text-violet-700"
-                            : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
-                        }`}
-                        data-testid={`portal-test-chip-${t.replace(/\s+/g, "-").toLowerCase()}`}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
             {sortedCallList.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-10 text-center text-sm text-slate-500">
-                {search.trim() ? "No patients match this search." : "No patients in this view."}
+                No patients in this view.
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto pr-1 space-y-2">
@@ -1251,8 +1316,8 @@ export default function OutreachSchedulerPortalPage() {
             </div>
           </div>
 
-          {/* Tasks — bottom 1/3 (urgent items integrated inline, marked with orange dot) */}
-          <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden flex flex-col min-h-0" data-testid="portal-tasks-tile">
+          {/* Tasks tile moved into left rail (see ToolsPanel sibling block) */}
+          <div className="hidden" data-testid="portal-tasks-tile-removed">
             <div className="px-5 pt-4 pb-4 flex flex-col flex-1 min-h-0">
               <div className="mb-3 flex items-center gap-2">
                 <ListTodo className="h-4 w-4 text-violet-600" />
@@ -1530,6 +1595,62 @@ export default function OutreachSchedulerPortalPage() {
           </Dialog>
         );
       })()}
+
+      {/* Floating iOS-style messages popout (right edge, does NOT shrink playfield) */}
+      {messagesOpen && (
+        <div
+          className="fixed right-4 bottom-4 z-40 w-80 max-h-[60vh] rounded-3xl border border-white/70 bg-white/95 shadow-[0_24px_80px_rgba(15,23,42,0.25)] backdrop-blur-xl flex flex-col overflow-hidden"
+          data-testid="portal-messages-popout"
+        >
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100">
+            <MessageCircle className="h-4 w-4 text-emerald-600" />
+            <h3 className="text-sm font-semibold text-slate-800 flex-1">Messages</h3>
+            <button
+              type="button"
+              onClick={() => setMessagesOpen(false)}
+              className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              data-testid="portal-messages-close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1.5">
+            {[...urgentTasks, ...openTasks.filter((t) => !urgentTasks.some((u) => u.id === t.id))].length === 0 ? (
+              <div className="px-3 py-8 text-center text-xs text-slate-400">No active threads</div>
+            ) : (
+              [...urgentTasks, ...openTasks.filter((t) => !urgentTasks.some((u) => u.id === t.id))].map((task) => (
+                <div key={task.id} className="flex items-start gap-2 rounded-2xl border border-slate-100 bg-white px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-xs font-semibold text-slate-800">{task.title}</span>
+                      {unreadTaskIds.has(task.id) && <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />}
+                    </div>
+                    {task.patientName && <p className="truncate text-[11px] text-slate-500">{task.patientName}</p>}
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openTaskDrawer(task)}
+                      className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600 hover:border-emerald-300 hover:text-emerald-700"
+                      data-testid={`portal-msg-open-${task.id}`}
+                    >
+                      Open
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openPlayfieldTab({ kind: "thread", patientId: task.patientScreeningId ?? undefined, patientName: task.patientName ?? undefined, threadId: String(task.id) })}
+                      className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600 hover:border-indigo-300 hover:text-indigo-700"
+                      data-testid={`portal-msg-tab-${task.id}`}
+                    >
+                      Tab
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Task drawer */}
       {taskDrawerPatientId !== null && currentUser && (
