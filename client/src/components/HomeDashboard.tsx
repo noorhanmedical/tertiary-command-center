@@ -7,7 +7,7 @@ import {
   CalendarDays, ChevronLeft, ChevronRight, Clock, FileText, Loader2, Phone, Plus, Upload, Users,
 } from "lucide-react";
 
-type DayPatient = { id: number; name: string; time: string | null; ancillaries: string[] };
+type DayPatient = { id: number; batchId: number; name: string; time: string | null; ancillaries: string[] };
 type ClinicMonthCell = { isoDate: string; patientCount: number; ancillaryCount: number; patients?: DayPatient[] };
 type ClinicTab = {
   clinicKey: string;
@@ -35,6 +35,7 @@ interface HomeDashboardProps {
   onNewSchedule: () => void;
   onOpenDir: () => void;
   onOpenSidebar: () => void;
+  onOpenSchedule: (batchId: number) => void;
   isCreatingBatch: boolean;
 }
 
@@ -63,6 +64,7 @@ export function HomeDashboard({
   onNewSchedule,
   onOpenDir,
   onOpenSidebar,
+  onOpenSchedule,
   isCreatingBatch,
 }: HomeDashboardProps) {
   const [, setLocation] = useLocation();
@@ -342,10 +344,12 @@ export function HomeDashboard({
                 ) : (
                   <div className="space-y-1" data-testid="list-day-patients">
                     {selectedDayPatients.map((p) => (
-                      <div
+                      <button
+                        type="button"
                         key={p.id}
-                        className="flex items-center gap-3 px-3 py-2 rounded-xl bg-white border border-slate-100 hover:bg-slate-50 transition-colors"
-                        data-testid={`day-patient-row-${p.id}`}
+                        onClick={() => onOpenSchedule(p.batchId)}
+                        className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-xl bg-white border border-slate-100 hover-elevate active-elevate-2 cursor-pointer transition-colors"
+                        data-testid={`button-day-patient-${p.id}`}
                       >
                         <span className="text-xs font-semibold text-primary w-16 shrink-0 tabular-nums">
                           {formatTime12(p.time) || "—"}
@@ -360,7 +364,7 @@ export function HomeDashboard({
                             ))}
                           </div>
                         )}
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}

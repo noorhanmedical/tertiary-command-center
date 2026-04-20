@@ -156,7 +156,7 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
           patientCount: 0,
           ancillaryCount: 0,
           newCommittedToday: 0,
-          patients: [] as { id: number; name: string; time: string | null; ancillaries: string[] }[],
+          patients: [] as { id: number; batchId: number; name: string; time: string | null; ancillaries: string[] }[],
         })),
       });
     }
@@ -221,6 +221,7 @@ export async function buildScheduleDashboard(storage: IStorage, selectedWeekStar
         if (newToday) monthCell.newCommittedToday += 1;
         monthCell.patients.push({
           id: patient.id,
+          batchId: batch.id,
           name: s(patient.name),
           time: patient.time ?? null,
           ancillaries: tests.map((t) => s(t)).filter(Boolean),
