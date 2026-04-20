@@ -178,6 +178,10 @@ export async function registerRoutes(
   registerGeneratedNotesRoutes(app);
   registerPlexusTasksRoutes(app);
   registerBatchRoutes(app);
+  // PatientDatabaseRoutes must be registered before PatientRoutes so that
+  // the static `/api/patients/database*` paths take precedence over the
+  // `/api/patients/:id` parameterised handler.
+  registerPatientDatabaseRoutes(app);
   registerPatientRoutes(app, { backgroundSyncPatients });
   registerBillingRoutes(app, { backgroundSyncBilling });
   registerOutreachRoutes(app);
@@ -186,7 +190,6 @@ export async function registerRoutes(
   registerAppointmentRoutes(app);
   registerAdminRoutes(app);
   registerOutboxRoutes(app);
-  registerPatientDatabaseRoutes(app);
   registerTestFixtureRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────

@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -35,7 +35,13 @@ type RosterPatient = {
 };
 
 type ClinicGroup = { clinic: string; patients: RosterPatient[] };
-type RosterResponse = { groups: ClinicGroup[]; totals: { patients: number; clinics: number } };
+type ClinicTotal = { clinic: string; count: number };
+type RosterResponse = {
+  groups: ClinicGroup[];
+  clinicTotals: ClinicTotal[];
+  totals: { patients: number; clinics: number };
+  pagination: { page: number; pageSize: number; total: number; hasMore: boolean };
+};
 type CooldownSummary = {
   oneDay: number; oneWeek: number; oneMonth: number;
   totals: { patients: number; clinics: number };
@@ -108,18 +114,66 @@ export default function PatientDatabasePage() {
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
 
-  const rosterQuery = useQuery<RosterResponse>({
-    queryKey: ["/api/patients/database", { search, clinic: clinicFilter, cooldownWindow: windowFilter }],
-    queryFn: async () => {
+  const PAGE_SIZE = 100;
+  const rosterQuery = useInfiniteQuery<RosterResponse>({
+    queryKey: ["/api/patients/database", { search, clinic: clinicFilter, cooldownWindow: windowFilter, pageSize: PAGE_SIZE }],
+    initialPageParam: 1,
+    queryFn: async ({ pageParam }) => {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
       if (clinicFilter) params.set("clinic", clinicFilter);
       if (windowFilter) params.set("cooldownWindow", windowFilter);
-      const res = await fetch(`/api/patients/database${params.toString() ? `?${params}` : ""}`, { credentials: "include" });
+      params.set("page", String(pageParam ?? 1));
+      params.set("pageSize", String(PAGE_SIZE));
+      const res = await fetch(`/api/patients/database?${params}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load patient database");
       return res.json();
     },
+    getNextPageParam: (lastPage) =>
+      lastPage.pagination.hasMore ? lastPage.pagination.page + 1 : undefined,
   });
+
+  // Merge paginated pages into a single set of clinic groups, preserving the
+  // server's ordering (alphabetical, with Unassigned last) and de-duplicating
+  // patients by encodedKey in case a row appears in two pages (e.g. caching).
+  const mergedRoster = useMemo(() => {
+    const pages = rosterQuery.data?.pages ?? [];
+    const groupOrder: string[] = [];
+    const groupMap = new Map<string, { patients: RosterPatient[]; seen: Set<string> }>();
+    for (const pg of pages) {
+      for (const grp of pg.groups) {
+        let entry = groupMap.get(grp.clinic);
+        if (!entry) {
+          entry = { patients: [], seen: new Set() };
+          groupMap.set(grp.clinic, entry);
+          groupOrder.push(grp.clinic);
+        }
+        for (const p of grp.patients) {
+          if (entry.seen.has(p.encodedKey)) continue;
+          entry.seen.add(p.encodedKey);
+          entry.patients.push(p);
+        }
+      }
+    }
+    const groups: ClinicGroup[] = groupOrder.map((clinic) => ({
+      clinic,
+      patients: groupMap.get(clinic)!.patients,
+    }));
+    const last = pages[pages.length - 1];
+    return {
+      groups,
+      clinicTotals: last?.clinicTotals ?? [],
+      totals: last?.totals ?? { patients: 0, clinics: 0 },
+      pagination: last?.pagination ?? { page: 1, pageSize: PAGE_SIZE, total: 0, hasMore: false },
+      loadedCount: groups.reduce((s, g) => s + g.patients.length, 0),
+    };
+  }, [rosterQuery.data]);
+
+  const clinicTotalByName = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const ct of mergedRoster.clinicTotals) m.set(ct.clinic, ct.count);
+    return m;
+  }, [mergedRoster.clinicTotals]);
 
   const summaryQuery = useQuery<CooldownSummary>({
     queryKey: ["/api/patients/database/cooldown-summary"],
@@ -170,11 +224,14 @@ export default function PatientDatabasePage() {
   });
 
   const allClinics = useMemo(
-    () => (rosterQuery.data?.groups ?? []).map((g) => g.clinic),
-    [rosterQuery.data],
+    () => mergedRoster.clinicTotals.map((c) => c.clinic),
+    [mergedRoster.clinicTotals],
   );
 
-  const totalPatients = rosterQuery.data?.totals.patients ?? 0;
+  const totalPatients = mergedRoster.totals.patients;
+  const totalClinics = mergedRoster.totals.clinics;
+  const loadedCount = mergedRoster.loadedCount;
+  const hasMore = mergedRoster.pagination.hasMore;
   const isLoading = rosterQuery.isLoading;
 
   return (
@@ -186,7 +243,10 @@ export default function PatientDatabasePage() {
             <div>
               <h1 className="text-base font-bold tracking-tight">Patient Database</h1>
               <p className="text-xs text-muted-foreground" data-testid="text-roster-summary">
-                {totalPatients} patient{totalPatients !== 1 ? "s" : ""} · {(rosterQuery.data?.groups ?? []).length} clinic{(rosterQuery.data?.groups ?? []).length !== 1 ? "s" : ""}
+                {totalPatients} patient{totalPatients !== 1 ? "s" : ""} · {totalClinics} clinic{totalClinics !== 1 ? "s" : ""}
+                {hasMore || loadedCount < totalPatients ? (
+                  <span className="ml-1" data-testid="text-roster-loaded">(showing {loadedCount})</span>
+                ) : null}
               </p>
             </div>
           </div>
@@ -269,19 +329,29 @@ export default function PatientDatabasePage() {
 
           {isLoading ? (
             <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-          ) : (rosterQuery.data?.groups ?? []).length === 0 ? (
+          ) : mergedRoster.groups.length === 0 ? (
             <div className="text-center py-20 text-muted-foreground">
               <Users className="w-12 h-12 mx-auto mb-4 opacity-30" />
               <p className="text-base">No patients match your filters.</p>
             </div>
           ) : (
             <div className="space-y-6">
-              {(rosterQuery.data?.groups ?? []).map((group) => (
+              {mergedRoster.groups.map((group) => {
+                const clinicTotal = clinicTotalByName.get(group.clinic) ?? group.patients.length;
+                const partial = group.patients.length < clinicTotal;
+                return (
                 <section key={group.clinic} data-testid={`section-clinic-${group.clinic.replace(/\s+/g, "-")}`}>
                   <div className="flex items-center gap-2 mb-3">
                     <Building2 className="w-4 h-4 text-slate-500" />
                     <h2 className="text-sm font-semibold text-slate-800 dark:text-foreground">{group.clinic}</h2>
-                    <Badge variant="outline" className="text-[10px]">{group.patients.length}</Badge>
+                    <Badge
+                      variant="outline"
+                      className="text-[10px]"
+                      title={partial ? `${group.patients.length} of ${clinicTotal} loaded` : undefined}
+                      data-testid={`badge-clinic-count-${group.clinic.replace(/\s+/g, "-")}`}
+                    >
+                      {partial ? `${group.patients.length} / ${clinicTotal}` : clinicTotal}
+                    </Badge>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     {group.patients.map((p) => (
@@ -313,7 +383,24 @@ export default function PatientDatabasePage() {
                     ))}
                   </div>
                 </section>
-              ))}
+                );
+              })}
+              {hasMore && (
+                <div className="flex justify-center py-4">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => rosterQuery.fetchNextPage()}
+                    disabled={rosterQuery.isFetchingNextPage}
+                    data-testid="button-load-more-patients"
+                  >
+                    {rosterQuery.isFetchingNextPage ? (
+                      <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                    ) : null}
+                    Load more ({totalPatients - loadedCount} remaining)
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </div>

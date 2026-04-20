@@ -87,6 +87,21 @@ export type PatientRosterAggregateFilters = {
   clinic?: string;
   /** "1d" | "1w" | "1m" — only include patients with an active cooldown clearing within this window */
   cooldownWindow?: string;
+  /** 1-indexed page number. Defaults to 1. */
+  page?: number;
+  /** Number of patients per page. Defaults to 100, capped at 500. */
+  pageSize?: number;
+};
+
+export type PatientRosterClinicTotal = {
+  clinic: string;
+  count: number;
+};
+
+export type PatientRosterAggregateResult = {
+  rows: PatientRosterAggregateRow[];
+  total: number;
+  clinicTotals: PatientRosterClinicTotal[];
 };
 
 export type PatientCooldownClinicCount = {
@@ -189,7 +204,7 @@ export interface IStorage {
   // ── Patient-database aggregation (SQL GROUP BY name+dob, JOINs against
   // test history and generated notes). These let the roster/cooldown
   // endpoints scale without pulling whole tables into Node memory.
-  getPatientRosterAggregates(filters?: PatientRosterAggregateFilters): Promise<PatientRosterAggregateRow[]>;
+  getPatientRosterAggregates(filters?: PatientRosterAggregateFilters): Promise<PatientRosterAggregateResult>;
   getPatientCooldownDashboard(): Promise<{ totals: PatientGroupTotals; counts: { oneDay: number; oneWeek: number; oneMonth: number }; byClinic: PatientCooldownClinicCount[] }>;
   getPatientHistoryImportReport(sampleLimit: number): Promise<{ totalHistoryRows: number; unmatchedCount: number; unmatched: UnmatchedHistoryReportRow[] }>;
   getPatientGroupScreenings(name: string, dob: string | null): Promise<PatientScreening[]>;
@@ -502,7 +517,7 @@ export class DatabaseStorage implements IStorage {
   // than one row per (name, dob) patient group, regardless of how many
   // screenings, test-history rows, or generated notes back that group.
 
-  async getPatientRosterAggregates(filters: PatientRosterAggregateFilters = {}): Promise<PatientRosterAggregateRow[]> {
+  async getPatientRosterAggregates(filters: PatientRosterAggregateFilters = {}): Promise<PatientRosterAggregateResult> {
     const search = (filters.search ?? "").trim().toLowerCase();
     const clinic = (filters.clinic ?? "").trim();
     const cooldownWindow = (filters.cooldownWindow ?? "").trim();
@@ -513,10 +528,19 @@ export class DatabaseStorage implements IStorage {
       : null;
     if (cooldownWindow && cooldownLimit === null) {
       // Unknown window — return nothing (matches old route behaviour).
-      return [];
+      return { rows: [], total: 0, clinicTotals: [] };
     }
 
-    const result = await db.execute(sql`
+    const requestedPageSize = Number.isFinite(filters.pageSize) ? Number(filters.pageSize) : 100;
+    const pageSize = Math.max(1, Math.min(500, Math.trunc(requestedPageSize) || 100));
+    const requestedPage = Number.isFinite(filters.page) ? Number(filters.page) : 1;
+    const page = Math.max(1, Math.trunc(requestedPage) || 1);
+    const offset = (page - 1) * pageSize;
+
+    // Shared CTE chain reused by both the page query and the totals query.
+    // Keeping the SQL aligned guarantees pagination metadata matches the
+    // rows actually returned for the page.
+    const baseCte = sql`
       WITH groups AS (
         SELECT name, dob, COUNT(*)::int AS screening_count
         FROM patient_screenings
@@ -573,41 +597,66 @@ export class DatabaseStorage implements IStorage {
           MIN(clears_at) FILTER (WHERE clears_at > CURRENT_DATE) AS next_clear
         FROM test_clears
         GROUP BY name, dob
+      ),
+      filtered AS (
+        SELECT
+          r.id AS representative_id,
+          r.batch_id,
+          r.name,
+          r.dob,
+          r.age,
+          r.gender,
+          r.phone_number,
+          r.insurance,
+          COALESCE(NULLIF(r.facility, ''), NULLIF(r.batch_facility, ''), 'Unassigned') AS clinic,
+          lv.last_visit,
+          g.screening_count,
+          COALESCE(h.test_count, 0)::int AS test_count,
+          COALESCE(n.note_count, 0)::int AS note_count,
+          COALESCE(pc.active_count, 0)::int AS cooldown_active_count,
+          pc.next_clear,
+          CASE WHEN pc.next_clear IS NULL THEN NULL
+               ELSE (pc.next_clear - CURRENT_DATE)::int END AS days_until_next_clear
+        FROM repr r
+        JOIN groups g ON g.name = r.name AND g.dob IS NOT DISTINCT FROM r.dob
+        LEFT JOIN notes n ON n.name = r.name AND n.dob IS NOT DISTINCT FROM r.dob
+        LEFT JOIN history h ON h.name = r.name AND h.dob IS NOT DISTINCT FROM r.dob
+        LEFT JOIN last_visit lv ON lv.name = r.name AND lv.dob IS NOT DISTINCT FROM r.dob
+        LEFT JOIN patient_cooldown pc ON pc.name = r.name AND pc.dob IS NOT DISTINCT FROM r.dob
+        WHERE
+          (${search}::text = '' OR lower(r.name || ' ' || COALESCE(r.dob, '')) LIKE '%' || ${search}::text || '%')
+          AND (${clinic}::text = '' OR COALESCE(NULLIF(r.facility, ''), NULLIF(r.batch_facility, ''), 'Unassigned') = ${clinic}::text)
+          AND (
+            ${cooldownLimit}::int IS NULL
+            OR (pc.next_clear IS NOT NULL AND (pc.next_clear - CURRENT_DATE) <= ${cooldownLimit}::int)
+          )
       )
-      SELECT
-        r.id AS representative_id,
-        r.batch_id,
-        r.name,
-        r.dob,
-        r.age,
-        r.gender,
-        r.phone_number,
-        r.insurance,
-        COALESCE(NULLIF(r.facility, ''), NULLIF(r.batch_facility, ''), 'Unassigned') AS clinic,
-        lv.last_visit,
-        g.screening_count,
-        COALESCE(h.test_count, 0)::int AS test_count,
-        COALESCE(n.note_count, 0)::int AS note_count,
-        COALESCE(pc.active_count, 0)::int AS cooldown_active_count,
-        pc.next_clear,
-        CASE WHEN pc.next_clear IS NULL THEN NULL
-             ELSE (pc.next_clear - CURRENT_DATE)::int END AS days_until_next_clear
-      FROM repr r
-      JOIN groups g ON g.name = r.name AND g.dob IS NOT DISTINCT FROM r.dob
-      LEFT JOIN notes n ON n.name = r.name AND n.dob IS NOT DISTINCT FROM r.dob
-      LEFT JOIN history h ON h.name = r.name AND h.dob IS NOT DISTINCT FROM r.dob
-      LEFT JOIN last_visit lv ON lv.name = r.name AND lv.dob IS NOT DISTINCT FROM r.dob
-      LEFT JOIN patient_cooldown pc ON pc.name = r.name AND pc.dob IS NOT DISTINCT FROM r.dob
-      WHERE
-        (${search}::text = '' OR lower(r.name || ' ' || COALESCE(r.dob, '')) LIKE '%' || ${search}::text || '%')
-        AND (${clinic}::text = '' OR COALESCE(NULLIF(r.facility, ''), NULLIF(r.batch_facility, ''), 'Unassigned') = ${clinic}::text)
-        AND (
-          ${cooldownLimit}::int IS NULL
-          OR (pc.next_clear IS NOT NULL AND (pc.next_clear - CURRENT_DATE) <= ${cooldownLimit}::int)
-        )
-    `);
+    `;
 
-    return (result.rows as any[]).map((row) => ({
+    const [pageResult, totalsResult] = await Promise.all([
+      db.execute(sql`
+        ${baseCte}
+        SELECT *
+        FROM filtered
+        ORDER BY (clinic = 'Unassigned'), clinic ASC, name ASC
+        LIMIT ${pageSize}::int OFFSET ${offset}::int
+      `),
+      db.execute(sql`
+        ${baseCte}
+        SELECT
+          (SELECT COUNT(*)::int FROM filtered) AS total,
+          COALESCE((
+            SELECT json_agg(row_to_json(t)) FROM (
+              SELECT clinic, COUNT(*)::int AS count
+              FROM filtered
+              GROUP BY clinic
+              ORDER BY (clinic = 'Unassigned'), clinic ASC
+            ) t
+          ), '[]'::json) AS clinic_totals
+      `),
+    ]);
+
+    const rows = (pageResult.rows as any[]).map((row) => ({
       representativeId: Number(row.representative_id),
       batchId: Number(row.batch_id),
       name: String(row.name),
@@ -625,6 +674,15 @@ export class DatabaseStorage implements IStorage {
       nextCooldownClearsAt: row.next_clear ? formatDate(row.next_clear) : null,
       daysUntilNextClear: row.days_until_next_clear == null ? null : Number(row.days_until_next_clear),
     }));
+
+    const totalsRow = (totalsResult.rows as any[])[0] ?? { total: 0, clinic_totals: [] };
+    const clinicTotalsRaw = Array.isArray(totalsRow.clinic_totals) ? totalsRow.clinic_totals : [];
+    const clinicTotals: PatientRosterClinicTotal[] = clinicTotalsRaw.map((t: any) => ({
+      clinic: String(t.clinic ?? "Unassigned"),
+      count: Number(t.count ?? 0),
+    }));
+
+    return { rows, total: Number(totalsRow.total ?? 0), clinicTotals };
   }
 
   async getPatientCooldownDashboard(): Promise<{

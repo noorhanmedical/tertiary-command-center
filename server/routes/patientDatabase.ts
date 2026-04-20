@@ -110,21 +110,30 @@ export function registerPatientDatabaseRoutes(app: Express) {
       const clinicFilter = String(req.query.clinic || "").trim();
       const cooldownWindow = String(req.query.cooldownWindow || "").trim(); // "1d" | "1w" | "1m"
 
-      const cacheKey = JSON.stringify({ search, clinicFilter, cooldownWindow });
+      const pageRaw = parseInt(String(req.query.page ?? ""), 10);
+      const pageSizeRaw = parseInt(String(req.query.pageSize ?? ""), 10);
+      const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+      const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0
+        ? Math.min(500, pageSizeRaw)
+        : 100;
+
+      const cacheKey = JSON.stringify({ search, clinicFilter, cooldownWindow, page, pageSize });
       const cached = cacheGet(rosterResponseCache, cacheKey);
       if (cached) return res.json(cached);
 
-      const [aggregates, importReport] = await Promise.all([
+      const [aggregate, importReport] = await Promise.all([
         storage.getPatientRosterAggregates({
           search,
           clinic: clinicFilter,
           cooldownWindow,
+          page,
+          pageSize,
         }),
         storage.getPatientHistoryImportReport(0),
       ]);
 
       const groupsMap = new Map<string, RosterPatient[]>();
-      for (const row of aggregates) {
+      for (const row of aggregate.rows) {
         const clinic = row.clinic || UNASSIGNED;
         const patient = rosterFromAggregate(row);
         const arr = groupsMap.get(clinic);
@@ -143,10 +152,22 @@ export function registerPatientDatabaseRoutes(app: Express) {
           return a.clinic.localeCompare(b.clinic);
         });
 
-      const totalPatients = groups.reduce((s, g) => s + g.patients.length, 0);
+      const totalLoaded = page * pageSize;
+      const hasMore = aggregate.total > totalLoaded;
+
       const payload = {
         groups,
-        totals: { patients: totalPatients, clinics: groups.length },
+        clinicTotals: aggregate.clinicTotals,
+        totals: {
+          patients: aggregate.total,
+          clinics: aggregate.clinicTotals.length,
+        },
+        pagination: {
+          page,
+          pageSize,
+          total: aggregate.total,
+          hasMore,
+        },
         importHealth: {
           unmatchedHistoryCount: importReport.unmatchedCount,
           // SQL aggregation uses exact (name, dob) matching; fuzzy
@@ -157,7 +178,6 @@ export function registerPatientDatabaseRoutes(app: Express) {
       cacheSet(rosterResponseCache, cacheKey, payload);
       res.json(payload);
     } catch (error: any) {
-      console.error("[patient-database/list] error:", error);
       res.status(500).json({ error: error.message });
     }
   });
