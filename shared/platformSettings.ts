@@ -45,6 +45,18 @@ export const CLINIC_SPREADSHEET_CONNECTIONS: ClinicSpreadsheetConnection[] = [
 
 export const SHARED_CALENDAR_SPREADSHEET_ID = "PASTE_SHARED_CALENDAR_SPREADSHEET_ID";
 
+// ── Portal outreach tuning ───────────────────────────────────────────────────
+// PORTAL_OUTREACH_BASE_CAP: max outreach calls per worker on a normal day.
+// PORTAL_OUTREACH_HEAVY_LOAD_THRESHOLD: when in-clinic appointments per worker
+//   meet or exceed this number, the day is considered "heavy" — outreach cap
+//   is reduced to leave bandwidth for in-clinic work.
+// PORTAL_OUTREACH_HEAVY_DAY_CAP_FACTOR: multiplier (<1.0) applied to the base
+//   cap on heavy days. e.g. 0.6 means each worker only gets 60% of normal
+//   outreach load.
+export const PORTAL_OUTREACH_BASE_CAP = 50;
+export const PORTAL_OUTREACH_HEAVY_LOAD_THRESHOLD = 8;
+export const PORTAL_OUTREACH_HEAVY_DAY_CAP_FACTOR = 0.6;
+
 function s(v: unknown): string {
   return v == null ? "" : String(v).trim();
 }

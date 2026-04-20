@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Stethoscope, HeartHandshake, Calendar as CalendarIcon, Phone, FileSignature,
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
-  Sparkles, Send, Minimize2, FileBarChart, FilePlus,
+  Sparkles, Send, Minimize2, FileBarChart, FilePlus, User, Bell,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,18 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SignaturePad } from "./SignaturePad";
 
 type Role = "technician" | "liaison";
-type CenterMode = "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf";
+type CenterMode = "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart";
+
+type PortalTask = {
+  id: number;
+  title: string;
+  description: string | null;
+  taskType: string;
+  urgency: string;
+  patientScreeningId: number | null;
+  dueDate: string | null;
+  status: string;
+};
 
 type ConsentByTest = { testType: string; signed: boolean; documentId: number | null };
 
@@ -348,10 +359,16 @@ function PatientDetail({ patient, role, onConsent }: { patient: TodayPatient; ro
                   {c.signed ? "Consent on file for today." : "No signed consent for this test today."}
                 </div>
               </div>
-              <Button onClick={() => onConsent(c.testType)} disabled={patient.patientScreeningId == null} data-testid={`button-sign-${c.testType}`}>
-                <FileSignature className="h-4 w-4 mr-2" />
-                {c.signed ? "Re-sign" : "Sign now"}
-              </Button>
+              {c.signed ? (
+                <Badge className="bg-emerald-100 text-emerald-700" data-testid={`pill-consent-${c.testType}`}>
+                  <Check className="h-3 w-3 mr-1" /> Consent ✓
+                </Badge>
+              ) : (
+                <Button onClick={() => onConsent(c.testType)} disabled={patient.patientScreeningId == null} data-testid={`button-sign-${c.testType}`}>
+                  <FileSignature className="h-4 w-4 mr-2" />
+                  Sign now
+                </Button>
+              )}
             </Card>
           ))}
         </TabsContent>
@@ -491,6 +508,15 @@ export function PortalShell({ role }: { role: Role }) {
     enabled: !!facility,
   });
 
+  const { data: tasksData } = useQuery<{ urgent: PortalTask[]; open: PortalTask[] }>({
+    queryKey: ["/api/portal/my-tasks"],
+    queryFn: async () => {
+      const res = await fetch("/api/portal/my-tasks", { credentials: "include" });
+      return res.json();
+    },
+    refetchInterval: POLL_MS,
+  });
+
   const { data: outreachData } = useQuery<{ patients: OutreachItem[]; heavyDay?: boolean; cap?: number; totalPool?: number }>({
     queryKey: ["/api/portal/outreach-call-list", facility],
     queryFn: async () => {
@@ -523,6 +549,18 @@ export function PortalShell({ role }: { role: Role }) {
     setCenterMode(mode);
     setCenterSrc(url);
     setCenterTitle(label);
+  }
+
+  function openPatientChart(p: TodayPatient) {
+    if (p.patientScreeningId == null) return;
+    openCenterMode("patientChart", `/patient-database#patient-${p.patientScreeningId}`, `Chart — ${p.name}`);
+  }
+
+  function openConsentPane(p: TodayPatient) {
+    if (p.patientScreeningId != null) {
+      setSelectedPatientId(p.patientScreeningId);
+    }
+    setCenterMode("consent");
   }
 
   return (
@@ -562,7 +600,7 @@ export function PortalShell({ role }: { role: Role }) {
               <Phone className="h-4 w-4" /> Outreach call list
             </div>
             <div className="text-[11px] text-slate-500 mb-2">
-              Your share{outreachData?.heavyDay ? " (heavy day cap ×1.5)" : ""}
+              Your share{outreachData?.heavyDay ? " (heavy day — outreach cap reduced)" : ""}
               {typeof outreachData?.totalPool === "number" ? ` · ${outreachData.totalPool} in pool` : ""}
             </div>
             <div className="space-y-1.5 max-h-[40vh] overflow-y-auto">
@@ -581,7 +619,35 @@ export function PortalShell({ role }: { role: Role }) {
 
         {/* Center: patient detail OR expanded mode */}
         <div className="overflow-y-auto min-h-0">
-          {centerMode !== "patient" && centerSrc ? (
+          {centerMode === "consent" && selected ? (
+            <Card className="p-6 space-y-4" data-testid="expanded-consent">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="text-lg font-semibold">Consent — {selected.name}</div>
+                  <div className="text-sm text-slate-500">{selected.facility} · {formatTime(selected.time)}</div>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setCenterMode("patient")} data-testid="consent-close">
+                  <Minimize2 className="h-3.5 w-3.5 mr-1" /> Back to chart
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {selected.consentByTest.map((c) => (
+                  <Card key={c.testType} className="p-3 flex items-center justify-between" data-testid={`consent-pane-row-${c.testType}`}>
+                    <div className="font-medium">{c.testType}</div>
+                    {c.signed ? (
+                      <Badge className="bg-emerald-100 text-emerald-700">
+                        <Check className="h-3 w-3 mr-1" /> Consent ✓
+                      </Badge>
+                    ) : (
+                      <Button size="sm" onClick={() => setConsentDialog({ patient: selected, testType: c.testType })} data-testid={`consent-pane-sign-${c.testType}`}>
+                        <FileSignature className="h-3.5 w-3.5 mr-1" /> Sign now
+                      </Button>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            </Card>
+          ) : centerMode !== "patient" && centerSrc ? (
             <div className="h-[70vh]">
               <ExpandedSectionView mode={centerMode} src={centerSrc} title={centerTitle} onClose={() => setCenterMode("patient")} />
             </div>
@@ -646,6 +712,26 @@ export function PortalShell({ role }: { role: Role }) {
                     <div className="mt-1.5 flex gap-1 justify-end">
                       <button
                         type="button"
+                        title="Patient chart"
+                        disabled={p.patientScreeningId == null}
+                        onClick={() => openPatientChart(p)}
+                        className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
+                        data-testid={`row-icon-chart-${p.patientScreeningId}`}
+                      >
+                        <User className="h-3.5 w-3.5 text-slate-700" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Consent"
+                        disabled={p.patientScreeningId == null}
+                        onClick={() => openConsentPane(p)}
+                        className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
+                        data-testid={`row-icon-consent-${p.patientScreeningId}`}
+                      >
+                        <FileSignature className="h-3.5 w-3.5 text-rose-600" />
+                      </button>
+                      <button
+                        type="button"
                         title="Plexus PDF"
                         disabled={!p.plexusPdfUrl}
                         onClick={() => openCenterMode("plexusPdf", p.plexusPdfUrl, `Plexus PDF — ${p.name}`)}
@@ -678,6 +764,61 @@ export function PortalShell({ role }: { role: Role }) {
                   </div>
                 );
               })}
+            </div>
+          </Card>
+
+          {/* Tasks pane (urgent inline + open list) */}
+          <Card className="p-3" data-testid="tasks-pane">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-semibold flex items-center gap-2">
+                <Bell className="h-4 w-4 text-rose-600" /> My tasks
+              </div>
+              <Badge variant="outline" data-testid="badge-task-count">
+                {(tasksData?.urgent.length ?? 0) + (tasksData?.open.length ?? 0)}
+              </Badge>
+            </div>
+            {(tasksData?.urgent ?? []).length > 0 && (
+              <div className="mb-2 space-y-1">
+                <div className="text-[11px] uppercase tracking-wide text-rose-600 font-semibold">Urgent</div>
+                {tasksData!.urgent.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      if (t.patientScreeningId != null) {
+                        setSelectedPatientId(t.patientScreeningId);
+                        if (t.taskType === "tech_assignment") setCenterMode("consent");
+                        else setCenterMode("patient");
+                      }
+                    }}
+                    className="w-full text-left rounded-lg border border-rose-200 bg-rose-50/50 px-2.5 py-2 hover:bg-rose-50"
+                    data-testid={`task-urgent-${t.id}`}
+                  >
+                    <div className="text-sm font-medium truncate">{t.title}</div>
+                    <div className="text-[11px] text-rose-700">{t.taskType} · {t.urgency}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {(tasksData?.open ?? []).length === 0 && (tasksData?.urgent ?? []).length === 0 && (
+              <div className="text-xs text-slate-500 py-2 text-center">No open tasks.</div>
+            )}
+            <div className="space-y-1">
+              {(tasksData?.open ?? []).map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    if (t.patientScreeningId != null) {
+                      setSelectedPatientId(t.patientScreeningId);
+                      setCenterMode("patient");
+                    }
+                  }}
+                  className="w-full text-left rounded-lg border bg-white px-2.5 py-2 hover:bg-slate-50"
+                  data-testid={`task-open-${t.id}`}
+                >
+                  <div className="text-sm font-medium truncate">{t.title}</div>
+                  <div className="text-[11px] text-slate-500">{t.taskType}</div>
+                </button>
+              ))}
             </div>
           </Card>
         </div>

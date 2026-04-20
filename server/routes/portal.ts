@@ -14,6 +14,13 @@ import {
   type AncillaryAppointment,
 } from "@shared/schema";
 import { and, eq, gte, lte, inArray } from "drizzle-orm";
+import {
+  PORTAL_OUTREACH_BASE_CAP,
+  PORTAL_OUTREACH_HEAVY_LOAD_THRESHOLD,
+  PORTAL_OUTREACH_HEAVY_DAY_CAP_FACTOR,
+} from "@shared/platformSettings";
+
+type ConsentDoc = { id: number; sourceNotes: string | null; createdAt: Date | string; kind: string };
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -101,7 +108,7 @@ function templateMatchesTest(title: string, description: string | null, testType
 // sign-consent writes) AND was created on/after the scheduled date. No
 // fallback — signing one test must NOT mark another test as consented.
 function consentForTest(
-  docs: { id: number; sourceNotes: string | null; createdAt: Date | string; kind: string }[],
+  docs: ConsentDoc[],
   testType: string,
   scheduledDate: string,
 ): { signed: boolean; documentId: number | null } {
@@ -218,7 +225,7 @@ export function registerPortalRoutes(app: Express) {
         for (const a of row.appointments) {
           if (seen.has(a.testType)) continue;
           seen.add(a.testType);
-          const c = consentForTest(docs as any, a.testType, date);
+          const c = consentForTest(docs as ConsentDoc[], a.testType, date);
           row.consentByTest.push({ testType: a.testType, signed: c.signed, documentId: c.documentId });
         }
         row.consentSigned = row.consentByTest.length > 0 && row.consentByTest.every((c) => c.signed);
@@ -227,6 +234,43 @@ export function registerPortalRoutes(app: Express) {
       const out = [...byKey.values()].sort((x, y) =>
         (x.time ?? "").localeCompare(y.time ?? "") || x.name.localeCompare(y.name),
       );
+
+      // Side-effect: ensure a tech_assignment Plexus task exists for every
+      // patient with at least one unsigned consent on a same-day appointment.
+      // Idempotent: we check for an open task with taskType=tech_assignment
+      // for this patient + due date == today before creating a new one.
+      if (date === todayIso()) {
+        const facSchedulers = await storage.getOutreachSchedulers();
+        for (const row of out) {
+          if (row.patientScreeningId == null) continue;
+          const hasGap = row.consentByTest.some((c) => !c.signed);
+          if (!hasGap) continue;
+          const existing = await storage.getTasksByPatient(row.patientScreeningId);
+          const already = existing.find(
+            (t) => t.taskType === "tech_assignment" && t.status !== "closed" && t.dueDate === date,
+          );
+          if (already) continue;
+          const assignee = facSchedulers.find(
+            (s) => s.userId && s.facility === row.facility,
+          )?.userId ?? null;
+          await storage.createTask({
+            title: `Consent needed — ${row.name}`,
+            description: `Patient ${row.name} has ${row.consentByTest.filter((c) => !c.signed).length} unsigned consent(s) for today's clinic at ${row.facility}.`,
+            taskType: "tech_assignment",
+            urgency: "EOD",
+            priority: "normal",
+            status: "open",
+            assignedToUserId: assignee,
+            createdByUserId: req.session.userId ?? null,
+            patientScreeningId: row.patientScreeningId,
+            projectId: null,
+            parentTaskId: null,
+            batchId: row.batchId,
+            dueDate: date,
+          });
+        }
+      }
+
       res.json({ date, facility, patients: out });
     } catch (err: any) {
       console.error("[portal/today-schedule]", err);
@@ -295,6 +339,13 @@ export function registerPortalRoutes(app: Express) {
         apptsByPatient.set(a.patientScreeningId, arr);
       }
 
+      // In-clinic ancillary load TODAY (used to detect "heavy" days). The
+      // heavier the in-clinic schedule, the LOWER the outreach cap so we
+      // protect bandwidth for the patients who are physically here today.
+      const todaysApptsConds = [eq(ancillaryAppointments.scheduledDate, today)];
+      if (facility) todaysApptsConds.push(eq(ancillaryAppointments.facility, facility));
+      const todaysAppts = await db.select().from(ancillaryAppointments).where(and(...todaysApptsConds));
+
       type Item = {
         patientScreeningId: number;
         name: string;
@@ -312,6 +363,9 @@ export function registerPortalRoutes(app: Express) {
         const patients = await storage.getPatientScreeningsByBatch(batch.id);
         for (const p of patients) {
           if (p.commitStatus === "Draft") continue;
+          // Only patients tagged as outreach cohort are call-list candidates;
+          // an in-clinic visit patient with no upcoming appt is NOT outreach.
+          if ((p.patientType ?? "visit") !== "outreach") continue;
           const appts = apptsByPatient.get(p.id) ?? [];
           const hasUpcoming = appts.some((a) => a.scheduledDate >= today && a.scheduledDate <= horizon);
           const batchInWindow = batchDay && batchDay >= today && batchDay <= horizon;
@@ -378,23 +432,69 @@ export function registerPortalRoutes(app: Express) {
         myShare = range ? pool.slice(range[0], range[1]) : [];
       }
 
-      // Heavy-day cap scaling.
-      const baseCap = 50;
-      const perWorkerLoad = workers.length > 0 ? pool.length / workers.length : pool.length;
-      const heavy = perWorkerLoad > baseCap;
-      const cap = heavy ? Math.round(baseCap * 1.5) : baseCap;
+      // Heavy-day cap scaling: when in-clinic load per worker is heavy, REDUCE
+      // outreach cap so workers focus on the patients physically present.
+      // Tunable via PORTAL_OUTREACH_* settings in shared/platformSettings.ts.
+      const inClinicPerWorker = workers.length > 0
+        ? todaysAppts.length / workers.length
+        : todaysAppts.length;
+      const heavy = inClinicPerWorker >= PORTAL_OUTREACH_HEAVY_LOAD_THRESHOLD;
+      const cap = heavy
+        ? Math.max(1, Math.round(PORTAL_OUTREACH_BASE_CAP * PORTAL_OUTREACH_HEAVY_DAY_CAP_FACTOR))
+        : PORTAL_OUTREACH_BASE_CAP;
       myShare.sort((a, b) => a.name.localeCompare(b.name));
 
       res.json({
         facility,
         heavyDay: heavy,
         cap,
+        baseCap: PORTAL_OUTREACH_BASE_CAP,
+        heavyDayFactor: PORTAL_OUTREACH_HEAVY_DAY_CAP_FACTOR,
+        inClinicAppointmentsToday: todaysAppts.length,
         totalPool: pool.length,
         workerCount: workers.length,
         patients: myShare.slice(0, cap),
       });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to load outreach list" });
+    }
+  });
+
+  // ── My open tech_assignment tasks (right-rail tasks pane) ──────────────────
+  // Returns tasks assigned to the current portal user. Tasks marked URGENT
+  // are returned first via the `urgent` array; remaining open tasks come back
+  // in `open`. Closed tasks are excluded.
+  app.get("/api/portal/my-tasks", requirePortalRole, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const all = await storage.getTasksByAssignee(userId);
+      const open = all.filter((t) => t.status !== "closed");
+      const urgent = open.filter((t) => t.urgency === "now" || t.urgency === "EOD");
+      const rest = open.filter((t) => !urgent.includes(t));
+      res.json({
+        urgent: urgent.map((t) => ({
+          id: t.id,
+          title: t.title,
+          description: t.description,
+          taskType: t.taskType,
+          urgency: t.urgency,
+          patientScreeningId: t.patientScreeningId,
+          dueDate: t.dueDate,
+          status: t.status,
+        })),
+        open: rest.map((t) => ({
+          id: t.id,
+          title: t.title,
+          description: t.description,
+          taskType: t.taskType,
+          urgency: t.urgency,
+          patientScreeningId: t.patientScreeningId,
+          dueDate: t.dueDate,
+          status: t.status,
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to load my tasks" });
     }
   });
 
