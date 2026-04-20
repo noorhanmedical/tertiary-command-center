@@ -725,8 +725,8 @@ export default function OutreachSchedulerPortalPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
-      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-6 py-6">
+    <div className="min-h-full flex-1 overflow-auto xl:h-full xl:min-h-0 xl:overflow-hidden flex flex-col bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
+      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-6 py-6 xl:flex-1 xl:min-h-0">
 
         <PageHeader
           variant="light"
@@ -754,10 +754,10 @@ export default function OutreachSchedulerPortalPage() {
         />
 
         {/* ── Cockpit grid: 25% / 50% / 25% — exactly three flat panels ── */}
-        <div className="grid gap-5 xl:grid-cols-[1fr_2fr_1fr]">
+        <div className="grid gap-5 xl:grid-cols-[1fr_2fr_1fr] xl:flex-1 xl:min-h-0">
 
           {/* ─── LEFT PANEL: Today's schedule + Calling tools + Booking calendar ─── */}
-          <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden divide-y divide-slate-100/80 self-start">
+          <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl divide-y divide-slate-100/80 overflow-hidden xl:flex xl:flex-col xl:min-h-0 xl:overflow-y-auto">
             <ToolsPanel
               facility={card.facility}
               todayAppointments={todayAppointments}
@@ -784,7 +784,7 @@ export default function OutreachSchedulerPortalPage() {
           </div>
 
           {/* ─── CENTER PANEL: Active patient + AI co-pilot + Mission control (sticky metrics float above) ─── */}
-          <div className="min-w-0 flex flex-col gap-4">
+          <div className="min-w-0 flex flex-col gap-4 xl:min-h-0">
             {/* Sticky top-center metrics pill — floats above the panel */}
             <div className="sticky top-2 z-20 flex justify-center">
               <FloatingMetricsTile
@@ -796,7 +796,7 @@ export default function OutreachSchedulerPortalPage() {
               />
             </div>
 
-            <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden divide-y divide-slate-100/80">
+            <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden divide-y divide-slate-100/80 xl:flex-1 xl:min-h-0 xl:overflow-y-auto">
             <CurrentCallCard
               item={selectedItem}
               latestCall={selectedItem ? latestCallByPatient.get(selectedItem.patientId) : undefined}
@@ -854,7 +854,7 @@ export default function OutreachSchedulerPortalPage() {
           </div>
 
           {/* ─── RIGHT PANEL: Call list + Tasks (Urgent folded in) ────── */}
-          <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden divide-y divide-slate-100/80 flex flex-col min-w-0" style={{ maxHeight: "calc(100vh - 220px)" }}>
+          <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden divide-y divide-slate-100/80 flex flex-col min-w-0 max-h-[calc(100vh-220px)] xl:max-h-none xl:min-h-0">
             <div className="px-5 pt-5 pb-4 flex flex-col flex-1 min-h-0">
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <h2 className="text-lg font-semibold text-slate-900">Call list</h2>
