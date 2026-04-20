@@ -28,6 +28,7 @@ import TeamOpsPage from "@/pages/team-ops";
 import PlexusTasksPage from "@/pages/plexus-tasks";
 import LoginPage from "@/pages/login";
 import { GlobalNav } from "@/components/GlobalNav";
+import { TopBanner } from "@/components/TopBanner";
 
 const SIDEBAR_STYLE = {
   "--sidebar-width": "18rem",
@@ -48,10 +49,12 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
     <Switch>
       <Route path="/schedule/:id" component={SharedSchedule} />
       <Route>
-        <div className="flex h-screen w-full overflow-hidden">
-          <GlobalNav user={user} onLogout={onLogout} />
-          <div className="flex flex-col flex-1 min-w-0 min-h-0">
-            <div className="flex-1 min-h-0 overflow-auto">
+        <div className="flex flex-col h-screen w-full overflow-hidden">
+          <TopBanner user={user} onLogout={onLogout} />
+          <div className="flex flex-1 min-h-0 min-w-0">
+            <GlobalNav user={user} onLogout={onLogout} />
+            <div className="flex flex-col flex-1 min-w-0 min-h-0">
+              <div className="flex-1 min-h-0 overflow-auto">
               <Switch>
                 <Route path="/">
                   <Redirect to="/home" />
@@ -104,6 +107,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route component={NotFound} />
               </Switch>
+              </div>
             </div>
           </div>
         </div>

@@ -61,9 +61,13 @@ export function HomeDashboard({
 
   return (
     <div className="flex flex-col h-full">
-      <header className="sticky top-0 z-50 bg-white/80 dark:bg-card/80 backdrop-blur-xl border-b border-slate-200/60">
-        <div className="px-8 py-3 flex items-center">
+      <header className="sticky top-0 z-40 bg-white/85 dark:bg-card/80 backdrop-blur-xl border-b border-slate-200/60">
+        <div className="px-8 flex items-center gap-4">
           <SidebarTrigger data-testid="button-sidebar-toggle-home" />
+          <div className="flex items-center gap-1 text-[13px] font-medium text-indigo-700 border-b-2 border-indigo-600 py-3 -mb-px" data-testid="tab-dashboard">
+            <span className="inline-block w-3.5 h-3.5 rounded-sm border border-indigo-600/70" aria-hidden />
+            Dashboard
+          </div>
         </div>
       </header>
       <main className="flex-1 overflow-auto">

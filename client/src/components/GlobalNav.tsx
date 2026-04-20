@@ -11,7 +11,6 @@ import {
   Shield,
   ChevronLeft,
   ChevronRight,
-  LogOut,
   CheckSquare,
 } from "lucide-react";
 import { useState, useEffect } from "react";
@@ -34,13 +33,6 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/patient-database", label: "Patient Database", Icon: Database,     roles: ["admin", "clinician", "biller"] },
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
 ];
-
-const ROLE_LABELS: Record<string, string> = {
-  admin: "Admin",
-  clinician: "Clinician",
-  scheduler: "Scheduler",
-  biller: "Biller",
-};
 
 function TodayBadge({ count }: { count: number }) {
   if (count === 0) return null;
@@ -66,27 +58,7 @@ function UnreadBadge({ count, overdue }: { count: number; overdue: boolean }) {
   );
 }
 
-function UserAvatar({ username, collapsed }: { username: string; collapsed: boolean }) {
-  const initials = username
-    .split(/[\s._-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0].toUpperCase())
-    .join("");
-
-  return (
-    <div
-      className="w-7 h-7 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"
-      title={collapsed ? username : undefined}
-      data-testid="avatar-user"
-      aria-label={`Signed in as ${username}`}
-    >
-      <span className="text-white text-[10px] font-bold leading-none">{initials || "?"}</span>
-    </div>
-  );
-}
-
-export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () => void }) {
+export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) {
   const [location] = useLocation();
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024);
   const [manualOverride, setManualOverride] = useState(false);
@@ -219,33 +191,6 @@ export function GlobalNav({ user, onLogout }: { user?: AuthUser; onLogout?: () =
           </>
         )}
 
-        {user && (
-          <div
-            className={`flex items-center gap-2 px-2 py-2 rounded-lg ${collapsed ? "justify-center" : ""}`}
-            title={collapsed ? `${user.username} (${ROLE_LABELS[userRole] ?? userRole}) — click to sign out` : undefined}
-          >
-            <UserAvatar username={user.username} collapsed={collapsed} />
-            {!collapsed && (
-              <>
-                <div className="flex flex-col min-w-0 flex-1">
-                  <span className="text-xs text-slate-700 font-medium truncate" data-testid="text-username">{user.username}</span>
-                  <span className="text-[10px] text-slate-400 truncate" data-testid="text-user-role">{ROLE_LABELS[userRole] ?? userRole}</span>
-                </div>
-              </>
-            )}
-            {onLogout && (
-              <button
-                onClick={onLogout}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors shrink-0"
-                title="Sign out"
-                data-testid="button-logout"
-                aria-label="Sign out"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </nav>
   );
