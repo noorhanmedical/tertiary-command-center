@@ -584,12 +584,24 @@ export const documents = pgTable("documents", {
   version: integer("version").notNull().default(1),
   // The id of the doc that REPLACED this one. If null, this row is current.
   supersededByDocumentId: integer("superseded_by_document_id"),
+  // Patient-specific uploads (e.g. a completed signed consent for John Doe)
+  // are scoped to a patient screening — they only show up on that chart.
+  patientScreeningId: integer("patient_screening_id").references(() => patientScreenings.id, { onDelete: "set null" }),
+  // Optional facility scope for narrowing surfaces by clinic.
+  facility: text("facility"),
+  // Where this document came from (e.g. "uploaded_documents migration", "tech portal").
+  sourceNotes: text("source_notes"),
   createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  // Soft-delete marker. Rows with deletedAt set are hidden from all reads but
+  // remain in the table for audit history.
+  deletedAt: timestamp("deleted_at"),
 }, (table) => [
   index("idx_documents_kind").on(table.kind),
   index("idx_documents_created_at").on(table.createdAt),
   index("idx_documents_superseded").on(table.supersededByDocumentId),
+  index("idx_documents_patient_screening_id").on(table.patientScreeningId),
+  index("idx_documents_deleted_at").on(table.deletedAt),
 ]);
 
 export const insertDocumentSchema = createInsertSchema(documents).omit({
@@ -597,11 +609,15 @@ export const insertDocumentSchema = createInsertSchema(documents).omit({
   createdAt: true,
   version: true,
   supersededByDocumentId: true,
+  deletedAt: true,
 }).extend({
   title: z.string().trim().min(1, "Title is required").max(200),
   description: z.string().max(1000).optional().default(""),
   kind: z.enum(DOCUMENT_KINDS),
   signatureRequirement: z.enum(DOCUMENT_SIGNATURE_REQUIREMENTS).optional(),
+  patientScreeningId: z.number().int().optional().nullable(),
+  facility: z.string().max(200).optional().nullable(),
+  sourceNotes: z.string().max(1000).optional().nullable(),
 });
 
 export type Document = typeof documents.$inferSelect;

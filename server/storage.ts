@@ -1735,25 +1735,47 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  // Returns only "current" documents (i.e. not yet superseded). Optionally
-  // filter by kind. Surface filtering is done via getDocumentsForSurface.
-  async listCurrentDocuments(filters?: { kind?: DocumentKind }): Promise<Document[]> {
-    const conditions = [sql`${documents.supersededByDocumentId} IS NULL`];
+  // Returns only "current" documents (i.e. not yet superseded and not
+  // soft-deleted). Optional filters: kind, patientScreeningId. Surface
+  // filtering is done via getDocumentsForSurface.
+  async listCurrentDocuments(filters?: {
+    kind?: DocumentKind;
+    patientScreeningId?: number | null;
+  }): Promise<Document[]> {
+    const conditions = [
+      sql`${documents.supersededByDocumentId} IS NULL`,
+      sql`${documents.deletedAt} IS NULL`,
+    ];
     if (filters?.kind) conditions.push(eq(documents.kind, filters.kind));
+    if (filters?.patientScreeningId === null) {
+      conditions.push(sql`${documents.patientScreeningId} IS NULL`);
+    } else if (typeof filters?.patientScreeningId === "number") {
+      conditions.push(eq(documents.patientScreeningId, filters.patientScreeningId));
+    }
     return db.select().from(documents)
       .where(and(...conditions))
       .orderBy(desc(documents.createdAt));
   }
 
-  async getDocumentsForSurface(surface: DocumentSurface): Promise<Document[]> {
+  async getDocumentsForSurface(
+    surface: DocumentSurface,
+    opts?: { patientScreeningId?: number | null },
+  ): Promise<Document[]> {
+    const conditions = [
+      eq(documentSurfaceAssignments.surface, surface),
+      sql`${documents.supersededByDocumentId} IS NULL`,
+      sql`${documents.deletedAt} IS NULL`,
+    ];
+    if (opts?.patientScreeningId === null) {
+      conditions.push(sql`${documents.patientScreeningId} IS NULL`);
+    } else if (typeof opts?.patientScreeningId === "number") {
+      conditions.push(eq(documents.patientScreeningId, opts.patientScreeningId));
+    }
     const rows = await db
       .select({ doc: documents })
       .from(documentSurfaceAssignments)
       .innerJoin(documents, eq(documents.id, documentSurfaceAssignments.documentId))
-      .where(and(
-        eq(documentSurfaceAssignments.surface, surface),
-        sql`${documents.supersededByDocumentId} IS NULL`,
-      ))
+      .where(and(...conditions))
       .orderBy(desc(documents.createdAt));
     return rows.map((r) => r.doc);
   }
@@ -1834,8 +1856,45 @@ export class DatabaseStorage implements IStorage {
       ));
   }
 
+  // Replace the full set of surface assignments for a document atomically.
+  // (PATCH-style: any surface in `surfaces` is added, any not in `surfaces`
+  // is removed.)
+  async replaceDocumentAssignments(
+    documentId: number,
+    surfaces: DocumentSurface[],
+  ): Promise<DocumentSurfaceAssignment[]> {
+    return db.transaction(async (tx) => {
+      const existing = await tx.select().from(documentSurfaceAssignments)
+        .where(eq(documentSurfaceAssignments.documentId, documentId));
+      const wanted = new Set<string>(surfaces);
+      const have = new Set<string>(existing.map((a) => a.surface));
+      const toRemove = existing.filter((a) => !wanted.has(a.surface));
+      const toAdd = surfaces.filter((s) => !have.has(s));
+      for (const a of toRemove) {
+        await tx.delete(documentSurfaceAssignments)
+          .where(eq(documentSurfaceAssignments.id, a.id));
+      }
+      for (const s of toAdd) {
+        await tx.insert(documentSurfaceAssignments)
+          .values({ documentId, surface: s })
+          .onConflictDoNothing();
+      }
+      return tx.select().from(documentSurfaceAssignments)
+        .where(eq(documentSurfaceAssignments.documentId, documentId));
+    });
+  }
+
+  // Soft-delete: mark deletedAt; rows stay in the table for audit history but
+  // are filtered out of all current/surface reads.
+  async softDeleteDocument(id: number): Promise<void> {
+    await db.update(documents)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(documents.id, id), sql`${documents.deletedAt} IS NULL`));
+  }
+
   async deleteDocument(id: number): Promise<void> {
-    // Detach any successor pointer first so we don't leave dangling FKs.
+    // Hard delete kept for admin/test cleanup paths only. Detach any successor
+    // pointer first so we don't leave dangling FKs.
     await db.update(documents)
       .set({ supersededByDocumentId: null })
       .where(eq(documents.supersededByDocumentId, id));
