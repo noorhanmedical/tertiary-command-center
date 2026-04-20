@@ -8,7 +8,6 @@ import {
   CreditCard,
   Users2,
   Database,
-  Brain,
   Shield,
   ChevronLeft,
   ChevronRight,
@@ -34,7 +33,6 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/team-ops",         label: "Team Ops",         Icon: Users2,       roles: ["admin"] },
   { href: "/patient-database", label: "Patient Database", Icon: Database,     roles: ["admin", "clinician", "biller"] },
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
-  { href: "/task-brain",       label: "Task Brain",       Icon: Brain,        roles: ["admin", "clinician"] },
 ];
 
 const ROLE_LABELS: Record<string, string> = {

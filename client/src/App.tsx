@@ -25,7 +25,6 @@ import AdminOutboxPage from "@/pages/admin-outbox";
 import ScheduleDashboardPage from "@/pages/schedule-dashboard";
 import SettingsPage from "@/pages/settings";
 import TeamOpsPage from "@/pages/team-ops";
-import TaskBrainPage from "@/pages/task-brain";
 import PlexusTasksPage from "@/pages/plexus-tasks";
 import LoginPage from "@/pages/login";
 import { GlobalNav } from "@/components/GlobalNav";
@@ -77,7 +76,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/outreach/scheduler/:id" component={OutreachSchedulerPortalPage} />
                 <Route path="/outreach" component={OutreachPage} />
                 <Route path="/team-ops" component={TeamOpsPage} />
-                <Route path="/task-brain" component={TaskBrainPage} />
+                <Route path="/task-brain">
+                  <Redirect to="/plexus-tasks" />
+                </Route>
                 <Route path="/plexus-tasks" component={PlexusTasksPage} />
                 <Route path="/admin">
                   <AdminGuard user={user}><AdminPage /></AdminGuard>

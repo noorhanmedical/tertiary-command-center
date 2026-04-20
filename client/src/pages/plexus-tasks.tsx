@@ -25,9 +25,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CreateTaskModal } from "@/components/plexus/CreateTaskModal";
+import { TaskDrawer } from "@/components/plexus/TaskDrawer";
+import type { PlexusTaskSummary, UserEntry } from "@/components/plexus/SchedulerIcon";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { PlexusProject } from "@shared/schema";
+import type { AuthUser } from "@/App";
 
 type PlexusTask = import("@shared/schema").PlexusTask & {
   patientName?: string | null;
@@ -66,32 +69,23 @@ type UnreadEntry = { taskId: number; unreadCount: number };
 function TaskRow({
   task,
   onStatusChange,
+  onOpen,
   unreadCount = 0,
   userMap = new Map(),
 }: {
   task: PlexusTask;
   onStatusChange: (id: number, status: string) => void;
+  onOpen: (task: PlexusTask) => void;
   unreadCount?: number;
   userMap?: Map<string, string>;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const qc = useQueryClient();
   const urgencyClass = URGENCY_COLORS[task.urgency] ?? URGENCY_COLORS["none"];
-
-  function handleExpand() {
-    setExpanded((v) => !v);
-    if (!expanded && unreadCount > 0) {
-      apiRequest("POST", `/api/plexus/tasks/${task.id}/read`, {}).catch(() => {});
-      qc.invalidateQueries({ queryKey: ["/api/plexus/tasks/unread-count"] });
-      qc.invalidateQueries({ queryKey: ["/api/plexus/tasks/unread-per-task"] });
-    }
-  }
 
   return (
     <div className="rounded-2xl border border-slate-200/80 bg-white shadow-sm transition hover:border-blue-200 hover:shadow-md">
       <div
         className="flex cursor-pointer items-start gap-3 p-4"
-        onClick={handleExpand}
+        onClick={() => onOpen(task)}
         data-testid={`task-row-${task.id}`}
       >
         <button
@@ -136,7 +130,7 @@ function TaskRow({
               </span>
             )}
           </div>
-          {task.description && !expanded && (
+          {task.description && (
             <p className="mt-0.5 truncate text-xs text-slate-500">{task.description}</p>
           )}
           <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-slate-400">
@@ -161,37 +155,8 @@ function TaskRow({
           </div>
         </div>
 
-        <button
-          className="shrink-0 text-slate-400 hover:text-slate-600"
-          onClick={(e) => { e.stopPropagation(); handleExpand(); }}
-        >
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        </button>
+        <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
       </div>
-
-      {expanded && (
-        <div className="border-t border-slate-100 px-4 pb-4 pt-3">
-          {task.description && (
-            <p className="mb-3 text-sm text-slate-600">{task.description}</p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            {(["open", "in_progress", "done", "closed"] as const).map((s) => (
-              <button
-                key={s}
-                className={`rounded-xl border px-2.5 py-1 text-xs font-medium transition ${
-                  task.status === s
-                    ? "border-blue-300 bg-blue-50 text-blue-700"
-                    : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700"
-                }`}
-                onClick={() => onStatusChange(task.id, s)}
-                data-testid={`button-set-status-${s}-${task.id}`}
-              >
-                {s.replace("_", " ")}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -204,7 +169,7 @@ function useUnreadPerTask() {
   });
 }
 
-function MyWorkView() {
+function MyWorkView({ onOpen }: { onOpen: (task: PlexusTask) => void }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data: tasks = [], isLoading } = useQuery<PlexusTask[]>({
@@ -274,6 +239,7 @@ function MyWorkView() {
                   key={t.id}
                   task={t}
                   onStatusChange={(id, status) => updateMutation.mutate({ id, status })}
+                  onOpen={onOpen}
                   unreadCount={msgMap.get(t.id) ?? 0}
                   userMap={userMap}
                 />
@@ -288,7 +254,7 @@ function MyWorkView() {
 
 type ProjectSummary = { taskCount: number; counts: Record<string, number> };
 
-function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => void }) {
+function ProjectsView({ onCreateTask, onOpen }: { onCreateTask: (projectId: number) => void; onOpen: (task: PlexusTask) => void }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data: projects = [], isLoading } = useQuery<PlexusProject[]>({
@@ -489,6 +455,7 @@ function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => v
                         key={t.id}
                         task={t}
                         onStatusChange={(id, status) => updateMutation.mutate({ id, status })}
+                        onOpen={onOpen}
                         unreadCount={msgMap.get(t.id) ?? 0}
                         userMap={userMap}
                       />
@@ -504,7 +471,7 @@ function ProjectsView({ onCreateTask }: { onCreateTask: (projectId: number) => v
   );
 }
 
-function SentView() {
+function SentView({ onOpen }: { onOpen: (task: PlexusTask) => void }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data: tasks = [], isLoading } = useQuery<PlexusTask[]>({
@@ -557,6 +524,7 @@ function SentView() {
           <TaskRow
             task={t}
             onStatusChange={(id, status) => updateMutation.mutate({ id, status })}
+            onOpen={onOpen}
             unreadCount={msgMap.get(t.id) ?? 0}
             userMap={userMap}
           />
@@ -597,7 +565,7 @@ function UrgentPanel({
 }: {
   collapsed: boolean;
   onToggle: () => void;
-  onHelp: (taskId: number) => void;
+  onHelp: (task: PlexusTask) => void;
 }) {
   const { data: urgentTasks = [] } = useQuery<PlexusTask[]>({
     queryKey: ["/api/plexus/tasks/urgent"],
@@ -652,7 +620,8 @@ function UrgentPanel({
               return (
                 <div
                   key={t.id}
-                  className="rounded-2xl border border-red-200/60 bg-red-50/60 p-3"
+                  className="cursor-pointer rounded-2xl border border-red-200/60 bg-red-50/60 p-3 transition hover:bg-red-50"
+                  onClick={() => onHelp(t)}
                   data-testid={`urgent-task-${t.id}`}
                 >
                   <div className="flex items-start gap-2">
@@ -690,11 +659,11 @@ function UrgentPanel({
                   </div>
                   <button
                     className="mt-2 w-full rounded-xl border border-blue-200 bg-blue-50 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 transition"
-                    onClick={() => onHelp(t.id)}
+                    onClick={(e) => { e.stopPropagation(); onHelp(t); }}
                     data-testid={`button-help-task-${t.id}`}
                   >
                     <Users className="inline h-3 w-3 mr-1" />
-                    Help
+                    Open
                   </button>
                 </div>
               );
@@ -710,7 +679,7 @@ function UrgentPanel({
             return (
               <button
                 key={t.id}
-                onClick={() => onHelp(t.id)}
+                onClick={() => onHelp(t)}
                 className={`w-7 h-7 rounded-full border flex items-center justify-center text-[9px] font-bold ${urgencyClass}`}
                 title={t.title}
                 data-testid={`urgent-dot-${t.id}`}
@@ -818,18 +787,7 @@ export default function PlexusTasksPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createForProject, setCreateForProject] = useState<number | null>(null);
   const [urgentCollapsed, setUrgentCollapsed] = useState(false);
-  const { toast } = useToast();
-  const qc = useQueryClient();
-
-  const helpMutation = useMutation({
-    mutationFn: (taskId: number) =>
-      apiRequest("POST", `/api/plexus/tasks/${taskId}/collaborators`, {}),
-    onSuccess: () => {
-      toast({ title: "Added as collaborator" });
-      qc.invalidateQueries({ queryKey: ["/api/plexus/tasks/urgent"] });
-    },
-    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
-  });
+  const [selectedTask, setSelectedTask] = useState<PlexusTask | null>(null);
 
   function openCreateFor(projectId?: number) {
     setCreateForProject(projectId ?? null);
@@ -910,16 +868,16 @@ export default function PlexusTasksPage() {
 
         <OverdueAlert />
 
-        {view === "my-work" && <MyWorkView />}
-        {view === "projects" && <ProjectsView onCreateTask={(pid) => openCreateFor(pid)} />}
-        {view === "sent" && <SentView />}
+        {view === "my-work" && <MyWorkView onOpen={setSelectedTask} />}
+        {view === "projects" && <ProjectsView onCreateTask={(pid) => openCreateFor(pid)} onOpen={setSelectedTask} />}
+        {view === "sent" && <SentView onOpen={setSelectedTask} />}
       </main>
 
       {/* Right: Urgent Panel */}
       <UrgentPanel
         collapsed={urgentCollapsed}
         onToggle={() => setUrgentCollapsed((v) => !v)}
-        onHelp={(taskId) => helpMutation.mutate(taskId)}
+        onHelp={setSelectedTask}
       />
 
       <CreateTaskModal
@@ -927,6 +885,78 @@ export default function PlexusTasksPage() {
         onClose={() => { setCreateModalOpen(false); setCreateForProject(null); }}
         defaultProjectId={createForProject}
       />
+
+      {selectedTask !== null && (
+        <TaskDrawerForTask task={selectedTask} onClose={() => setSelectedTask(null)} />
+      )}
     </div>
+  );
+}
+
+function toIsoString(value: string | Date | null | undefined): string {
+  if (!value) return new Date(0).toISOString();
+  if (typeof value === "string") return value;
+  return value.toISOString();
+}
+
+function taskToSummary(task: PlexusTask): PlexusTaskSummary {
+  return {
+    id: task.id,
+    title: task.title,
+    description: task.description ?? null,
+    taskType: task.taskType,
+    urgency: task.urgency,
+    priority: task.priority,
+    status: task.status,
+    assignedToUserId: task.assignedToUserId ?? null,
+    createdByUserId: task.createdByUserId ?? null,
+    patientScreeningId: task.patientScreeningId ?? null,
+    dueDate: task.dueDate ?? null,
+    createdAt: toIsoString(task.createdAt),
+    updatedAt: toIsoString(task.updatedAt),
+    patientName: task.patientName ?? null,
+  };
+}
+
+function TaskDrawerForTask({ task, onClose }: { task: PlexusTask; onClose: () => void }) {
+  const { data: currentUser } = useQuery<AuthUser>({
+    queryKey: ["/api/auth/me"],
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: users = [] } = useQuery<UserEntry[]>({
+    queryKey: ["/api/plexus/users"],
+    staleTime: 5 * 60 * 1000,
+  });
+  const patientId = task.patientScreeningId ?? null;
+  const { data: patientTasks = [] } = useQuery<PlexusTaskSummary[]>({
+    queryKey: ["/api/plexus/tasks", "patient", patientId],
+    queryFn: async () => {
+      const res = await fetch(`/api/plexus/tasks?patientScreeningId=${patientId}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!patientId,
+    staleTime: 30_000,
+  });
+
+  const summary = taskToSummary(task);
+  const tasks: PlexusTaskSummary[] = patientId && patientTasks.length > 0
+    ? (patientTasks.some((t) => t.id === task.id) ? patientTasks : [summary, ...patientTasks])
+    : [summary];
+
+  const headerName =
+    task.patientName ??
+    patientTasks.find((t) => t.id === task.id)?.patientName ??
+    task.title;
+
+  return (
+    <TaskDrawer
+      patientScreeningId={patientId ?? 0}
+      patientName={headerName ?? undefined}
+      tasks={tasks}
+      currentUser={currentUser ?? null}
+      users={users}
+      onClose={onClose}
+    />
   );
 }
