@@ -253,21 +253,27 @@ export function registerPortalRoutes(app: Express) {
           const assignee = facSchedulers.find(
             (s) => s.userId && s.facility === row.facility,
           )?.userId ?? null;
-          await storage.createTask({
-            title: `Consent needed — ${row.name}`,
-            description: `Patient ${row.name} has ${row.consentByTest.filter((c) => !c.signed).length} unsigned consent(s) for today's clinic at ${row.facility}.`,
-            taskType: "tech_assignment",
-            urgency: "EOD",
-            priority: "normal",
-            status: "open",
-            assignedToUserId: assignee,
-            createdByUserId: req.session.userId ?? null,
-            patientScreeningId: row.patientScreeningId,
-            projectId: null,
-            parentTaskId: null,
-            batchId: row.batchId,
-            dueDate: date,
-          });
+          // Best-effort: failing to create a tech_assignment task must NOT
+          // break the schedule response. Log and continue.
+          try {
+            await storage.createTask({
+              title: `Consent needed — ${row.name}`,
+              description: `Patient ${row.name} has ${row.consentByTest.filter((c) => !c.signed).length} unsigned consent(s) for today's clinic at ${row.facility}.`,
+              taskType: "tech_assignment",
+              urgency: "EOD",
+              priority: "normal",
+              status: "open",
+              assignedToUserId: assignee,
+              createdByUserId: req.session.userId ?? null,
+              patientScreeningId: row.patientScreeningId,
+              projectId: null,
+              parentTaskId: null,
+              batchId: row.batchId,
+              dueDate: date,
+            });
+          } catch (taskErr) {
+            console.warn("[portal/today-schedule] tech_assignment create failed:", taskErr);
+          }
         }
       }
 

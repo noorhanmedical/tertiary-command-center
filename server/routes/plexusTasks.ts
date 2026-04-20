@@ -21,7 +21,7 @@ type PlexusEventType =
   | "message_sent" | "read" | "call_logged";
 
 // ── Enum constants (mirror DB check constraints) ───────────────────────────
-const TASK_TYPE = ["task", "subtask", "milestone", "approval", "urgent_call"] as const;
+const TASK_TYPE = ["task", "subtask", "milestone", "approval", "urgent_call", "scheduler_assignment", "tech_assignment"] as const;
 const TASK_STATUS = ["open", "in_progress", "done", "closed"] as const;
 const TASK_URGENCY = ["none", "EOD", "within 3 hours", "within 1 hour"] as const;
 const TASK_PRIORITY = ["low", "normal", "high"] as const;
