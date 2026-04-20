@@ -115,9 +115,12 @@ export function rankCandidates(
       });
       let sort = k.sort;
       if (k.tier === 2) {
+        // Tier 2 ordering per spec: insurance, then OLDEST last-contact
+        // first (most overdue patients lead), then qualifying-test count
+        // as the final tiebreak.
         const last = lastContactByPatient.get(row.patient.id) ?? 0;
         const ageDays = last === 0 ? 9999 : Math.max(0, Math.round((asOfMs - last) / 86_400_000));
-        sort = [k.sort[0], k.sort[1], k.sort[2], -ageDays];
+        sort = [k.sort[0], k.sort[1], -ageDays, k.sort[3]];
       }
       return { ...row, _key: sort };
     })

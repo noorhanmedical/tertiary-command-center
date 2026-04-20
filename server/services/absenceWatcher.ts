@@ -15,7 +15,7 @@
 import { storage } from "../storage";
 import { withAdvisoryLock } from "../lib/advisoryLock";
 import { releaseAndRedistribute } from "./callListEngine";
-import { openai } from "./aiClient";
+import { openai, withRetry } from "./aiClient";
 
 const TICK_MS = Number(process.env.ABSENCE_TICK_MS ?? 10 * 60 * 1000);
 const STALE_CALL_WINDOW_MIN = Number(process.env.ABSENCE_STALE_CALL_WINDOW_MIN ?? 90);
@@ -147,7 +147,9 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
             `for ${today}. They ${todayCalls.length === 0 ? "have not logged any calls today" : `last logged a call at ${new Date(lastCallTime).toISOString()}`}, ` +
             `oldest assignment is ${Math.round(oldestAgeMin)} min old. Reply with a JSON object ` +
             `{"summary":"one sentence","actions":[{"type":"release_and_redistribute","reason":"..."}]}`;
-          const resp = await openai.chat.completions.create({
+          // Route through withRetry so the call is timed out, retried on
+          // transient errors, and counted by the OpenAI concurrency limiter.
+          const resp = await withRetry(() => openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
               { role: "system", content: "You are an operations assistant. Return ONLY a JSON object." },
@@ -155,7 +157,7 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
             ],
             response_format: { type: "json_object" },
             max_tokens: 200,
-          });
+          }), 2, "absenceWatcher.ai");
           const raw = resp.choices?.[0]?.message?.content ?? "";
           const parsed = JSON.parse(raw);
           if (typeof parsed.summary === "string") aiSummary = parsed.summary;

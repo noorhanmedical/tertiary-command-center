@@ -5,11 +5,12 @@ export type InsuranceTier = 1 | 2 | 3;
 export function insuranceTier(insurance: string | null | undefined): InsuranceTier {
   const s = (insurance || "").trim().toLowerCase();
   if (!s) return 3;
-  const isMedicare = /medicare/.test(s);
-  const isAdvantage =
-    /(advantage|hmo|ppo|mapd|part c|aetna|humana|united|wellcare|kaiser|anthem|bcbs|cigna|blue cross)/.test(s);
-  if (isMedicare && !isAdvantage) return 1;
-  if (/ppo/.test(s) || isAdvantage) return 2;
+  // Strict per spec: straight Medicare = 1, PPO = 2, everything else
+  // (HMO, Advantage, MAPD, commercial, Medicaid, etc.) = 3.
+  const isMedicare = /\bmedicare\b/.test(s);
+  const isAdvantageOrHmo = /(advantage|\bhmo\b|mapd|\bpart c\b)/.test(s);
+  if (isMedicare && !isAdvantageOrHmo && !/\bppo\b/.test(s)) return 1;
+  if (/\bppo\b/.test(s)) return 2;
   return 3;
 }
 
@@ -103,8 +104,11 @@ export function priorityKey(p: PriorityInputs): {
     const days = daysBetween(p.asOfDate, p.scheduleDate ?? p.asOfDate);
     return { tier, sort: [tier, days, insurance, -qtCount] };
   }
-  // Tier 2: insurance first, then more qualifying tests.
-  return { tier, sort: [tier, insurance, -qtCount, 0] };
+  // Tier 2 per spec: insurance tier first, then OLDEST last-contact age
+  // (filled in by rankCandidates), then qualifying-test count as a final
+  // tiebreak. Last-contact slot is left as 0 here and overwritten by the
+  // ranker which has access to the contact map.
+  return { tier, sort: [tier, insurance, 0, -qtCount] };
 }
 
 function daysBetween(a: string, b: string): number {
