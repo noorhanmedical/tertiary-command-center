@@ -9,10 +9,13 @@ import {
   billingRecords,
   invoices,
   invoiceLineItems,
+  invoicePayments,
   type Invoice,
   type InsertInvoice,
   type InvoiceLineItem,
   type InsertInvoiceLineItem,
+  type InvoicePayment,
+  type InsertInvoicePayment,
   uploadedDocuments,
   ancillaryAppointments,
   outreachSchedulers,
@@ -81,6 +84,9 @@ import {
   type InsertUser,
 } from "@shared/schema";
 import { eq, desc, ilike, sql, and, gte, lte, asc, ne, inArray, or } from "drizzle-orm";
+import { recomputeInvoiceTotals } from "./lib/invoiceRecompute";
+
+type TxClient = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 // SQL-aggregated row shapes used by the patient-database endpoints.
 // These let Postgres do the GROUP BY / JOIN work instead of pulling every
@@ -252,6 +258,9 @@ export interface IStorage {
   markInvoiceSent(id: number, sentTo: string): Promise<Invoice | undefined>;
   deleteInvoice(id: number): Promise<void>;
   getNextInvoiceNumber(): Promise<string>;
+  getInvoicePayments(invoiceId: number): Promise<InvoicePayment[]>;
+  createInvoicePayment(payment: InsertInvoicePayment): Promise<{ payment: InvoicePayment; invoice: Invoice }>;
+  deleteInvoicePayment(paymentId: number): Promise<{ invoice: Invoice } | undefined>;
 
   saveUploadedDocument(record: InsertUploadedDocument): Promise<UploadedDocument>;
   getAllUploadedDocuments(): Promise<UploadedDocument[]>;
@@ -1019,6 +1028,50 @@ export class DatabaseStorage implements IStorage {
 
   async deleteInvoice(id: number): Promise<void> {
     await db.delete(invoices).where(eq(invoices.id, id));
+  }
+
+  async getInvoicePayments(invoiceId: number): Promise<InvoicePayment[]> {
+    return db.select().from(invoicePayments)
+      .where(eq(invoicePayments.invoiceId, invoiceId))
+      .orderBy(asc(invoicePayments.paymentDate), asc(invoicePayments.id));
+  }
+
+  async createInvoicePayment(payment: InsertInvoicePayment): Promise<{ payment: InvoicePayment; invoice: Invoice }> {
+    return await db.transaction(async (tx) => {
+      const [created] = await tx.insert(invoicePayments).values(payment).returning();
+      const updated = await this.recomputeInvoiceTotalsTx(tx, payment.invoiceId);
+      return { payment: created, invoice: updated };
+    });
+  }
+
+  async deleteInvoicePayment(invoiceId: number, paymentId: number): Promise<{ invoice: Invoice } | undefined> {
+    return await db.transaction(async (tx) => {
+      const [existing] = await tx.select().from(invoicePayments)
+        .where(and(eq(invoicePayments.id, paymentId), eq(invoicePayments.invoiceId, invoiceId)));
+      if (!existing) return undefined;
+      await tx.delete(invoicePayments)
+        .where(and(eq(invoicePayments.id, paymentId), eq(invoicePayments.invoiceId, invoiceId)));
+      const updated = await this.recomputeInvoiceTotalsTx(tx, invoiceId);
+      return { invoice: updated };
+    });
+  }
+
+  private async recomputeInvoiceTotalsTx(tx: TxClient, invoiceId: number): Promise<Invoice> {
+    const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId));
+    if (!inv) throw new Error("Invoice not found");
+    const payments = await tx.select().from(invoicePayments).where(eq(invoicePayments.invoiceId, invoiceId));
+    const result = recomputeInvoiceTotals({
+      totalCharges: inv.totalCharges,
+      initialPaid: inv.initialPaid,
+      currentStatus: inv.status,
+      payments,
+    });
+    const [updated] = await tx.update(invoices).set({
+      totalPaid: result.totalPaid.toFixed(2),
+      totalBalance: result.totalBalance.toFixed(2),
+      status: result.status,
+    }).where(eq(invoices.id, invoiceId)).returning();
+    return updated;
   }
 
   async getNextInvoiceNumber(): Promise<string> {

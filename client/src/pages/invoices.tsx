@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/PageHeader";
-import { Receipt, Plus, Download, ArrowLeft, Send, FileText, Trash2, Mail, TrendingUp, Wallet, AlertTriangle } from "lucide-react";
+import { Receipt, Plus, Download, ArrowLeft, Send, FileText, Trash2, Mail, TrendingUp, Wallet, AlertTriangle, DollarSign } from "lucide-react";
 import { VALID_FACILITIES, DEFAULT_CLINIC, CLINIC_HUMBLE, formatClinicAddress, type ClinicProfile } from "@shared/plexus";
 
 type AgingBucket = "0-30" | "31-60" | "60+";
@@ -42,15 +42,30 @@ type Invoice = {
   invoiceDate: string;
   fromDate: string | null;
   toDate: string | null;
-  status: "Draft" | "Sent";
+  status: "Draft" | "Sent" | "Partially Paid" | "Paid";
   notes: string | null;
   totalCharges: string;
+  initialPaid: string;
   totalPaid: string;
   totalBalance: string;
   sentTo: string | null;
   sentAt: string | null;
   createdAt: string;
 };
+
+type InvoicePayment = {
+  id: number;
+  invoiceId: number;
+  amount: string;
+  paymentDate: string;
+  method: string;
+  reference: string | null;
+  note: string | null;
+  recordedByUserId: string | null;
+  createdAt: string;
+};
+
+const PAYMENT_METHOD_OPTIONS = ["Check", "ACH", "Wire", "Credit Card", "Cash", "Other"] as const;
 
 type InvoiceLineItem = {
   id: number;
@@ -99,7 +114,9 @@ function fmtDateTime(iso: string | null | undefined): string {
 }
 
 function statusBadgeClass(status: string): string {
-  if (status === "Sent") return "bg-emerald-100 text-emerald-800 border-emerald-200";
+  if (status === "Paid") return "bg-emerald-100 text-emerald-800 border-emerald-200";
+  if (status === "Partially Paid") return "bg-amber-100 text-amber-800 border-amber-200";
+  if (status === "Sent") return "bg-blue-100 text-blue-800 border-blue-200";
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
@@ -624,10 +641,67 @@ function InvoiceDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [downloading, setDownloading] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
 
-  const { data, isLoading } = useQuery<{ invoice: Invoice; lineItems: InvoiceLineItem[] }>({
+  const { data, isLoading } = useQuery<{ invoice: Invoice; lineItems: InvoiceLineItem[]; payments: InvoicePayment[] }>({
     queryKey: ["/api/invoices", id],
   });
 
+  const queryClient = useQueryClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const [payAmount, setPayAmount] = useState("");
+  const [payDate, setPayDate] = useState(today);
+  const [payMethod, setPayMethod] = useState<string>("Check");
+  const [payReference, setPayReference] = useState("");
+  const [payNote, setPayNote] = useState("");
+
+  const recordPayment = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/invoices/${id}/payments`, {
+        amount: payAmount,
+        paymentDate: payDate,
+        method: payMethod,
+        reference: payReference || null,
+        note: payNote || null,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      toast({ title: "Payment recorded" });
+      setPayAmount("");
+      setPayReference("");
+      setPayNote("");
+      setPayDate(today);
+      setPayMethod("Check");
+    },
+    onError: (e: Error) => toast({ title: "Failed to record payment", description: e.message, variant: "destructive" }),
+  });
+
+  const deletePayment = useMutation({
+    mutationFn: async (paymentId: number) => {
+      const res = await apiRequest("DELETE", `/api/invoices/${id}/payments/${paymentId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      toast({ title: "Payment removed" });
+    },
+    onError: (e: Error) => toast({ title: "Failed to remove payment", description: e.message, variant: "destructive" }),
+  });
+
+  const markSent = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/invoices/${id}/status`, { status: "Sent" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      toast({ title: "Invoice marked as Sent" });
+    },
+    onError: (e: Error) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
+  });
   async function handleDownloadPdf() {
     if (!printRef.current || !data) return;
     setDownloading(true);
@@ -774,6 +848,34 @@ function InvoiceDetail({ id, onBack }: { id: number; onBack: () => void }) {
             </div>
           </div>
 
+          {data.payments.length > 0 && (
+            <div className="mt-8 pt-4 border-t border-slate-200" data-testid="section-payment-history-printable">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Payment History</div>
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase text-slate-500 bg-slate-50">
+                    <th className="px-3 py-2 font-semibold">Date</th>
+                    <th className="px-3 py-2 font-semibold">Method</th>
+                    <th className="px-3 py-2 font-semibold">Reference</th>
+                    <th className="px-3 py-2 font-semibold">Note</th>
+                    <th className="px-3 py-2 font-semibold text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.payments.map((p) => (
+                    <tr key={p.id} className="border-b border-slate-100">
+                      <td className="px-3 py-2 text-slate-700 whitespace-nowrap">{fmtDate(p.paymentDate)}</td>
+                      <td className="px-3 py-2 text-slate-700">{p.method}</td>
+                      <td className="px-3 py-2 text-slate-500 text-xs">{p.reference || "—"}</td>
+                      <td className="px-3 py-2 text-slate-500 text-xs">{p.note || "—"}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-900 font-medium">{fmtMoney(p.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {invoice.notes && (
             <div className="mt-8 pt-4 border-t border-slate-200">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Notes</div>
@@ -790,6 +892,151 @@ function InvoiceDetail({ id, onBack }: { id: number; onBack: () => void }) {
         clinic={clinic}
         generatePdfBase64={generatePdfBase64}
       />
+
+      <Card className="p-6 print:hidden" data-testid="section-payments">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+              <DollarSign className="w-4 h-4 text-emerald-600" /> Payments
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Record payments received against this invoice. Balance updates automatically.
+            </p>
+          </div>
+          <div className="text-right text-sm">
+            <div className="text-slate-500 text-xs">Outstanding Balance</div>
+            <div className="text-xl font-bold text-slate-900 tabular-nums" data-testid="text-outstanding-balance">{fmtMoney(invoice.totalBalance)}</div>
+          </div>
+        </div>
+
+        {invoice.status === "Draft" ? (
+          <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-md px-3 py-2.5">
+            Payments can only be recorded once the invoice has been marked as Sent.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end pb-4 border-b border-slate-200">
+            <div className="md:col-span-1">
+              <Label htmlFor="pay-amount" className="text-xs">Amount</Label>
+              <Input
+                id="pay-amount"
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0.00"
+                value={payAmount}
+                onChange={(e) => setPayAmount(e.target.value)}
+                data-testid="input-payment-amount"
+              />
+            </div>
+            <div className="md:col-span-1">
+              <Label htmlFor="pay-date" className="text-xs">Date</Label>
+              <Input
+                id="pay-date"
+                type="date"
+                value={payDate}
+                onChange={(e) => setPayDate(e.target.value)}
+                data-testid="input-payment-date"
+              />
+            </div>
+            <div className="md:col-span-1">
+              <Label htmlFor="pay-method" className="text-xs">Method</Label>
+              <Select value={payMethod} onValueChange={setPayMethod}>
+                <SelectTrigger id="pay-method" data-testid="select-payment-method">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_METHOD_OPTIONS.map((m) => (
+                    <SelectItem key={m} value={m}>{m}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="md:col-span-1">
+              <Label htmlFor="pay-reference" className="text-xs">Reference (optional)</Label>
+              <Input
+                id="pay-reference"
+                placeholder="Check #, txn id…"
+                value={payReference}
+                onChange={(e) => setPayReference(e.target.value)}
+                data-testid="input-payment-reference"
+              />
+            </div>
+            <div className="md:col-span-1">
+              <Label htmlFor="pay-note" className="text-xs">Note (optional)</Label>
+              <Input
+                id="pay-note"
+                value={payNote}
+                onChange={(e) => setPayNote(e.target.value)}
+                data-testid="input-payment-note"
+              />
+            </div>
+            <div className="md:col-span-1">
+              <Button
+                className="w-full"
+                onClick={() => recordPayment.mutate()}
+                disabled={!payAmount || parseFloat(payAmount) <= 0 || !payDate || recordPayment.isPending}
+                data-testid="button-record-payment"
+              >
+                {recordPayment.isPending ? "Saving…" : "Record Payment"}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {data.payments.length === 0 ? (
+          <div className="py-6 text-center text-sm text-slate-400" data-testid="empty-payments">
+            No payments recorded yet.
+          </div>
+        ) : (
+          <div className="overflow-x-auto mt-4">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-slate-500 border-b border-slate-200">
+                  <th className="px-3 py-2">Date</th>
+                  <th className="px-3 py-2">Method</th>
+                  <th className="px-3 py-2">Reference</th>
+                  <th className="px-3 py-2">Note</th>
+                  <th className="px-3 py-2 text-right">Amount</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.payments.map((p) => (
+                  <tr key={p.id} className="border-b border-slate-100" data-testid={`row-payment-${p.id}`}>
+                    <td className="px-3 py-2 text-slate-700 whitespace-nowrap">{fmtDate(p.paymentDate)}</td>
+                    <td className="px-3 py-2 text-slate-700">{p.method}</td>
+                    <td className="px-3 py-2 text-slate-500">{p.reference || "—"}</td>
+                    <td className="px-3 py-2 text-slate-500">{p.note || "—"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-medium text-slate-900" data-testid={`text-payment-amount-${p.id}`}>{fmtMoney(p.amount)}</td>
+                    <td className="px-3 py-2 text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (!confirm("Remove this payment? The invoice balance will be restored.")) return;
+                          deletePayment.mutate(p.id);
+                        }}
+                        data-testid={`button-delete-payment-${p.id}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-slate-400 hover:text-red-500" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={4} className="px-3 py-2 text-right text-xs uppercase text-slate-500">Total recorded payments</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-900" data-testid="text-payments-total">
+                    {fmtMoney(data.payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0).toFixed(2))}
+                  </td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

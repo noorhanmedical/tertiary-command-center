@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
-import { INVOICE_STATUSES } from "@shared/schema";
+import { INVOICE_STATUSES, PAYMENT_METHODS } from "@shared/schema";
 import { logAudit } from "../services/auditService";
 import { sendOutreachEmail } from "../services/emailService";
 
@@ -44,6 +44,18 @@ const sendInvoiceEmailSchema = z.object({
     .min(1, "Invoice PDF is required.")
     .max(MAX_PDF_BASE64_BYTES, "Invoice PDF is too large to email (max ~10 MB)."),
   pdfFilename: z.string().trim().min(1).optional(),
+});
+
+const createPaymentSchema = z.object({
+  amount: z.union([z.number(), z.string()]).transform((v) => {
+    const n = typeof v === "number" ? v : parseFloat(v);
+    if (isNaN(n)) throw new Error("Invalid amount");
+    return n;
+  }).refine((n) => n > 0, "Amount must be greater than 0"),
+  paymentDate: dateString,
+  method: z.enum(PAYMENT_METHODS).default("Check"),
+  reference: z.string().nullable().optional(),
+  note: z.string().nullable().optional(),
 });
 
 function num(v: string | null | undefined): number {
@@ -167,7 +179,8 @@ export function registerInvoiceRoutes(app: Express) {
       const invoice = await storage.getInvoice(id);
       if (!invoice) return res.status(404).json({ error: "Invoice not found" });
       const lineItems = await storage.getInvoiceLineItems(id);
-      res.json({ invoice, lineItems });
+      const payments = await storage.getInvoicePayments(id);
+      res.json({ invoice, lineItems, payments });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -227,6 +240,7 @@ export function registerInvoiceRoutes(app: Express) {
           status: "Draft",
           notes: notes ?? null,
           totalCharges: totalCharges.toFixed(2),
+          initialPaid: totalPaid.toFixed(2),
           totalPaid: totalPaid.toFixed(2),
           totalBalance: totalBalance.toFixed(2),
           createdByUserId: userIdOf(req),
@@ -326,6 +340,59 @@ export function registerInvoiceRoutes(app: Express) {
       res.json({ ok: true, invoice: updated, messageId: result.messageId });
     } catch (err: any) {
       res.status(502).json({ error: err?.message || "Failed to send invoice email" });
+    }
+  });
+
+  app.get("/api/invoices/:id/payments", requireBillerOrAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const payments = await storage.getInvoicePayments(id);
+      res.json(payments);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/invoices/:id/payments", requireBillerOrAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const invoice = await storage.getInvoice(id);
+      if (!invoice) return res.status(404).json({ error: "Invoice not found" });
+      if (invoice.status === "Draft") {
+        return res.status(400).json({ error: "Cannot record payments on a Draft invoice. Mark it as Sent first." });
+      }
+      const parsed = createPaymentSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      const { amount, paymentDate, method, reference, note } = parsed.data;
+      const result = await storage.createInvoicePayment({
+        invoiceId: id,
+        amount: amount.toFixed(2),
+        paymentDate,
+        method,
+        reference: reference ?? null,
+        note: note ?? null,
+        recordedByUserId: userIdOf(req),
+      });
+      void logAudit(req, "create", "invoice_payment", result.payment.id, { invoiceId: id, amount: amount.toFixed(2), method });
+      res.status(201).json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/invoices/:id/payments/:paymentId", requireBillerOrAdmin, async (req, res) => {
+    try {
+      const invoiceId = parseInt(req.params.id);
+      const paymentId = parseInt(req.params.paymentId);
+      if (isNaN(invoiceId) || isNaN(paymentId)) {
+        return res.status(400).json({ error: "Invalid invoice or payment id" });
+      }
+      const result = await storage.deleteInvoicePayment(invoiceId, paymentId);
+      if (!result) return res.status(404).json({ error: "Payment not found for this invoice" });
+      void logAudit(req, "delete", "invoice_payment", paymentId, { invoiceId });
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
   });
 
