@@ -55,23 +55,34 @@ export function buildAssignmentsForPool(
     cap.set(sc.id, dailyCapacity(sc, baseDailyTarget));
   }
 
+  // Round-robin allocation, weighted by capacity %. We pick the scheduler
+  // whose load/cap RATIO is currently smallest among those with remaining
+  // capacity — this rotates through the pool while still honoring per-
+  // scheduler capacity weights. Tiebreakers: lower load, then lower id
+  // (deterministic). Saturation breaks the loop.
   const drafts: AssignmentDraft[] = [];
+  const orderedSchedulers = [...schedulers].sort((a, b) => a.id - b.id);
   for (const c of candidates) {
     let best: OutreachScheduler | null = null;
-    let bestRemaining = -1;
-    for (const sc of schedulers) {
-      const remaining = (cap.get(sc.id) ?? 0) - (load.get(sc.id) ?? 0);
-      if (remaining <= 0) continue;
+    let bestRatio = Number.POSITIVE_INFINITY;
+    let bestLoad = Number.POSITIVE_INFINITY;
+    for (const sc of orderedSchedulers) {
+      const c1 = cap.get(sc.id) ?? 0;
+      if (c1 <= 0) continue;
+      const l = load.get(sc.id) ?? 0;
+      if (l >= c1) continue;
+      const ratio = l / c1;
       if (
-        remaining > bestRemaining ||
-        (remaining === bestRemaining && best && (sc.capacityPercent ?? 100) > (best.capacityPercent ?? 100)) ||
-        (remaining === bestRemaining && best && sc.id < best.id)
+        ratio < bestRatio ||
+        (ratio === bestRatio && l < bestLoad) ||
+        (ratio === bestRatio && l === bestLoad && best && sc.id < best.id)
       ) {
         best = sc;
-        bestRemaining = remaining;
+        bestRatio = ratio;
+        bestLoad = l;
       }
     }
-    if (!best) break; // Pool fully saturated.
+    if (!best) break;
     load.set(best.id, (load.get(best.id) ?? 0) + 1);
     drafts.push({
       patientScreeningId: c.patient.id,

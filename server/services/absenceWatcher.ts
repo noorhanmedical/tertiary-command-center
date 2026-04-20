@@ -19,12 +19,9 @@ import { openai } from "./aiClient";
 
 const TICK_MS = Number(process.env.ABSENCE_TICK_MS ?? 10 * 60 * 1000);
 const STALE_CALL_WINDOW_MIN = Number(process.env.ABSENCE_STALE_CALL_WINDOW_MIN ?? 90);
-// Untouched-assignment age: if the scheduler's OLDEST active assignment was
-// assigned more than this many minutes ago and they have not logged any
-// dispositions on it, we treat the queue as untouched (a stronger absence
-// signal than just "no calls in 90m" — covers schedulers who logged on a
-// stale call early in the day and then went dark).
-const UNTOUCHED_ASSIGNMENT_MIN = Number(process.env.ABSENCE_UNTOUCHED_ASSIGNMENT_MIN ?? 120);
+// Spec: alert fires when (no calls in 90 min) AND (untouched-assignment older
+// than 60 min) AND (no PTO). Untouched default = 60 minutes.
+const UNTOUCHED_ASSIGNMENT_MIN = Number(process.env.ABSENCE_UNTOUCHED_ASSIGNMENT_MIN ?? 60);
 const BUSINESS_HOUR_START = Number(process.env.ABSENCE_BUSINESS_HOUR_START ?? 9);
 const BUSINESS_HOUR_END = Number(process.env.ABSENCE_BUSINESS_HOUR_END ?? 17);
 // Default 30 min from spec — admin has 30 min to act before auto-exec fires.
@@ -92,10 +89,11 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
       }, Number.POSITIVE_INFINITY);
       const oldestAgeMin = oldestAssignedMs === Number.POSITIVE_INFINITY
         ? 0 : (now.getTime() - oldestAssignedMs) / 60_000;
-      const untouched = todayCalls.length === 0 && oldestAgeMin >= UNTOUCHED_ASSIGNMENT_MIN;
+      const untouched = oldestAgeMin >= UNTOUCHED_ASSIGNMENT_MIN;
 
-      // Trigger if EITHER signal fires.
-      if (!stale && !untouched) continue;
+      // Strict AND per spec: stale calls AND untouched assignments AND
+      // no PTO (PTO is gated above). Reduces false-alert risk vs OR.
+      if (!(stale && untouched)) continue;
 
       // Find any open absence task for this scheduler+day. If one exists,
       // we DO NOT create another — but we DO consider it for auto-execution
@@ -138,7 +136,12 @@ export async function runOnce(now: Date = new Date()): Promise<void> {
       let aiPlan: { actions: Array<{ type: string; reason: string }> } = {
         actions: [{ type: "release_and_redistribute", reason: "scheduler unresponsive" }],
       };
-      if (ENABLE_AI_PROPOSAL && process.env.OPENAI_API_KEY) {
+      // Use the canonical aiClient (which reads AI_INTEGRATIONS_OPENAI_API_KEY
+       // and applies the OpenAI concurrency limiter). Gate strictly on the
+      // configured key so the proposal step is consistent with the rest of
+      // the codebase.
+      const aiKeyConfigured = !!(process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY);
+      if (ENABLE_AI_PROPOSAL && aiKeyConfigured) {
         try {
           const prompt = `Scheduler ${sc.name} at ${sc.facility} has ${load} active patient calls ` +
             `for ${today}. They ${todayCalls.length === 0 ? "have not logged any calls today" : `last logged a call at ${new Date(lastCallTime).toISOString()}`}, ` +
