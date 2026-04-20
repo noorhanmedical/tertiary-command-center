@@ -72,6 +72,8 @@ type Props = {
   patientId: number | null;
   patientName: string;
   schedulerUserId: string | null;
+  /** Number of prior call attempts. Sheet shows the auto-incremented next # (priorAttempts + 1). */
+  priorAttempts?: number;
   defaultOutcome?: OutreachCallOutcome;
   onLogged?: () => void;
 };
@@ -91,6 +93,7 @@ export function DispositionSheet({
   patientId,
   patientName,
   schedulerUserId,
+  priorAttempts = 0,
   defaultOutcome,
   onLogged,
 }: Props) {
@@ -131,6 +134,10 @@ export function DispositionSheet({
       toast({ title: "Call logged" });
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls"] });
+      // The portal renders its timeline / last-outcome / attempt pills from
+      // the bulk by-patients query — invalidate it so the row updates
+      // immediately, not after the next 60s poll.
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/by-patients"] });
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/today"] });
       onLogged?.();
       onOpenChange(false);
@@ -188,7 +195,15 @@ export function DispositionSheet({
         data-testid="disposition-sheet"
       >
         <SheetHeader>
-          <SheetTitle>Log call outcome</SheetTitle>
+          <SheetTitle className="flex items-center justify-between gap-3">
+            <span>Log call outcome</span>
+            <span
+              className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-700"
+              data-testid="disposition-attempt-counter"
+            >
+              Attempt #{priorAttempts + 1}
+            </span>
+          </SheetTitle>
           <SheetDescription>{patientName || "—"}</SheetDescription>
         </SheetHeader>
 

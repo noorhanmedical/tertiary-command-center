@@ -571,12 +571,15 @@ export default function OutreachSchedulerPortalPage() {
     return count;
   }, [card, latestCallByPatient]);
 
-  // Auto-select the top-priority patient if nothing is selected yet.
+  // Auto-select the top-priority patient on first load when no #p<id> hash
+  // has placed the cursor anywhere — the top slot is always Current Call.
   useEffect(() => {
     if (selectedId == null && sortedCallList.length > 0 && !isLoading) {
-      // No-op; let the user click. (Avoid surprise hash changes.)
+      const top = sortedCallList[0]?.item.patientId;
+      if (top != null) selectPatient(top);
     }
-  }, [selectedId, sortedCallList, isLoading]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortedCallList, isLoading]);
 
   const selectedItem = useMemo(
     () => (card?.callList ?? []).find((p) => p.patientId === selectedId) ?? null,
@@ -749,10 +752,10 @@ export default function OutreachSchedulerPortalPage() {
                   {todayAppointments.map((a) => (
                     <div
                       key={a.id}
-                      className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs"
+                      className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs"
                       data-testid={`today-appt-${a.id}`}
                     >
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
                         {isBrainWave(a.testType) ? <Brain className="h-3.5 w-3.5 text-violet-600 shrink-0" /> : <Activity className="h-3.5 w-3.5 text-rose-700 shrink-0" />}
                         <span className="font-semibold text-slate-700 shrink-0">{formatTime12(a.scheduledTime)}</span>
                         <span className="truncate text-slate-600">{a.patientName}</span>
@@ -760,6 +763,15 @@ export default function OutreachSchedulerPortalPage() {
                       <Badge className={`shrink-0 text-[9px] ${isBrainWave(a.testType) ? "bg-violet-100 text-violet-700" : "bg-rose-100 text-rose-800"}`}>
                         {isBrainWave(a.testType) ? "BW" : "VW"}
                       </Badge>
+                      <button
+                        type="button"
+                        onClick={() => setCancelTarget(a)}
+                        title="Cancel appointment (then re-book from the call list)"
+                        className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-rose-600 transition hover:border-rose-300 hover:bg-rose-50"
+                        data-testid={`today-appt-cancel-${a.id}`}
+                      >
+                        Cancel
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -1032,13 +1044,14 @@ export default function OutreachSchedulerPortalPage() {
                           )}
                         </button>
 
-                        {/* Per-row Add to Schedule shortcut */}
+                        {/* Per-row Add to Schedule — opens the prefilled booking dialog
+                            so the operator never leaves the call list. */}
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             selectPatient(item.patientId);
-                            setBookingPanelOpen(true);
+                            setCallListBookPatient(item);
                           }}
                           title="Add to schedule"
                           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-violet-200 bg-white text-violet-600 transition hover:border-violet-300 hover:bg-violet-50"
@@ -1212,6 +1225,9 @@ export default function OutreachSchedulerPortalPage() {
         patientId={selectedItem?.patientId ?? null}
         patientName={selectedItem?.patientName ?? ""}
         schedulerUserId={currentUser?.id ?? null}
+        priorAttempts={
+          selectedItem ? (callsByPatient[selectedItem.patientId]?.length ?? 0) : 0
+        }
       />
 
       {/* Shortcut help dialog */}
@@ -1517,7 +1533,29 @@ function CurrentCallCard({
         <span className="inline-flex items-center gap-0.5"><Building2 className="h-3 w-3" />{item.facility}</span>
         {item.dob && <span>DOB {item.dob}</span>}
         {item.age != null && <span>· {item.age} y/o</span>}
+        {item.insurance && (
+          <span className="inline-flex items-center gap-0.5"><ShieldCheck className="h-3 w-3" />{item.insurance}</span>
+        )}
       </div>
+
+      {/* Prior tests / cooldown reasoning summary */}
+      {(item.previousTests || item.previousTestsDate) && (
+        <div
+          className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 p-2.5 text-[11px] text-amber-900"
+          data-testid="current-call-cooldown"
+        >
+          <div className="flex items-center gap-1.5">
+            <Clock className="h-3 w-3" />
+            <span className="font-semibold uppercase tracking-[0.14em] text-[10px]">Prior tests · cooldown</span>
+          </div>
+          <div className="mt-1 leading-relaxed">
+            {item.previousTests && <span>{item.previousTests}</span>}
+            {item.previousTestsDate && (
+              <span className="ml-1 text-amber-700">(last {item.previousTestsDate})</span>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="mt-3 rounded-xl bg-white/70 p-3">
         <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 inline-flex items-center gap-1">
