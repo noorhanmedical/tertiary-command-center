@@ -54,6 +54,21 @@ function formatDayHeader(iso: string, today: string): string {
   return label;
 }
 
+function firstName(full: string): string {
+  const trimmed = full.trim();
+  if (!trimmed) return full;
+  // Handle "Last, First" -> "First"
+  if (trimmed.includes(",")) {
+    const after = trimmed.split(",")[1]?.trim();
+    if (after) {
+      const firstAfter = after.split(/\s+/)[0];
+      if (firstAfter) return firstAfter;
+    }
+  }
+  const first = trimmed.split(/\s+/)[0];
+  return first || full;
+}
+
 export function HomeDashboard({
   batches,
   dashboardData,
@@ -78,6 +93,7 @@ export function HomeDashboard({
 
   const today = dashboardData?.today ?? "";
   const effectiveSelectedDate = selectedDate ?? today;
+  const displayMonth = dashboardData?.weekStart?.slice(0, 7);
 
   useEffect(() => {
     if (!selectedDate && today) setSelectedDate(today);
@@ -99,259 +115,345 @@ export function HomeDashboard({
     return map;
   }, [selectedDayPatients]);
 
+  // Per-clinic patient totals for the visible month, used as tab badges.
+  const clinicMonthTotals = useMemo<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    for (const tab of dashboardClinicTabs) {
+      let total = 0;
+      for (const cell of tab.monthCells) {
+        if (cell.isoDate.slice(0, 7) === displayMonth) {
+          total += cell.patientCount;
+        }
+      }
+      map[tab.clinicKey] = total;
+    }
+    return map;
+  }, [dashboardClinicTabs, displayMonth]);
+
   return (
     <div className="flex flex-col h-full">
-      <header className="sticky top-0 z-40 bg-white/85 dark:bg-card/80 backdrop-blur-xl border-b border-slate-200/60">
+      <header className="sticky top-0 z-40 bg-white/85 dark:bg-card/80 backdrop-blur-xl border-b border-slate-200/60 dark:border-border/60">
         <div className="px-8 flex items-center gap-4">
           <SidebarTrigger data-testid="button-sidebar-toggle-home" />
-          <div className="flex items-center gap-1 text-[13px] font-medium text-indigo-700 border-b-2 border-indigo-600 py-3 -mb-px" data-testid="tab-dashboard">
+          <div className="flex items-center gap-1 text-[13px] font-medium text-indigo-700 dark:text-indigo-300 border-b-2 border-indigo-600 py-3 -mb-px" data-testid="tab-dashboard">
             <span className="inline-block w-3.5 h-3.5 rounded-sm border border-indigo-600/70" aria-hidden />
             Dashboard
           </div>
         </div>
       </header>
       <main className="flex-1 overflow-auto">
-        <div className="max-w-5xl mx-auto px-8 pt-10 pb-16">
-          <PageHeader
-            eyebrow="PLEXUS ANCILLARY · HOME"
-            title="Plexus"
-            subtitle="Ancillary Screening Platform"
-            titleTestId="text-home-heading"
-            className="mb-10"
-          />
+        <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-10 pb-16">
+          <div className="max-w-5xl mx-auto">
+            <PageHeader
+              eyebrow="PLEXUS ANCILLARY · HOME"
+              title="Plexus"
+              subtitle="Ancillary Screening Platform"
+              titleTestId="text-home-heading"
+              className="mb-10"
+            />
 
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-            <Card
-              className={`glass-tile glass-tile-interactive group cursor-pointer ${isCreatingBatch ? "pointer-events-none opacity-60" : ""}`}
-              onClick={onNewSchedule}
-              data-testid="tile-new-schedule"
-            >
-              <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                {isCreatingBatch
-                  ? <Loader2 className="glass-tile-icon w-14 h-14 text-indigo-900 animate-spin" strokeWidth={1.5} />
-                  : <Plus className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
-                <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-new-schedule">New Schedule</span>
-              </div>
-            </Card>
-            <Card
-              className="glass-tile glass-tile-interactive group cursor-pointer"
-              onClick={() => setLocation("/documents")}
-              data-testid="tile-documents"
-            >
-              <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                <FileText className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
-              </div>
-            </Card>
-            <Link href="/document-upload">
-              <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-document-upload">
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+              <Card
+                className={`glass-tile glass-tile-interactive group cursor-pointer ${isCreatingBatch ? "pointer-events-none opacity-60" : ""}`}
+                onClick={onNewSchedule}
+                data-testid="tile-new-schedule"
+              >
                 <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                  <Upload className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-document-upload">Document Upload</span>
+                  {isCreatingBatch
+                    ? <Loader2 className="glass-tile-icon w-14 h-14 text-indigo-900 animate-spin" strokeWidth={1.5} />
+                    : <Plus className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
+                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-new-schedule">New Schedule</span>
                 </div>
               </Card>
-            </Link>
-            <Card
-              className="glass-tile glass-tile-interactive group cursor-pointer"
-              onClick={onOpenDir}
-              data-testid="tile-patient-directory"
-            >
-              <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                <Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
-              </div>
-            </Card>
-            <Link href="/outreach">
-              <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-outreach">
+              <Card
+                className="glass-tile glass-tile-interactive group cursor-pointer"
+                onClick={() => setLocation("/documents")}
+                data-testid="tile-documents"
+              >
                 <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                  <Phone className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach">Outreach</span>
+                  <FileText className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
                 </div>
               </Card>
-            </Link>
+              <Link href="/document-upload">
+                <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-document-upload">
+                  <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                    <Upload className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-document-upload">Document Upload</span>
+                  </div>
+                </Card>
+              </Link>
+              <Card
+                className="glass-tile glass-tile-interactive group cursor-pointer"
+                onClick={onOpenDir}
+                data-testid="tile-patient-directory"
+              >
+                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                  <Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
+                </div>
+              </Card>
+              <Link href="/outreach">
+                <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-outreach">
+                  <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                    <Phone className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach">Outreach</span>
+                  </div>
+                </Card>
+              </Link>
+            </div>
           </div>
 
-          <Card className="glass-tile mt-4" data-testid="tile-schedule-dashboard-inline">
-            <div className="p-5">
-              <div className="flex items-center justify-between mb-4">
+          <Card className="glass-tile mt-6" data-testid="tile-schedule-dashboard-inline">
+            <div className="p-6 lg:p-8">
+              <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
-                    <CalendarDays className="w-5 h-5 text-blue-600" strokeWidth={1.75} />
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 flex items-center justify-center shrink-0">
+                    <CalendarDays className="w-5 h-5 text-indigo-600 dark:text-indigo-300" strokeWidth={1.75} />
                   </div>
                   <div>
-                    <span className="text-[18px] font-semibold text-slate-800 dark:text-foreground">Schedule Dashboard</span>
-                    <p className="text-[12px] text-slate-500 mt-0.5">Live clinic schedule</p>
+                    <span className="text-[20px] font-semibold text-slate-900 dark:text-foreground tracking-tight">Schedule Dashboard</span>
+                    <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-0.5">Live monthly view across clinics</p>
                   </div>
                 </div>
-                <Link href="/schedule-dashboard">
-                  <span className="text-xs text-primary font-medium hover:underline cursor-pointer shrink-0" data-testid="link-view-full-schedule">Full Dashboard →</span>
-                </Link>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 rounded-xl border border-slate-200/80 dark:border-border bg-white/60 dark:bg-card/40 backdrop-blur px-1 py-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const base = dashboardWeekOverride || dashboardData?.weekStart || new Date().toISOString().slice(0, 10);
+                        const [y, m] = base.split("-").map(Number);
+                        const prev = new Date(y, (m || 1) - 2, 1);
+                        setDashboardWeekOverride(`${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-01`);
+                      }}
+                      className="p-1.5 rounded-lg hover-elevate active-elevate-2 text-slate-600 dark:text-muted-foreground"
+                      data-testid="button-dashboard-prev-month"
+                      aria-label="Previous month"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-sm font-semibold text-slate-800 dark:text-foreground w-32 text-center tabular-nums" data-testid="text-dashboard-month-label">
+                      {dashboardData?.weekStart
+                        ? new Date(dashboardData.weekStart + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" })
+                        : "—"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const base = dashboardWeekOverride || dashboardData?.weekStart || new Date().toISOString().slice(0, 10);
+                        const [y, m] = base.split("-").map(Number);
+                        const next = new Date(y, (m || 1), 1);
+                        setDashboardWeekOverride(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-01`);
+                      }}
+                      className="p-1.5 rounded-lg hover-elevate active-elevate-2 text-slate-600 dark:text-muted-foreground"
+                      data-testid="button-dashboard-next-month"
+                      aria-label="Next month"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <Link href="/schedule-dashboard">
+                    <span className="text-xs text-indigo-700 dark:text-indigo-300 font-medium hover:underline cursor-pointer shrink-0 px-2" data-testid="link-view-full-schedule">Full Dashboard →</span>
+                  </Link>
+                </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const base = dashboardWeekOverride || dashboardData?.weekStart || new Date().toISOString().slice(0, 10);
-                      const [y, m] = base.split("-").map(Number);
-                      const prev = new Date(y, (m || 1) - 2, 1);
-                      setDashboardWeekOverride(`${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-01`);
-                    }}
-                    className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-500"
-                    data-testid="button-dashboard-prev-month"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <span className="text-sm font-semibold text-slate-700 w-28 text-center tabular-nums" data-testid="text-dashboard-month-label">
-                    {dashboardData?.weekStart
-                      ? new Date(dashboardData.weekStart + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" })
-                      : "—"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const base = dashboardWeekOverride || dashboardData?.weekStart || new Date().toISOString().slice(0, 10);
-                      const [y, m] = base.split("-").map(Number);
-                      const next = new Date(y, (m || 1), 1);
-                      setDashboardWeekOverride(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-01`);
-                    }}
-                    className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors text-slate-500"
-                    data-testid="button-dashboard-next-month"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-                {dashboardClinicTabs.length > 1 && (
-                  <div className="flex flex-wrap gap-1">
-                    {dashboardClinicTabs.map((tab) => (
-                      <button
-                        key={tab.clinicKey}
-                        type="button"
-                        onClick={() => setDashboardClinicKey(tab.clinicKey)}
-                        className={`rounded-xl border px-2.5 py-0.5 text-xs font-medium transition ${
-                          activeDashboardClinic?.clinicKey === tab.clinicKey
-                            ? "border-blue-200 bg-blue-50 text-blue-700"
-                            : "border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:text-blue-700"
-                        }`}
-                        data-testid={`button-dashboard-clinic-${tab.clinicKey}`}
-                      >
-                        {tab.clinicLabel}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {dashboardLoading ? (
-                <div className="grid grid-cols-7 gap-1 mb-4">
-                  {[...Array(35)].map((_, i) => (
-                    <div key={i} className="h-16 bg-slate-100 rounded-xl animate-pulse" />
-                  ))}
-                </div>
-              ) : !activeDashboardClinic ? (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 py-8 text-center text-xs text-slate-400 mb-4">
-                  No schedule data — create a schedule to get started
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-7 mb-1">
-                    {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-                      <div key={d} className="text-center text-[11px] font-medium uppercase tracking-wider text-slate-400 py-2">{d}</div>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-7 gap-1 mb-4">
-                    {activeDashboardClinic.monthCells.map((cell) => {
-                      const isToday = cell.isoDate === dashboardData?.today;
-                      const isSelected = cell.isoDate === effectiveSelectedDate;
-                      const cellMonth = cell.isoDate.slice(0, 7);
-                      const displayMonth = dashboardData?.weekStart?.slice(0, 7);
-                      const isCurrentMonth = cellMonth === displayMonth;
-                      const dayNum = parseInt(cell.isoDate.split("-")[2], 10);
+              {dashboardClinicTabs.length > 0 && (
+                <div className="mb-5 -mx-1 overflow-x-auto" data-testid="dashboard-clinic-tabs">
+                  <div className="inline-flex items-center gap-1 rounded-2xl bg-slate-100/80 dark:bg-muted/40 p-1 min-w-full">
+                    {dashboardClinicTabs.map((tab) => {
+                      const isActive = activeDashboardClinic?.clinicKey === tab.clinicKey;
+                      const count = clinicMonthTotals[tab.clinicKey] ?? 0;
                       return (
                         <button
+                          key={tab.clinicKey}
                           type="button"
-                          key={cell.isoDate}
-                          onClick={() => setSelectedDate(cell.isoDate)}
-                          className={`text-left rounded-2xl p-2 min-h-[80px] flex flex-col transition-colors cursor-pointer ${
-                            isSelected
-                              ? "bg-indigo-50 border-2 border-indigo-400 shadow-sm"
-                              : isCurrentMonth
-                                ? "bg-white border border-slate-200/70 hover:bg-slate-50 hover:border-slate-300"
-                                : "bg-slate-50/40 border border-transparent hover:bg-slate-100/60"
+                          onClick={() => setDashboardClinicKey(tab.clinicKey)}
+                          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium whitespace-nowrap transition-all ${
+                            isActive
+                              ? "bg-white dark:bg-card text-indigo-700 dark:text-indigo-300 shadow-sm ring-1 ring-indigo-200/70 dark:ring-indigo-500/20"
+                              : "text-slate-600 dark:text-muted-foreground hover:text-slate-900 dark:hover:text-foreground"
                           }`}
-                          data-testid={`dashboard-month-cell-${cell.isoDate}`}
-                          aria-pressed={isSelected}
+                          data-testid={`button-dashboard-clinic-${tab.clinicKey}`}
+                          aria-pressed={isActive}
                         >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className={`inline-flex items-center justify-center min-w-[1.75rem] h-7 px-1 rounded-2xl text-sm font-semibold ${
-                              isToday
-                                ? "bg-violet-600 text-white shadow-sm"
-                                : isCurrentMonth
-                                  ? "text-slate-900"
-                                  : "text-slate-300"
-                            }`}>{dayNum}</span>
-                          </div>
-                          {cell.patientCount > 0 && (
-                            <div className="flex flex-col gap-0.5 mt-auto">
-                              <span className="text-[10px] leading-tight text-slate-500">
-                                <span className="font-semibold text-slate-700">{cell.patientCount}</span> pt{cell.patientCount !== 1 ? "s" : ""}
-                              </span>
-                              {cell.ancillaryCount > 0 && (
-                                <span className="text-[10px] leading-tight">
-                                  <span className="font-semibold text-violet-600">{cell.ancillaryCount}</span>
-                                  <span className="text-slate-400"> anc</span>
-                                </span>
-                              )}
-                            </div>
+                          <span>{tab.clinicLabel}</span>
+                          {count > 0 && (
+                            <span
+                              className={`inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 rounded-full text-[10px] font-semibold tabular-nums ${
+                                isActive
+                                  ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200"
+                                  : "bg-slate-200/80 text-slate-600 dark:bg-muted dark:text-muted-foreground"
+                              }`}
+                              data-testid={`badge-clinic-count-${tab.clinicKey}`}
+                            >
+                              {count}
+                            </span>
                           )}
                         </button>
                       );
                     })}
                   </div>
-                </>
+                </div>
               )}
 
-              <div className="border-t border-slate-100 pt-3" data-testid="panel-day-detail">
-                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-                  <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider" data-testid="text-day-detail-header">
-                    {effectiveSelectedDate ? formatDayHeader(effectiveSelectedDate, today) : "Selected Day"}
+              {dashboardLoading ? (
+                <div className="overflow-x-auto">
+                  <div className="min-w-[760px]">
+                    <div className="grid grid-cols-7 mb-2">
+                      {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+                        <div key={d} className="text-center text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-muted-foreground py-2">{d}</div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-7 gap-1.5">
+                      {[...Array(42)].map((_, i) => (
+                        <div key={i} className="h-32 bg-slate-100 dark:bg-muted/40 rounded-2xl animate-pulse" />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : !activeDashboardClinic ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 dark:border-border bg-slate-50/60 dark:bg-muted/20 py-16 text-center text-sm text-slate-400 dark:text-muted-foreground mb-4">
+                  No schedule data — create a schedule to get started
+                </div>
+              ) : (
+                <div className="overflow-x-auto -mx-1 px-1">
+                  <div className="min-w-[760px]">
+                    <div className="grid grid-cols-7 mb-2">
+                      {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+                        <div key={d} className="text-center text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-muted-foreground py-2">{d}</div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-7 gap-1.5 mb-6">
+                      {activeDashboardClinic.monthCells.map((cell) => {
+                        const isToday = cell.isoDate === dashboardData?.today;
+                        const isSelected = cell.isoDate === effectiveSelectedDate;
+                        const cellMonth = cell.isoDate.slice(0, 7);
+                        const isCurrentMonth = cellMonth === displayMonth;
+                        const dayNum = parseInt(cell.isoDate.split("-")[2], 10);
+                        const previewPatients = (cell.patients ?? []).slice(0, 2);
+                        const moreCount = Math.max(0, (cell.patients?.length ?? cell.patientCount) - previewPatients.length);
+
+                        const baseStyle = isToday
+                          ? "bg-gradient-to-br from-indigo-50 to-violet-50 dark:from-indigo-500/15 dark:to-violet-500/15 border-2 border-indigo-400 dark:border-indigo-400/60 shadow-sm"
+                          : isSelected
+                            ? "bg-white dark:bg-card border-2 border-indigo-300 dark:border-indigo-500/40 shadow-sm"
+                            : isCurrentMonth
+                              ? "bg-white dark:bg-card/60 border border-slate-200/70 dark:border-border hover:border-indigo-200 dark:hover:border-indigo-500/40 hover:bg-indigo-50/30 dark:hover:bg-indigo-500/5"
+                              : "bg-slate-50/40 dark:bg-muted/20 border border-transparent hover:bg-slate-100/60 dark:hover:bg-muted/30";
+
+                        return (
+                          <button
+                            type="button"
+                            key={cell.isoDate}
+                            onClick={() => setSelectedDate(cell.isoDate)}
+                            className={`group text-left rounded-2xl p-2.5 min-h-[120px] flex flex-col transition-all cursor-pointer ${baseStyle}`}
+                            data-testid={`dashboard-month-cell-${cell.isoDate}`}
+                            aria-pressed={isSelected}
+                          >
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className={`inline-flex items-center justify-center min-w-[1.75rem] h-7 px-1.5 rounded-full text-sm font-semibold tabular-nums ${
+                                isToday
+                                  ? "bg-violet-600 text-white shadow"
+                                  : isCurrentMonth
+                                    ? "text-slate-900 dark:text-foreground"
+                                    : "text-slate-300 dark:text-muted-foreground/50"
+                              }`}>{dayNum}</span>
+                              {cell.patientCount > 0 && (
+                                <div className="flex items-center gap-1">
+                                  {cell.ancillaryCount > 0 && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-200 tabular-nums">
+                                      {cell.ancillaryCount}<span className="font-normal opacity-70 ml-0.5">anc</span>
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200 tabular-nums">
+                                    {cell.patientCount}<span className="font-normal opacity-70 ml-0.5">pt</span>
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            {previewPatients.length > 0 && (
+                              <div className="flex flex-col gap-0.5 mt-0.5 overflow-hidden">
+                                {previewPatients.map((p) => (
+                                  <span
+                                    key={p.id}
+                                    className={`text-[11px] leading-tight truncate ${
+                                      isCurrentMonth
+                                        ? "text-slate-700 dark:text-foreground/90"
+                                        : "text-slate-400 dark:text-muted-foreground/60"
+                                    }`}
+                                    data-testid={`text-cell-patient-${p.id}`}
+                                  >
+                                    {p.time && (
+                                      <span className="text-slate-400 dark:text-muted-foreground/70 mr-1 tabular-nums">
+                                        {formatTime12(p.time).replace(/ (AM|PM)$/i, "")}
+                                      </span>
+                                    )}
+                                    {firstName(p.name) || "(unnamed)"}
+                                  </span>
+                                ))}
+                                {moreCount > 0 && (
+                                  <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-300 mt-0.5">
+                                    +{moreCount} more
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="border-t border-slate-200/70 dark:border-border pt-5 mt-2" data-testid="panel-day-detail">
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                  <div className="flex items-baseline gap-3 flex-wrap">
+                    <h3 className="text-base font-semibold text-slate-900 dark:text-foreground tracking-tight" data-testid="text-day-detail-header">
+                      {effectiveSelectedDate ? formatDayHeader(effectiveSelectedDate, today) : "Selected Day"}
+                    </h3>
                     {activeDashboardClinic && (
-                      <span className="ml-2 text-slate-400 normal-case">· {activeDashboardClinic.clinicLabel}</span>
+                      <span className="text-xs text-slate-500 dark:text-muted-foreground">
+                        {activeDashboardClinic.clinicLabel}
+                        {activeDashboardClinic.scheduler && (
+                          <span className="ml-1.5 text-slate-400 dark:text-muted-foreground/70">· {activeDashboardClinic.scheduler.name}</span>
+                        )}
+                      </span>
                     )}
-                  </p>
+                  </div>
                   {Object.keys(selectedDayAncillaryBreakdown).length > 0 && (
-                    <div className="flex flex-wrap gap-1" data-testid="day-ancillary-breakdown">
+                    <div className="flex flex-wrap gap-1.5" data-testid="day-ancillary-breakdown">
                       {Object.entries(selectedDayAncillaryBreakdown).map(([test, n]) => (
-                        <span key={test} className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700">
-                          {test} <span className="text-violet-500">×{n}</span>
+                        <span key={test} className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-200 ring-1 ring-violet-100 dark:ring-violet-500/20">
+                          {test} <span className="text-violet-500 dark:text-violet-300 ml-0.5">×{n}</span>
                         </span>
                       ))}
                     </div>
                   )}
                 </div>
                 {selectedDayPatients.length === 0 ? (
-                  <div className="py-6 text-center text-xs text-slate-400" data-testid="text-day-empty">
+                  <div className="py-10 text-center text-sm text-slate-400 dark:text-muted-foreground rounded-xl border border-dashed border-slate-200/70 dark:border-border" data-testid="text-day-empty">
                     No patients scheduled for this day.
                   </div>
                 ) : (
-                  <div className="space-y-1" data-testid="list-day-patients">
+                  <div className="grid sm:grid-cols-2 gap-2" data-testid="list-day-patients">
                     {selectedDayPatients.map((p) => (
                       <button
                         type="button"
                         key={p.id}
                         onClick={() => onOpenSchedule(p.batchId)}
-                        className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-xl bg-white border border-slate-100 hover-elevate active-elevate-2 cursor-pointer transition-colors"
+                        className="text-left flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-white dark:bg-card border border-slate-200/70 dark:border-border hover-elevate active-elevate-2 cursor-pointer transition-colors"
                         data-testid={`button-day-patient-${p.id}`}
                       >
-                        <span className="text-xs font-semibold text-primary w-16 shrink-0 tabular-nums">
+                        <span className="text-xs font-semibold text-indigo-700 dark:text-indigo-300 w-16 shrink-0 tabular-nums">
                           {formatTime12(p.time) || "—"}
                         </span>
-                        <span className="text-xs font-medium text-slate-800 flex-1 truncate" data-testid={`text-day-patient-name-${p.id}`}>{p.name || "(unnamed)"}</span>
+                        <span className="text-sm font-medium text-slate-800 dark:text-foreground flex-1 truncate" data-testid={`text-day-patient-name-${p.id}`}>{p.name || "(unnamed)"}</span>
                         {p.ancillaries.length > 0 && (
-                          <div className="flex flex-wrap gap-1 justify-end shrink-0 max-w-[60%]">
+                          <div className="flex flex-wrap gap-1 justify-end shrink-0 max-w-[55%]">
                             {p.ancillaries.map((a, i) => (
-                              <span key={`${p.id}-${a}-${i}`} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">
+                              <span key={`${p.id}-${a}-${i}`} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200">
                                 {a}
                               </span>
                             ))}
@@ -366,7 +468,7 @@ export function HomeDashboard({
           </Card>
 
           {batches.length > 0 && (
-            <div className="mt-10">
+            <div className="max-w-5xl mx-auto mt-10">
               <Button
                 variant="outline"
                 size="sm"
