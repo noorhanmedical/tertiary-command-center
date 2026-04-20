@@ -29,14 +29,17 @@ import {
   Megaphone,
   TrendingUp,
   ShieldCheck,
-  Mic,
-  PauseCircle,
   Send,
   Loader2,
   Wand2,
-  Copy,
   Trash2,
+  Mail,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -287,6 +290,7 @@ export default function OutreachSchedulerPortalPage() {
   const [callListBookTime, setCallListBookTime] = useState<string>("");
   const [scrollToSlot, setScrollToSlot] = useState<{ time: string; testType: string } | null>(null);
   const [bookingPanelOpen, setBookingPanelOpen] = useState(false);
+  const [expandedSection, setExpandedSection] = useState<"calendar" | "email" | "materials" | null>(null);
 
   // Call flow state
   const [search, setSearch] = useState("");
@@ -771,7 +775,7 @@ export default function OutreachSchedulerPortalPage() {
         {/* ── Cockpit grid: 25% / 50% / 25% — exactly three flat panels ── */}
         <div className="grid gap-5 xl:grid-cols-[1fr_2fr_1fr] xl:flex-1 xl:min-h-0">
 
-          {/* ─── LEFT PANEL: Today's schedule + Calling tools + Booking calendar ─── */}
+          {/* ─── LEFT PANEL: Tri-clinic calendar + Communication hub ─── */}
           <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl divide-y divide-slate-100/80 overflow-hidden xl:flex xl:flex-col xl:min-h-0 xl:overflow-y-auto">
             <ToolsPanel
               facility={card.facility}
@@ -795,6 +799,8 @@ export default function OutreachSchedulerPortalPage() {
               setBookPatientSearch={setBookPatientSearch}
               setCancelTarget={setCancelTarget}
               scrollToSlot={scrollToSlot}
+              expandedSection={expandedSection}
+              setExpandedSection={setExpandedSection}
             />
           </div>
 
@@ -811,6 +817,29 @@ export default function OutreachSchedulerPortalPage() {
               />
             </div>
 
+            {expandedSection ? (
+              <ExpandedSectionView
+                section={expandedSection}
+                onClose={() => setExpandedSection(null)}
+                facility={card.facility}
+                appointments={appointments}
+                selectedItem={selectedItem}
+                calYear={calYear}
+                calMonth={calMonth}
+                setCalMonth={setCalMonth}
+                setCalYear={setCalYear}
+                selectedDay={selectedDay}
+                setSelectedDay={setSelectedDay}
+                onConfirmSlot={(slot) => {
+                  setBookSlot(slot);
+                  if (selectedItem) {
+                    setBookLinkedPatient(selectedItem);
+                    setBookName("");
+                    setBookPatientSearch("");
+                  }
+                }}
+              />
+            ) : (
             <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden divide-y divide-slate-100/80 xl:flex-1 xl:min-h-0 xl:overflow-y-auto">
             <CurrentCallCard
               item={selectedItem}
@@ -866,6 +895,7 @@ export default function OutreachSchedulerPortalPage() {
               }}
             />
             </div>
+            )}
           </div>
 
           {/* ─── RIGHT PANEL: Call list + Tasks (Urgent folded in) ────── */}
@@ -2004,190 +2034,637 @@ function ToolsPanel(props: {
   setBookPatientSearch: (s: string) => void;
   setCancelTarget: (a: AncillaryAppointment | null) => void;
   scrollToSlot: { time: string; testType: string } | null;
+  expandedSection?: "calendar" | "email" | "materials" | null;
+  setExpandedSection?: (s: "calendar" | "email" | "materials" | null) => void;
 }) {
   const {
     facility, todayAppointments, selectedItem, bookingPanelOpen, setBookingPanelOpen,
     calYear, calMonth, setCalMonth, setCalYear, selectedDay, setSelectedDay,
-    bookedDates, appointments, selectedDateStr, setBookSlot, setBookName,
-    setBookLinkedPatient, setBookPatientSearch, setCancelTarget, scrollToSlot,
-  } = props;
+      appointments, setBookSlot, setBookName,
+      setBookLinkedPatient, setBookPatientSearch,
+      setExpandedSection,
+    } = props;
 
-  const [muted, setMuted] = useState(false);
-  const [held, setHeld] = useState(false);
-  const [dialed, setDialed] = useState("");
-  const phone = selectedItem?.phoneNumber ?? "";
+    function handleConfirmSlot(slot: BookingSlot) {
+      setBookSlot(slot);
+      if (selectedItem) {
+        setBookLinkedPatient(selectedItem);
+        setBookName("");
+        setBookPatientSearch("");
+      }
+    }
 
-  return (
-    <div data-testid="portal-tools-panel" className="contents">
-      {/* Calling Tools */}
-      <div className="px-5 pt-5 pb-4">
-        <div className="mb-3 flex items-center gap-2">
-          <Phone className="h-4 w-4 text-blue-600" />
-          <h2 className="text-sm font-semibold text-slate-800">Calling tools</h2>
-          <Badge variant="outline" className="ml-auto rounded-full text-[10px] text-slate-500">RingCentral</Badge>
-        </div>
-        {selectedItem ? (
-          <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-3">
-            <p className="text-xs text-slate-500">Active patient</p>
-            <p className="text-sm font-semibold text-slate-900 truncate">{selectedItem.patientName}</p>
-            <div className="mt-2 flex gap-1.5">
-              <a
-                href={`tel:${digitsOnly(phone)}`}
-                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
-                data-testid="tools-call-active"
-              >
-                <Phone className="h-3.5 w-3.5" /> Call {phone || "—"}
-              </a>
-              <button
-                type="button"
-                onClick={() => { if (phone) navigator.clipboard?.writeText(phone).catch(() => {}); }}
-                title="Copy phone number"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:border-blue-300 hover:bg-blue-50"
-                data-testid="tools-copy-phone"
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-        ) : (
-          <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-3 text-center text-[11px] italic text-slate-400">
-            Pick a patient to enable click-to-call.
-          </p>
-        )}
+    return (
+      <div data-testid="portal-tools-panel" className="contents">
+        {/* Top half — Tri-Clinic monthly calendar */}
+        <TriClinicCalendar
+          facility={facility}
+          appointments={appointments}
+          selectedItem={selectedItem}
+          calYear={calYear}
+          calMonth={calMonth}
+          setCalMonth={setCalMonth}
+          setCalYear={setCalYear}
+          selectedDay={selectedDay}
+          setSelectedDay={setSelectedDay}
+          onConfirmSlot={handleConfirmSlot}
+          onExpand={setExpandedSection ? () => setExpandedSection("calendar") : undefined}
+        />
 
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => setMuted((v) => !v)}
-            className={`flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1.5 text-[11px] font-medium transition ${
-              muted
-                ? "border-rose-300 bg-rose-100 text-rose-700"
-                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-            }`}
-            data-testid="tools-mute"
-          >
-            <Mic className="h-3.5 w-3.5" /> {muted ? "Unmute" : "Mute"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setHeld((v) => !v)}
-            className={`flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1.5 text-[11px] font-medium transition ${
-              held
-                ? "border-amber-300 bg-amber-100 text-amber-700"
-                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-            }`}
-            data-testid="tools-hold"
-          >
-            <PauseCircle className="h-3.5 w-3.5" /> {held ? "Resume" : "Hold"}
-          </button>
-        </div>
-
-        <div className="mt-3">
-          <Label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Manual dial</Label>
-          <div className="mt-1 flex gap-1.5">
-            <Input
-              value={dialed}
-              onChange={(e) => setDialed(e.target.value)}
-              placeholder="(555) 555-5555"
-              className="h-8 text-sm rounded-xl"
-              data-testid="tools-dial-input"
-            />
-            <a
-              href={dialed ? `tel:${digitsOnly(dialed)}` : undefined}
-              className={`flex h-8 w-8 items-center justify-center rounded-xl ${
-                dialed ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-slate-100 text-slate-300 pointer-events-none"
-              }`}
-              data-testid="tools-dial-go"
-            >
-              <Phone className="h-3.5 w-3.5" />
-            </a>
-          </div>
-        </div>
+        {/* Bottom half — Communication hub */}
+        <CommunicationHub
+          selectedItem={selectedItem}
+          facility={facility}
+          onExpandEmail={setExpandedSection ? () => setExpandedSection("email") : undefined}
+          onExpandMaterials={setExpandedSection ? () => setExpandedSection("materials") : undefined}
+        />
       </div>
+    );
+  }
 
-      {/* Today's Schedule */}
-      <div className="px-5 py-4">
+  // ─── Tri-Clinic Calendar ───────────────────────────────────────────────────
+  const CLINIC_PALETTE = [
+    { dot: "bg-blue-500",   ring: "ring-blue-400",   text: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-300" },
+    { dot: "bg-violet-500", ring: "ring-violet-400", text: "text-violet-700", bg: "bg-violet-50", border: "border-violet-300" },
+    { dot: "bg-amber-500",  ring: "ring-amber-400",  text: "text-amber-700",  bg: "bg-amber-50",  border: "border-amber-300" },
+  ];
+
+  type ClinicGroup = { key: string; label: string; color: typeof CLINIC_PALETTE[number] };
+
+  function deriveClinicGroups(appointments: AncillaryAppointment[]): ClinicGroup[] {
+    const facilities = new Set<string>();
+    for (const a of appointments) if (a.facility) facilities.add(a.facility);
+    if (facilities.size > 1) {
+      return Array.from(facilities).slice(0, 3).map((f, i) => ({ key: f, label: f, color: CLINIC_PALETTE[i] }));
+    }
+    // Single facility — split by test type so the calendar still shows multi-color dots.
+    const types = new Set<string>();
+    for (const a of appointments) types.add(isBrainWave(a.testType) ? "BrainWave" : "VitalWave");
+    const facLabel = Array.from(facilities)[0] ?? "";
+    return Array.from(types).slice(0, 3).map((t, i) => ({
+      key: `${facLabel}::${t}`,
+      label: facLabel ? `${facLabel} · ${t}` : t,
+      color: CLINIC_PALETTE[i],
+    }));
+  }
+
+  function clinicKeyForAppt(a: AncillaryAppointment, multiFacility: boolean): string {
+    if (multiFacility) return a.facility;
+    return `${a.facility}::${isBrainWave(a.testType) ? "BrainWave" : "VitalWave"}`;
+  }
+
+  function clinicKeyForPatient(p: OutreachCallItem, groups: ClinicGroup[], multiFacility: boolean): string | null {
+    if (multiFacility) return p.facility;
+    for (const g of groups) {
+      const isBw = g.label.includes("BrainWave");
+      if (p.qualifyingTests.some((t) => (isBw ? isBrainWave(t) : isVitalWave(t)))) return g.key;
+    }
+    return groups[0]?.key ?? null;
+  }
+
+  function TriClinicCalendar({
+    facility, appointments, selectedItem,
+    calYear, calMonth, setCalMonth, setCalYear,
+    selectedDay, setSelectedDay,
+    onConfirmSlot, onExpand, fullWidth = false,
+  }: {
+    facility: string;
+    appointments: AncillaryAppointment[];
+    selectedItem: OutreachCallItem | null;
+    calYear: number;
+    calMonth: number;
+    setCalMonth: (m: number | ((p: number) => number)) => void;
+    setCalYear: (y: number | ((p: number) => number)) => void;
+    selectedDay: number | null;
+    setSelectedDay: (d: number | null) => void;
+    onConfirmSlot: (slot: BookingSlot) => void;
+    onExpand?: () => void;
+    fullWidth?: boolean;
+  }) {
+    const facilitiesInData = useMemo(() => {
+      const s = new Set<string>();
+      for (const a of appointments) if (a.facility) s.add(a.facility);
+      return s;
+    }, [appointments]);
+    const multiFacility = facilitiesInData.size > 1;
+    const groups = useMemo(() => deriveClinicGroups(appointments), [appointments]);
+    const groupColorByKey = useMemo(() => {
+      const m = new Map<string, ClinicGroup>();
+      for (const g of groups) m.set(g.key, g);
+      return m;
+    }, [groups]);
+
+    const dateGroupCounts = useMemo(() => {
+      const m = new Map<string, Map<string, number>>();
+      for (const a of appointments) {
+        if (a.status !== "scheduled") continue;
+        const key = clinicKeyForAppt(a, multiFacility);
+        if (!groupColorByKey.has(key)) continue;
+        let inner = m.get(a.scheduledDate);
+        if (!inner) { inner = new Map(); m.set(a.scheduledDate, inner); }
+        inner.set(key, (inner.get(key) ?? 0) + 1);
+      }
+      return m;
+    }, [appointments, multiFacility, groupColorByKey]);
+
+    const selectedPatientGroupKey = selectedItem ? clinicKeyForPatient(selectedItem, groups, multiFacility) : null;
+    const selectedGroupColor = selectedPatientGroupKey ? groupColorByKey.get(selectedPatientGroupKey)?.color : undefined;
+
+    const firstDay = new Date(calYear, calMonth, 1);
+    const startWeekday = firstDay.getDay();
+    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+    const today = new Date();
+    const isCurrentMonth = today.getFullYear() === calYear && today.getMonth() === calMonth;
+    const monthLabel = firstDay.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+    const [popupDay, setPopupDay] = useState<number | null>(null);
+
+    const cells: Array<{ day: number | null }> = [];
+    for (let i = 0; i < startWeekday; i++) cells.push({ day: null });
+    for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d });
+    while (cells.length % 7 !== 0) cells.push({ day: null });
+
+    function prevMonth() { if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); } else setCalMonth((m) => m - 1); }
+    function nextMonth() { if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); } else setCalMonth((m) => m + 1); }
+
+    const cellSize = fullWidth ? "h-16" : "h-10";
+    const gapClass = fullWidth ? "gap-1.5" : "gap-1";
+
+    return (
+      <div className={fullWidth ? "p-6" : "px-5 pt-5 pb-4"} data-testid="tri-clinic-calendar">
         <div className="mb-3 flex items-center gap-2">
-          <Calendar className="h-4 w-4 text-emerald-600" />
-          <h2 className="text-sm font-semibold text-slate-800">Today's Schedule</h2>
-          <Badge variant="outline" className="ml-auto rounded-full text-[10px] text-slate-500">
-            {todayAppointments.length} booked
-          </Badge>
+          <Calendar className="h-4 w-4 text-blue-600" />
+          <h2 className="text-sm font-semibold text-slate-800">Booking calendar</h2>
+          <Badge variant="outline" className="ml-2 rounded-full text-[10px] text-slate-500">{facility}</Badge>
+          {onExpand && !fullWidth && (
+            <button
+              type="button"
+              onClick={onExpand}
+              title="Expand calendar"
+              className="ml-auto flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:border-blue-300 hover:bg-blue-50"
+              data-testid="tools-expand-calendar"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
-        {todayAppointments.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-4 text-center text-[11px] italic text-slate-400">
-            No appointments booked yet.
-          </p>
-        ) : (
-          <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
-            {todayAppointments.map((a) => (
-              <div
-                key={a.id}
-                className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs"
-                data-testid={`today-appt-${a.id}`}
-              >
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  {isBrainWave(a.testType) ? <Brain className="h-3.5 w-3.5 text-violet-600 shrink-0" /> : <Activity className="h-3.5 w-3.5 text-rose-700 shrink-0" />}
-                  <span className="font-semibold text-slate-700 shrink-0">{formatTime12(a.scheduledTime)}</span>
-                  <span className="truncate text-slate-600">{a.patientName}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCancelTarget(a)}
-                  title="Cancel appointment"
-                  className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-rose-600 transition hover:border-rose-300 hover:bg-rose-50"
-                  data-testid={`today-appt-cancel-${a.id}`}
-                >
-                  Cancel
-                </button>
-              </div>
+
+        <div className="mb-2 flex items-center gap-2">
+          <button type="button" onClick={prevMonth} className="rounded-full border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50" data-testid="cal-prev-month">
+            <ChevronUp className="h-3.5 w-3.5 -rotate-90" />
+          </button>
+          <span className="text-sm font-semibold text-slate-800" data-testid="cal-month-label">{monthLabel}</span>
+          <button type="button" onClick={nextMonth} className="rounded-full border border-slate-200 bg-white p-1 text-slate-500 hover:bg-slate-50" data-testid="cal-next-month">
+            <ChevronUp className="h-3.5 w-3.5 rotate-90" />
+          </button>
+          <button
+            type="button"
+            onClick={() => { setCalMonth(today.getMonth()); setCalYear(today.getFullYear()); setSelectedDay(today.getDate()); }}
+            className="ml-auto rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-50"
+            data-testid="cal-today"
+          >
+            Today
+          </button>
+        </div>
+
+        {groups.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2 text-[10px] text-slate-500">
+            {groups.map((g) => (
+              <span key={g.key} className="inline-flex items-center gap-1" data-testid={`cal-legend-${g.key}`}>
+                <span className={`h-2 w-2 rounded-full ${g.color.dot}`} />
+                <span className="truncate max-w-[120px]">{g.label}</span>
+              </span>
             ))}
           </div>
         )}
-      </div>
 
-      {/* Booking calendar - collapsible */}
-      <div>
-        <button
-          type="button"
-          onClick={() => setBookingPanelOpen((v) => !v)}
-          className="flex w-full items-center gap-2 px-5 py-3 text-left"
-          data-testid="portal-booking-panel-toggle"
-        >
-          <CalendarPlus className="h-4 w-4 text-blue-600" />
-          <span className="text-sm font-semibold text-slate-800">Booking calendar</span>
-          <Badge variant="outline" className="ml-auto rounded-full text-[10px] text-slate-500">{facility}</Badge>
-          {bookingPanelOpen ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
-        </button>
-        {bookingPanelOpen && (
-          <div className="px-5 pb-5 pt-1 space-y-3">
-            <MiniCalendar
-              year={calYear}
-              month={calMonth}
-              onPrev={() => { if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); } else setCalMonth((m) => m - 1); }}
-              onNext={() => { if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); } else setCalMonth((m) => m + 1); }}
-              onSelectDay={setSelectedDay}
-              selectedDay={selectedDay}
-              bookedDates={bookedDates}
-              testIdPrefix="portal-cal"
-            />
-            {selectedDay && selectedDateStr && (
-              <SlotGrid
-                appointments={appointments}
-                selectedDate={selectedDateStr}
-                onBook={(slot) => { setBookSlot(slot); setBookName(""); setBookLinkedPatient(null); setBookPatientSearch(""); }}
-                onCancel={(appt) => setCancelTarget(appt)}
-                testIdPrefix="portal"
-                availableLabel="Open"
-                bwBadgeLabel="1 hr"
-                vwBadgeLabel="30 min"
-                truncateWidth="max-w-[80px]"
-                scrollToSlot={scrollToSlot}
-              />
-            )}
+        <div className={`grid grid-cols-7 ${gapClass} text-center text-[10px] uppercase tracking-wide text-slate-400 mb-1`}>
+          {["S","M","T","W","T","F","S"].map((d, i) => <div key={i}>{d}</div>)}
+        </div>
+
+        <div className={`grid grid-cols-7 ${gapClass}`}>
+          {cells.map((c, i) => {
+            if (c.day == null) return <div key={i} className={cellSize} />;
+            const dateKey = toDateKey(calYear, calMonth, c.day);
+            const dayCounts = dateGroupCounts.get(dateKey);
+            const isToday = isCurrentMonth && c.day === today.getDate();
+            const isSelected = selectedDay === c.day;
+            const highlightForSelected = selectedGroupColor && dayCounts?.has(selectedPatientGroupKey!);
+            return (
+              <Popover key={i} open={popupDay === c.day} onOpenChange={(o) => { if (!o) setPopupDay(null); }}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedDay(c.day); setPopupDay(c.day); }}
+                    className={[
+                      cellSize,
+                      "relative rounded-lg border text-xs font-medium transition flex flex-col items-center justify-start pt-1",
+                      isSelected
+                        ? "border-blue-400 bg-blue-50 text-blue-700"
+                        : isToday
+                        ? "border-emerald-300 bg-emerald-50/40 text-emerald-700"
+                        : "border-slate-100 bg-white text-slate-600 hover:border-blue-200 hover:bg-blue-50/50",
+                      highlightForSelected ? `ring-2 ring-offset-1 ${selectedGroupColor!.ring}` : "",
+                    ].join(" ")}
+                    data-testid={`cal-day-${dateKey}`}
+                  >
+                    <span>{c.day}</span>
+                    {dayCounts && dayCounts.size > 0 && (
+                      <div className="mt-0.5 flex gap-0.5">
+                        {Array.from(dayCounts.entries()).slice(0, 3).map(([gk, cnt]) => {
+                          const color = groupColorByKey.get(gk)?.color;
+                          if (!color) return null;
+                          return (
+                            <span key={gk} className={`h-1.5 w-1.5 rounded-full ${color.dot}`} title={`${groupColorByKey.get(gk)?.label}: ${cnt}`} />
+                          );
+                        })}
+                      </div>
+                    )}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-3" align="center" sideOffset={4}>
+                  <DayBookPopup
+                    dateLabel={new Date(calYear, calMonth, c.day).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+                    selectedItem={selectedItem}
+                    appointments={appointments}
+                    selectedDateKey={dateKey}
+                    onConfirm={(slot) => { onConfirmSlot(slot); setPopupDay(null); }}
+                    onCancel={() => setPopupDay(null)}
+                  />
+                </PopoverContent>
+              </Popover>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  function DayBookPopup({
+    dateLabel, selectedItem, appointments, selectedDateKey, onConfirm, onCancel,
+  }: {
+    dateLabel: string;
+    selectedItem: OutreachCallItem | null;
+    appointments: AncillaryAppointment[];
+    selectedDateKey: string;
+    onConfirm: (slot: BookingSlot) => void;
+    onCancel: () => void;
+  }) {
+    const defaultType: "BrainWave" | "VitalWave" = selectedItem?.qualifyingTests.some((t) => isBrainWave(t)) ? "BrainWave" : "VitalWave";
+    const [testType, setTestType] = useState<"BrainWave" | "VitalWave">(defaultType);
+    const [time, setTime] = useState<string>("");
+    const slots = testType === "BrainWave" ? BW_SLOTS : VW_SLOTS;
+    const bookedTimes = new Set(
+      appointments
+        .filter((a) => a.scheduledDate === selectedDateKey && a.status === "scheduled" && (testType === "BrainWave" ? !isVitalWave(a.testType) : isVitalWave(a.testType)))
+        .map((a) => a.scheduledTime),
+    );
+
+    return (
+      <div className="space-y-3" data-testid="day-book-popup">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Book on</p>
+          <p className="text-sm font-semibold text-slate-800">{dateLabel}</p>
+        </div>
+        {selectedItem ? (
+          <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-2.5 py-1.5">
+            <p className="text-[10px] text-violet-500 uppercase tracking-wide">Patient</p>
+            <p className="text-sm font-semibold text-violet-800 truncate">{selectedItem.patientName}</p>
+          </div>
+        ) : (
+          <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-2.5 py-2 text-[11px] italic text-slate-400">
+            No patient selected — pick one from the call list to pre-fill.
+          </p>
+        )}
+        <div>
+          <Label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Ancillary test</Label>
+          <div className="mt-1 flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => { setTestType("BrainWave"); setTime(""); }}
+              className={`flex-1 inline-flex items-center justify-center gap-1 rounded-full border px-2 py-1 text-xs ${testType === "BrainWave" ? "border-violet-300 bg-violet-100 text-violet-700" : "border-slate-200 bg-white text-slate-500"}`}
+              data-testid="popup-type-brainwave"
+            >
+              <Brain className="h-3 w-3" /> BrainWave
+            </button>
+            <button
+              type="button"
+              onClick={() => { setTestType("VitalWave"); setTime(""); }}
+              className={`flex-1 inline-flex items-center justify-center gap-1 rounded-full border px-2 py-1 text-xs ${testType === "VitalWave" ? "border-rose-300 bg-rose-100 text-rose-700" : "border-slate-200 bg-white text-slate-500"}`}
+              data-testid="popup-type-vitalwave"
+            >
+              <Activity className="h-3 w-3" /> VitalWave
+            </button>
+          </div>
+        </div>
+        <div>
+          <Label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Time slot</Label>
+          <div className="mt-1 grid grid-cols-4 gap-1 max-h-40 overflow-y-auto pr-1">
+            {slots.map((s) => {
+              const isBooked = bookedTimes.has(s);
+              const isSelected = time === s;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  disabled={isBooked}
+                  onClick={() => setTime(s)}
+                  className={`rounded-md border py-1 text-[11px] transition ${
+                    isBooked ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300"
+                    : isSelected ? "border-blue-400 bg-blue-600 text-white"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:bg-blue-50"
+                  }`}
+                  data-testid={`popup-time-${s}`}
+                >
+                  {formatTime12(s)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex justify-end gap-1.5">
+          <Button variant="ghost" size="sm" onClick={onCancel} data-testid="popup-cancel">Cancel</Button>
+          <Button
+            size="sm"
+            disabled={!time}
+            onClick={() => onConfirm({ time, testType })}
+            data-testid="popup-confirm"
+          >
+            Confirm
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Communication Hub ────────────────────────────────────────────────────
+  function CommunicationHub({
+    selectedItem, facility, onExpandEmail, onExpandMaterials,
+  }: {
+    selectedItem: OutreachCallItem | null;
+    facility: string;
+    onExpandEmail?: () => void;
+    onExpandMaterials?: () => void;
+  }) {
+    return (
+      <div className="px-5 py-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Mail className="h-4 w-4 text-emerald-600" />
+          <h2 className="text-sm font-semibold text-slate-800">Communication hub</h2>
+        </div>
+        <Tabs defaultValue="email" className="w-full">
+          <TabsList className="grid w-full grid-cols-2 h-8">
+            <TabsTrigger value="email" className="text-xs" data-testid="hub-tab-email">
+              <Mail className="h-3 w-3 mr-1" /> Email
+            </TabsTrigger>
+            <TabsTrigger value="materials" className="text-xs" data-testid="hub-tab-materials">
+              <Megaphone className="h-3 w-3 mr-1" /> Materials
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="email" className="mt-3">
+            <EmailComposer selectedItem={selectedItem} facility={facility} onExpand={onExpandEmail} />
+          </TabsContent>
+          <TabsContent value="materials" className="mt-3">
+            <MaterialsPanel selectedItem={selectedItem} onExpand={onExpandMaterials} />
+          </TabsContent>
+        </Tabs>
+      </div>
+    );
+  }
+
+  function defaultEmailFor(p: OutreachCallItem | null, facility: string): { to: string; subject: string; body: string } {
+    if (!p) return { to: "", subject: "", body: "" };
+    const subject = `Scheduling your visit at ${p.facility || facility}`;
+    const body = `Hi ${p.patientName.split(" ")[0] || ""},\n\nThis is your scheduler from ${p.facility || facility}. We'd like to book your upcoming ${p.qualifyingTests.join(" / ") || "screening"} visit. Please reply with a time that works best for you, or call us at the number on file.\n\nThank you,\nScheduling Team`;
+    return { to: p.phoneNumber || "", subject, body };
+  }
+
+  function EmailComposer({
+    selectedItem, facility, onExpand, fullWidth = false,
+  }: {
+    selectedItem: OutreachCallItem | null;
+    facility: string;
+    onExpand?: () => void;
+    fullWidth?: boolean;
+  }) {
+    const { toast } = useToast();
+    const initial = useMemo(() => defaultEmailFor(selectedItem, facility), [selectedItem, facility]);
+    const [to, setTo] = useState(initial.to);
+    const [subject, setSubject] = useState(initial.subject);
+    const [body, setBody] = useState(initial.body);
+
+    useEffect(() => {
+      setTo(initial.to);
+      setSubject(initial.subject);
+      setBody(initial.body);
+    }, [initial]);
+
+    function handleSend() {
+      if (!selectedItem) {
+        toast({ title: "No patient selected", description: "Pick a patient from the call list first.", variant: "destructive" });
+        return;
+      }
+      toast({ title: "Email sent", description: `Sent to ${selectedItem.patientName}.` });
+    }
+
+    return (
+      <div className="space-y-2" data-testid="email-composer">
+        {!fullWidth && onExpand && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={onExpand}
+              title="Expand email"
+              className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:border-emerald-300 hover:bg-emerald-50"
+              data-testid="hub-expand-email"
+            >
+              <Maximize2 className="h-3 w-3" />
+            </button>
+          </div>
+        )}
+        <div>
+          <Label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">To</Label>
+          <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="patient@example.com" className="mt-1 h-8 text-sm rounded-xl" data-testid="email-to" />
+        </div>
+        <div>
+          <Label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Subject</Label>
+          <Input value={subject} onChange={(e) => setSubject(e.target.value)} className="mt-1 h-8 text-sm rounded-xl" data-testid="email-subject" />
+        </div>
+        <div>
+          <Label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Body</Label>
+          <Textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={fullWidth ? 14 : 5}
+            className="mt-1 text-sm rounded-xl"
+            data-testid="email-body"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] text-slate-400 truncate">
+            {selectedItem ? `Pre-filled for ${selectedItem.patientName}` : "Pick a patient to pre-fill"}
+          </span>
+          <Button size="sm" onClick={handleSend} className="h-8 rounded-full" data-testid="email-send">
+            <Send className="h-3.5 w-3.5 mr-1" /> Send
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const MARKETING_MATERIALS = [
+    { id: "brainwave-brochure", title: "BrainWave Brochure", desc: "Patient-facing overview of the BrainWave screening.", icon: Brain },
+    { id: "vitalwave-info",     title: "VitalWave Info Sheet", desc: "1-page summary of the VitalWave cardiac screening.", icon: Activity },
+    { id: "screening-faq",      title: "General Screening FAQ", desc: "Answers to the most common patient questions.", icon: FileText },
+    { id: "insurance-coverage", title: "Insurance Coverage Note", desc: "Standard coverage note — Medicare + most PPOs.", icon: ShieldCheck },
+    { id: "appointment-prep",   title: "Visit Prep Checklist", desc: "What to bring, fasting, ID, insurance card.", icon: ListTodo },
+    { id: "post-visit-care",    title: "Post-Visit Care Guide", desc: "Post-test care + follow-up scheduling guidance.", icon: Sparkles },
+  ];
+
+  function MaterialsPanel({
+    selectedItem, onExpand, fullWidth = false,
+  }: {
+    selectedItem: OutreachCallItem | null;
+    onExpand?: () => void;
+    fullWidth?: boolean;
+  }) {
+    const { toast } = useToast();
+
+    function handleSend(title: string) {
+      if (!selectedItem) {
+        toast({ title: "No patient selected", description: "Pick a patient from the call list first.", variant: "destructive" });
+        return;
+      }
+      toast({ title: "Material sent", description: `${title} sent to ${selectedItem.patientName}.` });
+    }
+
+    const cols = fullWidth ? "grid-cols-2 md:grid-cols-3" : "grid-cols-1";
+    const items = fullWidth ? MARKETING_MATERIALS : MARKETING_MATERIALS.slice(0, 3);
+
+    return (
+      <div className="space-y-2" data-testid="materials-panel">
+        {!fullWidth && onExpand && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={onExpand}
+              title="Expand materials"
+              className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:border-amber-300 hover:bg-amber-50"
+              data-testid="hub-expand-materials"
+            >
+              <Maximize2 className="h-3 w-3" />
+            </button>
+          </div>
+        )}
+        <div className={`grid gap-2 ${cols}`}>
+          {items.map((m) => {
+            const Icon = m.icon;
+            return (
+              <div
+                key={m.id}
+                className="rounded-xl border border-slate-200 bg-white p-2.5 hover:border-amber-300 hover:bg-amber-50/40 transition"
+                data-testid={`material-card-${m.id}`}
+              >
+                <div className="flex items-start gap-2">
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-amber-50 text-amber-600 shrink-0">
+                    <Icon className="h-3.5 w-3.5" />
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-slate-800 truncate">{m.title}</p>
+                    <p className="text-[10px] text-slate-500 line-clamp-2">{m.desc}</p>
+                  </div>
+                </div>
+                <div className="mt-2 flex justify-end">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleSend(m.title)}
+                    className="h-7 rounded-full text-[11px]"
+                    data-testid={`material-send-${m.id}`}
+                  >
+                    <Send className="h-3 w-3 mr-1" /> Send to patient
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {!fullWidth && onExpand && (
+          <button
+            type="button"
+            onClick={onExpand}
+            className="w-full text-center text-[11px] text-slate-500 hover:text-slate-700 underline"
+            data-testid="hub-materials-see-all"
+          >
+            See all {MARKETING_MATERIALS.length} materials
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // ─── Expanded ("playing field") view rendered in the center column ──────
+  function ExpandedSectionView(props: {
+    section: "calendar" | "email" | "materials";
+    onClose: () => void;
+    facility: string;
+    appointments: AncillaryAppointment[];
+    selectedItem: OutreachCallItem | null;
+    calYear: number;
+    calMonth: number;
+    setCalMonth: (m: number | ((p: number) => number)) => void;
+    setCalYear: (y: number | ((p: number) => number)) => void;
+    selectedDay: number | null;
+    setSelectedDay: (d: number | null) => void;
+    onConfirmSlot: (slot: BookingSlot) => void;
+  }) {
+    const { section, onClose } = props;
+    const titleMap = { calendar: "Booking calendar", email: "Email composer", materials: "Marketing materials" };
+    return (
+      <div
+        className="rounded-3xl border border-white/60 bg-white/90 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden"
+        data-testid={`expanded-${section}`}
+      >
+        <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-3">
+          {section === "calendar" && <Calendar className="h-4 w-4 text-blue-600" />}
+          {section === "email" && <Mail className="h-4 w-4 text-emerald-600" />}
+          {section === "materials" && <Megaphone className="h-4 w-4 text-amber-600" />}
+          <h2 className="text-base font-semibold text-slate-800">{titleMap[section]}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-auto inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:bg-slate-50"
+            data-testid="expanded-close"
+          >
+            <Minimize2 className="h-3.5 w-3.5" /> Collapse
+          </button>
+        </div>
+        {section === "calendar" && (
+          <TriClinicCalendar
+            fullWidth
+            facility={props.facility}
+            appointments={props.appointments}
+            selectedItem={props.selectedItem}
+            calYear={props.calYear}
+            calMonth={props.calMonth}
+            setCalMonth={props.setCalMonth}
+            setCalYear={props.setCalYear}
+            selectedDay={props.selectedDay}
+            setSelectedDay={props.setSelectedDay}
+            onConfirmSlot={props.onConfirmSlot}
+          />
+        )}
+        {section === "email" && (
+          <div className="p-6">
+            <EmailComposer fullWidth selectedItem={props.selectedItem} facility={props.facility} />
+          </div>
+        )}
+        {section === "materials" && (
+          <div className="p-6">
+            <MaterialsPanel fullWidth selectedItem={props.selectedItem} />
           </div>
         )}
       </div>
-    </div>
-  );
-}
+    );
+  }
+  
