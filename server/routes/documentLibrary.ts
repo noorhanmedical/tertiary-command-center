@@ -4,8 +4,8 @@ import { storage } from "../storage";
 import { saveBlob, readBlob, deleteBlob, getLatestBlobForOwner } from "../services/blobStore";
 import { enqueueDriveFile } from "../services/outbox";
 import { db } from "../db";
-import { uploadedDocuments } from "@shared/schema";
-import { desc, eq } from "drizzle-orm";
+import { uploadedDocuments, documents as documentsTable, documentSurfaceAssignments, patientScreenings } from "@shared/schema";
+import { desc, eq, like, sql } from "drizzle-orm";
 import {
   type Document,
   DOCUMENT_KINDS,
@@ -72,8 +72,76 @@ function inferLibraryKindFromLegacyDocType(docType: string): DocumentKind {
   }
 }
 
+// Stable, deterministic source-notes prefix used to mark library rows that
+// were back-filled from the legacy `uploaded_documents` table. Used both for
+// idempotency (skip already-migrated rows) and provenance tracing.
+const LEGACY_SOURCE_PREFIX = "legacy_uploaded_document_id=";
+
+// First-read migration: idempotently upsert any unmigrated `uploaded_documents`
+// rows into `documents` + a default `patient_chart` `document_surface_assignments`
+// row, resolving `patient_screening_id` by exact name match where possible.
+// Errors are logged but never thrown — a failed migration must not break reads.
+async function migrateLegacyUploadedDocuments(): Promise<void> {
+  try {
+    const legacyRows = await db.select().from(uploadedDocuments)
+      .where(eq(uploadedDocuments.isTest, false));
+    if (legacyRows.length === 0) return;
+
+    const migrated = await db.select({ sourceNotes: documentsTable.sourceNotes })
+      .from(documentsTable)
+      .where(like(documentsTable.sourceNotes, `${LEGACY_SOURCE_PREFIX}%`));
+    const migratedIds = new Set<number>();
+    for (const r of migrated) {
+      if (!r.sourceNotes) continue;
+      const idStr = r.sourceNotes.slice(LEGACY_SOURCE_PREFIX.length);
+      const n = parseInt(idStr, 10);
+      if (!Number.isNaN(n)) migratedIds.add(n);
+    }
+
+    const todo = legacyRows.filter((r) => !migratedIds.has(r.id));
+    if (todo.length === 0) return;
+
+    for (const row of todo) {
+      try {
+        const matches = await db.select({ id: patientScreenings.id })
+          .from(patientScreenings)
+          .where(eq(patientScreenings.name, row.patientName))
+          .orderBy(desc(patientScreenings.id))
+          .limit(1);
+        const patientScreeningId = matches[0]?.id ?? null;
+
+        await db.transaction(async (tx) => {
+          const inserted = await tx.insert(documentsTable).values({
+            title: `${row.patientName} — ${row.ancillaryType} (${row.docType})`,
+            description: "",
+            kind: inferLibraryKindFromLegacyDocType(row.docType),
+            signatureRequirement: "none",
+            filename: `${row.patientName}-${row.docType}.pdf`,
+            contentType: "application/pdf",
+            sizeBytes: 0,
+            patientScreeningId,
+            facility: row.facility,
+            sourceNotes: `${LEGACY_SOURCE_PREFIX}${row.id}`,
+            createdByUserId: null,
+          }).returning({ id: documentsTable.id });
+          const newId = inserted[0]!.id;
+          await tx.insert(documentSurfaceAssignments).values({
+            documentId: newId,
+            surface: "patient_chart",
+          }).onConflictDoNothing();
+        });
+      } catch (rowErr) {
+        console.error(`[document-library] legacy migration failed for uploaded_documents.id=${row.id}:`, rowErr);
+      }
+    }
+  } catch (e) {
+    console.error("[document-library] legacy bulk migration failed:", e);
+  }
+}
+
 // Adapter: shape a legacy uploaded_documents row to look like a library doc so
 // it can appear alongside library entries in patient_chart reads.
+// Retained as a defensive fallback for read paths that race the migration.
 function shapeLegacyUploadedDoc(row: typeof uploadedDocuments.$inferSelect, basePath: string) {
   const kind = inferLibraryKindFromLegacyDocType(row.docType);
   return {
@@ -157,31 +225,18 @@ function mountRoutes(app: Express, basePath: string) {
       if (kindParam && !DOCUMENT_KINDS.includes(kindParam as DocumentKind)) {
         return res.status(400).json({ error: `unknown kind: ${kindParam}` });
       }
+      // First-read migration: idempotently back-fill `documents` rows for any
+      // legacy `uploaded_documents` that haven't been migrated yet, so a
+      // single canonical query below returns both new and legacy content
+      // (including patient-scoped reads via `patient_screening_id`).
+      await migrateLegacyUploadedDocuments();
+
       const docs = await storage.listCurrentDocuments({
         surface: surfaceParam ? (surfaceParam as DocumentSurface) : undefined,
         kind: kindParam ? (kindParam as DocumentKind) : undefined,
         patientScreeningId: typeof patientScreeningId === "number" ? patientScreeningId : undefined,
       });
-      type ShapedDoc =
-        | Awaited<ReturnType<typeof shapeDocument>>
-        | ReturnType<typeof shapeLegacyUploadedDoc>;
-      const shaped: ShapedDoc[] = await Promise.all(docs.map((d) => shapeDocument(d, basePath)));
-
-      // ── Backward-compat adapter ───────────────────────────────────────
-      // Legacy `uploaded_documents` rows only carry a `patientName` string,
-      // not a `patientScreeningId`, so they cannot be safely scoped to a
-      // single chart. To avoid leaking documents across patients, only fold
-      // them in when no `patientId` is given AND the caller is explicitly
-      // asking for the patient_chart surface (i.e. an admin browsing all
-      // patient documents). Patient-specific reads omit them entirely.
-      if (!patientIdParam && surfaceParam === "patient_chart") {
-        const legacyRows = await db.select().from(uploadedDocuments)
-          .where(eq(uploadedDocuments.isTest, false))
-          .orderBy(desc(uploadedDocuments.uploadedAt))
-          .limit(200);
-        const legacyShaped = legacyRows.map((r) => shapeLegacyUploadedDoc(r, basePath));
-        shaped.push(...legacyShaped);
-      }
+      const shaped = await Promise.all(docs.map((d) => shapeDocument(d, basePath)));
       res.json(shaped);
     } catch (e: any) {
       console.error(`[${basePath}] list failed:`, e);
