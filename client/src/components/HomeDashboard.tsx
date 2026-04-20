@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
-  Activity, CalendarDays, ChevronLeft, ChevronRight, Clock, FileText, Loader2, Phone, Plus, Upload, Users,
+  CalendarDays, ChevronLeft, ChevronRight, Clock, FileText, Loader2, Phone, Plus, Upload, Users,
 } from "lucide-react";
 
 type DayPatient = { id: number; name: string; time: string | null; ancillaries: string[] };
@@ -111,8 +111,13 @@ export function HomeDashboard({
         <div className="max-w-5xl mx-auto px-8 pt-10 pb-16">
           <div className="mb-12 text-center">
             <div className="flex flex-col items-center gap-3">
-              <div className="w-16 h-16 rounded-2xl bg-indigo-500 flex items-center justify-center shadow-md">
-                <Activity className="w-9 h-9 text-white" />
+              <div className="w-16 h-16 flex items-center justify-center">
+                <img
+                  src="/plexus-logo-icon.png"
+                  alt="Plexus Ancillary Services"
+                  className="w-16 h-16 object-contain"
+                  data-testid="img-home-logo"
+                />
               </div>
               <div>
                 <h2 className="text-[32px] leading-tight font-bold tracking-tight text-slate-900 dark:text-foreground" data-testid="text-home-heading">Plexus</h2>

@@ -28,10 +28,13 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
     <div className="min-h-screen bg-[#0f1b35] flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-indigo-600 mb-4">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-7 h-7 text-white">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714a2.25 2.25 0 001.357 2.059l.344.142c.796.329 1.399 1.01 1.604 1.845a2.25 2.25 0 01-2.174 2.735h-4.26a2.25 2.25 0 01-2.174-2.735 3.75 3.75 0 011.604-1.845l.344-.142A2.25 2.25 0 0114.25 8.818V3.104m0 0c.25.023.499.05.75.082" />
-            </svg>
+          <div className="inline-flex items-center justify-center w-14 h-14 mb-4">
+            <img
+              src="/plexus-logo-icon.png"
+              alt="Plexus Ancillary Services"
+              className="w-14 h-14 object-contain"
+              data-testid="img-login-logo"
+            />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Plexus</h1>
           <p className="text-white/50 text-sm mt-1">Ancillary Screening Platform</p>
