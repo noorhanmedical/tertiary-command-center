@@ -291,31 +291,34 @@ function mountRoutes(app: Express, basePath: string) {
 
       // Legacy fallback: rows back-filled from `uploaded_documents` have no
       // library_document blob of their own — their bytes still live under
-      // ownerType "uploaded_document". Resolve via the source_notes pointer.
+      // ownerType "uploaded_document". Always resolve the Drive link up front
+      // for legacy-migrated rows so we can redirect any time a local byte
+      // read fails, not only when the blob row itself is missing.
       let legacyDriveLink: string | null = null;
-      if (!blob && doc.sourceNotes && doc.sourceNotes.startsWith(LEGACY_SOURCE_PREFIX)) {
+      if (doc.sourceNotes && doc.sourceNotes.startsWith(LEGACY_SOURCE_PREFIX)) {
         const legacyIdStr = doc.sourceNotes.slice(LEGACY_SOURCE_PREFIX.length);
         const legacyId = parseInt(legacyIdStr, 10);
         if (!Number.isNaN(legacyId)) {
-          blob = await getLatestBlobForOwner("uploaded_document", legacyId);
+          const legacyRow = await db.select()
+            .from(uploadedDocuments)
+            .where(eq(uploadedDocuments.id, legacyId))
+            .limit(1);
+          legacyDriveLink = legacyRow[0]?.driveWebViewLink ?? null;
           if (!blob) {
-            const legacyRow = await db.select()
-              .from(uploadedDocuments)
-              .where(eq(uploadedDocuments.id, legacyId))
-              .limit(1);
-            legacyDriveLink = legacyRow[0]?.driveWebViewLink ?? null;
+            blob = await getLatestBlobForOwner("uploaded_document", legacyId);
           }
         }
       }
 
       if (!blob) {
-        // Final fallback: redirect to the Drive web-view link if the legacy
-        // row only ever had cloud-hosted bytes.
+        // No blob row at all — redirect to Drive if we have a link.
         if (legacyDriveLink) return res.redirect(legacyDriveLink);
         return res.status(404).json({ error: "File not found" });
       }
       const data = await readBlob(blob.id);
       if (!data) {
+        // Blob row exists but local bytes are missing/unreadable — fall back
+        // to the Drive link rather than 404'ing the consumer.
         if (legacyDriveLink) return res.redirect(legacyDriveLink);
         return res.status(404).json({ error: "File not found" });
       }
