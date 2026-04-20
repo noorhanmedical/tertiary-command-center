@@ -5,6 +5,7 @@ import type {
   SchedulerAssignment,
   ScreeningBatch,
   PtoRequest,
+  InsertSchedulerAssignment,
 } from "@shared/schema";
 import { isEligibleForCallList, priorityKey, comparePriority } from "./callListPriority";
 
@@ -357,7 +358,10 @@ export async function releaseAndRedistribute(
   if (!sched) {
     return { schedulerId, asOfDate, released: 0, reassigned: 0, unassigned: 0 };
   }
-  const released = await storage.releaseSchedulerAssignmentsForScheduler(schedulerId, asOfDate, reason);
+  // Compute what would be released by reading active rows for this scheduler
+  // & day; we'll do the actual release + reassignment inserts atomically
+  // below so a crash mid-loop can never leave released-but-not-reassigned rows.
+  const released = (await storage.listActiveSchedulerAssignments({ schedulerId, asOfDate }));
   if (released.length === 0) {
     return { schedulerId, asOfDate, released: 0, reassigned: 0, unassigned: 0 };
   }
@@ -404,7 +408,9 @@ export async function releaseAndRedistribute(
     }))
     .sort((a, b) => comparePriority(a._key, b._key));
 
-  let reassigned = 0;
+  // Build the set of reassignment drafts in memory first, then apply
+  // release + insert atomically through applySchedulerAssignmentDiff.
+  const drafts: InsertSchedulerAssignment[] = [];
   for (const { release: r } of releasedRanked) {
     let best: OutreachScheduler | null = null;
     let bestRemaining = -1;
@@ -414,7 +420,7 @@ export async function releaseAndRedistribute(
       if (remaining > bestRemaining) { best = sc; bestRemaining = remaining; }
     }
     if (!best) break;
-    await storage.createSchedulerAssignment({
+    drafts.push({
       patientScreeningId: r.patientScreeningId,
       schedulerId: best.id,
       asOfDate,
@@ -423,8 +429,14 @@ export async function releaseAndRedistribute(
       reason,
     });
     load.set(best.id, (load.get(best.id) ?? 0) + 1);
-    reassigned += 1;
   }
+
+  await storage.applySchedulerAssignmentDiff(
+    released.map((r) => r.id),
+    drafts,
+    reason,
+  );
+  const reassigned = drafts.length;
 
   return {
     schedulerId,
