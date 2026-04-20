@@ -521,6 +521,9 @@ export default function OutreachSchedulerPortalPage() {
     },
     onSuccess: () => {
       queryClientLocal.invalidateQueries({ queryKey: ["/api/appointments"] });
+      // Cancellation may flip a patient back to outreach-derived type;
+      // refresh the dashboard so the call list updates next poll.
+      globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
       toast({ title: "Appointment cancelled" });
       setCancelTarget(null);
     },
@@ -1079,6 +1082,21 @@ export default function OutreachSchedulerPortalPage() {
                             <span className="text-sm font-semibold text-slate-900 truncate">{item.patientName}</span>
                             <Badge className={`rounded-full border text-[10px] ${statusBadgeClass(item.appointmentStatus)}`}>
                               {statusLabel(item.appointmentStatus)}
+                            </Badge>
+                            <Badge
+                              className={`rounded-full border text-[10px] uppercase tracking-wide ${
+                                (item.patientType || "").toLowerCase() === "visit"
+                                  ? "bg-sky-100 text-sky-800 border-sky-200"
+                                  : "bg-violet-100 text-violet-800 border-violet-200"
+                              }`}
+                              title={
+                                (item.patientType || "").toLowerCase() === "visit"
+                                  ? "Visit patient — has an appointment within the next 90 days"
+                                  : "Outreach patient — no appointment within the next 90 days"
+                              }
+                              data-testid={`portal-row-patient-type-${item.patientId}`}
+                            >
+                              {(item.patientType || "outreach").toLowerCase()}
                             </Badge>
                             {latest && (
                               <Badge

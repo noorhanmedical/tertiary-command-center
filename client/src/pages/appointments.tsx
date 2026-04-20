@@ -72,6 +72,9 @@ function ClinicTab({ facility }: { facility: Facility }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      // Refresh the outreach dashboard so the affected patient's derived
+      // visit/outreach type recomputes on the next poll.
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
       toast({ title: "Appointment booked" });
       setBookSlot(null);
       setBookName("");
@@ -88,6 +91,9 @@ function ClinicTab({ facility }: { facility: Facility }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      // Cancellation may flip a patient's derived type back to outreach;
+      // refresh the dashboard so the call list updates next poll.
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
       toast({ title: "Appointment cancelled" });
       setCancelTarget(null);
     },

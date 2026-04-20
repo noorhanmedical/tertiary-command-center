@@ -68,9 +68,23 @@ function sessionRole(req: Request): string | null {
 }
 
 export function registerOutreachRoutes(app: Express) {
-  app.get("/api/outreach/dashboard", async (_req, res) => {
+  app.get("/api/outreach/dashboard", async (req, res) => {
     try {
-      const today = new Date().toISOString().slice(0, 10);
+      // Allow callers to pin the dashboard to a specific as-of date for
+      // deterministic backfills/replays. Falls back to today (UTC) when
+      // omitted. Bad values are rejected so we never silently rebuild
+      // against the wall clock when the caller meant otherwise.
+      const raw = typeof req.query.asOfDate === "string" ? req.query.asOfDate : "";
+      let today: string;
+      if (raw) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+          res.status(400).json({ error: "asOfDate must be YYYY-MM-DD" });
+          return;
+        }
+        today = raw;
+      } else {
+        today = new Date().toISOString().slice(0, 10);
+      }
       const dashboard = await buildOutreachDashboard(storage, today);
       res.json(dashboard);
     } catch (err) {

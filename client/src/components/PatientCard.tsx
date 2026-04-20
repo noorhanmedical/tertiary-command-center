@@ -16,6 +16,7 @@ import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
 
 import { ANCILLARY_TESTS } from "@shared/plexus";
 import { ClinicalDataEditor } from "@/components/ClinicalDataEditor";
+import { derivePatientType } from "@shared/patientType";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
@@ -81,6 +82,8 @@ interface PatientCardProps {
   onAnalyze: () => void;
   onOpenScheduleModal: (patient: PatientScreening) => void;
   schedulerName?: string | null;
+  batchScheduleDate?: string | null;
+  asOfDate?: string | null;
 }
 
 function getInitials(name: string): string {
@@ -114,6 +117,8 @@ export function PatientCard({
   onAnalyze,
   onOpenScheduleModal,
   schedulerName,
+  batchScheduleDate,
+  asOfDate,
 }: PatientCardProps) {
   const isCompleted = patient.status === "completed";
   const commitStatus = patient.commitStatus || "Draft";
@@ -191,6 +196,19 @@ export function PatientCard({
     enabled: !!patient.id,
   });
   const scheduledAppt = patientAppts.find((a: AncillaryAppointment) => a.status === "scheduled");
+
+  // Derived patient type — visit if any scheduled appointment (or batch
+  // visit date) sits within the next 90 days; otherwise falls back to the
+  // stored manual override. Recomputes whenever appointments refetch.
+  const todayIso = (asOfDate && /^\d{4}-\d{2}-\d{2}$/.test(asOfDate))
+    ? asOfDate
+    : new Date().toISOString().slice(0, 10);
+  const derivedType = derivePatientType({
+    appointments: patientAppts,
+    batchScheduleDate: batchScheduleDate ?? null,
+    storedPatientType: patient.patientType,
+    asOfDate: todayIso,
+  });
 
   useEffect(() => { setLocalTests(patient.qualifyingTests || []); }, [patient.qualifyingTests]);
 
@@ -326,6 +344,21 @@ export function PatientCard({
             data-testid={`pill-commit-status-${patient.id}`}
           >
             {commitStatusLabel(commitStatus)}
+          </span>
+          <span
+            className={`text-[10px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 border ${
+              derivedType === "visit"
+                ? "bg-sky-100 text-sky-800 border-sky-200"
+                : "bg-violet-100 text-violet-800 border-violet-200"
+            }`}
+            title={
+              derivedType === "visit"
+                ? "Visit patient — has an appointment within the next 90 days"
+                : "Outreach patient — no appointment within the next 90 days"
+            }
+            data-testid={`pill-patient-type-${patient.id}`}
+          >
+            {derivedType}
           </span>
           {schedulerName && (
             <span

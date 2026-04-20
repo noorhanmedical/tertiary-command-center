@@ -658,6 +658,7 @@ export default function Home() {
                           onAnalyze={() => analyzeOnePatient(patient.id)}
                           onOpenScheduleModal={(p) => setScheduleModalPatient(p)}
                           schedulerName={selectedBatch?.assignedScheduler?.name ?? null}
+                          batchScheduleDate={selectedBatch?.scheduleDate ?? null}
                         />
                       ))}
                     </div>

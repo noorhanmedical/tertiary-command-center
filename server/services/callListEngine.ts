@@ -6,8 +6,10 @@ import type {
   ScreeningBatch,
   PtoRequest,
   InsertSchedulerAssignment,
+  AncillaryAppointment,
 } from "@shared/schema";
 import { isEligibleForCallList, priorityKey, comparePriority } from "./callListPriority";
+import { derivePatientType } from "@shared/patientType";
 
 // ── Configuration ──────────────────────────────────────────────────────────
 // "Base" daily target = how many calls a 100% capacity scheduler can handle
@@ -19,6 +21,11 @@ export type EligibleCandidate = {
   patient: PatientScreening;
   facility: string;
   scheduleDate: string | null;
+  // Derived patient type computed at gather time. The engine pool only
+  // ever contains derived "visit" patients today, but we still pass it
+  // through ranking so prioritization never reads the (potentially stale)
+  // stored `patient.patientType` column.
+  derivedPatientType: "visit" | "outreach";
 };
 
 export type AssignmentDraft = {
@@ -93,7 +100,12 @@ export function buildAssignmentsForPool(
 }
 
 export function rankCandidates(
-  patients: { patient: PatientScreening; scheduleDate: string | null; facility: string }[],
+  patients: {
+    patient: PatientScreening;
+    scheduleDate: string | null;
+    facility: string;
+    derivedPatientType: "visit" | "outreach";
+  }[],
   asOfDate: string,
   lastContactByPatient: Map<number, number> = new Map(), // pid -> epoch ms
 ): EligibleCandidate[] {
@@ -105,7 +117,10 @@ export function rankCandidates(
   return patients
     .map((row) => {
       const k = priorityKey({
-        patientType: row.patient.patientType,
+        // Use the derived classification (computed against live appointments
+        // in the 90-day window). The stored `patient.patientType` column
+        // can be stale and must NOT influence ranking.
+        patientType: row.derivedPatientType,
         scheduleDate: row.scheduleDate,
         insurance: row.patient.insurance,
         qualifyingTests: row.patient.qualifyingTests,
@@ -147,48 +162,55 @@ export async function activeSchedulersForToday(
 }
 
 // ── Eligibility gather ────────────────────────────────────────────────────
-const VISIT_WINDOW_DAYS = Number(process.env.CALL_LIST_VISIT_WINDOW_DAYS ?? 30);
-
-function withinVisitWindow(scheduleDate: string | null, asOfDate: string): boolean {
-  if (!scheduleDate) return true; // outreach-only patients have no scheduleDate
-  const d = scheduleDate.slice(0, 10);
-  if (d < asOfDate) return false; // past visits handled separately (Tier-2 outreach)
-  const start = new Date(`${asOfDate}T00:00:00Z`).getTime();
-  const dest = new Date(`${d}T00:00:00Z`).getTime();
-  if (isNaN(start) || isNaN(dest)) return false;
-  const diffDays = Math.round((dest - start) / 86_400_000);
-  return diffDays <= VISIT_WINDOW_DAYS;
-}
-
-function isPastVisit(scheduleDate: string | null, asOfDate: string): boolean {
-  if (!scheduleDate) return false;
-  return scheduleDate.slice(0, 10) < asOfDate;
-}
+// Eligibility is owned by `derivePatientType` (90-day classifier). The old
+// 30-day VISIT_WINDOW_DAYS gate has been removed so the canonical signal
+// drives both portal routing and engine selection.
 
 async function gatherEligibleForFacility(
   storage: IStorage,
   facility: string,
   asOfDate: string,
 ): Promise<EligibleCandidate[]> {
-  // Visit-tier patients = anyone in a batch within the next 30 days for
-  // this facility. Outreach-tier patients (patientType='outreach') bypass
-  // the visit window — they have no upcoming visit anchoring them to a
-  // date and should remain eligible until contacted/completed.
-  const batches = await storage.getAllScreeningBatches();
+  // Scheduler engine pool = derived "visit" patients only. The 90-day
+  // classifier is the canonical eligibility window: any patient with a
+  // scheduled appointment or batch visit date within the next 90 days
+  // surfaces here. Outreach-tier patients are routed to the
+  // technician/liaison portal instead. We deliberately do NOT apply the
+  // legacy 30-day visit-window gate on top of derivedType — doing so
+  // would exclude derived-visit patients in days 31–90 from scheduler
+  // eligibility, which contradicts the canonical signal.
+  const [batches, allScheduled] = await Promise.all([
+    storage.getAllScreeningBatches(),
+    storage.getAppointments({ status: "scheduled" }),
+  ]);
   const facilityBatches: ScreeningBatch[] = batches.filter((b) => (b.facility ?? "") === facility);
+  const apptsByPatient = new Map<number, AncillaryAppointment[]>();
+  for (const a of allScheduled) {
+    if (a.patientScreeningId == null) continue;
+    const arr = apptsByPatient.get(a.patientScreeningId);
+    if (arr) arr.push(a);
+    else apptsByPatient.set(a.patientScreeningId, [a]);
+  }
 
   const candidates: EligibleCandidate[] = [];
   for (const batch of facilityBatches) {
-    const inVisitWindow = withinVisitWindow(batch.scheduleDate ?? null, asOfDate);
     const patients = await storage.getPatientScreeningsByBatch(batch.id);
     for (const p of patients) {
       const e = isEligibleForCallList(p);
       if (!e.eligible) continue;
-      // Outreach-type and past-visit patients flow into Tier 2 via priorityKey().
-      const isOutreach = (p.patientType ?? "").toLowerCase() === "outreach";
-      const past = isPastVisit(batch.scheduleDate ?? null, asOfDate);
-      if (!isOutreach && !inVisitWindow && !past) continue;
-      candidates.push({ patient: p, facility, scheduleDate: batch.scheduleDate ?? null });
+      const derivedType = derivePatientType({
+        appointments: apptsByPatient.get(p.id) ?? [],
+        batchScheduleDate: batch.scheduleDate ?? null,
+        storedPatientType: p.patientType,
+        asOfDate,
+      });
+      if (derivedType !== "visit") continue;
+      candidates.push({
+        patient: p,
+        facility,
+        scheduleDate: batch.scheduleDate ?? null,
+        derivedPatientType: derivedType,
+      });
     }
   }
   return candidates;
@@ -314,6 +336,20 @@ export async function assignNewlyEligiblePatient(
   if (existing) return existing;
   const e = isEligibleForCallList(patient);
   if (!e.eligible) return null;
+  // Apply the canonical 90-day derived classifier on this hot path too —
+  // outreach-tier patients must not enter the scheduler engine even when
+  // they become "newly eligible" via status changes mid-day.
+  const [allAppts, batch] = await Promise.all([
+    storage.getAppointmentsByPatient(patient.id),
+    patient.batchId ? storage.getScreeningBatch(patient.batchId) : Promise.resolve(undefined),
+  ]);
+  const derivedType = derivePatientType({
+    appointments: allAppts.filter((a) => (a.status || "").toLowerCase() === "scheduled"),
+    batchScheduleDate: batch?.scheduleDate ?? null,
+    storedPatientType: patient.patientType,
+    asOfDate,
+  });
+  if (derivedType !== "visit") return null;
   const schedulers = await activeSchedulersForToday(storage, facility, asOfDate);
   if (schedulers.length === 0) return null;
   const existingDay = await storage.listActiveSchedulerAssignments({ asOfDate });
@@ -387,6 +423,17 @@ export async function releaseAndRedistribute(
   // signal entirely.
   const allBatches = await storage.getAllScreeningBatches();
   const batchById = new Map(allBatches.map((b) => [b.id, b]));
+  // Bulk-fetch scheduled appointments once so we can derive each released
+  // patient's type without N round-trips. The derived type — not the
+  // possibly-stale stored column — drives ranking for redistribution.
+  const allScheduled = await storage.getAppointments({ status: "scheduled" });
+  const apptsByPatient = new Map<number, AncillaryAppointment[]>();
+  for (const a of allScheduled) {
+    if (a.patientScreeningId == null) continue;
+    const arr = apptsByPatient.get(a.patientScreeningId);
+    if (arr) arr.push(a);
+    else apptsByPatient.set(a.patientScreeningId, [a]);
+  }
   const releasedPatients = await Promise.all(
     released.map(async (r) => {
       const p = await storage.getPatientScreening(r.patientScreeningId);
@@ -396,16 +443,26 @@ export async function releaseAndRedistribute(
   );
   const releasedRanked = releasedPatients
     .filter((rp): rp is { release: typeof released[number]; patient: PatientScreening; scheduleDate: string | null } => !!rp.patient)
-    .map((rp) => ({
-      ...rp,
-      _key: priorityKey({
-        patientType: rp.patient.patientType,
-        scheduleDate: rp.scheduleDate,
-        insurance: rp.patient.insurance,
-        qualifyingTests: rp.patient.qualifyingTests,
+    .map((rp) => {
+      const derivedType = derivePatientType({
+        appointments: apptsByPatient.get(rp.patient.id) ?? [],
+        batchScheduleDate: rp.scheduleDate,
+        storedPatientType: rp.patient.patientType,
         asOfDate,
-      }).sort,
-    }))
+      });
+      return {
+        ...rp,
+        derivedPatientType: derivedType,
+        _key: priorityKey({
+          // Derived type drives priority — stored column is stale-prone.
+          patientType: derivedType,
+          scheduleDate: rp.scheduleDate,
+          insurance: rp.patient.insurance,
+          qualifyingTests: rp.patient.qualifyingTests,
+          asOfDate,
+        }).sort,
+      };
+    })
     .sort((a, b) => comparePriority(a._key, b._key));
 
   // Build the set of reassignment drafts in memory first, then apply

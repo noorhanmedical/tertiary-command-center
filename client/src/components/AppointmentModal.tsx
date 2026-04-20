@@ -84,6 +84,9 @@ export function AppointmentModal({ patient, onClose, defaultDate }: AppointmentM
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/appointments/upcoming"] });
       queryClient.invalidateQueries({ queryKey: ["/api/appointments/patient", patient.id] });
+      // Booking can flip a patient's derived type from outreach -> visit;
+      // invalidate the dashboard so the call-list reflects it on next poll.
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
       toast({ title: "Appointment booked!", description: `${patient.name} scheduled for ${selectedTestType}` });
       onClose();
     },

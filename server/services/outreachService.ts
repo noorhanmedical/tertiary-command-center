@@ -1,6 +1,7 @@
 import type { IStorage } from "../storage";
-import type { PatientScreening, OutreachScheduler, PatientTestHistory } from "@shared/schema";
+import type { PatientScreening, OutreachScheduler, PatientTestHistory, AncillaryAppointment } from "@shared/schema";
 import { patientKey } from "../lib/patientKey";
+import { derivePatientType } from "@shared/patientType";
 
 type PriorTestEntry = {
   testName: string;
@@ -151,32 +152,31 @@ function normalizeReasoning(raw: unknown, qualifyingTests: string[]): ReasoningE
   return out;
 }
 
-// Visit window for the dashboard call list. Aligned with the call-list
-// engine's CALL_LIST_VISIT_WINDOW_DAYS so patients whose visits are within
-// the next N days surface to the assigned scheduler. Outreach-type patients
-// (no scheduleDate gating) always surface.
-const DASHBOARD_VISIT_WINDOW_DAYS = Number(process.env.CALL_LIST_VISIT_WINDOW_DAYS ?? 30);
-
-function withinDashboardWindow(scheduleDate: string, today: string): boolean {
-  if (!scheduleDate) return true;
-  if (scheduleDate < today) return false;
-  const start = new Date(`${today}T00:00:00Z`).getTime();
-  const dest = new Date(`${scheduleDate}T00:00:00Z`).getTime();
-  if (isNaN(start) || isNaN(dest)) return false;
-  return Math.round((dest - start) / 86_400_000) <= DASHBOARD_VISIT_WINDOW_DAYS;
-}
-
 export async function buildOutreachDashboard(
   storage: IStorage,
   today: string,
 ): Promise<OutreachDashboard> {
-  const [batches, schedulers, todayAppointments, allHistory, activeAssignments] = await Promise.all([
+  const [batches, schedulers, todayAppointments, allHistory, activeAssignments, allScheduledAppts] = await Promise.all([
     storage.getAllScreeningBatches(),
     storage.getOutreachSchedulers(),
     storage.getAppointments({ date: today, status: "scheduled" }),
     storage.getAllTestHistory(),
     storage.listActiveSchedulerAssignments({ asOfDate: today }),
+    // All scheduled appointments — used by the derived patient-type
+    // classifier so visit/outreach reflects current bookings without a
+    // sticky column read.
+    storage.getAppointments({ status: "scheduled" }),
   ]);
+
+  // Index scheduled appointments by patient screening id so the classifier
+  // is O(1) per patient.
+  const apptsByPatient = new Map<number, AncillaryAppointment[]>();
+  for (const a of allScheduledAppts) {
+    if (a.patientScreeningId == null) continue;
+    const arr = apptsByPatient.get(a.patientScreeningId);
+    if (arr) arr.push(a);
+    else apptsByPatient.set(a.patientScreeningId, [a]);
+  }
 
   // Build patient->scheduler ownership map from active engine assignments.
   // When an active row exists, it is the source of truth for ownership and
@@ -226,7 +226,6 @@ export async function buildOutreachDashboard(
 
   for (const batch of batches) {
     const batchDay = canonicalDay(batch.scheduleDate);
-    const inWindow = withinDashboardWindow(batchDay, today);
 
     const patients: PatientScreening[] = await storage.getPatientScreeningsByBatch(batch.id);
     const facility = s(batch.facility) || "Unassigned Facility";
@@ -244,11 +243,23 @@ export async function buildOutreachDashboard(
       // existing patients keep their place.
       if (patient.commitStatus === "Draft") continue;
 
-      // Engine assignment is authoritative; otherwise gate by visit window
-      // (outreach-type patients bypass the window entirely).
-      const isOutreach = (s(patient.patientType) || "visit").toLowerCase() === "outreach";
-      const hasAssignment = assignedSchedulerByPatient.has(patient.id);
-      if (!hasAssignment && !isOutreach && !inWindow) continue;
+      // Derived patient type — single source of truth. A patient with any
+      // scheduled appointment (or batch visit date) within the next 90
+      // days is "visit"; otherwise we fall back to the stored value.
+      const derivedType = derivePatientType({
+        appointments: apptsByPatient.get(patient.id) ?? [],
+        batchScheduleDate: batchDay,
+        storedPatientType: patient.patientType,
+        asOfDate: today,
+      });
+
+      // Scheduler portal call list = derived "visit" patients only. The
+      // 90-day classifier IS the eligibility window — no narrower legacy
+      // gate is applied here, so a patient with an appointment 60 days out
+      // surfaces to schedulers regardless of whether they already hold an
+      // active engine assignment. Outreach-tier patients are routed to the
+      // technician/liaison portal (separate task).
+      if (derivedType !== "visit") continue;
 
       let owner: { name: string; facility: string; capacityPercent: number };
       const assignedSchedId = assignedSchedulerByPatient.get(patient.id);
@@ -320,7 +331,7 @@ export async function buildOutreachDashboard(
         insurance: s(patient.insurance) || "No insurance",
         qualifyingTests,
         appointmentStatus,
-        patientType: s(patient.patientType) || "visit",
+        patientType: derivedType,
         batchId: batch.id,
         scheduleDate: s(batch.scheduleDate),
         time: s(patient.time) || "No time",
