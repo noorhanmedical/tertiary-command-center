@@ -64,6 +64,7 @@ export const patientScreenings = pgTable("patient_screenings", {
   gender: text("gender"),
   dob: text("dob"),
   phoneNumber: text("phone_number"),
+  email: text("email"),
   insurance: text("insurance"),
   facility: text("facility"),
   diagnoses: text("diagnoses"),

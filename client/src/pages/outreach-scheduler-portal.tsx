@@ -98,6 +98,7 @@ type OutreachCallItem = {
   patientName: string;
   facility: string;
   phoneNumber: string;
+  email: string;
   insurance: string;
   qualifyingTests: string[];
   appointmentStatus: string;
@@ -2436,7 +2437,7 @@ function ToolsPanel(props: {
     if (!p) return { to: "", subject: "", body: "" };
     const subject = `Scheduling your visit at ${p.facility || facility}`;
     const body = `Hi ${p.patientName.split(" ")[0] || ""},\n\nThis is your scheduler from ${p.facility || facility}. We'd like to book your upcoming ${p.qualifyingTests.join(" / ") || "screening"} visit. Please reply with a time that works best for you, or call us at the number on file.\n\nThank you,\nScheduling Team`;
-    return { to: p.phoneNumber || "", subject, body };
+    return { to: p.email || "", subject, body };
   }
 
   function EmailComposer({
@@ -2459,12 +2460,44 @@ function ToolsPanel(props: {
       setBody(initial.body);
     }, [initial]);
 
+    const sendMutation = useMutation({
+      mutationFn: async () => {
+        if (!selectedItem) throw new Error("No patient selected");
+        const res = await apiRequest("POST", "/api/outreach/send-email", {
+          patientScreeningId: selectedItem.patientId,
+          to,
+          subject,
+          body,
+        });
+        return res.json();
+      },
+      onSuccess: () => {
+        toast({ title: "Email sent", description: `Sent to ${selectedItem?.patientName ?? "patient"}.` });
+        globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
+      },
+      onError: (err: unknown) => {
+        const raw = err instanceof Error ? err.message : String(err);
+        // apiRequest throws "<status>: <body>" — surface just the message.
+        const cleaned = raw.replace(/^\d+:\s*/, "");
+        let description = cleaned;
+        try {
+          const parsed = JSON.parse(cleaned);
+          if (parsed?.error) description = String(parsed.error);
+        } catch { /* not JSON, use raw */ }
+        toast({ title: "Email failed", description, variant: "destructive" });
+      },
+    });
+
     function handleSend() {
       if (!selectedItem) {
         toast({ title: "No patient selected", description: "Pick a patient from the call list first.", variant: "destructive" });
         return;
       }
-      toast({ title: "Email sent", description: `Sent to ${selectedItem.patientName}.` });
+      if (!to.trim()) {
+        toast({ title: "Recipient required", description: "Add the patient's email address before sending.", variant: "destructive" });
+        return;
+      }
+      sendMutation.mutate();
     }
 
     return (
@@ -2504,8 +2537,8 @@ function ToolsPanel(props: {
           <span className="text-[10px] text-slate-400 truncate">
             {selectedItem ? `Pre-filled for ${selectedItem.patientName}` : "Pick a patient to pre-fill"}
           </span>
-          <Button size="sm" onClick={handleSend} className="h-8 rounded-full" data-testid="email-send">
-            <Send className="h-3.5 w-3.5 mr-1" /> Send
+          <Button size="sm" onClick={handleSend} disabled={sendMutation.isPending} className="h-8 rounded-full" data-testid="email-send">
+            <Send className="h-3.5 w-3.5 mr-1" /> {sendMutation.isPending ? "Sending..." : "Send"}
           </Button>
         </div>
       </div>
@@ -2529,13 +2562,40 @@ function ToolsPanel(props: {
     fullWidth?: boolean;
   }) {
     const { toast } = useToast();
+    const [pendingId, setPendingId] = useState<string | null>(null);
 
-    function handleSend(title: string) {
+    const sendMaterialMutation = useMutation({
+      mutationFn: async ({ materialId }: { materialId: string; title: string }) => {
+        if (!selectedItem) throw new Error("No patient selected");
+        const res = await apiRequest("POST", "/api/outreach/send-material", {
+          patientScreeningId: selectedItem.patientId,
+          materialId,
+        });
+        return res.json();
+      },
+      onSuccess: (_data, vars) => {
+        toast({ title: "Material sent", description: `${vars.title} sent to ${selectedItem?.patientName ?? "patient"}.` });
+      },
+      onError: (err: unknown) => {
+        const raw = err instanceof Error ? err.message : String(err);
+        const cleaned = raw.replace(/^\d+:\s*/, "");
+        let description = cleaned;
+        try {
+          const parsed = JSON.parse(cleaned);
+          if (parsed?.error) description = String(parsed.error);
+        } catch { /* not JSON */ }
+        toast({ title: "Material failed", description, variant: "destructive" });
+      },
+      onSettled: () => setPendingId(null),
+    });
+
+    function handleSend(materialId: string, title: string) {
       if (!selectedItem) {
         toast({ title: "No patient selected", description: "Pick a patient from the call list first.", variant: "destructive" });
         return;
       }
-      toast({ title: "Material sent", description: `${title} sent to ${selectedItem.patientName}.` });
+      setPendingId(materialId);
+      sendMaterialMutation.mutate({ materialId, title });
     }
 
     const cols = fullWidth ? "grid-cols-2 md:grid-cols-3" : "grid-cols-1";
@@ -2578,11 +2638,12 @@ function ToolsPanel(props: {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => handleSend(m.title)}
+                    onClick={() => handleSend(m.id, m.title)}
+                    disabled={pendingId === m.id}
                     className="h-7 rounded-full text-[11px]"
                     data-testid={`material-send-${m.id}`}
                   >
-                    <Send className="h-3 w-3 mr-1" /> Send to patient
+                    <Send className="h-3 w-3 mr-1" /> {pendingId === m.id ? "Sending..." : "Send to patient"}
                   </Button>
                 </div>
               </div>

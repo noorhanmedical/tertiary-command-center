@@ -22,6 +22,7 @@ type OutreachCallItem = {
   patientName: string;
   facility: string;
   phoneNumber: string;
+  email: string;
   insurance: string;
   qualifyingTests: string[];
   appointmentStatus: string;
@@ -315,6 +316,7 @@ export async function buildOutreachDashboard(
         patientName: patient.name,
         facility,
         phoneNumber: s(patient.phoneNumber) || "No phone",
+        email: s(patient.email),
         insurance: s(patient.insurance) || "No insurance",
         qualifyingTests,
         appointmentStatus,
