@@ -12,6 +12,7 @@ import {
   DOCUMENT_SIGNATURE_REQUIREMENTS,
   DOCUMENT_SURFACES,
   type DocumentKind,
+  type DocumentSignatureRequirement,
   type DocumentSurface,
 } from "@shared/schema";
 
@@ -161,7 +162,10 @@ function mountRoutes(app: Express, basePath: string) {
         kind: kindParam ? (kindParam as DocumentKind) : undefined,
         patientScreeningId: typeof patientScreeningId === "number" ? patientScreeningId : undefined,
       });
-      const shaped = await Promise.all(docs.map((d) => shapeDocument(d, basePath)));
+      type ShapedDoc =
+        | Awaited<ReturnType<typeof shapeDocument>>
+        | ReturnType<typeof shapeLegacyUploadedDoc>;
+      const shaped: ShapedDoc[] = await Promise.all(docs.map((d) => shapeDocument(d, basePath)));
 
       // ── Backward-compat adapter ───────────────────────────────────────
       // Legacy `uploaded_documents` rows only carry a `patientName` string,
@@ -195,7 +199,7 @@ function mountRoutes(app: Express, basePath: string) {
 
   app.get(`${basePath}/:id`, requireAuth, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
       const doc = await storage.getDocument(id);
       if (!doc || doc.deletedAt !== null) return res.status(404).json({ error: "Not found" });
@@ -207,7 +211,7 @@ function mountRoutes(app: Express, basePath: string) {
 
   app.get(`${basePath}/:id/versions`, requireAuth, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
       const head = await storage.getDocument(id);
       if (!head || head.deletedAt !== null) return res.status(404).json({ error: "Not found" });
@@ -221,7 +225,7 @@ function mountRoutes(app: Express, basePath: string) {
 
   app.get(`${basePath}/:id/file`, requireAuth, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
       const doc = await storage.getDocument(id);
       if (!doc) return res.status(404).json({ error: "Not found" });
@@ -264,9 +268,10 @@ function mountRoutes(app: Express, basePath: string) {
       if (!DOCUMENT_KINDS.includes(kind as DocumentKind)) {
         return res.status(400).json({ error: `kind must be one of: ${DOCUMENT_KINDS.join(", ")}` });
       }
-      if (!DOCUMENT_SIGNATURE_REQUIREMENTS.includes(signatureRequirement as any)) {
+      if (!(DOCUMENT_SIGNATURE_REQUIREMENTS as readonly string[]).includes(signatureRequirement)) {
         return res.status(400).json({ error: `signatureRequirement must be one of: ${DOCUMENT_SIGNATURE_REQUIREMENTS.join(", ")}` });
       }
+      const sigReq = signatureRequirement as DocumentSignatureRequirement;
 
       let patientScreeningId: number | null = null;
       if (patientScreeningIdRaw !== undefined && patientScreeningIdRaw !== null && String(patientScreeningIdRaw).length > 0) {
@@ -295,7 +300,7 @@ function mountRoutes(app: Express, basePath: string) {
         title,
         description,
         kind: kind as DocumentKind,
-        signatureRequirement: signatureRequirement as any,
+        signatureRequirement: sigReq,
         filename,
         contentType,
         sizeBytes: buffer.length,
@@ -344,7 +349,7 @@ function mountRoutes(app: Express, basePath: string) {
   // Replace a document with a new version. Inherits assignments + bumps version.
   app.post(`${basePath}/:id/supersede`, requireAdmin, upload.single("file"), async (req: any, res) => {
     try {
-      const oldId = parseInt(req.params.id, 10);
+      const oldId = parseInt(String(req.params.id), 10);
       if (Number.isNaN(oldId)) return res.status(400).json({ error: "id must be a number" });
       const oldDoc = await storage.getDocument(oldId);
       if (!oldDoc) return res.status(404).json({ error: "Not found" });
@@ -364,7 +369,7 @@ function mountRoutes(app: Express, basePath: string) {
         title: String(req.body.title ?? oldDoc.title),
         description: String(req.body.description ?? oldDoc.description),
         kind: oldDoc.kind as DocumentKind,
-        signatureRequirement: oldDoc.signatureRequirement as any,
+        signatureRequirement: oldDoc.signatureRequirement as DocumentSignatureRequirement,
         filename,
         contentType,
         sizeBytes: buffer.length,
@@ -410,7 +415,7 @@ function mountRoutes(app: Express, basePath: string) {
   // Add a single surface assignment (additive).
   app.post(`${basePath}/:id/assignments`, requireAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
       const surface = String(req.body?.surface ?? "");
       if (!DOCUMENT_SURFACES.includes(surface as DocumentSurface)) {
@@ -428,7 +433,7 @@ function mountRoutes(app: Express, basePath: string) {
   // Replace the full set of surface assignments atomically.
   app.patch(`${basePath}/:id/assignments`, requireAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
       const surfaces = parseSurfacesField(req.body?.surfaces);
       for (const s of surfaces) {
@@ -448,9 +453,9 @@ function mountRoutes(app: Express, basePath: string) {
 
   app.delete(`${basePath}/:id/assignments/:surface`, requireAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
-      const surface = req.params.surface;
+      const surface = String(req.params.surface);
       if (!DOCUMENT_SURFACES.includes(surface as DocumentSurface)) {
         return res.status(400).json({ error: `unknown surface: ${surface}` });
       }
@@ -468,7 +473,7 @@ function mountRoutes(app: Express, basePath: string) {
   // preserve the version chain.
   app.delete(`${basePath}/:id`, requireAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
       const doc = await storage.getDocument(id);
       if (!doc) return res.status(404).json({ error: "Not found" });
