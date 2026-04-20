@@ -112,9 +112,21 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
       data-testid="global-nav"
       aria-label="Global navigation"
     >
-      <div className={`flex items-center ${collapsed ? "justify-center px-2 py-4" : "justify-between px-4 py-4"} border-b border-slate-200`}>
-        {!collapsed && (
-          <span className="text-slate-900 font-bold text-sm tracking-tight truncate">Plexus</span>
+      <div className={`flex items-center ${collapsed ? "justify-center px-2 py-3" : "justify-between px-3 py-3"} border-b border-slate-200`}>
+        {collapsed ? (
+          <img
+            src="/plexus-logo-icon.png"
+            alt="Plexus Ancillary Services"
+            className="w-8 h-8 object-contain"
+            data-testid="img-nav-logo"
+          />
+        ) : (
+          <img
+            src="/plexus-logo.png"
+            alt="Plexus Ancillary Services"
+            className="h-8 w-auto object-contain rounded-md"
+            data-testid="img-nav-logo"
+          />
         )}
         <button
           onClick={() => { setManualOverride(true); setCollapsed((c) => !c); }}

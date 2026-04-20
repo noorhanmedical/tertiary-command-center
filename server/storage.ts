@@ -1053,7 +1053,6 @@ export class DatabaseStorage implements IStorage {
       return call;
     });
   }
-
   async listOutreachCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]> {
     return db.select().from(outreachCalls)
       .where(eq(outreachCalls.patientScreeningId, patientScreeningId))

@@ -29,7 +29,6 @@ async function getAssignedSchedulerUserIdForPatient(
     .limit(1);
   return rows[0]?.userId ?? null;
 }
-
 // Map a call outcome to the denormalized appointmentStatus bucket on
 // patient_screenings. Manual booking still owns the canonical "scheduled"
 // state; we never overwrite "scheduled" except when the outcome itself is

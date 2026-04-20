@@ -994,7 +994,6 @@ export default function OutreachSchedulerPortalPage() {
                 )}
               </div>
             )}
-
             {sortedCallList.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-10 text-center text-sm text-slate-500">
                 {search.trim() ? "No patients match this search." : "No patients in this view."}
@@ -1126,7 +1125,6 @@ export default function OutreachSchedulerPortalPage() {
                           <CalendarPlus className="h-4 w-4" />
                         </button>
                       </div>
-
                       {/* Timeline toggle */}
                       {calls.length > 0 && (
                         <div className="mt-2 border-t border-slate-100 pt-2">

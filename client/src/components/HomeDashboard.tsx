@@ -116,7 +116,6 @@ export function HomeDashboard({
               </div>
               <div>
                 <h2 className="text-[32px] leading-tight font-bold tracking-tight text-slate-900 dark:text-foreground" data-testid="text-home-heading">Plexus</h2>
-                <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-1 tracking-wider uppercase font-semibold">Ancillary Screening</p>
               </div>
             </div>
           </div>
