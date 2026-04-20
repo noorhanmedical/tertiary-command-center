@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { PageHeader } from "@/components/PageHeader";
 import {
   CalendarDays, ChevronLeft, ChevronRight, Clock, FileText, Loader2, Phone, Plus, Upload, Users,
 } from "lucide-react";
@@ -111,21 +112,13 @@ export function HomeDashboard({
       </header>
       <main className="flex-1 overflow-auto">
         <div className="max-w-5xl mx-auto px-8 pt-10 pb-16">
-          <div className="mb-12 text-center">
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-16 h-16 flex items-center justify-center">
-                <img
-                  src="/plexus-logo-icon.png"
-                  alt="Plexus Ancillary Services"
-                  className="w-16 h-16 object-contain"
-                  data-testid="img-home-logo"
-                />
-              </div>
-              <div>
-                <h2 className="text-[32px] leading-tight font-bold tracking-tight text-slate-900 dark:text-foreground" data-testid="text-home-heading">Plexus</h2>
-              </div>
-            </div>
-          </div>
+          <PageHeader
+            eyebrow="PLEXUS ANCILLARY · HOME"
+            title="Plexus"
+            subtitle="Ancillary Screening Platform"
+            titleTestId="text-home-heading"
+            className="mb-10"
+          />
 
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
             <Card

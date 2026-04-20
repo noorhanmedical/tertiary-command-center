@@ -131,6 +131,7 @@ export default function AdminUsersPage() {
       <div className="mx-auto flex w-full max-w-[900px] flex-col gap-6 px-6 py-6">
         <PageHeader
           backHref="/admin"
+          eyebrow="PLEXUS ANCILLARY · USERS"
           icon={Users}
           iconAccent="bg-amber-100 text-amber-700"
           title="User Management"

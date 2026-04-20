@@ -77,6 +77,7 @@ export default function AuditLogPage() {
         </div>
 
         <PageHeader
+          eyebrow="PLEXUS ANCILLARY · AUDIT"
           icon={Shield}
           title="Audit Log"
           subtitle="A read-only record of who changed what and when."

@@ -106,6 +106,7 @@ export default function AdminOutboxPage() {
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
       <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
         <PageHeader
+          eyebrow="PLEXUS ANCILLARY · OUTBOX"
           icon={Inbox}
           iconAccent="bg-blue-100 text-blue-700"
           title="Admin Outbox"

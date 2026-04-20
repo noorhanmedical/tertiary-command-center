@@ -84,6 +84,7 @@ export default function OutreachPage() {
         {/* Header */}
         <PageHeader
           backHref="/"
+          eyebrow="PLEXUS ANCILLARY · OUTREACH"
           icon={Phone}
           iconAccent="bg-blue-600/10 text-blue-700"
           title="Outreach"

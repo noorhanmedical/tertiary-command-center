@@ -389,6 +389,7 @@ export default function SettingsPage() {
               </Link>
             </Button>
             <PageHeader
+              eyebrow="PLEXUS ANCILLARY · SETTINGS"
               icon={SettingsIcon}
               title="Settings"
               subtitle="Team members, patient databases, and clinic spreadsheet connections."

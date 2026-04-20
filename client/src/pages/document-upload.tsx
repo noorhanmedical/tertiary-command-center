@@ -262,6 +262,7 @@ export default function DocumentUploadPage() {
     <div className="flex-1 overflow-y-auto p-6 bg-[hsl(210,35%,96%)]">
       <div className="max-w-5xl mx-auto">
         <PageHeader
+          eyebrow="PLEXUS ANCILLARY · UPLOADS"
           icon={Upload}
           iconAccent="bg-indigo-100 text-indigo-700"
           title="Document Upload"

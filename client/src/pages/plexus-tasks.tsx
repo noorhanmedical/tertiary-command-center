@@ -844,6 +844,7 @@ export default function PlexusTasksPage() {
       {/* Main content */}
       <main className="flex-1 overflow-y-auto p-6 min-w-0">
         <PageHeader
+          eyebrow="PLEXUS ANCILLARY · TASKS"
           icon={NAV.find((n) => n.id === view)?.Icon}
           iconAccent="bg-indigo-600/10 text-indigo-700"
           title={

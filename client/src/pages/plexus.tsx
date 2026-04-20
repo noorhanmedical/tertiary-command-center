@@ -203,24 +203,25 @@ export default function PlexusPage() {
   return (
     <div className="flex flex-col h-full relative z-10 bg-slate-50 dark:bg-background">
       <header className="bg-white dark:bg-card border-b border-slate-200 dark:border-border sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-2 text-slate-600 dark:text-muted-foreground h-8 px-2"
-            onClick={handleBack}
-            data-testid="button-back"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </Button>
-          <div className="h-5 w-px bg-slate-200 dark:bg-border" />
+        <div className="max-w-4xl mx-auto px-4 py-3">
           <PageHeader
+            eyebrow="PLEXUS ANCILLARY · DOCUMENTS"
             icon={ClipboardList}
             iconAccent="bg-primary/10 text-primary"
             title="Plexus Documents"
             subtitle="Generate pre-procedure, post-procedure, and billing documents"
-            className="!bg-transparent !border-0 !shadow-none !backdrop-blur-0 [&>div]:!p-0 flex-1"
+            actions={
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-2 text-slate-600 dark:text-muted-foreground"
+                onClick={handleBack}
+                data-testid="button-back"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </Button>
+            }
           />
         </div>
 

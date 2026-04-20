@@ -962,25 +962,17 @@ export default function BillingPage() {
     <main className="flex-1 overflow-hidden flex flex-col bg-slate-50" data-testid="billing-page">
       {/* Header */}
       <div className="shrink-0 bg-white border-b border-slate-200">
-        {/* Top bar */}
-        <div className="px-5 pt-4 pb-3 flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <Link href="/">
-              <Button variant="ghost" size="sm" className="gap-1.5 text-slate-500 hover:text-slate-800 -ml-2" data-testid="button-back-home">
-                <ArrowLeft className="w-3.5 h-3.5" />Back
-              </Button>
-            </Link>
-            <div className="h-5 w-px bg-slate-200" />
-            <PageHeader
-              icon={DollarSign}
-              iconAccent="bg-emerald-100 text-emerald-700"
-              title="Billing Tracker"
-              subtitle="Ancillary service claims & payments"
-              titleTestId="text-billing-title"
-              className="!bg-transparent !border-0 !shadow-none !backdrop-blur-0 [&>div]:!p-0"
-            />
-          </div>
-          <div className="flex items-center gap-2 flex-wrap justify-end">
+        <div className="px-5 pt-4 pb-3">
+          <PageHeader
+            backHref="/"
+            eyebrow="PLEXUS ANCILLARY · BILLING"
+            icon={DollarSign}
+            iconAccent="bg-emerald-100 text-emerald-700"
+            title="Billing Tracker"
+            subtitle="Ancillary service claims & payments"
+            titleTestId="text-billing-title"
+            actions={
+              <div className="flex items-center gap-2 flex-wrap justify-end">
             <Button size="sm" variant="outline" onClick={() => syncBillingMutation.mutate()} disabled={syncBillingMutation.isPending || importFromSheetMutation.isPending}
               className="gap-1.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50 h-8 text-xs" data-testid="button-sync-billing-sheets">
               {syncBillingMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <SiGooglesheets className="w-3.5 h-3.5" />}
@@ -1012,7 +1004,9 @@ export default function BillingPage() {
             <Button size="sm" variant="outline" className="gap-1.5 text-xs h-8 text-slate-600" onClick={() => setShowAddRow(true)} data-testid="button-add-billing-row">
               <Plus className="w-3.5 h-3.5" />Add Row
             </Button>
-          </div>
+              </div>
+            }
+          />
         </div>
 
         {/* Metrics bar */}

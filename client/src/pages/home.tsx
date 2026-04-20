@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Calendar as CalendarPicker } from "@/components/ui/calendar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSidebar, SidebarTrigger } from "@/components/ui/sidebar";
+import { PageHeader } from "@/components/PageHeader";
 import { AlertTriangle, Database, FileText, Loader2, Lock, Plus, Search, Trash2, Upload, User, X } from "lucide-react";
 import type { ScreeningBatch, PatientScreening, PatientTestHistory, OutreachScheduler } from "@shared/schema";
 import type { ReasoningValue } from "@/lib/pdfGeneration";
@@ -468,24 +469,22 @@ export default function Home() {
 
         {view === "history" ? (
           <div className="flex flex-col h-full relative z-10">
-            <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
-              <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
-                <div className="flex items-center gap-2">
-                  <SidebarTrigger data-testid="button-sidebar-toggle-history" />
-                  <div>
-                    <h1 className="text-base font-bold tracking-tight flex items-center gap-2"><Database className="w-4 h-4" />Patient Test History</h1>
-                    <p className="text-xs text-muted-foreground">{testHistory.length} records</p>
-                  </div>
-                </div>
-                {testHistory.length > 0 && (
-                  <Button variant="outline" size="sm" onClick={() => { if (confirm("Clear all test history records?")) clearHistoryMutation.mutate(); }} className="gap-1.5 text-red-600" data-testid="button-clear-history">
-                    <Trash2 className="w-3.5 h-3.5" /> Clear All
-                  </Button>
-                )}
-              </div>
-            </header>
             <div className="flex-1 overflow-auto p-4">
               <div className="max-w-5xl mx-auto space-y-4">
+                <PageHeader
+                  eyebrow="PLEXUS ANCILLARY · PATIENT HISTORY"
+                  icon={Database}
+                  iconAccent="bg-slate-900/8 text-slate-700"
+                  title="Patient Test History"
+                  subtitle={`${testHistory.length} record${testHistory.length === 1 ? "" : "s"}`}
+                  actions={
+                    testHistory.length > 0 ? (
+                      <Button variant="outline" size="sm" onClick={() => { if (confirm("Clear all test history records?")) clearHistoryMutation.mutate(); }} className="gap-1.5 text-red-600" data-testid="button-clear-history">
+                        <Trash2 className="w-3.5 h-3.5" /> Clear All
+                      </Button>
+                    ) : undefined
+                  }
+                />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Card className="p-4">
                     <div className="flex items-center gap-2 mb-2"><Upload className="w-4 h-4 text-muted-foreground" /><span className="text-sm font-semibold">Upload File</span></div>

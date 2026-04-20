@@ -101,6 +101,7 @@ export default function SchedulePage() {
     <div className="min-h-full bg-gradient-to-br from-slate-50 via-white to-blue-50/40">
       <div className="mx-auto max-w-[1400px] px-6 py-8">
         <PageHeader
+          eyebrow="PLEXUS ANCILLARY · SCHEDULE"
           icon={CalendarDays}
           iconAccent="bg-blue-600/10 text-blue-700"
           title="Global Schedule"

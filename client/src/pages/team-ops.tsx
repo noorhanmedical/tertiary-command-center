@@ -398,6 +398,7 @@ export default function TeamOpsPage() {
 
         {/* Header */}
         <PageHeader
+          eyebrow="PLEXUS ANCILLARY · TEAM OPS"
           icon={Users2}
           iconAccent="bg-violet-600/10 text-violet-700"
           title="Team Ops"

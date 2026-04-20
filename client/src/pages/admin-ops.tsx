@@ -17,6 +17,7 @@ export default function AdminOpsPage() {
             </Link>
           </Button>
           <PageHeader
+            eyebrow="PLEXUS ANCILLARY · ADMIN OPS"
             icon={Shield}
             title="Admin Ops"
             subtitle="Administrative-only surfaces for billing and system configuration."

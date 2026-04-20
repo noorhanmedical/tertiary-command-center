@@ -82,6 +82,7 @@ export default function AdminAnalysisJobsPage() {
       <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
         <PageHeader
           backHref="/admin"
+          eyebrow="PLEXUS ANCILLARY · ANALYSIS"
           icon={History}
           iconAccent="bg-indigo-100 text-indigo-700"
           title="Analysis Run History"

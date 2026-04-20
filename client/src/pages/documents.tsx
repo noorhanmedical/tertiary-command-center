@@ -302,6 +302,7 @@ export default function DocumentsPage() {
         <PageHeader
           backHref="/"
           backLabel="Home"
+          eyebrow="PLEXUS ANCILLARY · DOCUMENTS"
           icon={FileText}
           iconAccent="bg-teal-100 text-teal-700"
           title="Ancillary Documents"

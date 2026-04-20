@@ -270,6 +270,7 @@ export default function PatientDatabasePage() {
       <main className="flex-1 overflow-auto p-4">
         <div className="max-w-6xl mx-auto space-y-4">
           <PageHeader
+            eyebrow="PLEXUS ANCILLARY · PATIENTS"
             icon={Database}
             iconAccent="bg-slate-900/8 text-slate-700"
             title="Patient Database"
