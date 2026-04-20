@@ -3,6 +3,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { INVOICE_STATUSES } from "@shared/schema";
 import { logAudit } from "../services/auditService";
+import { sendOutreachEmail } from "../services/emailService";
 
 const requireBillerOrAdmin = (req: Request, res: Response, next: NextFunction) => {
   const role = req.session?.role;
@@ -24,6 +25,25 @@ const createInvoiceSchema = z.object({
 
 const updateStatusSchema = z.object({
   status: z.enum(INVOICE_STATUSES),
+});
+
+const emailAddress = z.string().trim().email("A valid email address is required.");
+
+// Cap the encoded PDF at ~10 MB (base64 is ~4/3 the size of the bytes it
+// encodes, so 14 MB of base64 ≈ 10 MB of PDF). Prevents an authenticated
+// user from posting an arbitrarily large attachment.
+const MAX_PDF_BASE64_BYTES = 14 * 1024 * 1024;
+
+const sendInvoiceEmailSchema = z.object({
+  to: z.array(emailAddress).min(1, "At least one recipient is required."),
+  cc: z.array(emailAddress).optional(),
+  subject: z.string().trim().min(1, "Subject is required."),
+  message: z.string().min(1, "Message is required."),
+  pdfBase64: z
+    .string()
+    .min(1, "Invoice PDF is required.")
+    .max(MAX_PDF_BASE64_BYTES, "Invoice PDF is too large to email (max ~10 MB)."),
+  pdfFilename: z.string().trim().min(1).optional(),
 });
 
 function num(v: string | null | undefined): number {
@@ -138,6 +158,80 @@ export function registerInvoiceRoutes(app: Express) {
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/invoices/:id/send-email", requireBillerOrAdmin, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid invoice id" });
+
+      const parsed = sendInvoiceEmailSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+      const { to, cc, subject, message, pdfBase64, pdfFilename } = parsed.data;
+
+      const invoice = await storage.getInvoice(id);
+      if (!invoice) return res.status(404).json({ error: "Invoice not found" });
+
+      // Decode and sanity-check the attached PDF.
+      const cleanedB64 = pdfBase64.replace(/^data:application\/pdf;base64,/, "");
+      let pdfBuffer: Buffer;
+      try {
+        pdfBuffer = Buffer.from(cleanedB64, "base64");
+      } catch {
+        return res.status(400).json({ error: "Invoice PDF could not be decoded." });
+      }
+      if (pdfBuffer.length === 0) {
+        return res.status(400).json({ error: "Invoice PDF is empty." });
+      }
+      // Quick file-type sanity check: PDFs always start with "%PDF-".
+      if (pdfBuffer.slice(0, 5).toString("ascii") !== "%PDF-") {
+        return res.status(400).json({ error: "Attached file is not a valid PDF." });
+      }
+
+      const safeFacility = invoice.facility.replace(/[^A-Za-z0-9-]+/g, "_");
+      const filename = pdfFilename?.trim() || `${invoice.invoiceNumber}_${safeFacility}.pdf`;
+
+      const ccList = cc ?? [];
+      const sentToLabel = ccList.length > 0
+        ? `${to.join(", ")} (cc: ${ccList.join(", ")})`
+        : to.join(", ");
+
+      const result = await sendOutreachEmail({
+        to,
+        cc: ccList.length > 0 ? ccList : undefined,
+        subject,
+        body: message,
+        attachments: [
+          {
+            filename,
+            content: pdfBuffer,
+            contentType: "application/pdf",
+          },
+        ],
+      });
+
+      const updated = await storage.markInvoiceSent(id, sentToLabel);
+      void logAudit(req, "send", "invoice", id, {
+        to,
+        cc: ccList,
+        messageId: result.messageId,
+      });
+
+      if (!updated) {
+        // Email did go out, but the invoice was deleted between the read and
+        // the update. Surface a 409 so the UI can refetch and reflect that.
+        return res.status(409).json({
+          error: "Invoice was removed before it could be marked as Sent.",
+          messageId: result.messageId,
+        });
+      }
+
+      res.json({ ok: true, invoice: updated, messageId: result.messageId });
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message || "Failed to send invoice email" });
     }
   });
 

@@ -7,7 +7,8 @@ export interface OutreachEmailAttachment {
 }
 
 export interface SendOutreachEmailInput {
-  to: string;
+  to: string | string[];
+  cc?: string | string[];
   subject: string;
   body: string;
   attachments?: OutreachEmailAttachment[];
@@ -68,13 +69,28 @@ export function emailFromAddress(): string {
   return from;
 }
 
+function normalizeRecipients(value: string | string[] | undefined, label: string): string[] {
+  if (value == null) return [];
+  const list = Array.isArray(value)
+    ? value
+    : value.split(/[,;]+/);
+  const cleaned = list.map((v) => v.trim()).filter((v) => v.length > 0);
+  for (const addr of cleaned) {
+    if (!isValidEmail(addr)) {
+      throw new Error(`"${addr}" is not a valid ${label} email address.`);
+    }
+  }
+  return cleaned;
+}
+
 export async function sendOutreachEmail(
   input: SendOutreachEmailInput,
 ): Promise<SendOutreachEmailResult> {
-  const to = input.to.trim();
-  if (!isValidEmail(to)) {
-    throw new Error(`"${input.to}" is not a valid email address.`);
+  const to = normalizeRecipients(input.to, "recipient");
+  if (to.length === 0) {
+    throw new Error("At least one recipient is required.");
   }
+  const cc = normalizeRecipients(input.cc, "CC");
   const subject = input.subject.trim();
   if (!subject) throw new Error("Subject is required.");
   const body = input.body;
@@ -86,6 +102,7 @@ export async function sendOutreachEmail(
   const info = await transporter.sendMail({
     from,
     to,
+    cc: cc.length > 0 ? cc : undefined,
     subject,
     text: body,
     attachments: input.attachments?.map((a) => ({

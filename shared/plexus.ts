@@ -24,6 +24,7 @@ export type ClinicProfile = {
   address: string;
   phone?: string;
   fax?: string;
+  billingContactEmail?: string;
 };
 
 export type PatientDemographics = {
@@ -106,14 +107,16 @@ export const DEFAULT_CLINIC: ClinicProfile = {
   name: 'New Wave Physician Group',
   address: '13480 Veterans Memorial Dr R1\nHouston, TX 77014',
   phone: '(281) 587-1600',
-  fax: '(832) 698-9568'
+  fax: '(832) 698-9568',
+  billingContactEmail: 'billing@newwavephysicians.com'
 };
 
 export const CLINIC_HUMBLE: ClinicProfile = {
   name: 'New Wave Physician Group',
   address: '1806 Humble Place Dr.\nHumble, TX 77338',
   phone: '(281) 369-9514',
-  fax: '(281) 359-4208'
+  fax: '(281) 359-4208',
+  billingContactEmail: 'billing@newwavephysicians.com'
 };
 
 interface ClinicianRegistryEntry {

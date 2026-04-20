@@ -249,6 +249,7 @@ export interface IStorage {
     lineItems: Omit<InsertInvoiceLineItem, "invoiceId">[],
   ): Promise<Invoice>;
   updateInvoiceStatus(id: number, status: string): Promise<Invoice | undefined>;
+  markInvoiceSent(id: number, sentTo: string): Promise<Invoice | undefined>;
   deleteInvoice(id: number): Promise<void>;
   getNextInvoiceNumber(): Promise<string>;
 
@@ -1005,6 +1006,14 @@ export class DatabaseStorage implements IStorage {
 
   async updateInvoiceStatus(id: number, status: string): Promise<Invoice | undefined> {
     const [r] = await db.update(invoices).set({ status }).where(eq(invoices.id, id)).returning();
+    return r;
+  }
+
+  async markInvoiceSent(id: number, sentTo: string): Promise<Invoice | undefined> {
+    const [r] = await db.update(invoices)
+      .set({ status: "Sent", sentTo, sentAt: new Date() })
+      .where(eq(invoices.id, id))
+      .returning();
     return r;
   }
 

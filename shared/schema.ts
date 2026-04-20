@@ -501,6 +501,8 @@ export const invoices = pgTable("invoices", {
   totalPaid: numeric("total_paid", { precision: 12, scale: 2 }).notNull().default("0"),
   totalBalance: numeric("total_balance", { precision: 12, scale: 2 }).notNull().default("0"),
   createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  sentTo: text("sent_to"),
+  sentAt: timestamp("sent_at"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_invoices_facility").on(table.facility),
@@ -511,6 +513,8 @@ export const invoices = pgTable("invoices", {
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({
   id: true,
   createdAt: true,
+  sentTo: true,
+  sentAt: true,
 });
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;

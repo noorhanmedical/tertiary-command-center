@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/PageHeader";
-import { Receipt, Plus, Download, ArrowLeft, Send, FileText, Trash2 } from "lucide-react";
+import { Receipt, Plus, Download, ArrowLeft, Send, FileText, Trash2, Mail } from "lucide-react";
 import { VALID_FACILITIES, DEFAULT_CLINIC, CLINIC_HUMBLE, formatClinicAddress, type ClinicProfile } from "@shared/plexus";
 
 type Invoice = {
@@ -26,6 +26,8 @@ type Invoice = {
   totalCharges: string;
   totalPaid: string;
   totalBalance: string;
+  sentTo: string | null;
+  sentAt: string | null;
   createdAt: string;
 };
 
@@ -60,6 +62,19 @@ function fmtDate(d: string | null | undefined): string {
 function clinicForFacility(facility: string): ClinicProfile {
   if (facility === "Taylor Family Practice") return CLINIC_HUMBLE;
   return { ...DEFAULT_CLINIC, name: facility };
+}
+
+function fmtDateTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function statusBadgeClass(status: string): string {
@@ -143,6 +158,7 @@ function InvoicesList({ onOpen }: { onOpen: (id: number) => void }) {
                   <th className="px-3 py-2 text-right">Total Charges</th>
                   <th className="px-3 py-2 text-right">Balance</th>
                   <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Emailed</th>
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
@@ -166,6 +182,16 @@ function InvoicesList({ onOpen }: { onOpen: (id: number) => void }) {
                       <Badge variant="outline" className={statusBadgeClass(inv.status)} data-testid={`badge-status-${inv.id}`}>
                         {inv.status}
                       </Badge>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs text-slate-500" data-testid={`text-emailed-${inv.id}`}>
+                      {inv.sentAt ? (
+                        <div className="flex flex-col leading-tight">
+                          <span className="text-slate-700">{fmtDateTime(inv.sentAt)}</span>
+                          {inv.sentTo && <span className="text-slate-500 truncate max-w-[200px]" title={inv.sentTo}>to {inv.sentTo}</span>}
+                        </div>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-right">
                       <Button
@@ -290,27 +316,30 @@ function CreateInvoiceDialog({ open, onClose, onCreated }: { open: boolean; onCl
   );
 }
 
+type Html2PdfOptions = Parameters<ReturnType<typeof import("html2pdf.js")["default"]>["set"]>[0];
+
+function pdfOptionsFor(invoice: Invoice): { filename: string; options: Html2PdfOptions } {
+  const safeFacility = invoice.facility.replace(/[^A-Za-z0-9-]+/g, "_");
+  const filename = `${invoice.invoiceNumber}_${safeFacility}.pdf`;
+  const options = {
+    margin: [0.4, 0.4, 0.4, 0.4],
+    filename,
+    image: { type: "jpeg", quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: "in", format: "letter", orientation: "portrait" },
+    pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+  } as unknown as Html2PdfOptions;
+  return { filename, options };
+}
+
 function InvoiceDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const printRef = useRef<HTMLDivElement>(null);
   const [downloading, setDownloading] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
 
   const { data, isLoading } = useQuery<{ invoice: Invoice; lineItems: InvoiceLineItem[] }>({
     queryKey: ["/api/invoices", id],
-  });
-
-  const markSent = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("PATCH", `/api/invoices/${id}/status`, { status: "Sent" });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices", id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-      toast({ title: "Invoice marked as Sent" });
-    },
-    onError: (e: Error) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
   });
 
   async function handleDownloadPdf() {
@@ -318,22 +347,28 @@ function InvoiceDetail({ id, onBack }: { id: number; onBack: () => void }) {
     setDownloading(true);
     try {
       const html2pdf = (await import("html2pdf.js")).default;
-      const safeFacility = data.invoice.facility.replace(/[^A-Za-z0-9-]+/g, "_");
-      const filename = `${data.invoice.invoiceNumber}_${safeFacility}.pdf`;
-      const options = {
-        margin: [0.4, 0.4, 0.4, 0.4],
-        filename,
-        image: { type: "jpeg", quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: "in", format: "letter", orientation: "portrait" },
-        pagebreak: { mode: ["avoid-all", "css", "legacy"] },
-      } as unknown as Parameters<ReturnType<typeof html2pdf>["set"]>[0];
+      const { options } = pdfOptionsFor(data.invoice);
       await html2pdf().set(options).from(printRef.current).save();
     } catch (err: any) {
       toast({ title: "PDF export failed", description: err.message, variant: "destructive" });
     } finally {
       setDownloading(false);
     }
+  }
+
+  async function generatePdfBase64(): Promise<{ base64: string; filename: string }> {
+    if (!printRef.current || !data) throw new Error("Invoice is not ready.");
+    const html2pdf = (await import("html2pdf.js")).default;
+    const { options, filename } = pdfOptionsFor(data.invoice);
+    const blob: Blob = await html2pdf().set(options).from(printRef.current).outputPdf("blob");
+    const buf = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
+    }
+    return { base64: btoa(binary), filename };
   }
 
   if (isLoading || !data) {
@@ -354,18 +389,25 @@ function InvoiceDetail({ id, onBack }: { id: number; onBack: () => void }) {
           <ArrowLeft className="w-4 h-4 mr-1.5" /> Back to Invoices
         </Button>
         <div className="flex items-center gap-2">
-          {invoice.status === "Draft" && (
-            <Button variant="outline" onClick={() => markSent.mutate()} disabled={markSent.isPending} data-testid="button-mark-sent">
-              <Send className="w-4 h-4 mr-1.5" />
-              {markSent.isPending ? "Saving…" : "Mark as Sent"}
-            </Button>
-          )}
+          <Button variant="outline" onClick={() => setEmailOpen(true)} data-testid="button-email-invoice">
+            <Mail className="w-4 h-4 mr-1.5" />
+            Email Invoice
+          </Button>
           <Button onClick={handleDownloadPdf} disabled={downloading} data-testid="button-download-pdf">
             <Download className="w-4 h-4 mr-1.5" />
             {downloading ? "Generating…" : "Download PDF"}
           </Button>
         </div>
       </div>
+
+      {invoice.sentAt && (
+        <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-2 print:hidden" data-testid="banner-invoice-sent">
+          <Send className="w-3.5 h-3.5" />
+          <span>
+            Emailed {invoice.sentTo ? <>to <span className="font-medium">{invoice.sentTo}</span></> : null} on {fmtDateTime(invoice.sentAt)}
+          </span>
+        </div>
+      )}
 
       <Card className="p-0 overflow-hidden">
         <div ref={printRef} className="bg-white p-10" data-testid="invoice-printable">
@@ -454,6 +496,161 @@ function InvoiceDetail({ id, onBack }: { id: number; onBack: () => void }) {
           )}
         </div>
       </Card>
+
+      <EmailInvoiceDialog
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        invoice={invoice}
+        clinic={clinic}
+        generatePdfBase64={generatePdfBase64}
+      />
     </div>
+  );
+}
+
+function EmailInvoiceDialog({
+  open,
+  onClose,
+  invoice,
+  clinic,
+  generatePdfBase64,
+}: {
+  open: boolean;
+  onClose: () => void;
+  invoice: Invoice;
+  clinic: ClinicProfile;
+  generatePdfBase64: () => Promise<{ base64: string; filename: string }>;
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const defaultTo = clinic.billingContactEmail ?? "";
+  const defaultSubject = `Invoice ${invoice.invoiceNumber} from ${clinic.name}`;
+  const defaultMessage =
+    `Hello,\n\n` +
+    `Please find attached invoice ${invoice.invoiceNumber} from ${clinic.name} ` +
+    `for services dated ${fmtDate(invoice.invoiceDate)}.\n\n` +
+    `Total amount due: $${parseFloat(invoice.totalBalance || "0").toFixed(2)}.\n\n` +
+    `Please reply to this email with any questions.\n\n` +
+    `Thank you,\nBilling Team`;
+
+  const [to, setTo] = useState(defaultTo);
+  const [cc, setCc] = useState("");
+  const [subject, setSubject] = useState(defaultSubject);
+  const [message, setMessage] = useState(defaultMessage);
+
+  // Reset fields each time the dialog reopens for a given invoice.
+  useEffect(() => {
+    if (open) {
+      setTo(defaultTo);
+      setCc("");
+      setSubject(defaultSubject);
+      setMessage(defaultMessage);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, invoice.id]);
+
+  function splitAddresses(input: string): string[] {
+    return input
+      .split(/[,;\n]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+
+  const send = useMutation({
+    mutationFn: async () => {
+      const toList = splitAddresses(to);
+      const ccList = splitAddresses(cc);
+      if (toList.length === 0) throw new Error("At least one recipient is required.");
+
+      const { base64, filename } = await generatePdfBase64();
+      const res = await apiRequest("POST", `/api/invoices/${invoice.id}/send-email`, {
+        to: toList,
+        cc: ccList,
+        subject,
+        message,
+        pdfBase64: base64,
+        pdfFilename: filename,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices", invoice.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      toast({ title: "Invoice emailed", description: `Sent to ${to}` });
+      onClose();
+    },
+    onError: (e: Error) =>
+      toast({ title: "Failed to send invoice", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg" data-testid="dialog-email-invoice">
+        <DialogHeader>
+          <DialogTitle>Email Invoice {invoice.invoiceNumber}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div>
+            <Label htmlFor="email-to">To <span className="text-slate-400 text-xs">(comma-separated)</span></Label>
+            <Input
+              id="email-to"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              placeholder="billing@clinic.com"
+              data-testid="input-email-to"
+            />
+            {!clinic.billingContactEmail && (
+              <p className="text-xs text-slate-400 mt-1">No billing contact on file for this clinic — enter one above.</p>
+            )}
+          </div>
+          <div>
+            <Label htmlFor="email-cc">CC <span className="text-slate-400 text-xs">(optional)</span></Label>
+            <Input
+              id="email-cc"
+              value={cc}
+              onChange={(e) => setCc(e.target.value)}
+              placeholder=""
+              data-testid="input-email-cc"
+            />
+          </div>
+          <div>
+            <Label htmlFor="email-subject">Subject</Label>
+            <Input
+              id="email-subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              data-testid="input-email-subject"
+            />
+          </div>
+          <div>
+            <Label htmlFor="email-message">Message</Label>
+            <Textarea
+              id="email-message"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              rows={8}
+              data-testid="input-email-message"
+            />
+          </div>
+          <p className="text-xs text-slate-500">
+            The invoice PDF will be attached automatically. Sending will mark this invoice as Sent.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={send.isPending} data-testid="button-cancel-email">
+            Cancel
+          </Button>
+          <Button
+            onClick={() => send.mutate()}
+            disabled={send.isPending || !to.trim() || !subject.trim() || !message.trim()}
+            data-testid="button-send-email"
+          >
+            <Send className="w-4 h-4 mr-1.5" />
+            {send.isPending ? "Sending…" : "Send Email"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
