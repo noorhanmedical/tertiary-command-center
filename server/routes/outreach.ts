@@ -1,12 +1,34 @@
 import type { Express, Request } from "express";
 import { storage } from "../storage";
+import { db } from "../db";
 import { VALID_FACILITIES } from "./helpers";
 import {
   insertOutreachSchedulerSchema,
   insertOutreachCallSchema,
+  patientScreenings,
+  screeningBatches,
+  outreachSchedulers,
   type OutreachCallOutcome,
 } from "../../shared/schema";
+import { eq } from "drizzle-orm";
 import { buildOutreachDashboard } from "../services/outreachService";
+
+// Look up the user_id of the scheduler currently assigned to a given
+// patient screening (via batch.assigned_scheduler_id). Returns null when
+// the patient is unassigned, the scheduler row has no user mapping, or
+// the patient does not exist.
+async function getAssignedSchedulerUserIdForPatient(
+  patientScreeningId: number,
+): Promise<string | null> {
+  const rows = await db
+    .select({ userId: outreachSchedulers.userId })
+    .from(patientScreenings)
+    .innerJoin(screeningBatches, eq(patientScreenings.batchId, screeningBatches.id))
+    .leftJoin(outreachSchedulers, eq(screeningBatches.assignedSchedulerId, outreachSchedulers.id))
+    .where(eq(patientScreenings.id, patientScreeningId))
+    .limit(1);
+  return rows[0]?.userId ?? null;
+}
 
 // Map a call outcome to the denormalized appointmentStatus bucket on
 // patient_screenings. Manual booking still owns the canonical "scheduled"
@@ -128,9 +150,25 @@ export function registerOutreachRoutes(app: Express) {
       const attemptNumber = parsed.data.attemptNumber ?? prior.length + 1;
       const desiredStatus = deriveAppointmentStatus(parsed.data.outcome);
 
-      // Authorization: only admins may attribute a call to another scheduler.
-      // Non-admins always get their own session id, regardless of body.
+      // Authorization:
+      //   • Admins may write any disposition for any patient and may attribute
+      //     the call to any scheduler (via body.schedulerUserId).
+      //   • Non-admins must be the scheduler currently assigned to this
+      //     patient's batch. They cannot impersonate another scheduler — their
+      //     attribution is always the session user.
+      //   • Patients with no assigned scheduler are admin-only to log against,
+      //     to avoid drive-by disposition writes from any team member.
       const isAdmin = sessionRole(req) === "admin";
+      if (!isAdmin) {
+        const assignedUserId = await getAssignedSchedulerUserIdForPatient(
+          parsed.data.patientScreeningId,
+        );
+        if (!assignedUserId || assignedUserId !== userId) {
+          return res
+            .status(403)
+            .json({ error: "Not authorized to log calls for this patient" });
+        }
+      }
       const attributedScheduler =
         isAdmin && parsed.data.schedulerUserId
           ? parsed.data.schedulerUserId
@@ -194,7 +232,8 @@ export function registerOutreachRoutes(app: Express) {
       if (!sessionId) return res.status(401).json({ error: "Not authenticated" });
       // Only admins may query another scheduler's calls; everyone else is
       // forced to their own session id (prevents cross-user PII exposure).
-      const requested = String(req.query.schedulerUserId ?? "");
+      // Spec uses `schedulerId`; we also accept `schedulerUserId` for backward compat.
+      const requested = String(req.query.schedulerId ?? req.query.schedulerUserId ?? "");
       const isAdmin = sessionRole(req) === "admin";
       const userId = (isAdmin && requested) ? requested : sessionId;
       const today = new Date().toISOString().slice(0, 10);

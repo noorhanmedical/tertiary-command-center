@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS outreach_calls (
   notes TEXT,
   callback_at TIMESTAMP,
   attempt_number INTEGER NOT NULL DEFAULT 1,
+  duration_seconds INTEGER,
   started_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 

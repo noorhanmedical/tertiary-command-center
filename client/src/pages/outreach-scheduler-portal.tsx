@@ -992,16 +992,14 @@ export default function OutreachSchedulerPortalPage() {
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                             <span className="inline-flex items-center gap-0.5"><Building2 className="h-3 w-3" />{item.facility}</span>
                             <span>·</span>
-                            <span
+                            <a
+                              href={`tel:${digitsOnly(item.phoneNumber)}`}
+                              onClick={(e) => e.stopPropagation()}
                               className="inline-flex items-center gap-0.5 text-blue-600 hover:underline"
                               data-testid={`portal-tel-${item.patientId}`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                window.location.href = `tel:${digitsOnly(item.phoneNumber)}`;
-                              }}
                             >
                               <Phone className="h-3 w-3" />{item.phoneNumber}
-                            </span>
+                            </a>
                             {item.insurance && (
                               <>
                                 <span>·</span>
