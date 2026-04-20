@@ -23,9 +23,9 @@
   --sidebar-accent: 238 100% 97%;
   --sidebar-accent-foreground: 238 100% 28%;
   --sidebar-ring: 212 72% 40%;
-  --popover: 210 30% 94%;
+  --popover: 0 0% 100%;
   --popover-foreground: 212 30% 12%;
-  --popover-border: 210 28% 84%;
+  --popover-border: 210 28% 88%;
   --primary: 212 72% 40%;
   --primary-foreground: 210 100% 98%;
   --secondary: 210 28% 85%;
@@ -180,7 +180,7 @@
 
 @layer components {
   .glass-tile {
-    background: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.90);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     border: 1px solid rgba(255, 255, 255, 0.6);
