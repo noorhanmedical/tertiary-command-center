@@ -155,7 +155,7 @@ export default function OutreachPage() {
 
         {/* Compact scheduler card grid */}
         {isLoading ? (
-          <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(200px,240px))]">
             {[1, 2, 3, 4].map((i) => (
               <div key={i} className="h-40 animate-pulse rounded-2xl bg-white/60" />
             ))}
@@ -166,7 +166,7 @@ export default function OutreachPage() {
             <Link href="/settings" className="text-blue-600 underline underline-offset-2">Settings</Link>.
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(200px,240px))]">
             {schedulerCards.map((card) => (
               <SchedulerTileCard key={card.id} card={card} />
             ))}
