@@ -10,6 +10,7 @@ import {
   uploadedDocuments,
   ancillaryAppointments,
   outreachSchedulers,
+  ptoRequests,
   analysisJobs,
   plexusProjects,
   plexusTasks,
@@ -36,6 +37,8 @@ import {
   type InsertAncillaryAppointment,
   type OutreachScheduler,
   type InsertOutreachScheduler,
+  type PtoRequest,
+  type InsertPtoRequest,
   type AnalysisJob,
   type InsertAnalysisJob,
   type PlexusProject,
@@ -214,6 +217,13 @@ export interface IStorage {
   createOutreachScheduler(record: InsertOutreachScheduler): Promise<OutreachScheduler>;
   updateOutreachScheduler(id: number, updates: Partial<InsertOutreachScheduler>): Promise<OutreachScheduler | undefined>;
   deleteOutreachScheduler(id: number): Promise<OutreachScheduler | undefined>;
+
+  // ── PTO Requests ─────────────────────────────────────────────────────────
+  createPtoRequest(record: InsertPtoRequest): Promise<PtoRequest>;
+  getPtoRequests(filters?: { userId?: string; status?: string; fromDate?: string; toDate?: string }): Promise<PtoRequest[]>;
+  getPtoRequest(id: number): Promise<PtoRequest | undefined>;
+  reviewPtoRequest(id: number, status: "approved" | "denied", reviewedBy: string): Promise<PtoRequest | undefined>;
+  deletePtoRequest(id: number): Promise<void>;
 
   createAnalysisJob(record: InsertAnalysisJob): Promise<AnalysisJob>;
   updateAnalysisJob(id: number, updates: Partial<InsertAnalysisJob>): Promise<AnalysisJob | undefined>;
@@ -905,6 +915,45 @@ export class DatabaseStorage implements IStorage {
   async deleteOutreachScheduler(id: number): Promise<OutreachScheduler | undefined> {
     const [deleted] = await db.delete(outreachSchedulers).where(eq(outreachSchedulers.id, id)).returning();
     return deleted;
+  }
+
+  // ── PTO Requests ─────────────────────────────────────────────────────────
+  async createPtoRequest(record: InsertPtoRequest): Promise<PtoRequest> {
+    const [created] = await db.insert(ptoRequests).values({
+      userId: record.userId,
+      startDate: record.startDate,
+      endDate: record.endDate,
+      note: record.note ?? null,
+    }).returning();
+    return created;
+  }
+
+  async getPtoRequests(filters: { userId?: string; status?: string; fromDate?: string; toDate?: string } = {}): Promise<PtoRequest[]> {
+    const conditions = [];
+    if (filters.userId) conditions.push(eq(ptoRequests.userId, filters.userId));
+    if (filters.status) conditions.push(eq(ptoRequests.status, filters.status));
+    if (filters.fromDate) conditions.push(gte(ptoRequests.endDate, filters.fromDate));
+    if (filters.toDate) conditions.push(lte(ptoRequests.startDate, filters.toDate));
+    return db.select().from(ptoRequests)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(ptoRequests.createdAt));
+  }
+
+  async getPtoRequest(id: number): Promise<PtoRequest | undefined> {
+    const [r] = await db.select().from(ptoRequests).where(eq(ptoRequests.id, id));
+    return r;
+  }
+
+  async reviewPtoRequest(id: number, status: "approved" | "denied", reviewedBy: string): Promise<PtoRequest | undefined> {
+    const [updated] = await db.update(ptoRequests)
+      .set({ status, reviewedBy, reviewedAt: new Date() })
+      .where(eq(ptoRequests.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deletePtoRequest(id: number): Promise<void> {
+    await db.delete(ptoRequests).where(eq(ptoRequests.id, id));
   }
 
   async createAnalysisJob(record: InsertAnalysisJob): Promise<AnalysisJob> {

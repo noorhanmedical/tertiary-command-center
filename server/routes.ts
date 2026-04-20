@@ -11,6 +11,7 @@ import { registerBatchRoutes } from "./routes/batches";
 import { registerPatientRoutes } from "./routes/patients";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerOutreachRoutes } from "./routes/outreach";
+import { registerPtoRoutes } from "./routes/pto";
 import { registerSettingsRoutes } from "./routes/settings";
 import { registerAppointmentRoutes } from "./routes/appointments";
 import { registerAdminRoutes } from "./routes/admin";
@@ -180,6 +181,7 @@ export async function registerRoutes(
   registerPatientRoutes(app, { backgroundSyncPatients });
   registerBillingRoutes(app, { backgroundSyncBilling });
   registerOutreachRoutes(app);
+  registerPtoRoutes(app);
   registerSettingsRoutes(app);
   registerAppointmentRoutes(app);
   registerAdminRoutes(app);
