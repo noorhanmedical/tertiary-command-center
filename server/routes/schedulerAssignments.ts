@@ -19,17 +19,30 @@ function todayIso(): string {
 }
 
 export function registerSchedulerAssignmentRoutes(app: Express) {
-  // GET active assignments — ?schedulerId, ?asOfDate (defaults today)
+  // GET active assignments — ?schedulerId, ?asOfDate (defaults today).
+  // Non-admin scheduler accounts can only read their OWN active assignments;
+  // they cannot enumerate the team. Admins may pass ?schedulerId or omit it
+  // to see all rows for the day.
   app.get("/api/scheduler-assignments", async (req, res) => {
     try {
-      if (!sessionUserId(req)) return res.status(401).json({ error: "Not authenticated" });
+      const userId = sessionUserId(req);
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const schedulerIdRaw = req.query.schedulerId;
       const asOfDate = String(req.query.asOfDate ?? todayIso());
       const filters: { schedulerId?: number; asOfDate?: string } = { asOfDate };
+      const isAdmin = sessionRole(req) === "admin";
       if (schedulerIdRaw != null && schedulerIdRaw !== "") {
         const n = parseInt(String(schedulerIdRaw), 10);
         if (!Number.isFinite(n)) return res.status(400).json({ error: "Invalid schedulerId" });
         filters.schedulerId = n;
+      }
+      if (!isAdmin) {
+        // Resolve the requesting user's scheduler row and lock the filter
+        // to that scheduler id, regardless of any schedulerId query arg.
+        const allSchedulers = await storage.getOutreachSchedulers();
+        const mine = allSchedulers.find((s) => s.userId === userId);
+        if (!mine) return res.json([]);
+        filters.schedulerId = mine.id;
       }
       const rows = await storage.listActiveSchedulerAssignments(filters);
       res.json(rows);
@@ -147,6 +160,17 @@ export function registerSchedulerAssignmentRoutes(app: Express) {
         if (a.source === "reassigned") cur.reassignedIn += 1;
         grouped.set(a.schedulerId, cur);
       }
+      // Last-activity per scheduler (most recent call's startedAt today).
+      const lastActivity = new Map<string, string>();
+      await Promise.all(
+        schedulers
+          .filter((sc) => !!sc.userId)
+          .map(async (sc) => {
+            const calls = await storage.listOutreachCallsForSchedulerToday(sc.userId!, asOfDate);
+            const latest = calls[0];
+            if (latest) lastActivity.set(sc.userId!, String(latest.startedAt));
+          }),
+      );
       const rows = schedulers.map((sc) => ({
         id: sc.id,
         name: sc.name,
@@ -156,6 +180,7 @@ export function registerSchedulerAssignmentRoutes(app: Express) {
         onPtoToday: !!sc.userId && onPto.has(sc.userId),
         activeCount: grouped.get(sc.id)?.active ?? 0,
         reassignedInCount: grouped.get(sc.id)?.reassignedIn ?? 0,
+        lastCallAt: sc.userId ? lastActivity.get(sc.userId) ?? null : null,
       }));
       res.json({ asOfDate, rows });
     } catch (err: any) {

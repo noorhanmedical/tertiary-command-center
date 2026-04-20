@@ -86,18 +86,30 @@ export function buildAssignmentsForPool(
 export function rankCandidates(
   patients: { patient: PatientScreening; scheduleDate: string | null; facility: string }[],
   asOfDate: string,
+  lastContactByPatient: Map<number, number> = new Map(), // pid -> epoch ms
 ): EligibleCandidate[] {
+  // Tier-2 oldest-contact-first tiebreak: patients who have not been called
+  // recently (or ever) move ahead of those just contacted. Tier-1 unchanged.
+  // Age is computed relative to asOfDate midnight (UTC) — NOT Date.now() —
+  // so backfill rebuilds for past or future dates produce stable orderings.
+  const asOfMs = new Date(`${asOfDate}T00:00:00Z`).getTime();
   return patients
-    .map((row) => ({
-      ...row,
-      _key: priorityKey({
+    .map((row) => {
+      const k = priorityKey({
         patientType: row.patient.patientType,
         scheduleDate: row.scheduleDate,
         insurance: row.patient.insurance,
         qualifyingTests: row.patient.qualifyingTests,
         asOfDate,
-      }).sort,
-    }))
+      });
+      let sort = k.sort;
+      if (k.tier === 2) {
+        const last = lastContactByPatient.get(row.patient.id) ?? 0;
+        const ageDays = last === 0 ? 9999 : Math.max(0, Math.round((asOfMs - last) / 86_400_000));
+        sort = [k.sort[0], k.sort[1], k.sort[2], -ageDays];
+      }
+      return { ...row, _key: sort };
+    })
     .sort((a, b) => comparePriority(a._key, b._key))
     .map(({ _key, ...rest }) => rest);
 }
@@ -125,23 +137,42 @@ export async function activeSchedulersForToday(
 }
 
 // ── Eligibility gather ────────────────────────────────────────────────────
+const VISIT_WINDOW_DAYS = Number(process.env.CALL_LIST_VISIT_WINDOW_DAYS ?? 30);
+
+function withinVisitWindow(scheduleDate: string | null, asOfDate: string): boolean {
+  if (!scheduleDate) return true; // outreach-only patients have no scheduleDate
+  const d = scheduleDate.slice(0, 10);
+  if (d < asOfDate) return false; // visit already passed — Tier-2 path uses outreach
+  const start = new Date(`${asOfDate}T00:00:00Z`).getTime();
+  const dest = new Date(`${d}T00:00:00Z`).getTime();
+  if (isNaN(start) || isNaN(dest)) return false;
+  const diffDays = Math.round((dest - start) / 86_400_000);
+  return diffDays <= VISIT_WINDOW_DAYS;
+}
+
 async function gatherEligibleForFacility(
   storage: IStorage,
   facility: string,
   asOfDate: string,
 ): Promise<EligibleCandidate[]> {
-  // Visit-tier patients = anyone in a batch on or after today for this facility.
-  // Outreach-tier patients = anyone with patientType=outreach for this facility.
-  // We pull both and let the priority key separate them.
+  // Visit-tier patients = anyone in a batch within the next 30 days for
+  // this facility. Outreach-tier patients (patientType='outreach') bypass
+  // the visit window — they have no upcoming visit anchoring them to a
+  // date and should remain eligible until contacted/completed.
   const batches = await storage.getAllScreeningBatches();
   const facilityBatches: ScreeningBatch[] = batches.filter((b) => (b.facility ?? "") === facility);
 
   const candidates: EligibleCandidate[] = [];
   for (const batch of facilityBatches) {
+    const inVisitWindow = withinVisitWindow(batch.scheduleDate ?? null, asOfDate);
     const patients = await storage.getPatientScreeningsByBatch(batch.id);
     for (const p of patients) {
       const e = isEligibleForCallList(p);
       if (!e.eligible) continue;
+      // Visit-type patients are gated by the 30-day window; outreach-type
+      // are always eligible regardless of the batch's schedule date.
+      const isOutreach = (p.patientType ?? "").toLowerCase() === "outreach";
+      if (!isOutreach && !inVisitWindow) continue;
       candidates.push({ patient: p, facility, scheduleDate: batch.scheduleDate ?? null });
     }
   }
@@ -209,7 +240,19 @@ export async function buildDailyAssignments(
   const remainingPool = eligibleAll.filter(
     (c) => !keptPatients.has(c.patient.id) && !patientsAssignedElsewhere.has(c.patient.id),
   );
-  const ranked = rankCandidates(remainingPool, asOfDate);
+  // Pull last-contact timestamps for the remaining-pool patients so the
+  // Tier-2 ranker can prefer oldest-untouched first.
+  const lastContact = new Map<number, number>();
+  await Promise.all(
+    remainingPool.map(async (c) => {
+      const last = await storage.latestOutreachCallForPatient(c.patient.id);
+      if (last) {
+        const t = new Date(last.startedAt as unknown as string).getTime();
+        if (!isNaN(t)) lastContact.set(c.patient.id, t);
+      }
+    }),
+  );
+  const ranked = rankCandidates(remainingPool, asOfDate, lastContact);
 
   // Subtract kept-load from each scheduler's capacity before greedy fill.
   const adjusted = schedulers.map((sc) => {
@@ -221,15 +264,12 @@ export async function buildDailyAssignments(
 
   const drafts = buildAssignmentsForPool(ranked, adjusted, asOfDate, baseDailyTarget);
 
-  if (release.length > 0) {
-    await storage.releaseSchedulerAssignmentsByIds(
-      release.map((r) => r.id),
-      "rebuild:patient_or_scheduler_no_longer_active",
-    );
-  }
-  if (drafts.length > 0) {
-    await storage.bulkCreateSchedulerAssignments(drafts);
-  }
+  // Single transaction — release+create either both apply or neither does.
+  await storage.applySchedulerAssignmentDiff(
+    release.map((r) => r.id),
+    drafts,
+    "rebuild:patient_or_scheduler_no_longer_active",
+  );
 
   return {
     facility,

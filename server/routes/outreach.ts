@@ -160,10 +160,28 @@ export function registerOutreachRoutes(app: Express) {
       //     to avoid drive-by disposition writes from any team member.
       const isAdmin = sessionRole(req) === "admin";
       if (!isAdmin) {
+        // Allow if EITHER the legacy batch.assigned_scheduler_id maps to me
+        // OR an active scheduler_assignment row places the patient on my
+        // queue today (covers reassignments from PTO/absence redistribution
+        // — without this, redistributed schedulers would be blocked from
+        // logging calls for patients they now own).
         const assignedUserId = await getAssignedSchedulerUserIdForPatient(
           parsed.data.patientScreeningId,
         );
-        if (!assignedUserId || assignedUserId !== userId) {
+        let allowed = !!assignedUserId && assignedUserId === userId;
+        if (!allowed) {
+          const todayIso = new Date().toISOString().slice(0, 10);
+          const a = await storage.getActiveAssignmentForPatientOnDate(
+            parsed.data.patientScreeningId,
+            todayIso,
+          );
+          if (a) {
+            const allSchedulers = await storage.getOutreachSchedulers();
+            const sc = allSchedulers.find((s) => s.id === a.schedulerId);
+            if (sc?.userId && sc.userId === userId) allowed = true;
+          }
+        }
+        if (!allowed) {
           return res
             .status(403)
             .json({ error: "Not authorized to log calls for this patient" });

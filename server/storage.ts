@@ -256,8 +256,14 @@ export interface IStorage {
   // ── Scheduler Assignments ─────────────────────────────────────────────────
   createSchedulerAssignment(record: InsertSchedulerAssignment): Promise<SchedulerAssignment>;
   bulkCreateSchedulerAssignments(records: InsertSchedulerAssignment[]): Promise<SchedulerAssignment[]>;
+  applySchedulerAssignmentDiff(
+    releaseIds: number[],
+    drafts: InsertSchedulerAssignment[],
+    reason: string,
+  ): Promise<{ released: SchedulerAssignment[]; created: SchedulerAssignment[] }>;
   listActiveSchedulerAssignments(filters?: { schedulerId?: number; asOfDate?: string }): Promise<SchedulerAssignment[]>;
   getActiveAssignmentForPatient(patientScreeningId: number): Promise<SchedulerAssignment | undefined>;
+  getActiveAssignmentForPatientOnDate(patientScreeningId: number, asOfDate: string): Promise<SchedulerAssignment | undefined>;
   releaseSchedulerAssignmentsForScheduler(schedulerId: number, asOfDate: string, reason: string): Promise<SchedulerAssignment[]>;
   releaseSchedulerAssignmentsByIds(ids: number[], reason: string): Promise<SchedulerAssignment[]>;
   reassignSchedulerAssignment(id: number, newSchedulerId: number, reason: string): Promise<SchedulerAssignment | undefined>;
@@ -1096,6 +1102,32 @@ export class DatabaseStorage implements IStorage {
     return db.insert(schedulerAssignments).values(records).returning();
   }
 
+  // Atomic apply — used by buildDailyAssignments. Wraps the release of
+  // outdated active rows AND the insertion of new drafts in a single DB
+  // transaction so a partial write cannot leave the day's call list in an
+  // inconsistent state if the process crashes mid-build.
+  async applySchedulerAssignmentDiff(
+    releaseIds: number[],
+    drafts: InsertSchedulerAssignment[],
+    reason: string,
+  ): Promise<{ released: SchedulerAssignment[]; created: SchedulerAssignment[] }> {
+    if (releaseIds.length === 0 && drafts.length === 0) {
+      return { released: [], created: [] };
+    }
+    return db.transaction(async (tx) => {
+      const released = releaseIds.length === 0 ? [] : await tx.update(schedulerAssignments)
+        .set({ status: "released", reason })
+        .where(and(
+          inArray(schedulerAssignments.id, releaseIds),
+          eq(schedulerAssignments.status, "active"),
+        ))
+        .returning();
+      const created = drafts.length === 0 ? [] :
+        await tx.insert(schedulerAssignments).values(drafts).returning();
+      return { released, created };
+    });
+  }
+
   async listActiveSchedulerAssignments(filters: { schedulerId?: number; asOfDate?: string } = {}): Promise<SchedulerAssignment[]> {
     const conds = [eq(schedulerAssignments.status, "active")];
     if (filters.schedulerId != null) conds.push(eq(schedulerAssignments.schedulerId, filters.schedulerId));
@@ -1109,6 +1141,21 @@ export class DatabaseStorage implements IStorage {
     const [row] = await db.select().from(schedulerAssignments).where(and(
       eq(schedulerAssignments.patientScreeningId, patientScreeningId),
       eq(schedulerAssignments.status, "active"),
+    )).limit(1);
+    return row;
+  }
+
+  // Date-scoped lookup used by access-control checks (e.g. outreach call
+  // logging) so authorization can never be granted/denied based on a stale
+  // active row from a prior day's call list.
+  async getActiveAssignmentForPatientOnDate(
+    patientScreeningId: number,
+    asOfDate: string,
+  ): Promise<SchedulerAssignment | undefined> {
+    const [row] = await db.select().from(schedulerAssignments).where(and(
+      eq(schedulerAssignments.patientScreeningId, patientScreeningId),
+      eq(schedulerAssignments.status, "active"),
+      eq(schedulerAssignments.asOfDate, asOfDate),
     )).limit(1);
     return row;
   }
