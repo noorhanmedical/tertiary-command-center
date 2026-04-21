@@ -2124,78 +2124,8 @@ function AiBar({
   );
 }
 
-function ToolsPanel(props: {
-  facility: string;
-  todayAppointments: AncillaryAppointment[];
-  onCancelAppointment: (a: AncillaryAppointment) => void;
-  selectedItem: OutreachCallItem | null;
-  bookingPanelOpen: boolean;
-  setBookingPanelOpen: (v: boolean | ((p: boolean) => boolean)) => void;
-  calYear: number;
-  calMonth: number;
-  setCalMonth: (m: number | ((p: number) => number)) => void;
-  setCalYear: (y: number | ((p: number) => number)) => void;
-  selectedDay: number | null;
-  setSelectedDay: (d: number | null) => void;
-  bookedDates: Set<string>;
-  appointments: AncillaryAppointment[];
-  selectedDateStr: string | null;
-  setBookSlot: (s: BookingSlot | null) => void;
-  setBookName: (n: string) => void;
-  setBookLinkedPatient: (p: OutreachCallItem | null) => void;
-  setBookPatientSearch: (s: string) => void;
-  setCancelTarget: (a: AncillaryAppointment | null) => void;
-  scrollToSlot: { time: string; testType: string } | null;
-  expandedSection?: "calendar" | "email" | "materials" | "tasks" | "currentCall" | null;
-  setExpandedSection?: (s: "calendar" | "email" | "materials" | "tasks" | "currentCall" | null) => void;
-}) {
-  const {
-    facility, todayAppointments, selectedItem, bookingPanelOpen, setBookingPanelOpen,
-    calYear, calMonth, setCalMonth, setCalYear, selectedDay, setSelectedDay,
-      appointments, setBookSlot, setBookName,
-      setBookLinkedPatient, setBookPatientSearch,
-      setExpandedSection,
-    } = props;
-
-    function handleConfirmSlot(slot: BookingSlot) {
-      setBookSlot(slot);
-      if (selectedItem) {
-        setBookLinkedPatient(selectedItem);
-        setBookName("");
-        setBookPatientSearch("");
-      }
-    }
-
-    return (
-      <div data-testid="portal-tools-panel" className="contents">
-        {/* Top half — Tri-Clinic monthly calendar */}
-        <TriClinicCalendar
-          facility={facility}
-          appointments={appointments}
-          selectedItem={selectedItem}
-          calYear={calYear}
-          calMonth={calMonth}
-          setCalMonth={setCalMonth}
-          setCalYear={setCalYear}
-          selectedDay={selectedDay}
-          setSelectedDay={setSelectedDay}
-          onConfirmSlot={handleConfirmSlot}
-          onExpand={setExpandedSection ? () => setExpandedSection("calendar") : undefined}
-        />
-
-        {/* Bottom half — Communication hub */}
-        <CommunicationHub
-          selectedItem={selectedItem}
-          facility={facility}
-          onExpandEmail={setExpandedSection ? () => setExpandedSection("email") : undefined}
-          onExpandMaterials={setExpandedSection ? () => setExpandedSection("materials") : undefined}
-        />
-      </div>
-    );
-  }
-
-  // ─── Tri-Clinic Calendar ───────────────────────────────────────────────────
-  const CLINIC_PALETTE = [
+// ─── Tri-Clinic Calendar ───────────────────────────────────────────────────
+const CLINIC_PALETTE = [
     { dot: "bg-blue-500",   ring: "ring-blue-400",   text: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-300" },
     { dot: "bg-violet-500", ring: "ring-violet-400", text: "text-violet-700", bg: "bg-violet-50", border: "border-violet-300" },
     { dot: "bg-amber-500",  ring: "ring-amber-400",  text: "text-amber-700",  bg: "bg-amber-50",  border: "border-amber-300" },
