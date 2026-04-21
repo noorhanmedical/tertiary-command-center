@@ -14,6 +14,7 @@
 
 import { startAbsenceWatcher, stopAbsenceWatcher } from "./services/absenceWatcher";
 import { startMorningRebuildScheduler, stopMorningRebuildScheduler } from "./services/morningRebuildScheduler";
+import { startInvoiceReminderWatcher, stopInvoiceReminderWatcher } from "./services/invoiceReminderService";
 
 let started = false;
 
@@ -22,6 +23,7 @@ export function startBackgroundServices(): void {
   started = true;
   startAbsenceWatcher();
   startMorningRebuildScheduler();
+  startInvoiceReminderWatcher();
 }
 
 export async function stopBackgroundServices(): Promise<void> {
@@ -29,4 +31,5 @@ export async function stopBackgroundServices(): Promise<void> {
   started = false;
   stopAbsenceWatcher();
   stopMorningRebuildScheduler();
+  stopInvoiceReminderWatcher();
 }

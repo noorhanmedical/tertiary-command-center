@@ -259,6 +259,7 @@ export interface IStorage {
   ): Promise<Invoice>;
   updateInvoiceStatus(id: number, status: string): Promise<Invoice | undefined>;
   markInvoiceSent(id: number, sentTo: string): Promise<Invoice | undefined>;
+  markInvoiceReminded(id: number, when: Date): Promise<Invoice | undefined>;
   deleteInvoice(id: number): Promise<void>;
   getNextInvoiceNumber(): Promise<string>;
   getInvoicePayments(invoiceId: number): Promise<InvoicePayment[]>;
@@ -1012,6 +1013,14 @@ export class DatabaseStorage implements IStorage {
   async markInvoiceSent(id: number, sentTo: string): Promise<Invoice | undefined> {
     const [r] = await db.update(invoices)
       .set({ status: "Sent", sentTo, sentAt: new Date() })
+      .where(eq(invoices.id, id))
+      .returning();
+    return r;
+  }
+
+  async markInvoiceReminded(id: number, when: Date): Promise<Invoice | undefined> {
+    const [r] = await db.update(invoices)
+      .set({ lastRemindedAt: when })
       .where(eq(invoices.id, id))
       .returning();
     return r;

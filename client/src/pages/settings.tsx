@@ -14,6 +14,7 @@ import {
   X,
   Lock,
   HardDrive,
+  BellRing,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -227,6 +228,102 @@ function facilityColor(f: string) {
   if (f.includes("Spring")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
   if (f.includes("Veteran")) return "bg-violet-50 text-violet-700 border-violet-200";
   return "bg-blue-50 text-blue-700 border-blue-200";
+}
+
+function InvoiceReminderSettingsCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useQuery<{ thresholdDays: number; defaultThresholdDays: number }>({
+    queryKey: ["/api/settings/invoice-reminders"],
+  });
+  const [draft, setDraft] = useState<string>("");
+
+  useEffect(() => {
+    if (data?.thresholdDays != null) setDraft(String(data.thresholdDays));
+  }, [data?.thresholdDays]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (thresholdDays: number) => {
+      const res = await apiRequest("POST", "/api/settings/invoice-reminders", { thresholdDays });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/invoice-reminders"] });
+      toast({ title: "Reminder threshold saved" });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Failed to save", description: err.message, variant: "destructive" }),
+  });
+
+  const runMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/settings/invoice-reminders/run", {});
+      return res.json() as Promise<{ threshold: number; evaluated: number; reminded: number }>;
+    },
+    onSuccess: (summary) => {
+      toast({
+        title: "Reminder sweep complete",
+        description: `Evaluated ${summary.evaluated} overdue invoice(s), created ${summary.reminded} reminder task(s).`,
+      });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Reminder sweep failed", description: err.message, variant: "destructive" }),
+  });
+
+  const parsedDraft = parseInt(draft, 10);
+  const draftValid = Number.isFinite(parsedDraft) && parsedDraft >= 1 && parsedDraft <= 365;
+  const isDirty = draftValid && data && parsedDraft !== data.thresholdDays;
+
+  return (
+    <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+      <div className="mb-4 flex items-center gap-2">
+        <BellRing className="h-5 w-5 text-rose-600" />
+        <h2 className="text-lg font-semibold text-slate-900">Overdue Invoice Reminders</h2>
+      </div>
+      <p className="mb-3 text-sm text-slate-600">
+        Each morning, invoices in <em>Sent</em> or <em>Partially Paid</em> status with a non-zero
+        balance older than this many days create an urgent Plexus task for the billing team.
+        Each invoice is re-surfaced at most once per window.
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1">Threshold (days)</label>
+          <Input
+            type="number"
+            min={1}
+            max={365}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            disabled={isLoading}
+            className="h-9 w-32 rounded-xl"
+            data-testid="input-invoice-reminder-threshold"
+          />
+        </div>
+        <Button
+          onClick={() => draftValid && saveMutation.mutate(parsedDraft)}
+          disabled={!isDirty || saveMutation.isPending}
+          className="h-9 rounded-xl bg-rose-600 text-white hover:bg-rose-700"
+          data-testid="button-save-invoice-reminder-threshold"
+        >
+          {saveMutation.isPending ? "Saving…" : "Save threshold"}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => runMutation.mutate()}
+          disabled={runMutation.isPending}
+          className="h-9 rounded-xl"
+          data-testid="button-run-invoice-reminders"
+        >
+          {runMutation.isPending ? "Running…" : "Run reminder sweep now"}
+        </Button>
+      </div>
+      {data && (
+        <p className="mt-3 text-xs text-slate-500" data-testid="text-invoice-reminder-current">
+          Currently reminding on invoices ≥ {data.thresholdDays} day(s) old (default {data.defaultThresholdDays}).
+        </p>
+      )}
+    </Card>
+  );
 }
 
 function ChangePasswordCard() {
@@ -585,6 +682,9 @@ export default function SettingsPage() {
 
         {/* Call-list distribution */}
         <CallListDistributionCard />
+
+        {/* Overdue invoice reminders */}
+        <InvoiceReminderSettingsCard />
 
         {/* Change Password */}
         <ChangePasswordCard />

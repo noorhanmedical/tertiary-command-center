@@ -27,6 +27,7 @@ export const invoices = pgTable("invoices", {
   createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
   sentTo: text("sent_to"),
   sentAt: timestamp("sent_at"),
+  lastRemindedAt: timestamp("last_reminded_at"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_invoices_facility").on(table.facility),
