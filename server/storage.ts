@@ -1,187 +1,109 @@
-import { db } from "./db";
-import bcrypt from "bcryptjs";
-import { usersRepository } from "./repositories/users.repo";
-import { auditRepository } from "./repositories/audit.repo";
-import { ptoRepository } from "./repositories/pto.repo";
+/**
+ * Thin storage facade.
+ *
+ * Historically `storage.ts` was a 2,000-line god-object that held every DB
+ * call in the app. It has been split into per-domain repositories under
+ * `server/repositories/*.repo.ts`. This file now exists purely as a backwards-
+ * compatible delegating facade so existing route call-sites that do
+ * `storage.foo(...)` keep working.
+ *
+ * New code should import the relevant repository directly, e.g.:
+ *   import { invoicesRepository } from "./repositories/invoices.repo";
+ */
 import {
-  screeningBatches,
-  patientScreenings,
-  patientTestHistory,
-  patientReferenceData,
-  generatedNotes,
-  billingRecords,
-  invoices,
-  invoiceLineItems,
-  invoicePayments,
-  type Invoice,
-  type InsertInvoice,
-  type InvoiceLineItem,
-  type InsertInvoiceLineItem,
-  type InvoicePayment,
-  type InsertInvoicePayment,
-  uploadedDocuments,
-  ancillaryAppointments,
-  outreachSchedulers,
-  outreachCalls,
-  ptoRequests,
-  schedulerAssignments,
-  analysisJobs,
-  plexusProjects,
-  plexusTasks,
-  plexusTaskCollaborators,
-  plexusTaskMessages,
-  plexusTaskEvents,
-  plexusTaskReads,
-  auditLog,
-  marketingMaterials,
-  type MarketingMaterial,
-  type InsertMarketingMaterial,
-  documents,
-  documentSurfaceAssignments,
-  type Document,
-  type InsertDocument,
-  type DocumentSurfaceAssignment,
-  type DocumentSurface,
-  type DocumentKind,
-  type ScreeningBatch,
-  type InsertScreeningBatch,
-  type PatientScreening,
-  type InsertPatientScreening,
-  type PatientTestHistory,
-  type InsertTestHistory,
-  type PatientReference,
-  type InsertPatientReference,
-  type GeneratedNote,
-  type InsertGeneratedNote,
-  type BillingRecord,
-  type InsertBillingRecord,
-  type UploadedDocument,
-  type InsertUploadedDocument,
-  type AncillaryAppointment,
-  type InsertAncillaryAppointment,
-  type OutreachScheduler,
-  type InsertOutreachScheduler,
-  type OutreachCall,
-  type InsertOutreachCall,
-  type PtoRequest,
-  type InsertPtoRequest,
-  type SchedulerAssignment,
-  type InsertSchedulerAssignment,
-  type AnalysisJob,
-  type InsertAnalysisJob,
-  type PlexusProject,
-  type InsertPlexusProject,
-  type PlexusTask,
-  type InsertPlexusTask,
-  type PlexusTaskCollaborator,
-  type InsertPlexusTaskCollaborator,
-  type PlexusTaskMessage,
-  type InsertPlexusTaskMessage,
-  type PlexusTaskEvent,
-  type InsertPlexusTaskEvent,
-  type PlexusTaskRead,
-  type AuditLog,
-  type InsertAuditLog,
-  users,
-  type User,
-  type InsertUser,
+  usersRepository,
+  auditRepository,
+  ptoRepository,
+  screeningRepository,
+  patientHistoryRepository,
+  notesRepository,
+  billingRepository,
+  invoicesRepository,
+  uploadedDocumentsRepository,
+  appointmentsRepository,
+  outreachRepository,
+  schedulerAssignmentsRepository,
+  analysisJobsRepository,
+  plexusRepository,
+  marketingMaterialsRepository,
+  documentLibraryRepository,
+} from "./repositories";
+
+import type {
+  ScreeningBatch,
+  InsertScreeningBatch,
+  PatientScreening,
+  InsertPatientScreening,
+  PatientTestHistory,
+  InsertTestHistory,
+  PatientReference,
+  InsertPatientReference,
+  GeneratedNote,
+  InsertGeneratedNote,
+  BillingRecord,
+  InsertBillingRecord,
+  Invoice,
+  InsertInvoice,
+  InvoiceLineItem,
+  InsertInvoiceLineItem,
+  InvoicePayment,
+  InsertInvoicePayment,
+  UploadedDocument,
+  InsertUploadedDocument,
+  AncillaryAppointment,
+  InsertAncillaryAppointment,
+  OutreachScheduler,
+  InsertOutreachScheduler,
+  OutreachCall,
+  InsertOutreachCall,
+  PtoRequest,
+  InsertPtoRequest,
+  SchedulerAssignment,
+  InsertSchedulerAssignment,
+  AnalysisJob,
+  InsertAnalysisJob,
+  PlexusProject,
+  InsertPlexusProject,
+  PlexusTask,
+  InsertPlexusTask,
+  PlexusTaskCollaborator,
+  InsertPlexusTaskCollaborator,
+  PlexusTaskMessage,
+  InsertPlexusTaskMessage,
+  PlexusTaskEvent,
+  InsertPlexusTaskEvent,
+  AuditLog,
+  InsertAuditLog,
+  MarketingMaterial,
+  InsertMarketingMaterial,
+  Document,
+  InsertDocument,
+  DocumentSurfaceAssignment,
+  DocumentSurface,
+  DocumentKind,
+  User,
+  InsertUser,
 } from "@shared/schema";
-import { eq, desc, ilike, sql, and, gte, lte, asc, ne, inArray, or } from "drizzle-orm";
-import { recomputeInvoiceTotals } from "./lib/invoiceRecompute";
 
-type TxClient = Parameters<Parameters<typeof db.transaction>[0]>[0];
+// Re-export the patient-aggregate types from the screening repo so existing
+// imports `import { PatientRosterAggregateRow } from "@/storage"` keep working.
+export type {
+  PatientRosterAggregateRow,
+  PatientRosterAggregateFilters,
+  PatientRosterClinicTotal,
+  PatientRosterAggregateResult,
+  PatientCooldownClinicCount,
+  PatientGroupTotals,
+  UnmatchedHistoryReportRow,
+} from "./repositories/screening.repo";
 
-// SQL-aggregated row shapes used by the patient-database endpoints.
-// These let Postgres do the GROUP BY / JOIN work instead of pulling every
-// screening, history row, and generated-note row into the Node process.
-export type PatientRosterAggregateRow = {
-  representativeId: number;
-  batchId: number;
-  name: string;
-  dob: string | null;
-  age: number | null;
-  gender: string | null;
-  phoneNumber: string | null;
-  insurance: string | null;
-  clinic: string;
-  lastVisit: string | null;
-  screeningCount: number;
-  testCount: number;
-  generatedNoteCount: number;
-  cooldownActiveCount: number;
-  nextCooldownClearsAt: string | null;
-  daysUntilNextClear: number | null;
-};
-
-export type PatientRosterAggregateFilters = {
-  search?: string;
-  clinic?: string;
-  /** "1d" | "1w" | "1m" — only include patients with an active cooldown clearing within this window */
-  cooldownWindow?: string;
-  /** 1-indexed page number. Defaults to 1. */
-  page?: number;
-  /** Number of patients per page. Defaults to 100, capped at 500. */
-  pageSize?: number;
-};
-
-export type PatientRosterClinicTotal = {
-  clinic: string;
-  count: number;
-};
-
-export type PatientRosterAggregateResult = {
-  rows: PatientRosterAggregateRow[];
-  total: number;
-  clinicTotals: PatientRosterClinicTotal[];
-};
-
-export type PatientCooldownClinicCount = {
-  clinic: string;
-  oneDay: number;
-  oneWeek: number;
-  oneMonth: number;
-};
-
-export type PatientGroupTotals = { patients: number; clinics: number };
-
-export type UnmatchedHistoryReportRow = {
-  id: number;
-  patientName: string;
-  dob: string | null;
-  testName: string;
-  dateOfService: string;
-  clinic: string | null;
-};
-
-function formatDate(value: unknown): string | null {
-  if (value == null) return null;
-  if (value instanceof Date) {
-    if (isNaN(value.getTime())) return null;
-    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
-  }
-  const s = String(value);
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : s;
-}
-
-function parseTimeToMinutes(time: string | null | undefined): number {
-  if (!time) return Infinity;
-  const t = time.trim().toUpperCase();
-  const match12 = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
-  if (match12) {
-    let h = parseInt(match12[1], 10);
-    const m = parseInt(match12[2], 10);
-    const period = match12[3];
-    if (period === "AM") { if (h === 12) h = 0; }
-    else { if (h !== 12) h += 12; }
-    return h * 60 + m;
-  }
-  const match24 = t.match(/^(\d{1,2}):(\d{2})$/);
-  if (match24) {
-    return parseInt(match24[1], 10) * 60 + parseInt(match24[2], 10);
-  }
-  return Infinity;
-}
+import type {
+  PatientRosterAggregateFilters,
+  PatientRosterAggregateResult,
+  PatientCooldownClinicCount,
+  PatientGroupTotals,
+  UnmatchedHistoryReportRow,
+} from "./repositories/screening.repo";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -232,9 +154,6 @@ export interface IStorage {
   deleteGeneratedNotesByPatient(patientId: number): Promise<void>;
   getGeneratedNotesByPatient(patientId: number): Promise<GeneratedNote[]>;
 
-  // ── Patient-database aggregation (SQL GROUP BY name+dob, JOINs against
-  // test history and generated notes). These let the roster/cooldown
-  // endpoints scale without pulling whole tables into Node memory.
   getPatientRosterAggregates(filters?: PatientRosterAggregateFilters): Promise<PatientRosterAggregateResult>;
   getPatientCooldownDashboard(): Promise<{ totals: PatientGroupTotals; counts: { oneDay: number; oneWeek: number; oneMonth: number }; byClinic: PatientCooldownClinicCount[]; allClinics: string[] }>;
   getPatientHistoryImportReport(sampleLimit: number): Promise<{ totalHistoryRows: number; unmatchedCount: number; unmatched: UnmatchedHistoryReportRow[] }>;
@@ -256,14 +175,10 @@ export interface IStorage {
   updateBillingRecord(id: number, updates: Partial<InsertBillingRecord>): Promise<BillingRecord | undefined>;
   deleteBillingRecord(id: number): Promise<void>;
 
-  // ── Invoices ────────────────────────────────────────────────────────────
   getAllInvoices(): Promise<Invoice[]>;
   getInvoice(id: number): Promise<Invoice | undefined>;
   getInvoiceLineItems(invoiceId: number): Promise<InvoiceLineItem[]>;
-  createInvoiceWithLineItems(
-    invoice: InsertInvoice,
-    lineItems: Omit<InsertInvoiceLineItem, "invoiceId">[],
-  ): Promise<Invoice>;
+  createInvoiceWithLineItems(invoice: InsertInvoice, lineItems: Omit<InsertInvoiceLineItem, "invoiceId">[]): Promise<Invoice>;
   updateInvoiceStatus(id: number, status: string): Promise<Invoice | undefined>;
   markInvoiceSent(id: number, sentTo: string): Promise<Invoice | undefined>;
   markInvoiceReminded(id: number, when: Date): Promise<Invoice | undefined>;
@@ -271,7 +186,7 @@ export interface IStorage {
   getNextInvoiceNumber(): Promise<string>;
   getInvoicePayments(invoiceId: number): Promise<InvoicePayment[]>;
   createInvoicePayment(payment: InsertInvoicePayment): Promise<{ payment: InvoicePayment; invoice: Invoice }>;
-  deleteInvoicePayment(paymentId: number): Promise<{ invoice: Invoice } | undefined>;
+  deleteInvoicePayment(invoiceId: number, paymentId: number): Promise<{ invoice: Invoice } | undefined>;
 
   saveUploadedDocument(record: InsertUploadedDocument): Promise<UploadedDocument>;
   getAllUploadedDocuments(): Promise<UploadedDocument[]>;
@@ -288,28 +203,16 @@ export interface IStorage {
   updateOutreachScheduler(id: number, updates: Partial<InsertOutreachScheduler>): Promise<OutreachScheduler | undefined>;
   deleteOutreachScheduler(id: number): Promise<OutreachScheduler | undefined>;
 
-  // ── Outreach Calls (persistent call history) ──────────────────────────────
   createOutreachCall(record: InsertOutreachCall): Promise<OutreachCall>;
-  // Atomic: insert call + (conditionally) update patient appointmentStatus
-  // in a single transaction so concurrent writes can't downgrade a
-  // "scheduled" patient between the SELECT and the UPDATE.
-  createOutreachCallAtomic(
-    record: InsertOutreachCall,
-    desiredStatus: string,
-  ): Promise<OutreachCall>;
+  createOutreachCallAtomic(record: InsertOutreachCall, desiredStatus: string): Promise<OutreachCall>;
   listOutreachCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]>;
   listOutreachCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]>;
   listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]>;
   latestOutreachCallForPatient(patientScreeningId: number): Promise<OutreachCall | undefined>;
 
-  // ── Scheduler Assignments ─────────────────────────────────────────────────
   createSchedulerAssignment(record: InsertSchedulerAssignment): Promise<SchedulerAssignment>;
   bulkCreateSchedulerAssignments(records: InsertSchedulerAssignment[]): Promise<SchedulerAssignment[]>;
-  applySchedulerAssignmentDiff(
-    releaseIds: number[],
-    drafts: InsertSchedulerAssignment[],
-    reason: string,
-  ): Promise<{ released: SchedulerAssignment[]; created: SchedulerAssignment[] }>;
+  applySchedulerAssignmentDiff(releaseIds: number[], drafts: InsertSchedulerAssignment[], reason: string): Promise<{ released: SchedulerAssignment[]; created: SchedulerAssignment[] }>;
   listActiveSchedulerAssignments(filters?: { schedulerId?: number; asOfDate?: string }): Promise<SchedulerAssignment[]>;
   getActiveAssignmentForPatient(patientScreeningId: number): Promise<SchedulerAssignment | undefined>;
   getActiveAssignmentForPatientOnDate(patientScreeningId: number, asOfDate: string): Promise<SchedulerAssignment | undefined>;
@@ -319,7 +222,6 @@ export interface IStorage {
   reassignSchedulerAssignment(id: number, newSchedulerId: number, reason: string): Promise<SchedulerAssignment | undefined>;
   markSchedulerAssignmentCompleted(patientScreeningId: number): Promise<void>;
 
-  // ── PTO Requests ─────────────────────────────────────────────────────────
   createPtoRequest(record: InsertPtoRequest): Promise<PtoRequest>;
   getPtoRequests(filters?: { userId?: string; status?: string; fromDate?: string; toDate?: string }): Promise<PtoRequest[]>;
   getPtoRequest(id: number): Promise<PtoRequest | undefined>;
@@ -334,14 +236,12 @@ export interface IStorage {
   failRunningAnalysisJobs(errorMessage: string): Promise<void>;
   purgeOldAnalysisJobs(olderThanDays: number): Promise<void>;
 
-  // ── Plexus Projects ────────────────────────────────────────────────────
   createProject(record: InsertPlexusProject): Promise<PlexusProject>;
   getProjects(): Promise<PlexusProject[]>;
   getProjectsForUser(userId: string): Promise<PlexusProject[]>;
   getProjectById(id: number): Promise<PlexusProject | undefined>;
   updateProject(id: number, updates: Partial<InsertPlexusProject>): Promise<PlexusProject | undefined>;
 
-  // ── Plexus Tasks ───────────────────────────────────────────────────────
   createTask(record: InsertPlexusTask): Promise<PlexusTask>;
   getTaskById(id: number): Promise<PlexusTask | undefined>;
   getTasksByProject(projectId: number): Promise<PlexusTask[]>;
@@ -353,43 +253,29 @@ export interface IStorage {
   getOverdueTasksForUser(userId: string): Promise<PlexusTask[]>;
   updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined>;
 
-  // ── Plexus Collaborators ───────────────────────────────────────────────
   addCollaborator(record: InsertPlexusTaskCollaborator): Promise<PlexusTaskCollaborator>;
   getCollaborators(taskId: number): Promise<PlexusTaskCollaborator[]>;
 
-  // ── Plexus Messages ────────────────────────────────────────────────────
   addMessage(record: InsertPlexusTaskMessage): Promise<PlexusTaskMessage>;
   getMessages(taskId: number): Promise<PlexusTaskMessage[]>;
 
-  // ── Plexus Events ──────────────────────────────────────────────────────
   writeEvent(record: InsertPlexusTaskEvent): Promise<PlexusTaskEvent>;
   getEvents(taskId: number): Promise<PlexusTaskEvent[]>;
 
-  // ── Plexus Reads ───────────────────────────────────────────────────────
   markRead(taskId: number, userId: string): Promise<void>;
   getUnreadCount(userId: string): Promise<number>;
 
-  // ── Plexus Deletes ─────────────────────────────────────────────────────
   deleteTask(id: number): Promise<void>;
   deleteProject(id: number): Promise<void>;
 
-  // ── Plexus Unread Per Task ──────────────────────────────────────────────
   getUnreadPerTask(userId: string): Promise<{ taskId: number; unreadCount: number }[]>;
 
-  // ── Patient search (for task patient-link) ─────────────────────────────
   searchPatientsByName(query: string): Promise<PatientScreening[]>;
   getPatientById(id: number): Promise<PatientScreening | undefined>;
   getTasksByPatientScreeningId(patientScreeningId: number): Promise<PlexusTask[]>;
 
-  // ── Audit Log ────────────────────────────────────────────────────────────
   createAuditLog(record: InsertAuditLog): Promise<AuditLog>;
-  getAuditLogs(filters?: {
-    userId?: string;
-    entityType?: string;
-    fromDate?: Date;
-    toDate?: Date;
-    limit?: number;
-  }): Promise<AuditLog[]>;
+  getAuditLogs(filters?: { userId?: string; entityType?: string; fromDate?: Date; toDate?: Date; limit?: number }): Promise<AuditLog[]>;
 
   getAllMarketingMaterials(): Promise<MarketingMaterial[]>;
   getMarketingMaterial(id: number): Promise<MarketingMaterial | undefined>;
@@ -399,1656 +285,238 @@ export interface IStorage {
     patch: { storagePath: string; sha256: string; filename: string; sizeBytes: number },
   ): Promise<MarketingMaterial>;
   deleteMarketingMaterial(id: number): Promise<void>;
+
+  // Document library
+  createDocument(record: InsertDocument): Promise<Document>;
+  getDocument(id: number): Promise<Document | undefined>;
+  listCurrentDocuments(filters?: { kind?: DocumentKind; surface?: DocumentSurface; patientScreeningId?: number }): Promise<Document[]>;
+  getDocumentsForSurface(surface: DocumentSurface, opts?: { patientScreeningId?: number; kind?: DocumentKind }): Promise<Document[]>;
+  getDocumentVersionChain(currentDocId: number): Promise<Document[]>;
+  supersedeDocument(oldId: number, newId: number): Promise<void>;
+  getDocumentAssignments(documentId: number): Promise<DocumentSurfaceAssignment[]>;
+  addDocumentAssignment(documentId: number, surface: DocumentSurface): Promise<DocumentSurfaceAssignment>;
+  removeDocumentAssignment(documentId: number, surface: DocumentSurface): Promise<void>;
+  replaceDocumentAssignments(documentId: number, surfaces: DocumentSurface[]): Promise<DocumentSurfaceAssignment[]>;
+  softDeleteDocument(id: number): Promise<void>;
+  deleteDocument(id: number): Promise<void>;
 }
 
+/**
+ * Backwards-compatible god-object facade. Each method just delegates to the
+ * relevant per-domain repository so legacy `storage.foo(...)` call-sites in
+ * routes keep working unchanged.
+ */
 export class DatabaseStorage implements IStorage {
-  // ── Users ────────────────────────────────────────────────────────────────
-  // Delegated to server/repositories/users.repo.ts. New code should prefer
-  // importing `usersRepository` directly.
-  getUser(id: string): Promise<User | undefined> {
-    return usersRepository.getById(id);
-  }
-
-  getUserByUsername(username: string): Promise<User | undefined> {
-    return usersRepository.getByUsername(username);
-  }
-
-  createUser(insertUser: InsertUser): Promise<User> {
-    return usersRepository.create(insertUser);
-  }
-
-  getUserCount(): Promise<number> {
-    return usersRepository.count();
-  }
-
-  updateUserPassword(id: string, plaintext: string): Promise<void> {
-    return usersRepository.updatePassword(id, plaintext);
-  }
-
-  updateUserRole(id: string, role: string): Promise<void> {
-    return usersRepository.updateRole(id, role);
-  }
-
-  validateUserPassword(username: string, plaintext: string): Promise<User | null> {
-    return usersRepository.validatePassword(username, plaintext);
-  }
-
-  getAllUsers(): Promise<Omit<User, "password">[]> {
-    return usersRepository.listAll();
-  }
-
-  deactivateUser(id: string): Promise<void> {
-    return usersRepository.deactivate(id);
-  }
-
-  deleteUser(id: string): Promise<void> {
-    return usersRepository.remove(id);
-  }
-
-  async createScreeningBatch(batch: InsertScreeningBatch): Promise<ScreeningBatch> {
-    const [result] = await db.insert(screeningBatches).values(batch).returning();
-    return result;
-  }
-
-  async getScreeningBatch(id: number): Promise<ScreeningBatch | undefined> {
-    const [result] = await db.select().from(screeningBatches).where(eq(screeningBatches.id, id));
-    return result;
-  }
-
-  async getAllScreeningBatches(): Promise<ScreeningBatch[]> {
-    return db.select().from(screeningBatches).orderBy(desc(screeningBatches.createdAt));
-  }
-
-  async updateScreeningBatch(id: number, updates: Partial<InsertScreeningBatch>): Promise<ScreeningBatch | undefined> {
-    const [result] = await db.update(screeningBatches).set(updates).where(eq(screeningBatches.id, id)).returning();
-    return result;
-  }
-
-  async deleteScreeningBatch(id: number): Promise<void> {
-    await db.delete(patientScreenings).where(eq(patientScreenings.batchId, id));
-    await db.delete(screeningBatches).where(eq(screeningBatches.id, id));
-  }
-
-  async createPatientScreening(screening: InsertPatientScreening): Promise<PatientScreening> {
-    const [result] = await db.insert(patientScreenings).values(screening).returning();
-    return result;
-  }
-
-  async getPatientScreeningsByBatch(batchId: number): Promise<PatientScreening[]> {
-    const rows = await db.select().from(patientScreenings).where(eq(patientScreenings.batchId, batchId));
-    return rows.sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
-  }
-
-  async getAllPatientScreenings(): Promise<PatientScreening[]> {
-    return db.select().from(patientScreenings);
-  }
-
-  async getPatientScreening(id: number): Promise<PatientScreening | undefined> {
-    const [result] = await db.select().from(patientScreenings).where(eq(patientScreenings.id, id));
-    return result;
-  }
-
-  async updatePatientScreening(id: number, updates: Partial<InsertPatientScreening>): Promise<PatientScreening | undefined> {
-    const [result] = await db.update(patientScreenings).set(updates).where(eq(patientScreenings.id, id)).returning();
-    return result;
-  }
-
-  async deletePatientScreening(id: number): Promise<void> {
-    await db.delete(patientScreenings).where(eq(patientScreenings.id, id));
-  }
-
-  async createTestHistory(record: InsertTestHistory): Promise<PatientTestHistory> {
-    const [result] = await db.insert(patientTestHistory).values(record).returning();
-    return result;
-  }
-
-  async createTestHistoryBulk(records: InsertTestHistory[]): Promise<PatientTestHistory[]> {
-    if (records.length === 0) return [];
-    const results = await db.insert(patientTestHistory).values(records).returning();
-    return results;
-  }
-
-  async bulkInsertTestHistoryIfNotExists(records: InsertTestHistory[]): Promise<void> {
-    for (const r of records) {
-      const existing = await db.select({ id: patientTestHistory.id })
-        .from(patientTestHistory)
-        .where(and(
-          ilike(patientTestHistory.patientName, r.patientName),
-          eq(patientTestHistory.testName, r.testName),
-          eq(patientTestHistory.dateOfService, r.dateOfService)
-        ))
-        .limit(1);
-      if (existing.length === 0) {
-        await db.insert(patientTestHistory).values(r);
-      }
-    }
-  }
-
-  async getAllTestHistory(): Promise<PatientTestHistory[]> {
-    return db.select().from(patientTestHistory).orderBy(desc(patientTestHistory.createdAt));
-  }
-
-  async searchTestHistory(nameQuery: string): Promise<PatientTestHistory[]> {
-    return db.select().from(patientTestHistory)
-      .where(ilike(patientTestHistory.patientName, `%${nameQuery}%`))
-      .orderBy(desc(patientTestHistory.dateOfService));
-  }
-
-  async deleteTestHistory(id: number): Promise<void> {
-    await db.delete(patientTestHistory).where(eq(patientTestHistory.id, id));
-  }
-
-  async deleteAllTestHistory(): Promise<void> {
-    await db.delete(patientTestHistory);
-  }
-
-  async createPatientReference(record: InsertPatientReference): Promise<PatientReference> {
-    const [result] = await db.insert(patientReferenceData).values(record).returning();
-    return result;
-  }
-
-  async createPatientReferenceBulk(records: InsertPatientReference[]): Promise<PatientReference[]> {
-    if (records.length === 0) return [];
-    const results = await db.insert(patientReferenceData).values(records).returning();
-    return results;
-  }
-
-  async getAllPatientReferences(): Promise<PatientReference[]> {
-    return db.select().from(patientReferenceData).orderBy(desc(patientReferenceData.createdAt));
-  }
-
-  async searchPatientReferences(nameQuery: string): Promise<PatientReference[]> {
-    return db.select().from(patientReferenceData)
-      .where(ilike(patientReferenceData.patientName, `%${nameQuery}%`))
-      .orderBy(desc(patientReferenceData.createdAt));
-  }
-
-  async deletePatientReference(id: number): Promise<void> {
-    await db.delete(patientReferenceData).where(eq(patientReferenceData.id, id));
-  }
-
-  async deleteAllPatientReferences(): Promise<void> {
-    await db.delete(patientReferenceData);
-  }
-
-  async saveGeneratedNotes(records: InsertGeneratedNote[]): Promise<GeneratedNote[]> {
-    if (records.length === 0) return [];
-    const results = await db.insert(generatedNotes).values(records).returning();
-    return results;
-  }
-
-  async getGeneratedNotesByBatch(batchId: number): Promise<GeneratedNote[]> {
-    return db.select().from(generatedNotes)
-      .where(eq(generatedNotes.batchId, batchId))
-      .orderBy(generatedNotes.generatedAt);
-  }
-
-  async getAllGeneratedNotes(): Promise<GeneratedNote[]> {
-    return db.select().from(generatedNotes)
-      .orderBy(desc(generatedNotes.generatedAt));
-  }
-
-  async getGeneratedNotesByPatientIds(patientIds: number[]): Promise<GeneratedNote[]> {
-    if (patientIds.length === 0) return [];
-    return db.select().from(generatedNotes)
-      .where(inArray(generatedNotes.patientId, patientIds))
-      .orderBy(desc(generatedNotes.generatedAt));
-  }
-
-  // ── Patient-database SQL aggregation ───────────────────────────────────
-  // All grouping happens in Postgres so the Node process never touches more
-  // than one row per (name, dob) patient group, regardless of how many
-  // screenings, test-history rows, or generated notes back that group.
-
-  async getPatientRosterAggregates(filters: PatientRosterAggregateFilters = {}): Promise<PatientRosterAggregateResult> {
-    const search = (filters.search ?? "").trim().toLowerCase();
-    const clinic = (filters.clinic ?? "").trim();
-    const cooldownWindow = (filters.cooldownWindow ?? "").trim();
-    const cooldownLimit =
-      cooldownWindow === "1d" ? 1
-      : cooldownWindow === "1w" ? 7
-      : cooldownWindow === "1m" ? 30
-      : null;
-    if (cooldownWindow && cooldownLimit === null) {
-      // Unknown window — return nothing (matches old route behaviour).
-      return { rows: [], total: 0, clinicTotals: [] };
-    }
-
-    const requestedPageSize = Number.isFinite(filters.pageSize) ? Number(filters.pageSize) : 100;
-    const pageSize = Math.max(1, Math.min(500, Math.trunc(requestedPageSize) || 100));
-    const requestedPage = Number.isFinite(filters.page) ? Number(filters.page) : 1;
-    const page = Math.max(1, Math.trunc(requestedPage) || 1);
-    const offset = (page - 1) * pageSize;
-
-    // Shared CTE chain reused by both the page query and the totals query.
-    // Keeping the SQL aligned guarantees pagination metadata matches the
-    // rows actually returned for the page.
-    const baseCte = sql`
-      WITH groups AS (
-        SELECT name, dob, COUNT(*)::int AS screening_count
-        FROM patient_screenings
-        GROUP BY name, dob
-      ),
-      repr AS (
-        SELECT DISTINCT ON (ps.name, ps.dob)
-          ps.name, ps.dob, ps.id, ps.batch_id, ps.age, ps.gender,
-          ps.phone_number, ps.insurance, ps.facility, ps.created_at,
-          sb.facility AS batch_facility, sb.schedule_date AS batch_schedule_date
-        FROM patient_screenings ps
-        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
-        ORDER BY ps.name, ps.dob, ps.created_at DESC
-      ),
-      notes AS (
-        SELECT ps.name, ps.dob, COUNT(gn.id)::int AS note_count
-        FROM patient_screenings ps
-        LEFT JOIN generated_notes gn ON gn.patient_id = ps.id
-        GROUP BY ps.name, ps.dob
-      ),
-      history AS (
-        SELECT patient_name AS name, dob, COUNT(*)::int AS test_count
-        FROM patient_test_history
-        GROUP BY patient_name, dob
-      ),
-      last_visit AS (
-        SELECT ps.name, ps.dob,
-          MAX(NULLIF(GREATEST(
-            COALESCE(sb.schedule_date, ''),
-            COALESCE(to_char(ps.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), '')
-          ), '')) AS last_visit
-        FROM patient_screenings ps
-        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
-        GROUP BY ps.name, ps.dob
-      ),
-      latest_test AS (
-        SELECT DISTINCT ON (patient_name, dob, lower(btrim(test_name)))
-          patient_name, dob, test_name, date_of_service, insurance_type
-        FROM patient_test_history
-        WHERE date_of_service ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-        ORDER BY patient_name, dob, lower(btrim(test_name)), date_of_service DESC
-      ),
-      test_clears AS (
-        SELECT patient_name AS name, dob,
-          (date_of_service::date + (
-            CASE WHEN lower(insurance_type) = 'medicare'
-                 THEN INTERVAL '12 months' ELSE INTERVAL '6 months' END
-          ))::date AS clears_at
-        FROM latest_test
-      ),
-      patient_cooldown AS (
-        SELECT name, dob,
-          COUNT(*) FILTER (WHERE clears_at > CURRENT_DATE)::int AS active_count,
-          MIN(clears_at) FILTER (WHERE clears_at > CURRENT_DATE) AS next_clear
-        FROM test_clears
-        GROUP BY name, dob
-      ),
-      filtered AS (
-        SELECT
-          r.id AS representative_id,
-          r.batch_id,
-          r.name,
-          r.dob,
-          r.age,
-          r.gender,
-          r.phone_number,
-          r.insurance,
-          COALESCE(NULLIF(r.facility, ''), NULLIF(r.batch_facility, ''), 'Unassigned') AS clinic,
-          lv.last_visit,
-          g.screening_count,
-          COALESCE(h.test_count, 0)::int AS test_count,
-          COALESCE(n.note_count, 0)::int AS note_count,
-          COALESCE(pc.active_count, 0)::int AS cooldown_active_count,
-          pc.next_clear,
-          CASE WHEN pc.next_clear IS NULL THEN NULL
-               ELSE (pc.next_clear - CURRENT_DATE)::int END AS days_until_next_clear
-        FROM repr r
-        JOIN groups g ON g.name = r.name AND g.dob IS NOT DISTINCT FROM r.dob
-        LEFT JOIN notes n ON n.name = r.name AND n.dob IS NOT DISTINCT FROM r.dob
-        LEFT JOIN history h ON h.name = r.name AND h.dob IS NOT DISTINCT FROM r.dob
-        LEFT JOIN last_visit lv ON lv.name = r.name AND lv.dob IS NOT DISTINCT FROM r.dob
-        LEFT JOIN patient_cooldown pc ON pc.name = r.name AND pc.dob IS NOT DISTINCT FROM r.dob
-        WHERE
-          (${search}::text = '' OR lower(r.name || ' ' || COALESCE(r.dob, '')) LIKE '%' || ${search}::text || '%')
-          AND (${clinic}::text = '' OR COALESCE(NULLIF(r.facility, ''), NULLIF(r.batch_facility, ''), 'Unassigned') = ${clinic}::text)
-          AND (
-            ${cooldownLimit}::int IS NULL
-            OR (pc.next_clear IS NOT NULL AND (pc.next_clear - CURRENT_DATE) <= ${cooldownLimit}::int)
-          )
-      )
-    `;
-
-    const [pageResult, totalsResult] = await Promise.all([
-      db.execute(sql`
-        ${baseCte}
-        SELECT *
-        FROM filtered
-        ORDER BY (clinic = 'Unassigned'), clinic ASC, name ASC
-        LIMIT ${pageSize}::int OFFSET ${offset}::int
-      `),
-      db.execute(sql`
-        ${baseCte}
-        SELECT
-          (SELECT COUNT(*)::int FROM filtered) AS total,
-          COALESCE((
-            SELECT json_agg(row_to_json(t)) FROM (
-              SELECT clinic, COUNT(*)::int AS count
-              FROM filtered
-              GROUP BY clinic
-              ORDER BY (clinic = 'Unassigned'), clinic ASC
-            ) t
-          ), '[]'::json) AS clinic_totals
-      `),
-    ]);
-
-    const rows = (pageResult.rows as any[]).map((row) => ({
-      representativeId: Number(row.representative_id),
-      batchId: Number(row.batch_id),
-      name: String(row.name),
-      dob: row.dob ?? null,
-      age: row.age == null ? null : Number(row.age),
-      gender: row.gender ?? null,
-      phoneNumber: row.phone_number ?? null,
-      insurance: row.insurance ?? null,
-      clinic: String(row.clinic ?? "Unassigned"),
-      lastVisit: row.last_visit ?? null,
-      screeningCount: Number(row.screening_count),
-      testCount: Number(row.test_count),
-      generatedNoteCount: Number(row.note_count),
-      cooldownActiveCount: Number(row.cooldown_active_count),
-      nextCooldownClearsAt: row.next_clear ? formatDate(row.next_clear) : null,
-      daysUntilNextClear: row.days_until_next_clear == null ? null : Number(row.days_until_next_clear),
-    }));
-
-    const totalsRow = (totalsResult.rows as any[])[0] ?? { total: 0, clinic_totals: [] };
-    const clinicTotalsRaw = Array.isArray(totalsRow.clinic_totals) ? totalsRow.clinic_totals : [];
-    const clinicTotals: PatientRosterClinicTotal[] = clinicTotalsRaw.map((t: any) => ({
-      clinic: String(t.clinic ?? "Unassigned"),
-      count: Number(t.count ?? 0),
-    }));
-
-    return { rows, total: Number(totalsRow.total ?? 0), clinicTotals };
-  }
-
-  async getPatientCooldownDashboard(): Promise<{
-    totals: PatientGroupTotals;
-    counts: { oneDay: number; oneWeek: number; oneMonth: number };
-    byClinic: PatientCooldownClinicCount[];
-    allClinics: string[];
-  }> {
-    const result = await db.execute(sql`
-      WITH patient_clinic AS (
-        SELECT DISTINCT ON (ps.name, ps.dob)
-          ps.name, ps.dob,
-          COALESCE(NULLIF(ps.facility, ''), NULLIF(sb.facility, ''), 'Unassigned') AS clinic
-        FROM patient_screenings ps
-        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
-        ORDER BY ps.name, ps.dob, ps.created_at DESC
-      ),
-      latest_test AS (
-        SELECT DISTINCT ON (patient_name, dob, lower(btrim(test_name)))
-          patient_name, dob, test_name, date_of_service, insurance_type
-        FROM patient_test_history
-        WHERE date_of_service ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-        ORDER BY patient_name, dob, lower(btrim(test_name)), date_of_service DESC
-      ),
-      test_clears AS (
-        SELECT patient_name AS name, dob,
-          (date_of_service::date + (
-            CASE WHEN lower(insurance_type) = 'medicare'
-                 THEN INTERVAL '12 months' ELSE INTERVAL '6 months' END
-          ))::date AS clears_at
-        FROM latest_test
-      ),
-      patient_active AS (
-        SELECT name, dob, MIN(clears_at) AS next_clear
-        FROM test_clears
-        WHERE clears_at > CURRENT_DATE
-        GROUP BY name, dob
-      ),
-      joined AS (
-        -- INNER JOIN on patient_clinic so the cooldown dashboard counts only
-        -- patients that exist in the screening roster (matches the previous
-        -- in-memory behaviour, which iterated screeningsByKey).
-        SELECT pa.name, pa.dob, pa.next_clear,
-          (pa.next_clear - CURRENT_DATE)::int AS days_until,
-          pc.clinic
-        FROM patient_active pa
-        JOIN patient_clinic pc ON pc.name = pa.name AND pc.dob IS NOT DISTINCT FROM pa.dob
-      )
-      SELECT
-        (SELECT COUNT(*)::int FROM patient_clinic) AS total_patients,
-        (SELECT COUNT(DISTINCT clinic)::int FROM patient_clinic) AS total_clinics,
-        (SELECT COUNT(*)::int FROM joined WHERE days_until <= 1) AS one_day_total,
-        (SELECT COUNT(*)::int FROM joined WHERE days_until <= 7) AS one_week_total,
-        (SELECT COUNT(*)::int FROM joined WHERE days_until <= 30) AS one_month_total,
-        COALESCE((
-          SELECT json_agg(row_to_json(t)) FROM (
-            SELECT
-              clinic,
-              COUNT(*) FILTER (WHERE days_until <= 1)::int AS one_day,
-              COUNT(*) FILTER (WHERE days_until <= 7)::int AS one_week,
-              COUNT(*) FILTER (WHERE days_until <= 30)::int AS one_month
-            FROM joined
-            GROUP BY clinic
-            HAVING COUNT(*) FILTER (WHERE days_until <= 30) > 0
-            ORDER BY clinic
-          ) t
-        ), '[]'::json) AS by_clinic,
-        COALESCE((
-          SELECT json_agg(clinic ORDER BY (clinic = 'Unassigned'), clinic ASC)
-          FROM (SELECT DISTINCT clinic FROM patient_clinic) c
-        ), '[]'::json) AS all_clinics
-    `);
-    const row: any = (result.rows as any[])[0] ?? {};
-    const byClinic = Array.isArray(row.by_clinic) ? row.by_clinic : [];
-    const allClinics = Array.isArray(row.all_clinics) ? row.all_clinics : [];
-    return {
-      totals: {
-        patients: Number(row.total_patients ?? 0),
-        clinics: Number(row.total_clinics ?? 0),
-      },
-      counts: {
-        oneDay: Number(row.one_day_total ?? 0),
-        oneWeek: Number(row.one_week_total ?? 0),
-        oneMonth: Number(row.one_month_total ?? 0),
-      },
-      byClinic: byClinic.map((c: any) => ({
-        clinic: String(c.clinic ?? "Unassigned"),
-        oneDay: Number(c.one_day ?? 0),
-        oneWeek: Number(c.one_week ?? 0),
-        oneMonth: Number(c.one_month ?? 0),
-      })),
-      allClinics: allClinics.map((c: any) => String(c ?? "Unassigned")),
-    };
-  }
-
-  async getPatientHistoryImportReport(sampleLimit: number): Promise<{
-    totalHistoryRows: number;
-    unmatchedCount: number;
-    unmatched: UnmatchedHistoryReportRow[];
-  }> {
-    const totalsRes = await db.execute(sql`
-      SELECT
-        (SELECT COUNT(*)::int FROM patient_test_history) AS total_rows,
-        (SELECT COUNT(*)::int FROM patient_test_history h
-           WHERE NOT EXISTS (
-             SELECT 1 FROM patient_screenings ps
-             WHERE ps.name = h.patient_name AND ps.dob IS NOT DISTINCT FROM h.dob
-           )) AS unmatched_rows
-    `);
-    const totals: any = (totalsRes.rows as any[])[0] ?? {};
-
-    const sampleRes = await db.execute(sql`
-      SELECT h.id, h.patient_name, h.dob, h.test_name, h.date_of_service, h.clinic
-      FROM patient_test_history h
-      WHERE NOT EXISTS (
-        SELECT 1 FROM patient_screenings ps
-        WHERE ps.name = h.patient_name AND ps.dob IS NOT DISTINCT FROM h.dob
-      )
-      ORDER BY h.id DESC
-      LIMIT ${sampleLimit}
-    `);
-    return {
-      totalHistoryRows: Number(totals.total_rows ?? 0),
-      unmatchedCount: Number(totals.unmatched_rows ?? 0),
-      unmatched: (sampleRes.rows as any[]).map((r) => ({
-        id: Number(r.id),
-        patientName: String(r.patient_name),
-        dob: r.dob ?? null,
-        testName: String(r.test_name),
-        dateOfService: String(r.date_of_service),
-        clinic: r.clinic ?? null,
-      })),
-    };
-  }
-
-  async getPatientGroupScreenings(name: string, dob: string | null): Promise<PatientScreening[]> {
-    return db.select().from(patientScreenings).where(and(
-      eq(patientScreenings.name, name),
-      dob === null
-        ? sql`${patientScreenings.dob} IS NULL`
-        : eq(patientScreenings.dob, dob),
-    ));
-  }
-
-  async getPatientGroupTestHistory(name: string, dob: string | null): Promise<PatientTestHistory[]> {
-    return db.select().from(patientTestHistory).where(and(
-      eq(patientTestHistory.patientName, name),
-      dob === null
-        ? sql`${patientTestHistory.dob} IS NULL`
-        : eq(patientTestHistory.dob, dob),
-    )).orderBy(desc(patientTestHistory.dateOfService));
-  }
-
-  async getGeneratedNoteCountsByPatientId(): Promise<Map<number, number>> {
-    const rows = await db
-      .select({ patientId: generatedNotes.patientId, count: sql<number>`count(*)::int` })
-      .from(generatedNotes)
-      .groupBy(generatedNotes.patientId);
-    const out = new Map<number, number>();
-    for (const r of rows) out.set(r.patientId, Number(r.count));
-    return out;
-  }
-
-  async deleteGeneratedNotesByPatient(patientId: number): Promise<void> {
-    await db.delete(generatedNotes).where(eq(generatedNotes.patientId, patientId));
-  }
-
-  async deleteGeneratedNotesByPatientAndService(patientId: number, service: string): Promise<void> {
-    await db.delete(generatedNotes).where(
-      and(eq(generatedNotes.patientId, patientId), eq(generatedNotes.service, service))
-    );
-  }
-
-  async getGeneratedNotesByPatient(patientId: number): Promise<GeneratedNote[]> {
-    return db.select().from(generatedNotes)
-      .where(eq(generatedNotes.patientId, patientId))
-      .orderBy(generatedNotes.generatedAt);
-  }
-
-  async getGeneratedNote(id: number): Promise<GeneratedNote | undefined> {
-    const [result] = await db.select().from(generatedNotes).where(eq(generatedNotes.id, id));
-    return result;
-  }
-
-  async updateGeneratedNoteDriveInfo(id: number, driveFileId: string, driveWebViewLink: string): Promise<GeneratedNote | undefined> {
-    const [result] = await db.update(generatedNotes)
-      .set({ driveFileId, driveWebViewLink })
-      .where(eq(generatedNotes.id, id))
-      .returning();
-    return result;
-  }
-
-  async getAllBillingRecords(): Promise<BillingRecord[]> {
-    return db.select().from(billingRecords).orderBy(desc(billingRecords.createdAt));
-  }
-
-  async getBillingRecordInvoiceLinks(): Promise<Array<{
-    billingRecordId: number;
-    invoiceId: number;
-    invoiceNumber: string;
-    status: string;
-    totalBalance: string;
-  }>> {
-    const rows = await db
-      .select({
-        billingRecordId: invoiceLineItems.billingRecordId,
-        invoiceId: invoices.id,
-        invoiceNumber: invoices.invoiceNumber,
-        status: invoices.status,
-        totalBalance: invoices.totalBalance,
-      })
-      .from(invoiceLineItems)
-      .innerJoin(invoices, eq(invoices.id, invoiceLineItems.invoiceId))
-      .where(sql`${invoiceLineItems.billingRecordId} is not null`)
-      // Newest invoice first so callers that dedupe by billingRecordId
-      // (e.g. the Billing page Map) deterministically pick the most
-      // recent invoice for each billing record.
-      .orderBy(desc(invoices.createdAt), desc(invoices.id));
-    return rows.map((r) => ({
-      billingRecordId: r.billingRecordId as number,
-      invoiceId: r.invoiceId,
-      invoiceNumber: r.invoiceNumber,
-      status: r.status,
-      totalBalance: r.totalBalance,
-    }));
-  }
-
-  async getBillingRecordByPatientAndService(patientId: number, service: string): Promise<BillingRecord | undefined> {
-    const [result] = await db.select().from(billingRecords)
-      .where(and(eq(billingRecords.patientId, patientId), eq(billingRecords.service, service)));
-    return result;
-  }
-
-  async createBillingRecord(record: InsertBillingRecord): Promise<BillingRecord> {
-    const [result] = await db.insert(billingRecords).values(record).returning();
-    return result;
-  }
-
-  async updateBillingRecord(id: number, updates: Partial<InsertBillingRecord>): Promise<BillingRecord | undefined> {
-    const [result] = await db.update(billingRecords).set(updates).where(eq(billingRecords.id, id)).returning();
-    return result;
-  }
-
-  async deleteBillingRecord(id: number): Promise<void> {
-    await db.delete(billingRecords).where(eq(billingRecords.id, id));
-  }
-
-  async getAllInvoices(): Promise<Invoice[]> {
-    return db.select().from(invoices).orderBy(desc(invoices.createdAt));
-  }
-
-  async getInvoice(id: number): Promise<Invoice | undefined> {
-    const [r] = await db.select().from(invoices).where(eq(invoices.id, id));
-    return r;
-  }
-
-  async getInvoiceLineItems(invoiceId: number): Promise<InvoiceLineItem[]> {
-    return db.select().from(invoiceLineItems)
-      .where(eq(invoiceLineItems.invoiceId, invoiceId))
-      .orderBy(asc(invoiceLineItems.id));
-  }
-
-  async createInvoiceWithLineItems(
-    invoice: InsertInvoice,
-    lineItems: Omit<InsertInvoiceLineItem, "invoiceId">[],
-  ): Promise<Invoice> {
-    return await db.transaction(async (tx) => {
-      const [created] = await tx.insert(invoices).values(invoice).returning();
-      if (lineItems.length > 0) {
-        await tx.insert(invoiceLineItems).values(
-          lineItems.map((li) => ({ ...li, invoiceId: created.id })),
-        );
-      }
-      return created;
-    });
-  }
-
-  async updateInvoiceStatus(id: number, status: string): Promise<Invoice | undefined> {
-    const [r] = await db.update(invoices).set({ status }).where(eq(invoices.id, id)).returning();
-    return r;
-  }
-
-  async markInvoiceSent(id: number, sentTo: string): Promise<Invoice | undefined> {
-    const [r] = await db.update(invoices)
-      .set({ status: "Sent", sentTo, sentAt: new Date() })
-      .where(eq(invoices.id, id))
-      .returning();
-    return r;
-  }
-
-  async markInvoiceReminded(id: number, when: Date): Promise<Invoice | undefined> {
-    const [r] = await db.update(invoices)
-      .set({ lastRemindedAt: when })
-      .where(eq(invoices.id, id))
-      .returning();
-    return r;
-  }
-
-  async deleteInvoice(id: number): Promise<void> {
-    await db.delete(invoices).where(eq(invoices.id, id));
-  }
-
-  async getInvoicePayments(invoiceId: number): Promise<InvoicePayment[]> {
-    return db.select().from(invoicePayments)
-      .where(eq(invoicePayments.invoiceId, invoiceId))
-      .orderBy(asc(invoicePayments.paymentDate), asc(invoicePayments.id));
-  }
-
-  async createInvoicePayment(payment: InsertInvoicePayment): Promise<{ payment: InvoicePayment; invoice: Invoice }> {
-    return await db.transaction(async (tx) => {
-      const [created] = await tx.insert(invoicePayments).values(payment).returning();
-      const updated = await this.recomputeInvoiceTotalsTx(tx, payment.invoiceId);
-      return { payment: created, invoice: updated };
-    });
-  }
-
-  async deleteInvoicePayment(invoiceId: number, paymentId: number): Promise<{ invoice: Invoice } | undefined> {
-    return await db.transaction(async (tx) => {
-      const [existing] = await tx.select().from(invoicePayments)
-        .where(and(eq(invoicePayments.id, paymentId), eq(invoicePayments.invoiceId, invoiceId)));
-      if (!existing) return undefined;
-      await tx.delete(invoicePayments)
-        .where(and(eq(invoicePayments.id, paymentId), eq(invoicePayments.invoiceId, invoiceId)));
-      const updated = await this.recomputeInvoiceTotalsTx(tx, invoiceId);
-      return { invoice: updated };
-    });
-  }
-
-  private async recomputeInvoiceTotalsTx(tx: TxClient, invoiceId: number): Promise<Invoice> {
-    const [inv] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId));
-    if (!inv) throw new Error("Invoice not found");
-    const payments = await tx.select().from(invoicePayments).where(eq(invoicePayments.invoiceId, invoiceId));
-    const result = recomputeInvoiceTotals({
-      totalCharges: inv.totalCharges,
-      initialPaid: inv.initialPaid,
-      currentStatus: inv.status,
-      payments,
-    });
-    const [updated] = await tx.update(invoices).set({
-      totalPaid: result.totalPaid.toFixed(2),
-      totalBalance: result.totalBalance.toFixed(2),
-      status: result.status,
-    }).where(eq(invoices.id, invoiceId)).returning();
-    return updated;
-  }
-
-  async getNextInvoiceNumber(): Promise<string> {
-    const year = new Date().getFullYear();
-    const prefix = `INV-${year}-`;
-    const rows = await db.select({ n: invoices.invoiceNumber })
-      .from(invoices)
-      .where(ilike(invoices.invoiceNumber, `${prefix}%`));
-    let max = 0;
-    for (const { n } of rows) {
-      const m = n.match(/-(\d+)$/);
-      if (m) {
-        const v = parseInt(m[1], 10);
-        if (v > max) max = v;
-      }
-    }
-    return `${prefix}${String(max + 1).padStart(4, "0")}`;
-  }
-
-  async saveUploadedDocument(record: InsertUploadedDocument): Promise<UploadedDocument> {
-    const [result] = await db.insert(uploadedDocuments).values(record).returning();
-    return result;
-  }
-
-  async getUploadedDocument(id: number): Promise<UploadedDocument | undefined> {
-    const [row] = await db.select().from(uploadedDocuments).where(eq(uploadedDocuments.id, id));
-    return row;
-  }
-  async getAllUploadedDocuments(): Promise<UploadedDocument[]> {
-    return db.select().from(uploadedDocuments).orderBy(desc(uploadedDocuments.uploadedAt));
-  }
-
-  async createAppointment(record: InsertAncillaryAppointment): Promise<AncillaryAppointment> {
-    const [result] = await db.insert(ancillaryAppointments).values(record).returning();
-    return result;
-  }
-
-  async getAppointments(filters?: { facility?: string; date?: string; testType?: string; status?: string }): Promise<AncillaryAppointment[]> {
-    const conditions = [];
-    if (filters?.facility) conditions.push(eq(ancillaryAppointments.facility, filters.facility));
-    if (filters?.date) conditions.push(eq(ancillaryAppointments.scheduledDate, filters.date));
-    if (filters?.testType) conditions.push(eq(ancillaryAppointments.testType, filters.testType));
-    if (filters?.status) conditions.push(eq(ancillaryAppointments.status, filters.status));
-
-    if (conditions.length > 0) {
-      return db.select().from(ancillaryAppointments)
-        .where(and(...conditions))
-        .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime));
-    }
-    return db.select().from(ancillaryAppointments)
-      .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime));
-  }
-
-  async getUpcomingAppointments(limit?: number): Promise<AncillaryAppointment[]> {
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    const query = db.select().from(ancillaryAppointments)
-      .where(and(
-        gte(ancillaryAppointments.scheduledDate, todayStr),
-        eq(ancillaryAppointments.status, "scheduled")
-      ))
-      .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime));
-    if (limit !== undefined) return query.limit(limit);
-    return query;
-  }
-
-  async cancelAppointment(id: number): Promise<AncillaryAppointment | undefined> {
-    const [result] = await db.update(ancillaryAppointments)
-      .set({ status: "cancelled" })
-      .where(eq(ancillaryAppointments.id, id))
-      .returning();
-    return result;
-  }
-
-  async getAppointmentsByPatient(patientScreeningId: number): Promise<AncillaryAppointment[]> {
-    return db.select().from(ancillaryAppointments)
-      .where(eq(ancillaryAppointments.patientScreeningId, patientScreeningId))
-      .orderBy(asc(ancillaryAppointments.scheduledDate), asc(ancillaryAppointments.scheduledTime));
-  }
-
-  async getOutreachSchedulers(): Promise<OutreachScheduler[]> {
-    return db.select().from(outreachSchedulers).orderBy(asc(outreachSchedulers.name));
-  }
-
-  async createOutreachScheduler(record: InsertOutreachScheduler): Promise<OutreachScheduler> {
-    const [result] = await db.insert(outreachSchedulers).values(record).returning();
-    return result;
-  }
-
-  async updateOutreachScheduler(id: number, updates: Partial<InsertOutreachScheduler>): Promise<OutreachScheduler | undefined> {
-    const [result] = await db.update(outreachSchedulers)
-      .set(updates)
-      .where(eq(outreachSchedulers.id, id))
-      .returning();
-    return result;
-  }
-
-  async createOutreachCall(record: InsertOutreachCall): Promise<OutreachCall> {
-    const [result] = await db.insert(outreachCalls).values({
-      ...record,
-      callbackAt: record.callbackAt ?? null,
-      durationSeconds: record.durationSeconds ?? null,
-    }).returning();
-    return result;
-  }
-
-  async createOutreachCallAtomic(
-    record: InsertOutreachCall,
-    desiredStatus: string,
-  ): Promise<OutreachCall> {
-    return await db.transaction(async (tx) => {
-      const [call] = await tx.insert(outreachCalls).values({
-        ...record,
-        callbackAt: record.callbackAt ?? null,
-        durationSeconds: record.durationSeconds ?? null,
-      }).returning();
-
-      // SQL-level guard: never downgrade a "scheduled" patient unless the
-      // new status is also "scheduled". This is atomic against concurrent
-      // writers because the predicate runs inside the same transaction.
-      // Commit-status transition rules (never downgrade):
-      //   • desiredStatus "scheduled" → commitStatus "Scheduled"
-      //   • otherwise (any outreach touch) → commitStatus "WithScheduler"
-      //     unless the patient is already Scheduled.
-      // Draft is intentionally left untouched here — the outreach service
-      // already filters Drafts out, so a call against a Draft would be an
-      // upstream bug we don't want to silently paper over.
-      if (desiredStatus === "scheduled") {
-        await tx.update(patientScreenings)
-          .set({
-            appointmentStatus: desiredStatus,
-            commitStatus: "Scheduled",
-          })
-          .where(eq(patientScreenings.id, record.patientScreeningId));
-      } else {
-        await tx.update(patientScreenings)
-          .set({ appointmentStatus: desiredStatus })
-          .where(and(
-            eq(patientScreenings.id, record.patientScreeningId),
-            ne(patientScreenings.appointmentStatus, "scheduled"),
-          ));
-        await tx.update(patientScreenings)
-          .set({ commitStatus: "WithScheduler" })
-          .where(and(
-            eq(patientScreenings.id, record.patientScreeningId),
-            inArray(patientScreenings.commitStatus, ["Ready"]),
-          ));
-      }
-
-      return call;
-    });
-  }
-  async listOutreachCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]> {
-    return db.select().from(outreachCalls)
-      .where(eq(outreachCalls.patientScreeningId, patientScreeningId))
-      .orderBy(desc(outreachCalls.startedAt));
-  }
-
-  async listOutreachCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]> {
-    if (patientScreeningIds.length === 0) return [];
-    return db.select().from(outreachCalls)
-      .where(inArray(outreachCalls.patientScreeningId, patientScreeningIds))
-      .orderBy(desc(outreachCalls.startedAt));
-  }
-
-  async listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]> {
-    const startOfDay = new Date(`${todayIso}T00:00:00.000Z`);
-    const endOfDay = new Date(`${todayIso}T23:59:59.999Z`);
-    return db.select().from(outreachCalls)
-      .where(and(
-        eq(outreachCalls.schedulerUserId, schedulerUserId),
-        gte(outreachCalls.startedAt, startOfDay),
-        lte(outreachCalls.startedAt, endOfDay),
-      ))
-      .orderBy(desc(outreachCalls.startedAt));
-  }
-
-  async latestOutreachCallForPatient(patientScreeningId: number): Promise<OutreachCall | undefined> {
-    const [row] = await db.select().from(outreachCalls)
-      .where(eq(outreachCalls.patientScreeningId, patientScreeningId))
-      .orderBy(desc(outreachCalls.startedAt))
-      .limit(1);
-    return row;
-  }
-
-  async deleteOutreachScheduler(id: number): Promise<OutreachScheduler | undefined> {
-    const [deleted] = await db.delete(outreachSchedulers).where(eq(outreachSchedulers.id, id)).returning();
-    return deleted;
-  }
-
-  // ── Scheduler Assignments ─────────────────────────────────────────────────
-  async createSchedulerAssignment(record: InsertSchedulerAssignment): Promise<SchedulerAssignment> {
-    const [row] = await db.insert(schedulerAssignments).values(record).returning();
-    return row;
-  }
-
-  async bulkCreateSchedulerAssignments(records: InsertSchedulerAssignment[]): Promise<SchedulerAssignment[]> {
-    if (records.length === 0) return [];
-    return db.insert(schedulerAssignments).values(records).returning();
-  }
-
-  // Atomic apply — used by buildDailyAssignments. Wraps the release of
-  // outdated active rows AND the insertion of new drafts in a single DB
-  // transaction so a partial write cannot leave the day's call list in an
-  // inconsistent state if the process crashes mid-build.
-  async applySchedulerAssignmentDiff(
-    releaseIds: number[],
-    drafts: InsertSchedulerAssignment[],
-    reason: string,
-  ): Promise<{ released: SchedulerAssignment[]; created: SchedulerAssignment[] }> {
-    if (releaseIds.length === 0 && drafts.length === 0) {
-      return { released: [], created: [] };
-    }
-    return db.transaction(async (tx) => {
-      const released = releaseIds.length === 0 ? [] : await tx.update(schedulerAssignments)
-        .set({ status: "released", reason })
-        .where(and(
-          inArray(schedulerAssignments.id, releaseIds),
-          eq(schedulerAssignments.status, "active"),
-        ))
-        .returning();
-      const created = drafts.length === 0 ? [] :
-        await tx.insert(schedulerAssignments).values(drafts).returning();
-      return { released, created };
-    });
-  }
-
-  async listActiveSchedulerAssignments(filters: { schedulerId?: number; asOfDate?: string } = {}): Promise<SchedulerAssignment[]> {
-    const conds = [eq(schedulerAssignments.status, "active")];
-    if (filters.schedulerId != null) conds.push(eq(schedulerAssignments.schedulerId, filters.schedulerId));
-    if (filters.asOfDate) conds.push(eq(schedulerAssignments.asOfDate, filters.asOfDate));
-    return db.select().from(schedulerAssignments)
-      .where(and(...conds))
-      .orderBy(asc(schedulerAssignments.assignedAt));
-  }
-
-  async getActiveAssignmentForPatient(patientScreeningId: number): Promise<SchedulerAssignment | undefined> {
-    const [row] = await db.select().from(schedulerAssignments).where(and(
-      eq(schedulerAssignments.patientScreeningId, patientScreeningId),
-      eq(schedulerAssignments.status, "active"),
-    )).limit(1);
-    return row;
-  }
-
-  // Date-scoped lookup used by access-control checks (e.g. outreach call
-  // logging) so authorization can never be granted/denied based on a stale
-  // active row from a prior day's call list.
-  async getActiveAssignmentForPatientOnDate(
-    patientScreeningId: number,
-    asOfDate: string,
-  ): Promise<SchedulerAssignment | undefined> {
-    const [row] = await db.select().from(schedulerAssignments).where(and(
-      eq(schedulerAssignments.patientScreeningId, patientScreeningId),
-      eq(schedulerAssignments.status, "active"),
-      eq(schedulerAssignments.asOfDate, asOfDate),
-    )).limit(1);
-    return row;
-  }
-
-  async releaseSchedulerAssignmentsForScheduler(
-    schedulerId: number,
-    asOfDate: string,
-    reason: string,
-  ): Promise<SchedulerAssignment[]> {
-    const released = await db.update(schedulerAssignments)
-      .set({ status: "released", reason })
-      .where(and(
-        eq(schedulerAssignments.schedulerId, schedulerId),
-        eq(schedulerAssignments.asOfDate, asOfDate),
-        eq(schedulerAssignments.status, "active"),
-      ))
-      .returning();
-    return released;
-  }
-
-  // Close any active row older than `beforeAsOfDate`. Used by daily build sweep.
-  async releaseStaleActiveAssignments(beforeAsOfDate: string, reason: string): Promise<number> {
-    const released = await db.update(schedulerAssignments)
-      .set({ status: "released", reason })
-      .where(and(
-        eq(schedulerAssignments.status, "active"),
-        sql`${schedulerAssignments.asOfDate} < ${beforeAsOfDate}`,
-      ))
-      .returning({ id: schedulerAssignments.id });
-    return released.length;
-  }
-
-  async releaseSchedulerAssignmentsByIds(ids: number[], reason: string): Promise<SchedulerAssignment[]> {
-    if (ids.length === 0) return [];
-    const released = await db.update(schedulerAssignments)
-      .set({ status: "released", reason })
-      .where(and(
-        inArray(schedulerAssignments.id, ids),
-        eq(schedulerAssignments.status, "active"),
-      ))
-      .returning();
-    return released;
-  }
-
-  async reassignSchedulerAssignment(
-    id: number,
-    newSchedulerId: number,
-    reason: string,
-  ): Promise<SchedulerAssignment | undefined> {
-    return db.transaction(async (tx) => {
-      const [old] = await tx.select().from(schedulerAssignments).where(eq(schedulerAssignments.id, id)).limit(1);
-      if (!old) return undefined;
-      await tx.update(schedulerAssignments)
-        .set({ status: "reassigned", reason })
-        .where(eq(schedulerAssignments.id, id));
-      const [created] = await tx.insert(schedulerAssignments).values({
-        patientScreeningId: old.patientScreeningId,
-        schedulerId: newSchedulerId,
-        asOfDate: old.asOfDate,
-        source: "reassigned",
-        originalSchedulerId: old.schedulerId,
-        reason,
-        status: "active",
-      }).returning();
-      return created;
-    });
-  }
-
-  async markSchedulerAssignmentCompleted(patientScreeningId: number): Promise<void> {
-    await db.update(schedulerAssignments)
-      .set({ status: "completed", completedAt: new Date() })
-      .where(and(
-        eq(schedulerAssignments.patientScreeningId, patientScreeningId),
-        eq(schedulerAssignments.status, "active"),
-      ));
-  }
-
-  // ── PTO Requests ─────────────────────────────────────────────────────────
-  // Delegated to server/repositories/pto.repo.ts.
-  createPtoRequest(record: InsertPtoRequest): Promise<PtoRequest> {
-    return ptoRepository.create(record);
-  }
-
-  getPtoRequests(filters: { userId?: string; status?: string; fromDate?: string; toDate?: string } = {}): Promise<PtoRequest[]> {
-    return ptoRepository.list(filters);
-  }
-
-  getPtoRequest(id: number): Promise<PtoRequest | undefined> {
-    return ptoRepository.getById(id);
-  }
-
-  reviewPtoRequest(id: number, status: "approved" | "denied", reviewedBy: string): Promise<PtoRequest | undefined> {
-    return ptoRepository.review(id, status, reviewedBy);
-  }
-
-  deletePtoRequest(id: number): Promise<void> {
-    return ptoRepository.remove(id);
-  }
-
-  async createAnalysisJob(record: InsertAnalysisJob): Promise<AnalysisJob> {
-    const [result] = await db.insert(analysisJobs).values(record).returning();
-    return result;
-  }
-
-  async updateAnalysisJob(id: number, updates: Partial<InsertAnalysisJob>): Promise<AnalysisJob | undefined> {
-    const [result] = await db.update(analysisJobs).set(updates).where(eq(analysisJobs.id, id)).returning();
-    return result;
-  }
-
-  async incrementAnalysisJobProgress(jobId: number): Promise<void> {
-    await db.update(analysisJobs)
-      .set({ completedPatients: sql`${analysisJobs.completedPatients} + 1` })
-      .where(eq(analysisJobs.id, jobId));
-  }
-
-  async getLatestAnalysisJobByBatch(batchId: number): Promise<AnalysisJob | undefined> {
-    const [result] = await db.select().from(analysisJobs)
-      .where(eq(analysisJobs.batchId, batchId))
-      .orderBy(desc(analysisJobs.startedAt))
-      .limit(1);
-    return result;
-  }
-
-  async getRecentAnalysisJobs(limit: number): Promise<Array<AnalysisJob & { batchName: string }>> {
-    const rows = await db
-      .select({
-        id: analysisJobs.id,
-        batchId: analysisJobs.batchId,
-        status: analysisJobs.status,
-        totalPatients: analysisJobs.totalPatients,
-        completedPatients: analysisJobs.completedPatients,
-        errorMessage: analysisJobs.errorMessage,
-        startedAt: analysisJobs.startedAt,
-        completedAt: analysisJobs.completedAt,
-        batchName: screeningBatches.name,
-      })
-      .from(analysisJobs)
-      .leftJoin(screeningBatches, eq(analysisJobs.batchId, screeningBatches.id))
-      .orderBy(desc(analysisJobs.startedAt))
-      .limit(limit);
-    return rows.map((r) => ({ ...r, batchName: r.batchName ?? `Batch #${r.batchId}` }));
-  }
-
-  async failRunningAnalysisJobs(errorMessage: string): Promise<void> {
-    await db.update(analysisJobs)
-      .set({ status: "failed", errorMessage, completedAt: new Date() })
-      .where(eq(analysisJobs.status, "running"));
-  }
-
-  async purgeOldAnalysisJobs(olderThanDays: number): Promise<void> {
-    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
-    await db.delete(analysisJobs).where(
-      and(
-        sql`${analysisJobs.completedAt} IS NOT NULL`,
-        sql`${analysisJobs.completedAt} < ${cutoff}`
-      )
-    );
-  }
-
-  // ── Plexus Projects ──────────────────────────────────────────────────────────
-  async createProject(record: InsertPlexusProject): Promise<PlexusProject> {
-    const [result] = await db.insert(plexusProjects).values(record).returning();
-    return result;
-  }
-
-  async getProjects(): Promise<PlexusProject[]> {
-    return db.select().from(plexusProjects).orderBy(asc(plexusProjects.title));
-  }
-
-  async getProjectsForUser(userId: string): Promise<PlexusProject[]> {
-    const ownedProjects = await db.select({ id: plexusProjects.id })
-      .from(plexusProjects)
-      .where(eq(plexusProjects.createdByUserId, userId));
-    const taskRows = await db.select({ projectId: plexusTasks.projectId })
-      .from(plexusTasks)
-      .where(and(
-        sql`${plexusTasks.projectId} IS NOT NULL`,
-        sql`(${plexusTasks.createdByUserId} = ${userId} OR ${plexusTasks.assignedToUserId} = ${userId})`
-      ));
-    const collabRows = await db.select({ taskId: plexusTaskCollaborators.taskId })
-      .from(plexusTaskCollaborators)
-      .where(eq(plexusTaskCollaborators.userId, userId));
-    const taskIds = collabRows.map((c) => c.taskId);
-    let collabProjectIds: number[] = [];
-    if (taskIds.length > 0) {
-      const collabTasks = await db.select({ projectId: plexusTasks.projectId })
-        .from(plexusTasks)
-        .where(and(inArray(plexusTasks.id, taskIds), sql`${plexusTasks.projectId} IS NOT NULL`));
-      collabProjectIds = collabTasks.map((t) => t.projectId).filter((id): id is number => id != null);
-    }
-    const allIds = Array.from(new Set([
-      ...ownedProjects.map((p) => p.id),
-      ...taskRows.map((t) => t.projectId).filter((id): id is number => id != null),
-      ...collabProjectIds,
-    ]));
-    if (allIds.length === 0) return [];
-    return db.select().from(plexusProjects)
-      .where(inArray(plexusProjects.id, allIds))
-      .orderBy(asc(plexusProjects.title));
-  }
-
-  async getProjectById(id: number): Promise<PlexusProject | undefined> {
-    const [result] = await db.select().from(plexusProjects).where(eq(plexusProjects.id, id));
-    return result;
-  }
-
-  async updateProject(id: number, updates: Partial<InsertPlexusProject>): Promise<PlexusProject | undefined> {
-    const [result] = await db.update(plexusProjects).set(updates).where(eq(plexusProjects.id, id)).returning();
-    return result;
-  }
-
-  // ── Plexus Tasks ─────────────────────────────────────────────────────────────
-  async createTask(record: InsertPlexusTask): Promise<PlexusTask> {
-    const [result] = await db.insert(plexusTasks).values(record).returning();
-    return result;
-  }
-
-  async getTaskById(id: number): Promise<PlexusTask | undefined> {
-    const [result] = await db.select().from(plexusTasks).where(eq(plexusTasks.id, id));
-    return result;
-  }
-
-  async getTasksByProject(projectId: number): Promise<PlexusTask[]> {
-    return db.select().from(plexusTasks)
-      .where(eq(plexusTasks.projectId, projectId))
-      .orderBy(asc(plexusTasks.createdAt));
-  }
-
-  async getTasksByAssignee(userId: string): Promise<PlexusTask[]> {
-    return db.select().from(plexusTasks)
-      .where(and(eq(plexusTasks.assignedToUserId, userId), ne(plexusTasks.status, "closed")))
-      .orderBy(desc(plexusTasks.createdAt));
-  }
-
-  async getTasksByCreator(userId: string): Promise<PlexusTask[]> {
-    return db.select().from(plexusTasks)
-      .where(eq(plexusTasks.createdByUserId, userId))
-      .orderBy(desc(plexusTasks.createdAt));
-  }
-
-  async getTasksByPatient(patientScreeningId: number): Promise<PlexusTask[]> {
-    return db.select().from(plexusTasks)
-      .where(eq(plexusTasks.patientScreeningId, patientScreeningId))
-      .orderBy(desc(plexusTasks.createdAt));
-  }
-
-  async getTasksByCreatorWithActivity(userId: string): Promise<(PlexusTask & { lastActivityAt: Date | null })[]> {
-    const tasks = await db.select().from(plexusTasks)
-      .where(eq(plexusTasks.createdByUserId, userId))
-      .orderBy(desc(plexusTasks.updatedAt));
-    if (tasks.length === 0) return [];
-    const taskIds = tasks.map((t) => t.id);
-    const latestMsgs = await db.select({
-      taskId: plexusTaskMessages.taskId,
-      latestAt: sql<Date>`MAX(${plexusTaskMessages.createdAt})`,
-    })
-      .from(plexusTaskMessages)
-      .where(inArray(plexusTaskMessages.taskId, taskIds))
-      .groupBy(plexusTaskMessages.taskId);
-    const msgMap = new Map(latestMsgs.map((m) => [m.taskId, m.latestAt]));
-    return tasks.map((t) => ({
-      ...t,
-      lastActivityAt: msgMap.get(t.id) ?? t.updatedAt,
-    }));
-  }
-
-  async getUrgentTasks(): Promise<PlexusTask[]> {
-    return db.select().from(plexusTasks)
-      .where(and(
-        ne(plexusTasks.urgency, "none"),
-        ne(plexusTasks.status, "closed"),
-        ne(plexusTasks.status, "done")
-      ))
-      .orderBy(desc(plexusTasks.createdAt));
-  }
-
-  async getOverdueTasksForUser(userId: string): Promise<PlexusTask[]> {
-    const today = new Date().toISOString().slice(0, 10);
-    return db.select().from(plexusTasks)
-      .where(and(
-        or(
-          eq(plexusTasks.assignedToUserId, userId),
-          eq(plexusTasks.createdByUserId, userId),
-        ),
-        ne(plexusTasks.status, "closed"),
-        ne(plexusTasks.status, "done"),
-        sql`${plexusTasks.dueDate} IS NOT NULL`,
-        lte(plexusTasks.dueDate, today),
-      ))
-      .orderBy(asc(plexusTasks.dueDate));
-  }
-
-  async updateTask(id: number, updates: Partial<InsertPlexusTask>): Promise<PlexusTask | undefined> {
-    const [result] = await db.update(plexusTasks)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(plexusTasks.id, id))
-      .returning();
-    return result;
-  }
-
-  // ── Plexus Collaborators ──────────────────────────────────────────────────────
-  async addCollaborator(record: InsertPlexusTaskCollaborator): Promise<PlexusTaskCollaborator> {
-    const existing = await db.select().from(plexusTaskCollaborators)
-      .where(and(eq(plexusTaskCollaborators.taskId, record.taskId), eq(plexusTaskCollaborators.userId, record.userId)))
-      .limit(1);
-    if (existing.length > 0) {
-      const [updated] = await db.update(plexusTaskCollaborators)
-        .set({ role: record.role })
-        .where(eq(plexusTaskCollaborators.id, existing[0].id))
-        .returning();
-      return updated;
-    }
-    const [result] = await db.insert(plexusTaskCollaborators).values(record).returning();
-    return result;
-  }
-
-  async getCollaborators(taskId: number): Promise<PlexusTaskCollaborator[]> {
-    return db.select().from(plexusTaskCollaborators).where(eq(plexusTaskCollaborators.taskId, taskId));
-  }
-
-  // ── Plexus Messages ───────────────────────────────────────────────────────────
-  async addMessage(record: InsertPlexusTaskMessage): Promise<PlexusTaskMessage> {
-    const [result] = await db.insert(plexusTaskMessages).values(record).returning();
-    await db.update(plexusTasks).set({ updatedAt: new Date() }).where(eq(plexusTasks.id, record.taskId));
-    return result;
-  }
-
-  async getMessages(taskId: number): Promise<PlexusTaskMessage[]> {
-    return db.select().from(plexusTaskMessages)
-      .where(eq(plexusTaskMessages.taskId, taskId))
-      .orderBy(asc(plexusTaskMessages.createdAt));
-  }
-
-  // ── Plexus Events ─────────────────────────────────────────────────────────────
-  async writeEvent(record: InsertPlexusTaskEvent): Promise<PlexusTaskEvent> {
-    const [result] = await db.insert(plexusTaskEvents).values(record).returning();
-    return result;
-  }
-
-  async getEvents(taskId: number): Promise<PlexusTaskEvent[]> {
-    return db.select().from(plexusTaskEvents)
-      .where(eq(plexusTaskEvents.taskId, taskId))
-      .orderBy(asc(plexusTaskEvents.createdAt));
-  }
-
-  // ── Plexus Reads ──────────────────────────────────────────────────────────────
-  async markRead(taskId: number, userId: string): Promise<void> {
-    const now = new Date();
-    const existing = await db.select().from(plexusTaskReads)
-      .where(and(eq(plexusTaskReads.taskId, taskId), eq(plexusTaskReads.userId, userId)))
-      .limit(1);
-    if (existing.length > 0) {
-      await db.update(plexusTaskReads)
-        .set({ lastReadAt: now })
-        .where(eq(plexusTaskReads.id, existing[0].id));
-    } else {
-      await db.insert(plexusTaskReads).values({ taskId, userId });
-    }
-    await db.insert(plexusTaskEvents).values({
-      taskId,
-      userId,
-      eventType: "read",
-      payload: { readAt: now.toISOString() },
-    });
-  }
-
-  // Returns task IDs where the user has membership for unread counting.
-  // Closed tasks are excluded from direct membership — unread badges
-  // for closed tasks would be noise since closed tasks are considered archived.
-  // Collaborator tasks are always included (to catch team-help scenarios).
-  private async _getMemberTaskIds(userId: string): Promise<number[]> {
-    const [directRows, collabRows] = await Promise.all([
-      db.select({ id: plexusTasks.id }).from(plexusTasks)
-        .where(and(
-          ne(plexusTasks.status, "closed"),
-          sql`(${plexusTasks.assignedToUserId} = ${userId} OR ${plexusTasks.createdByUserId} = ${userId})`
-        )),
-      db.select({ taskId: plexusTaskCollaborators.taskId })
-        .from(plexusTaskCollaborators)
-        .where(eq(plexusTaskCollaborators.userId, userId)),
-    ]);
-    return Array.from(new Set([
-      ...directRows.map((t) => t.id),
-      ...collabRows.map((c) => c.taskId),
-    ]));
-  }
-
-  // Canonical unread semantics: counts unread MESSAGES (not tasks).
-  // A message is unread if: user has no read record for the task, OR
-  // the message was sent after the user's last_read_at for that task.
-  // This powers the GlobalNav badge and per-task indicators.
-  async getUnreadCount(userId: string): Promise<number> {
-    const taskIds = await this._getMemberTaskIds(userId);
-    if (taskIds.length === 0) return 0;
-    const [msgRows, readRows] = await Promise.all([
-      db.select({ taskId: plexusTaskMessages.taskId, createdAt: plexusTaskMessages.createdAt })
-        .from(plexusTaskMessages)
-        .where(and(
-          inArray(plexusTaskMessages.taskId, taskIds),
-          sql`${plexusTaskMessages.senderUserId} != ${userId}`
-        )),
-      db.select({ taskId: plexusTaskReads.taskId, lastReadAt: plexusTaskReads.lastReadAt })
-        .from(plexusTaskReads)
-        .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, taskIds))),
-    ]);
-    const readMap = new Map(readRows.map((r) => [r.taskId, r.lastReadAt]));
-    return msgRows.filter((m) => {
-      const lastRead = readMap.get(m.taskId);
-      return !lastRead || m.createdAt > lastRead;
-    }).length;
-  }
-
-  async deleteTask(id: number): Promise<void> {
-    await db.delete(plexusTasks).where(eq(plexusTasks.id, id));
-  }
-
-  async deleteProject(id: number): Promise<void> {
-    await db.delete(plexusProjects).where(eq(plexusProjects.id, id));
-  }
-
-  async getUnreadPerTask(userId: string): Promise<{ taskId: number; unreadCount: number }[]> {
-    const taskIds = await this._getMemberTaskIds(userId);
-    if (taskIds.length === 0) return [];
-    const [msgRows, readRows] = await Promise.all([
-      db.select({ taskId: plexusTaskMessages.taskId, createdAt: plexusTaskMessages.createdAt })
-        .from(plexusTaskMessages)
-        .where(and(
-          inArray(plexusTaskMessages.taskId, taskIds),
-          sql`${plexusTaskMessages.senderUserId} != ${userId}`
-        )),
-      db.select({ taskId: plexusTaskReads.taskId, lastReadAt: plexusTaskReads.lastReadAt })
-        .from(plexusTaskReads)
-        .where(and(eq(plexusTaskReads.userId, userId), inArray(plexusTaskReads.taskId, taskIds))),
-    ]);
-    const readMap = new Map(readRows.map((r) => [r.taskId, r.lastReadAt]));
-    const perTask = new Map<number, number>();
-    for (const m of msgRows) {
-      const lastRead = readMap.get(m.taskId);
-      if (!lastRead || m.createdAt > lastRead) {
-        perTask.set(m.taskId, (perTask.get(m.taskId) ?? 0) + 1);
-      }
-    }
-    return Array.from(perTask.entries()).map(([taskId, unreadCount]) => ({ taskId, unreadCount }));
-  }
-
-  async searchPatientsByName(query: string): Promise<PatientScreening[]> {
-    return db.select().from(patientScreenings)
-      .where(sql`LOWER(${patientScreenings.name}) LIKE LOWER(${'%' + query + '%'})`)
-      .limit(20);
-  }
-
-  async getPatientById(id: number): Promise<PatientScreening | undefined> {
-    const [result] = await db.select().from(patientScreenings).where(eq(patientScreenings.id, id));
-    return result;
-  }
-
-  async getTasksByPatientScreeningId(patientScreeningId: number): Promise<PlexusTask[]> {
-    return db.select().from(plexusTasks)
-      .where(eq(plexusTasks.patientScreeningId, patientScreeningId))
-      .orderBy(desc(plexusTasks.createdAt));
-  }
-
-  // ── Audit Log ────────────────────────────────────────────────────────────
-  // Delegated to server/repositories/audit.repo.ts.
-  createAuditLog(record: InsertAuditLog): Promise<AuditLog> {
-    return auditRepository.create(record);
-  }
-
-  getAuditLogs(filters?: {
-    userId?: string;
-    entityType?: string;
-    fromDate?: Date;
-    toDate?: Date;
-    limit?: number;
-  }): Promise<AuditLog[]> {
+  // Users
+  getUser(id: string) { return usersRepository.getById(id); }
+  getUserByUsername(username: string) { return usersRepository.getByUsername(username); }
+  createUser(insertUser: InsertUser) { return usersRepository.create(insertUser); }
+  getUserCount() { return usersRepository.count(); }
+  updateUserPassword(id: string, plaintext: string) { return usersRepository.updatePassword(id, plaintext); }
+  updateUserRole(id: string, role: string) { return usersRepository.updateRole(id, role); }
+  validateUserPassword(username: string, plaintext: string) { return usersRepository.validatePassword(username, plaintext); }
+  getAllUsers() { return usersRepository.listAll(); }
+  deactivateUser(id: string) { return usersRepository.deactivate(id); }
+  deleteUser(id: string) { return usersRepository.remove(id); }
+
+  // Screening batches + patient screenings
+  createScreeningBatch(batch: InsertScreeningBatch) { return screeningRepository.createBatch(batch); }
+  getScreeningBatch(id: number) { return screeningRepository.getBatch(id); }
+  getAllScreeningBatches() { return screeningRepository.listBatches(); }
+  updateScreeningBatch(id: number, updates: Partial<InsertScreeningBatch>) { return screeningRepository.updateBatch(id, updates); }
+  deleteScreeningBatch(id: number) { return screeningRepository.deleteBatch(id); }
+
+  createPatientScreening(screening: InsertPatientScreening) { return screeningRepository.createScreening(screening); }
+  getAllPatientScreenings() { return screeningRepository.listAllScreenings(); }
+  getPatientScreeningsByBatch(batchId: number) { return screeningRepository.listScreeningsByBatch(batchId); }
+  getPatientScreening(id: number) { return screeningRepository.getScreening(id); }
+  updatePatientScreening(id: number, updates: Partial<InsertPatientScreening>) { return screeningRepository.updateScreening(id, updates); }
+  deletePatientScreening(id: number) { return screeningRepository.deleteScreening(id); }
+
+  searchPatientsByName(query: string) { return screeningRepository.searchPatientsByName(query); }
+  getPatientById(id: number) { return screeningRepository.getScreening(id); }
+
+  getPatientRosterAggregates(filters?: PatientRosterAggregateFilters) { return screeningRepository.getRosterAggregates(filters); }
+  getPatientCooldownDashboard() { return screeningRepository.getCooldownDashboard(); }
+  getPatientHistoryImportReport(sampleLimit: number) { return screeningRepository.getHistoryImportReport(sampleLimit); }
+  getPatientGroupScreenings(name: string, dob: string | null) { return screeningRepository.getGroupScreenings(name, dob); }
+
+  // Patient history + reference data
+  createTestHistory(record: InsertTestHistory) { return patientHistoryRepository.createTestHistory(record); }
+  createTestHistoryBulk(records: InsertTestHistory[]) { return patientHistoryRepository.createTestHistoryBulk(records); }
+  bulkInsertTestHistoryIfNotExists(records: InsertTestHistory[]) { return patientHistoryRepository.bulkInsertTestHistoryIfNotExists(records); }
+  getAllTestHistory() { return patientHistoryRepository.listAllTestHistory(); }
+  searchTestHistory(nameQuery: string) { return patientHistoryRepository.searchTestHistory(nameQuery); }
+  deleteTestHistory(id: number) { return patientHistoryRepository.deleteTestHistory(id); }
+  deleteAllTestHistory() { return patientHistoryRepository.deleteAllTestHistory(); }
+  getPatientGroupTestHistory(name: string, dob: string | null) { return patientHistoryRepository.getGroupTestHistory(name, dob); }
+
+  createPatientReference(record: InsertPatientReference) { return patientHistoryRepository.createReference(record); }
+  createPatientReferenceBulk(records: InsertPatientReference[]) { return patientHistoryRepository.createReferenceBulk(records); }
+  getAllPatientReferences() { return patientHistoryRepository.listAllReferences(); }
+  searchPatientReferences(nameQuery: string) { return patientHistoryRepository.searchReferences(nameQuery); }
+  deletePatientReference(id: number) { return patientHistoryRepository.deleteReference(id); }
+  deleteAllPatientReferences() { return patientHistoryRepository.deleteAllReferences(); }
+
+  // Generated notes
+  saveGeneratedNotes(records: InsertGeneratedNote[]) { return notesRepository.saveBulk(records); }
+  deleteGeneratedNotesByPatientAndService(patientId: number, service: string) { return notesRepository.deleteByPatientAndService(patientId, service); }
+  getGeneratedNotesByBatch(batchId: number) { return notesRepository.listByBatch(batchId); }
+  getAllGeneratedNotes() { return notesRepository.listAll(); }
+  getGeneratedNoteCountsByPatientId() { return notesRepository.countsByPatientId(); }
+  getGeneratedNotesByPatientIds(patientIds: number[]) { return notesRepository.listByPatientIds(patientIds); }
+  deleteGeneratedNotesByPatient(patientId: number) { return notesRepository.deleteByPatient(patientId); }
+  getGeneratedNotesByPatient(patientId: number) { return notesRepository.listByPatient(patientId); }
+  getGeneratedNote(id: number) { return notesRepository.getById(id); }
+  updateGeneratedNoteDriveInfo(id: number, driveFileId: string, driveWebViewLink: string) { return notesRepository.updateDriveInfo(id, driveFileId, driveWebViewLink); }
+
+  // Billing
+  getAllBillingRecords() { return billingRepository.listAll(); }
+  getBillingRecordByPatientAndService(patientId: number, service: string) { return billingRepository.getByPatientAndService(patientId, service); }
+  createBillingRecord(record: InsertBillingRecord) { return billingRepository.create(record); }
+  updateBillingRecord(id: number, updates: Partial<InsertBillingRecord>) { return billingRepository.update(id, updates); }
+  deleteBillingRecord(id: number) { return billingRepository.remove(id); }
+
+  // Invoices
+  getAllInvoices() { return invoicesRepository.listAll(); }
+  getInvoice(id: number) { return invoicesRepository.getById(id); }
+  getInvoiceLineItems(invoiceId: number) { return invoicesRepository.listLineItems(invoiceId); }
+  createInvoiceWithLineItems(invoice: InsertInvoice, lineItems: Omit<InsertInvoiceLineItem, "invoiceId">[]) {
+    return invoicesRepository.createWithLineItems(invoice, lineItems);
+  }
+  updateInvoiceStatus(id: number, status: string) { return invoicesRepository.updateStatus(id, status); }
+  markInvoiceSent(id: number, sentTo: string) { return invoicesRepository.markSent(id, sentTo); }
+  deleteInvoice(id: number) { return invoicesRepository.remove(id); }
+  getNextInvoiceNumber() { return invoicesRepository.nextInvoiceNumber(); }
+  getInvoicePayments(invoiceId: number) { return invoicesRepository.listPayments(invoiceId); }
+  createInvoicePayment(payment: InsertInvoicePayment) { return invoicesRepository.createPayment(payment); }
+  deleteInvoicePayment(invoiceId: number, paymentId: number) { return invoicesRepository.deletePayment(invoiceId, paymentId); }
+
+  // Uploaded documents
+  saveUploadedDocument(record: InsertUploadedDocument) { return uploadedDocumentsRepository.save(record); }
+  getAllUploadedDocuments() { return uploadedDocumentsRepository.listAll(); }
+  getUploadedDocument(id: number) { return uploadedDocumentsRepository.getById(id); }
+
+  // Appointments
+  createAppointment(record: InsertAncillaryAppointment) { return appointmentsRepository.create(record); }
+  getAppointments(filters?: { facility?: string; date?: string; testType?: string; status?: string }) { return appointmentsRepository.list(filters); }
+  getUpcomingAppointments(limit?: number) { return appointmentsRepository.upcoming(limit); }
+  cancelAppointment(id: number) { return appointmentsRepository.cancel(id); }
+  getAppointmentsByPatient(patientScreeningId: number) { return appointmentsRepository.listByPatient(patientScreeningId); }
+
+  // Outreach (schedulers + calls)
+  getOutreachSchedulers() { return outreachRepository.listSchedulers(); }
+  createOutreachScheduler(record: InsertOutreachScheduler) { return outreachRepository.createScheduler(record); }
+  updateOutreachScheduler(id: number, updates: Partial<InsertOutreachScheduler>) { return outreachRepository.updateScheduler(id, updates); }
+  deleteOutreachScheduler(id: number) { return outreachRepository.deleteScheduler(id); }
+
+  createOutreachCall(record: InsertOutreachCall) { return outreachRepository.createCall(record); }
+  createOutreachCallAtomic(record: InsertOutreachCall, desiredStatus: string) { return outreachRepository.createCallAtomic(record, desiredStatus); }
+  listOutreachCallsForPatient(patientScreeningId: number) { return outreachRepository.listCallsForPatient(patientScreeningId); }
+  listOutreachCallsForPatients(patientScreeningIds: number[]) { return outreachRepository.listCallsForPatients(patientScreeningIds); }
+  listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string) { return outreachRepository.listCallsForSchedulerToday(schedulerUserId, todayIso); }
+  latestOutreachCallForPatient(patientScreeningId: number) { return outreachRepository.latestCallForPatient(patientScreeningId); }
+
+  // Scheduler assignments
+  createSchedulerAssignment(record: InsertSchedulerAssignment) { return schedulerAssignmentsRepository.create(record); }
+  bulkCreateSchedulerAssignments(records: InsertSchedulerAssignment[]) { return schedulerAssignmentsRepository.bulkCreate(records); }
+  applySchedulerAssignmentDiff(releaseIds: number[], drafts: InsertSchedulerAssignment[], reason: string) {
+    return schedulerAssignmentsRepository.applyDiff(releaseIds, drafts, reason);
+  }
+  listActiveSchedulerAssignments(filters: { schedulerId?: number; asOfDate?: string } = {}) { return schedulerAssignmentsRepository.listActive(filters); }
+  getActiveAssignmentForPatient(patientScreeningId: number) { return schedulerAssignmentsRepository.getActiveForPatient(patientScreeningId); }
+  getActiveAssignmentForPatientOnDate(patientScreeningId: number, asOfDate: string) { return schedulerAssignmentsRepository.getActiveForPatientOnDate(patientScreeningId, asOfDate); }
+  releaseSchedulerAssignmentsForScheduler(schedulerId: number, asOfDate: string, reason: string) { return schedulerAssignmentsRepository.releaseForScheduler(schedulerId, asOfDate, reason); }
+  releaseSchedulerAssignmentsByIds(ids: number[], reason: string) { return schedulerAssignmentsRepository.releaseByIds(ids, reason); }
+  releaseStaleActiveAssignments(beforeAsOfDate: string, reason: string) { return schedulerAssignmentsRepository.releaseStale(beforeAsOfDate, reason); }
+  reassignSchedulerAssignment(id: number, newSchedulerId: number, reason: string) { return schedulerAssignmentsRepository.reassign(id, newSchedulerId, reason); }
+  markSchedulerAssignmentCompleted(patientScreeningId: number) { return schedulerAssignmentsRepository.markCompleted(patientScreeningId); }
+
+  // PTO
+  createPtoRequest(record: InsertPtoRequest) { return ptoRepository.create(record); }
+  getPtoRequests(filters: { userId?: string; status?: string; fromDate?: string; toDate?: string } = {}) { return ptoRepository.list(filters); }
+  getPtoRequest(id: number) { return ptoRepository.getById(id); }
+  reviewPtoRequest(id: number, status: "approved" | "denied", reviewedBy: string) { return ptoRepository.review(id, status, reviewedBy); }
+  deletePtoRequest(id: number) { return ptoRepository.remove(id); }
+
+  // Analysis jobs
+  createAnalysisJob(record: InsertAnalysisJob) { return analysisJobsRepository.create(record); }
+  updateAnalysisJob(id: number, updates: Partial<InsertAnalysisJob>) { return analysisJobsRepository.update(id, updates); }
+  incrementAnalysisJobProgress(jobId: number) { return analysisJobsRepository.incrementProgress(jobId); }
+  getLatestAnalysisJobByBatch(batchId: number) { return analysisJobsRepository.latestByBatch(batchId); }
+  getRecentAnalysisJobs(limit: number) { return analysisJobsRepository.recent(limit); }
+  failRunningAnalysisJobs(errorMessage: string) { return analysisJobsRepository.failRunning(errorMessage); }
+  purgeOldAnalysisJobs(olderThanDays: number) { return analysisJobsRepository.purgeOld(olderThanDays); }
+
+  // Plexus
+  createProject(record: InsertPlexusProject) { return plexusRepository.createProject(record); }
+  getProjects() { return plexusRepository.listProjects(); }
+  getProjectsForUser(userId: string) { return plexusRepository.listProjectsForUser(userId); }
+  getProjectById(id: number) { return plexusRepository.getProject(id); }
+  updateProject(id: number, updates: Partial<InsertPlexusProject>) { return plexusRepository.updateProject(id, updates); }
+  deleteProject(id: number) { return plexusRepository.deleteProject(id); }
+
+  createTask(record: InsertPlexusTask) { return plexusRepository.createTask(record); }
+  getTaskById(id: number) { return plexusRepository.getTask(id); }
+  getTasksByProject(projectId: number) { return plexusRepository.listTasksByProject(projectId); }
+  getTasksByAssignee(userId: string) { return plexusRepository.listTasksByAssignee(userId); }
+  getTasksByCreator(userId: string) { return plexusRepository.listTasksByCreator(userId); }
+  getTasksByCreatorWithActivity(userId: string) { return plexusRepository.listTasksByCreatorWithActivity(userId); }
+  getTasksByPatient(patientScreeningId: number) { return plexusRepository.listTasksByPatient(patientScreeningId); }
+  getTasksByPatientScreeningId(patientScreeningId: number) { return plexusRepository.listTasksByPatient(patientScreeningId); }
+  getUrgentTasks() { return plexusRepository.listUrgentTasks(); }
+  getOverdueTasksForUser(userId: string) { return plexusRepository.listOverdueTasksForUser(userId); }
+  updateTask(id: number, updates: Partial<InsertPlexusTask>) { return plexusRepository.updateTask(id, updates); }
+  deleteTask(id: number) { return plexusRepository.deleteTask(id); }
+
+  addCollaborator(record: InsertPlexusTaskCollaborator) { return plexusRepository.addCollaborator(record); }
+  getCollaborators(taskId: number) { return plexusRepository.listCollaborators(taskId); }
+
+  addMessage(record: InsertPlexusTaskMessage) { return plexusRepository.addMessage(record); }
+  getMessages(taskId: number) { return plexusRepository.listMessages(taskId); }
+
+  writeEvent(record: InsertPlexusTaskEvent) { return plexusRepository.writeEvent(record); }
+  getEvents(taskId: number) { return plexusRepository.listEvents(taskId); }
+
+  markRead(taskId: number, userId: string) { return plexusRepository.markRead(taskId, userId); }
+  getUnreadCount(userId: string) { return plexusRepository.unreadCount(userId); }
+  getUnreadPerTask(userId: string) { return plexusRepository.unreadPerTask(userId); }
+
+  // Audit log
+  createAuditLog(record: InsertAuditLog) { return auditRepository.create(record); }
+  getAuditLogs(filters?: { userId?: string; entityType?: string; fromDate?: Date; toDate?: Date; limit?: number }) {
     return auditRepository.list(filters);
   }
 
-  async getAllMarketingMaterials(): Promise<MarketingMaterial[]> {
-    return db.select().from(marketingMaterials).orderBy(desc(marketingMaterials.createdAt));
-  }
-
-  async getMarketingMaterial(id: number): Promise<MarketingMaterial | undefined> {
-    const [row] = await db.select().from(marketingMaterials).where(eq(marketingMaterials.id, id));
-    return row;
-  }
-
-  async createMarketingMaterial(record: InsertMarketingMaterial): Promise<MarketingMaterial> {
-    const [row] = await db.insert(marketingMaterials).values(record).returning();
-    return row;
-  }
-
-  async updateMarketingMaterialStorage(
+  // Marketing materials
+  getAllMarketingMaterials() { return marketingMaterialsRepository.listAll(); }
+  getMarketingMaterial(id: number) { return marketingMaterialsRepository.getById(id); }
+  createMarketingMaterial(record: InsertMarketingMaterial) { return marketingMaterialsRepository.create(record); }
+  updateMarketingMaterialStorage(
     id: number,
     patch: { storagePath: string; sha256: string; filename: string; sizeBytes: number },
-  ): Promise<MarketingMaterial> {
-    const [row] = await db.update(marketingMaterials).set(patch).where(eq(marketingMaterials.id, id)).returning();
-    return row;
+  ) {
+    return marketingMaterialsRepository.updateStorage(id, patch);
   }
+  deleteMarketingMaterial(id: number) { return marketingMaterialsRepository.remove(id); }
 
-  async deleteMarketingMaterial(id: number): Promise<void> {
-    await db.delete(marketingMaterials).where(eq(marketingMaterials.id, id));
+  // Document library
+  createDocument(record: InsertDocument) { return documentLibraryRepository.create(record); }
+  getDocument(id: number) { return documentLibraryRepository.getById(id); }
+  listCurrentDocuments(filters?: { kind?: DocumentKind; surface?: DocumentSurface; patientScreeningId?: number }) {
+    return documentLibraryRepository.listCurrent(filters);
   }
-
-  // ── Document Library ─────────────────────────────────────────────────────────
-  // Used by `/api/documents-library/*` and any internal surface (technician
-  // consent picker, scheduler resources, etc.) that wants to list documents.
-  async createDocument(record: InsertDocument): Promise<Document> {
-    const [row] = await db.insert(documents).values(record).returning();
-    return row;
+  getDocumentsForSurface(surface: DocumentSurface, opts?: { patientScreeningId?: number; kind?: DocumentKind }) {
+    return documentLibraryRepository.listForSurface(surface, opts);
   }
-
-  async getDocument(id: number): Promise<Document | undefined> {
-    const [row] = await db.select().from(documents).where(eq(documents.id, id));
-    return row;
-  }
-
-  // Returns "current" documents (not superseded, not soft-deleted) matching
-  // the supplied filters. `kind`, `surface` and `patientScreeningId` are
-  // additive — any combination is supported server-side. Patient-scoped
-  // docs are excluded by default; they only appear when `patientScreeningId`
-  // is explicitly provided.
-  async listCurrentDocuments(filters?: {
-    kind?: DocumentKind;
-    surface?: DocumentSurface;
-    patientScreeningId?: number;
-  }): Promise<Document[]> {
-    const conditions = [
-      sql`${documents.supersededByDocumentId} IS NULL`,
-      sql`${documents.deletedAt} IS NULL`,
-    ];
-    if (filters?.kind) conditions.push(eq(documents.kind, filters.kind));
-    if (typeof filters?.patientScreeningId === "number") {
-      conditions.push(eq(documents.patientScreeningId, filters.patientScreeningId));
-    } else {
-      // Default: hide patient-scoped docs from general/library reads.
-      conditions.push(sql`${documents.patientScreeningId} IS NULL`);
-    }
-    if (filters?.surface) {
-      const rows = await db
-        .select({ doc: documents })
-        .from(documentSurfaceAssignments)
-        .innerJoin(documents, eq(documents.id, documentSurfaceAssignments.documentId))
-        .where(and(eq(documentSurfaceAssignments.surface, filters.surface), ...conditions))
-        .orderBy(desc(documents.createdAt));
-      return rows.map((r) => r.doc);
-    }
-    return db.select().from(documents)
-      .where(and(...conditions))
-      .orderBy(desc(documents.createdAt));
-  }
-
-  // Thin wrapper kept for callers that only care about a single surface.
-  async getDocumentsForSurface(
-    surface: DocumentSurface,
-    opts?: { patientScreeningId?: number; kind?: DocumentKind },
-  ): Promise<Document[]> {
-    return this.listCurrentDocuments({
-      surface,
-      kind: opts?.kind,
-      patientScreeningId: opts?.patientScreeningId,
-    });
-  }
-
-  // Walks the supersededBy chain backwards to find every prior version of a
-  // logical document. Returns oldest -> newest.
-  async getDocumentVersionChain(currentDocId: number): Promise<Document[]> {
-    const chain: Document[] = [];
-    const seen = new Set<number>();
-    // Walk older versions: find rows whose supersededByDocumentId points at us.
-    let pointerId = currentDocId;
-    while (true) {
-      const [predecessor] = await db.select().from(documents)
-        .where(eq(documents.supersededByDocumentId, pointerId)).limit(1);
-      if (!predecessor || seen.has(predecessor.id)) break;
-      seen.add(predecessor.id);
-      chain.unshift(predecessor);
-      pointerId = predecessor.id;
-    }
-    const [current] = await db.select().from(documents).where(eq(documents.id, currentDocId));
-    if (current) chain.push(current);
-    return chain;
-  }
-
-  // Marks `oldId` as superseded by `newId`, copies the old assignments onto
-  // the new document (so the new version appears wherever the old did),
-  // and bumps the new document's version number to old.version + 1.
-  async supersedeDocument(oldId: number, newId: number): Promise<void> {
-    await db.transaction(async (tx) => {
-      // Lock the old row FOR UPDATE so two concurrent supersede calls can't
-      // both read the same version and produce duplicate version numbers.
-      await tx.execute(sql`SELECT id FROM documents WHERE id = ${oldId} FOR UPDATE`);
-      const [oldDoc] = await tx.select().from(documents).where(eq(documents.id, oldId));
-      if (!oldDoc) throw new Error(`document ${oldId} not found`);
-      if (oldDoc.supersededByDocumentId !== null) {
-        throw new Error(`document ${oldId} is already superseded`);
-      }
-      await tx.update(documents)
-        .set({ supersededByDocumentId: newId })
-        .where(eq(documents.id, oldId));
-      await tx.update(documents)
-        .set({ version: oldDoc.version + 1 })
-        .where(eq(documents.id, newId));
-      const oldAssignments = await tx.select().from(documentSurfaceAssignments)
-        .where(eq(documentSurfaceAssignments.documentId, oldId));
-      for (const a of oldAssignments) {
-        await tx.insert(documentSurfaceAssignments)
-          .values({ documentId: newId, surface: a.surface })
-          .onConflictDoNothing();
-      }
-    });
-  }
-
-  async getDocumentAssignments(documentId: number): Promise<DocumentSurfaceAssignment[]> {
-    return db.select().from(documentSurfaceAssignments)
-      .where(eq(documentSurfaceAssignments.documentId, documentId));
-  }
-
-  async addDocumentAssignment(documentId: number, surface: DocumentSurface): Promise<DocumentSurfaceAssignment> {
-    const [row] = await db.insert(documentSurfaceAssignments)
-      .values({ documentId, surface })
-      .onConflictDoNothing()
-      .returning();
-    if (row) return row;
-    const [existing] = await db.select().from(documentSurfaceAssignments)
-      .where(and(
-        eq(documentSurfaceAssignments.documentId, documentId),
-        eq(documentSurfaceAssignments.surface, surface),
-      ));
-    return existing;
-  }
-
-  async removeDocumentAssignment(documentId: number, surface: DocumentSurface): Promise<void> {
-    await db.delete(documentSurfaceAssignments)
-      .where(and(
-        eq(documentSurfaceAssignments.documentId, documentId),
-        eq(documentSurfaceAssignments.surface, surface),
-      ));
-  }
-
-  // Replace the full set of surface assignments for a document atomically.
-  // (PATCH-style: any surface in `surfaces` is added, any not in `surfaces`
-  // is removed.)
-  async replaceDocumentAssignments(
-    documentId: number,
-    surfaces: DocumentSurface[],
-  ): Promise<DocumentSurfaceAssignment[]> {
-    return db.transaction(async (tx) => {
-      const existing = await tx.select().from(documentSurfaceAssignments)
-        .where(eq(documentSurfaceAssignments.documentId, documentId));
-      const wanted = new Set<string>(surfaces);
-      const have = new Set<string>(existing.map((a) => a.surface));
-      const toRemove = existing.filter((a) => !wanted.has(a.surface));
-      const toAdd = surfaces.filter((s) => !have.has(s));
-      for (const a of toRemove) {
-        await tx.delete(documentSurfaceAssignments)
-          .where(eq(documentSurfaceAssignments.id, a.id));
-      }
-      for (const s of toAdd) {
-        await tx.insert(documentSurfaceAssignments)
-          .values({ documentId, surface: s })
-          .onConflictDoNothing();
-      }
-      return tx.select().from(documentSurfaceAssignments)
-        .where(eq(documentSurfaceAssignments.documentId, documentId));
-    });
-  }
-
-  // Soft-delete: mark deletedAt; rows stay in the table for audit history but
-  // are filtered out of all current/surface reads.
-  async softDeleteDocument(id: number): Promise<void> {
-    await db.update(documents)
-      .set({ deletedAt: new Date() })
-      .where(and(eq(documents.id, id), sql`${documents.deletedAt} IS NULL`));
-  }
-
-  async deleteDocument(id: number): Promise<void> {
-    // Hard delete kept for admin/test cleanup paths only. Detach any successor
-    // pointer first so we don't leave dangling FKs.
-    await db.update(documents)
-      .set({ supersededByDocumentId: null })
-      .where(eq(documents.supersededByDocumentId, id));
-    await db.delete(documents).where(eq(documents.id, id));
-  }
+  getDocumentVersionChain(currentDocId: number) { return documentLibraryRepository.versionChain(currentDocId); }
+  supersedeDocument(oldId: number, newId: number) { return documentLibraryRepository.supersede(oldId, newId); }
+  getDocumentAssignments(documentId: number) { return documentLibraryRepository.listAssignments(documentId); }
+  addDocumentAssignment(documentId: number, surface: DocumentSurface) { return documentLibraryRepository.addAssignment(documentId, surface); }
+  removeDocumentAssignment(documentId: number, surface: DocumentSurface) { return documentLibraryRepository.removeAssignment(documentId, surface); }
+  replaceDocumentAssignments(documentId: number, surfaces: DocumentSurface[]) { return documentLibraryRepository.replaceAssignments(documentId, surfaces); }
+  softDeleteDocument(id: number) { return documentLibraryRepository.softDelete(id); }
+  deleteDocument(id: number) { return documentLibraryRepository.hardDelete(id); }
 }
 
 export const storage = new DatabaseStorage();
