@@ -1,8 +1,20 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import type { AncillaryAppointment, OutreachCall } from "@shared/schema";
-import type { AuthUser } from "@/App";
-import type { PlexusTaskSummary, UserEntry } from "@/components/plexus/SchedulerIcon";
+import type { OutreachCall } from "@shared/schema";
+import { useCurrentUser } from "@/hooks/api/auth";
+import { useAppointmentsByFacility } from "@/hooks/api/appointments";
+import {
+  usePlexusUsers,
+  useMyWorkTasks,
+  useUrgentTasks,
+  useUnreadPerTask,
+} from "@/hooks/api/plexus";
+import { useSchedulerAssignments } from "@/hooks/api/scheduler-assignments";
+import {
+  useOutreachDashboard,
+  useOutreachSchedulers,
+  useOutreachCallsToday,
+  useOutreachCallsByPatients,
+} from "@/hooks/api/outreach";
 import {
   bucketForItem,
   callbackIsDueSoon,
@@ -24,10 +36,7 @@ export type SortedCallEntry = {
 };
 
 export function useOutreachData(schedulerId: string) {
-  const { data: dashboard, isLoading } = useQuery<OutreachDashboard>({
-    queryKey: ["/api/outreach/dashboard"],
-    refetchInterval: 60_000,
-  });
+  const { data: dashboard, isLoading } = useOutreachDashboard<OutreachDashboard>();
 
   const card = useMemo(
     () => dashboard?.schedulerCards.find((c) => c.id === schedulerId) ?? null,
@@ -35,39 +44,15 @@ export function useOutreachData(schedulerId: string) {
   );
   const facility = card?.facility as Facility | undefined;
 
-  const { data: appointments = [] } = useQuery<AncillaryAppointment[]>({
-    queryKey: ["/api/appointments", facility],
-    queryFn: async () => {
-      const res = await fetch(`/api/appointments?facility=${encodeURIComponent(facility!)}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load");
-      return res.json();
-    },
-    enabled: !!facility,
-    refetchInterval: 30_000,
-  });
+  const { data: appointments = [] } = useAppointmentsByFacility(facility);
 
-  const { data: currentUser } = useQuery<AuthUser>({
-    queryKey: ["/api/auth/me"],
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: currentUser } = useCurrentUser();
 
-  const { data: users = [] } = useQuery<UserEntry[]>({
-    queryKey: ["/api/plexus/users"],
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: users = [] } = usePlexusUsers();
 
-  const { data: myWorkTasks = [] } = useQuery<PlexusTaskSummary[]>({
-    queryKey: ["/api/plexus/tasks/my-work"],
-    refetchInterval: 60_000,
-  });
-  const { data: urgentTasks = [] } = useQuery<PlexusTaskSummary[]>({
-    queryKey: ["/api/plexus/tasks/urgent"],
-    refetchInterval: 30_000,
-  });
-  const { data: unreadPerTask = [] } = useQuery<{ taskId: number; unreadCount: number }[]>({
-    queryKey: ["/api/plexus/tasks/unread-per-task"],
-    refetchInterval: 60_000,
-  });
+  const { data: myWorkTasks = [] } = useMyWorkTasks();
+  const { data: urgentTasks = [] } = useUrgentTasks();
+  const { data: unreadPerTask = [] } = useUnreadPerTask();
 
   const unreadTaskIds = useMemo(() => {
     const s = new Set<number>();
@@ -80,53 +65,28 @@ export function useOutreachData(schedulerId: string) {
     [myWorkTasks],
   );
 
-  const { data: todayCalls = [] } = useQuery<OutreachCall[]>({
-    queryKey: ["/api/outreach/calls/today", currentUser?.id],
-    queryFn: async () => {
-      const res = await fetch(`/api/outreach/calls/today?schedulerUserId=${encodeURIComponent(currentUser!.id)}`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to load");
-      return res.json();
-    },
-    enabled: !!currentUser?.id,
-    refetchInterval: 30_000,
-  });
+  const { data: todayCalls = [] } = useOutreachCallsToday(currentUser?.id);
 
   const patientIds = useMemo(() => (card?.callList ?? []).map((p) => p.patientId), [card]);
 
-  const { data: assignmentRows = [] } = useQuery<AssignmentRow[]>({
-    queryKey: ["/api/scheduler-assignments"],
-    refetchInterval: 60_000,
-  });
+  const { data: assignmentRows = [] } = useSchedulerAssignments() as {
+    data: AssignmentRow[];
+  };
   const assignmentByPatient = useMemo(() => {
     const m = new Map<number, AssignmentRow>();
     for (const a of assignmentRows) m.set(a.patientScreeningId, a);
     return m;
   }, [assignmentRows]);
 
-  const { data: allSchedulerCards = [] } = useQuery<Array<{ id: number; name: string }>>({
-    queryKey: ["/api/outreach/schedulers"],
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: allSchedulerCards = [] } =
+    useOutreachSchedulers<{ id: number; name: string }>();
   const schedulerNameById = useMemo(() => {
     const m = new Map<number, string>();
     for (const sc of allSchedulerCards) m.set(sc.id, sc.name);
     return m;
   }, [allSchedulerCards]);
 
-  const { data: callsByPatient = {} } = useQuery<Record<number, OutreachCall[]>>({
-    queryKey: ["/api/outreach/calls/by-patients", patientIds.join(",")],
-    queryFn: async () => {
-      const res = await fetch(`/api/outreach/calls/by-patients?ids=${patientIds.join(",")}`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to load calls");
-      return res.json();
-    },
-    enabled: patientIds.length > 0,
-    refetchInterval: 60_000,
-  });
+  const { data: callsByPatient = {} } = useOutreachCallsByPatients(patientIds);
 
   const latestCallByPatient = useMemo(() => {
     const m = new Map<number, OutreachCall>();

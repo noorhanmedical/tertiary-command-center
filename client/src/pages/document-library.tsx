@@ -1,6 +1,16 @@
 import { useState, useRef, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import {
+  useDocumentLibrary,
+  useDocumentLibraryMeta,
+  useDocumentVersions,
+  useUploadDocument,
+  useDeleteDocument,
+  useSupersedeDocument,
+  useAddDocumentAssignment,
+  useRemoveDocumentAssignment,
+  type LibraryDoc,
+} from "@/hooks/api/documents-library";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -36,30 +46,6 @@ import {
   PenLine,
   BookOpen,
 } from "lucide-react";
-
-type LibraryDoc = {
-  id: number;
-  title: string;
-  description: string;
-  kind: string;
-  signatureRequirement: string;
-  filename: string;
-  contentType: string;
-  sizeBytes: number;
-  version: number;
-  supersededByDocumentId: number | null;
-  isCurrent: boolean;
-  createdAt: string;
-  surfaces: string[];
-  downloadUrl: string;
-  thumbnailUrl: string | null;
-};
-
-type LibraryMeta = {
-  kinds: string[];
-  signatureRequirements: string[];
-  surfaces: string[];
-};
 
 const KIND_LABELS: Record<string, string> = {
   informed_consent: "Informed Consent",
@@ -130,7 +116,6 @@ function bookHeight(id: number): number {
 
 export default function DocumentLibraryPage() {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const replaceFileRef = useRef<HTMLInputElement>(null);
 
@@ -151,22 +136,12 @@ export default function DocumentLibraryPage() {
   const [versionsOpenFor, setVersionsOpenFor] = useState<number | null>(null);
   const [replaceTargetId, setReplaceTargetId] = useState<number | null>(null);
 
-  const { data: meta } = useQuery<LibraryMeta>({
-    queryKey: ["/api/documents-library/meta"],
-  });
+  const { data: meta } = useDocumentLibraryMeta();
 
-  const { data: docs = [], isLoading } = useQuery<LibraryDoc[]>({
-    queryKey: ["/api/documents-library", filterKind, filterSurface, filterPatientId],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (filterSurface !== "all") params.set("surface", filterSurface);
-      else if (filterKind !== "all") params.set("kind", filterKind);
-      const trimmedPid = filterPatientId.trim();
-      if (trimmedPid && /^\d+$/.test(trimmedPid)) params.set("patientId", trimmedPid);
-      const res = await fetch(`/api/documents-library?${params.toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load documents");
-      return res.json();
-    },
+  const { data: docs = [], isLoading } = useDocumentLibrary({
+    kind: filterKind,
+    surface: filterSurface,
+    patientId: filterPatientId,
   });
 
   const visibleDocs = useMemo(() => {
@@ -197,112 +172,94 @@ export default function DocumentLibraryPage() {
     }));
   }, [meta, visibleDocs, filterKind]);
 
-  const uploadMutation = useMutation({
-    mutationFn: async () => {
-      if (!file || !title.trim() || !kind) throw new Error("title, kind, and file are required");
-      const fd = new FormData();
-      fd.append("title", title.trim());
-      fd.append("description", description.trim());
-      fd.append("kind", kind);
-      fd.append("signatureRequirement", sigReq);
-      fd.append("surfaces", JSON.stringify(surfaces));
-      const trimmedPid = uploadPatientId.trim();
-      if (trimmedPid && /^\d+$/.test(trimmedPid)) fd.append("patientScreeningId", trimmedPid);
-      const trimmedFac = uploadFacility.trim();
-      if (trimmedFac) fd.append("facility", trimmedFac);
-      fd.append("file", file);
-      const res = await fetch("/api/documents-library", { method: "POST", body: fd, credentials: "include" });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Upload failed" }));
-        throw new Error(err.error || "Upload failed");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/documents-library"] });
-      toast({ title: "Document uploaded" });
-      setTitle("");
-      setDescription("");
-      setKind("");
-      setSigReq("none");
-      setSurfaces([]);
-      setFile(null);
-      setUploadPatientId("");
-      setUploadFacility("");
-      if (fileRef.current) fileRef.current.value = "";
-      setUploadOpen(false);
-    },
-    onError: (e: Error) => {
-      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
-    },
-  });
+  const uploadMutation = useUploadDocument();
+  const deleteMutation = useDeleteDocument();
+  const supersedeMutation = useSupersedeDocument();
+  const addAssignmentMutation = useAddDocumentAssignment();
+  const removeAssignmentMutation = useRemoveDocumentAssignment();
 
-  const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`/api/documents-library/${id}`, { method: "DELETE", credentials: "include" });
-      if (!res.ok && res.status !== 204) throw new Error("Delete failed");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/documents-library"] });
-      toast({ title: "Document deleted" });
-    },
-    onError: (e: Error) => toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
-  });
-
-  const supersedeMutation = useMutation({
-    mutationFn: async ({ id, file }: { id: number; file: File }) => {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(`/api/documents-library/${id}/supersede`, {
-        method: "POST",
-        body: fd,
-        credentials: "include",
+  function handleUpload() {
+    if (!file || !title.trim() || !kind) {
+      toast({
+        title: "Upload failed",
+        description: "title, kind, and file are required",
+        variant: "destructive",
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Replace failed" }));
-        throw new Error(err.error || "Replace failed");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/documents-library"] });
-      setReplaceTargetId(null);
-      if (replaceFileRef.current) replaceFileRef.current.value = "";
-      toast({ title: "New version uploaded" });
-    },
-    onError: (e: Error) => toast({ title: "Replace failed", description: e.message, variant: "destructive" }),
-  });
+      return;
+    }
+    const fd = new FormData();
+    fd.append("title", title.trim());
+    fd.append("description", description.trim());
+    fd.append("kind", kind);
+    fd.append("signatureRequirement", sigReq);
+    fd.append("surfaces", JSON.stringify(surfaces));
+    const trimmedPid = uploadPatientId.trim();
+    if (trimmedPid && /^\d+$/.test(trimmedPid))
+      fd.append("patientScreeningId", trimmedPid);
+    const trimmedFac = uploadFacility.trim();
+    if (trimmedFac) fd.append("facility", trimmedFac);
+    fd.append("file", file);
+    uploadMutation.mutate(fd, {
+      onSuccess: () => {
+        toast({ title: "Document uploaded" });
+        setTitle("");
+        setDescription("");
+        setKind("");
+        setSigReq("none");
+        setSurfaces([]);
+        setFile(null);
+        setUploadPatientId("");
+        setUploadFacility("");
+        if (fileRef.current) fileRef.current.value = "";
+        setUploadOpen(false);
+      },
+      onError: (e: Error) =>
+        toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+    });
+  }
 
-  const addAssignmentMutation = useMutation({
-    mutationFn: async ({ id, surface }: { id: number; surface: string }) => {
-      const res = await fetch(`/api/documents-library/${id}/assignments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ surface }),
-      });
-      if (!res.ok) throw new Error("Failed to add assignment");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/documents-library"] });
-    },
-    onError: (e: Error) => toast({ title: "Assign failed", description: e.message, variant: "destructive" }),
-  });
+  function handleDelete(id: number) {
+    deleteMutation.mutate(id, {
+      onSuccess: () => toast({ title: "Document deleted" }),
+      onError: (e: Error) =>
+        toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
+    });
+  }
 
-  const removeAssignmentMutation = useMutation({
-    mutationFn: async ({ id, surface }: { id: number; surface: string }) => {
-      const res = await fetch(`/api/documents-library/${id}/assignments/${surface}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to remove assignment");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/documents-library"] });
-    },
-    onError: (e: Error) => toast({ title: "Unassign failed", description: e.message, variant: "destructive" }),
-  });
+  function handleSupersede(id: number, replacementFile: File) {
+    supersedeMutation.mutate(
+      { id, file: replacementFile },
+      {
+        onSuccess: () => {
+          setReplaceTargetId(null);
+          if (replaceFileRef.current) replaceFileRef.current.value = "";
+          toast({ title: "New version uploaded" });
+        },
+        onError: (e: Error) =>
+          toast({ title: "Replace failed", description: e.message, variant: "destructive" }),
+      },
+    );
+  }
+
+  function handleAddAssignment(id: number, surface: string) {
+    addAssignmentMutation.mutate(
+      { id, surface },
+      {
+        onError: (e: Error) =>
+          toast({ title: "Assign failed", description: e.message, variant: "destructive" }),
+      },
+    );
+  }
+
+  function handleRemoveAssignment(id: number, surface: string) {
+    removeAssignmentMutation.mutate(
+      { id, surface },
+      {
+        onError: (e: Error) =>
+          toast({ title: "Unassign failed", description: e.message, variant: "destructive" }),
+      },
+    );
+  }
 
   function toggleSurface(s: string) {
     setSurfaces((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
@@ -413,11 +370,11 @@ export default function DocumentLibraryPage() {
                           key={doc.id}
                           doc={doc}
                           metaSurfaces={meta?.surfaces ?? []}
-                          onAddSurface={(surface) => addAssignmentMutation.mutate({ id: doc.id, surface })}
-                          onRemoveSurface={(surface) => removeAssignmentMutation.mutate({ id: doc.id, surface })}
+                          onAddSurface={(surface) => handleAddAssignment(doc.id, surface)}
+                          onRemoveSurface={(surface) => handleRemoveAssignment(doc.id, surface)}
                           onDelete={() => {
                             if (confirm(`Delete "${doc.title}"? This removes the file and its assignments.`)) {
-                              deleteMutation.mutate(doc.id);
+                              handleDelete(doc.id);
                             }
                           }}
                           onReplace={() => {
@@ -449,7 +406,7 @@ export default function DocumentLibraryPage() {
           onChange={(e) => {
             const f = e.target.files?.[0];
             if (f && replaceTargetId !== null) {
-              supersedeMutation.mutate({ id: replaceTargetId, file: f });
+              handleSupersede(replaceTargetId, f);
             }
           }}
         />
@@ -600,7 +557,7 @@ export default function DocumentLibraryPage() {
                 Cancel
               </Button>
               <Button
-                onClick={() => uploadMutation.mutate()}
+                onClick={handleUpload}
                 disabled={!file || !title.trim() || !kind || uploadMutation.isPending}
                 data-testid="button-upload"
               >
@@ -795,14 +752,7 @@ function BookSpine({
 }
 
 function VersionList({ docId }: { docId: number }) {
-  const { data: versions = [], isLoading } = useQuery<LibraryDoc[]>({
-    queryKey: ["/api/documents-library", docId, "versions"],
-    queryFn: async () => {
-      const res = await fetch(`/api/documents-library/${docId}/versions`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load versions");
-      return res.json();
-    },
-  });
+  const { data: versions = [], isLoading } = useDocumentVersions(docId);
   return (
     <div className="mt-1 border-t border-slate-100 dark:border-slate-800 pt-3" data-testid={`versions-${docId}`}>
       <p className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500 font-semibold mb-2">Version History</p>

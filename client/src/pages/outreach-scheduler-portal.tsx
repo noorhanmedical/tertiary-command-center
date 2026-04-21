@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
   import { Link, useParams } from "wouter";
-  import { useMutation, useQueryClient } from "@tanstack/react-query";
   import {
     ArrowLeft, Calendar, Mail, FileText, ListTodo, MessageCircle, Phone, X, Keyboard,
   } from "lucide-react";
@@ -9,8 +8,16 @@ import { useEffect, useMemo, useState } from "react";
   import {
     Dialog, DialogContent, DialogHeader, DialogTitle,
   } from "@/components/ui/dialog";
-  import { apiRequest, queryClient as globalQueryClient } from "@/lib/queryClient";
   import { useToast } from "@/hooks/use-toast";
+  import {
+    useBookAppointment,
+    useCancelAppointment,
+  } from "@/hooks/api/appointments";
+  import { useJoinTaskAsCollaborator } from "@/hooks/api/plexus";
+  import {
+    useLogOutreachCall,
+    invalidateOutreach,
+  } from "@/hooks/api/outreach";
   import type { AncillaryAppointment } from "@shared/schema";
   import { toDateKey, isBrainWave } from "@/components/clinic-calendar";
   import type { BookingSlot } from "@/components/clinic-calendar";
@@ -78,7 +85,6 @@ export default function OutreachSchedulerPortalPage() {
   const [taskDrawerPatientName, setTaskDrawerPatientName] = useState<string>("");
 
   const { toast } = useToast();
-  const queryClientLocal = useQueryClient();
 
   // ── Data ────────────────────────────────────────────────────────────────
     const {
@@ -107,85 +113,77 @@ export default function OutreachSchedulerPortalPage() {
   
 
   // ── Mutations ──────────────────────────────────────────────────────────────
-  const bookMutation = useMutation({
-    mutationFn: async ({ patientName, testType, scheduledTime, patientId }: { patientName: string; testType: string; scheduledTime: string; patientId?: number }) => {
+  const bookAppointmentMut = useBookAppointment();
+  const cancelAppointmentMut = useCancelAppointment();
+  const joinTaskMut = useJoinTaskAsCollaborator();
+  const logCallSilent = useLogOutreachCall();
+
+  const bookMutation = {
+    mutate: (input: { patientName: string; testType: string; scheduledTime: string; patientId?: number }) => {
+      const { patientName, testType, scheduledTime, patientId } = input;
       const scheduledDate = toDateKey(calYear, calMonth, selectedDay!);
-      const res = await apiRequest("POST", "/api/appointments", { patientName, facility, scheduledDate, scheduledTime, testType });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed to book"); }
-      const appt = await res.json();
-      // Persist a "scheduled" call event so call history reflects the booking.
-      // Booking already succeeded — surface (don't swallow) any logging error
-      // as a non-blocking warning toast so the operator can retry if needed.
-      if (patientId != null) {
-        try {
-          const callRes = await apiRequest("POST", "/api/outreach/calls", {
-            patientScreeningId: patientId,
-            outcome: "scheduled",
-            notes: `Booked ${testType} on ${scheduledDate} at ${scheduledTime}`,
-            schedulerUserId: currentUser?.id,
-          });
-          if (!callRes.ok) {
-            const e = await callRes.json().catch(() => ({}));
-            toast({
-              title: "Booking saved, but call history not updated",
-              description: e.error || "You may need to log this call manually.",
-              variant: "destructive",
-            });
-          }
-        } catch (err: unknown) {
-          toast({
-            title: "Booking saved, but call history not updated",
-            description: err instanceof Error ? err.message : "You may need to log this call manually.",
-            variant: "destructive",
-          });
-        }
-      }
-      return appt;
+      bookAppointmentMut.mutate(
+        { patientName, facility: facility!, scheduledDate, scheduledTime, testType },
+        {
+          onSuccess: async () => {
+            // Persist a "scheduled" call event so call history reflects the
+            // booking. Booking already succeeded — surface any logging error
+            // as a non-blocking warning toast so the operator can retry.
+            if (patientId != null) {
+              try {
+                await logCallSilent.mutateAsync({
+                  patientScreeningId: patientId,
+                  outcome: "scheduled",
+                  notes: `Booked ${testType} on ${scheduledDate} at ${scheduledTime}`,
+                  schedulerUserId: currentUser?.id,
+                });
+              } catch (err: unknown) {
+                toast({
+                  title: "Booking saved, but call history not updated",
+                  description: err instanceof Error ? err.message : "You may need to log this call manually.",
+                  variant: "destructive",
+                });
+              }
+            }
+            invalidateOutreach();
+            toast({ title: "Appointment booked" });
+            setBookSlot(null);
+            setBookName("");
+            setBookLinkedPatient(null);
+            setBookPatientSearch("");
+            setCallListBookPatient(null);
+            setCallListBookTime("");
+          },
+          onError: (e: Error) => toast({ title: "Booking failed", description: e.message, variant: "destructive" }),
+        },
+      );
     },
-    onSuccess: () => {
-      queryClientLocal.invalidateQueries({ queryKey: ["/api/appointments"] });
-      globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
-      globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/by-patients"] });
-      globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/today"] });
-      toast({ title: "Appointment booked" });
-      setBookSlot(null);
-      setBookName("");
-      setBookLinkedPatient(null);
-      setBookPatientSearch("");
-      setCallListBookPatient(null);
-      setCallListBookTime("");
-    },
-    onError: (e: Error) => toast({ title: "Booking failed", description: e.message, variant: "destructive" }),
-  });
+    isPending: bookAppointmentMut.isPending,
+  };
 
-  const cancelMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("PATCH", `/api/appointments/${id}`, { status: "cancelled" });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClientLocal.invalidateQueries({ queryKey: ["/api/appointments"] });
-      // Cancellation may flip a patient back to outreach-derived type;
-      // refresh the dashboard so the call list updates next poll.
-      globalQueryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
-      toast({ title: "Appointment cancelled" });
-      setCancelTarget(null);
-    },
-    onError: (e: Error) => toast({ title: "Cancel failed", description: e.message, variant: "destructive" }),
-  });
+  const cancelMutation = {
+    mutate: (id: number) =>
+      cancelAppointmentMut.mutate(id, {
+        onSuccess: () => {
+          // Cancellation may flip a patient back to outreach-derived type;
+          // refresh the dashboard so the call list updates next poll.
+          invalidateOutreach();
+          toast({ title: "Appointment cancelled" });
+          setCancelTarget(null);
+        },
+        onError: (e: Error) => toast({ title: "Cancel failed", description: e.message, variant: "destructive" }),
+      }),
+    isPending: cancelAppointmentMut.isPending,
+  };
 
-  const helpMutation = useMutation({
-    mutationFn: async (taskId: number) => {
-      const res = await apiRequest("POST", `/api/plexus/tasks/${taskId}/collaborators`, { role: "collaborator" });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed"); }
-      return res.json();
-    },
-    onSuccess: () => {
-      toast({ title: "You've been added as a collaborator" });
-      queryClientLocal.invalidateQueries({ queryKey: ["/api/plexus/tasks/urgent"] });
-    },
-    onError: (e: Error) => toast({ title: "Could not join task", description: e.message, variant: "destructive" }),
-  });
+  const helpMutation = {
+    mutate: (taskId: number) =>
+      joinTaskMut.mutate(taskId, {
+        onSuccess: () => toast({ title: "You've been added as a collaborator" }),
+        onError: (e: Error) => toast({ title: "Could not join task", description: e.message, variant: "destructive" }),
+      }),
+    isPending: joinTaskMut.isPending,
+  };
 
   function openTaskDrawer(task: PlexusTaskSummary) {
     setTaskDrawerPatientId(task.patientScreeningId ?? 0);

@@ -1,7 +1,21 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import {
+  useInvoiceAging,
+  useInvoices,
+  useInvoice,
+  useCreateInvoice,
+  useDeleteInvoice,
+  useRecordPayment,
+  useDeletePayment,
+  useUpdateInvoiceStatus,
+  useSendInvoiceEmail,
+  type AgingBucket,
+  type AgingResponse,
+  type Invoice,
+  type InvoicePayment,
+  type InvoiceLineItem,
+} from "@/hooks/api/invoices";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,71 +29,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Receipt, Plus, Download, ArrowLeft, Send, FileText, Trash2, Mail, TrendingUp, Wallet, AlertTriangle, DollarSign } from "lucide-react";
 import { VALID_FACILITIES, DEFAULT_CLINIC, CLINIC_HUMBLE, formatClinicAddress, type ClinicProfile } from "@shared/plexus";
 
-type AgingBucket = "0-30" | "31-60" | "60+";
-
-type AgingClinicRow = {
-  facility: string;
-  invoiceCount: number;
-  totalBalance: string;
-  buckets: Record<AgingBucket, string>;
-  bucketCounts: Record<AgingBucket, number>;
-};
-
-type AgingResponse = {
-  clinics: AgingClinicRow[];
-  totals: {
-    totalBalance: string;
-    invoiceCount: number;
-    buckets: Record<AgingBucket, string>;
-    bucketCounts: Record<AgingBucket, number>;
-  };
-};
-
-type Invoice = {
-  id: number;
-  invoiceNumber: string;
-  facility: string;
-  invoiceDate: string;
-  fromDate: string | null;
-  toDate: string | null;
-  status: "Draft" | "Sent" | "Partially Paid" | "Paid";
-  notes: string | null;
-  totalCharges: string;
-  initialPaid: string;
-  totalPaid: string;
-  totalBalance: string;
-  sentTo: string | null;
-  sentAt: string | null;
-  createdAt: string;
-};
-
-type InvoicePayment = {
-  id: number;
-  invoiceId: number;
-  amount: string;
-  paymentDate: string;
-  method: string;
-  reference: string | null;
-  note: string | null;
-  recordedByUserId: string | null;
-  createdAt: string;
-};
-
 const PAYMENT_METHOD_OPTIONS = ["Check", "ACH", "Wire", "Credit Card", "Cash", "Other"] as const;
-
-type InvoiceLineItem = {
-  id: number;
-  invoiceId: number;
-  billingRecordId: number | null;
-  patientName: string;
-  dateOfService: string | null;
-  service: string;
-  mrn: string | null;
-  clinician: string | null;
-  totalCharges: string | null;
-  paidAmount: string | null;
-  balanceRemaining: string | null;
-};
 
 function fmtMoney(v: string | null | undefined): string {
   if (v == null || v === "") return "$0.00";
@@ -284,9 +234,7 @@ function BillingOverview({
   onSelectClinic: (facility: string) => void;
   onSelectBucket: (bucket: AgingBucket, facility?: string) => void;
 }) {
-  const { data, isLoading } = useQuery<AgingResponse>({
-    queryKey: ["/api/invoices/aging"],
-  });
+  const { data, isLoading } = useInvoiceAging();
 
   if (isLoading || !data) {
     return <div className="py-12 text-center text-slate-400 text-sm">Loading overview…</div>;
@@ -438,11 +386,8 @@ function InvoicesList({
   setFilterBucket: (v: AgingBucket | "") => void;
 }) {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
-
-  const { data: invoices = [], isLoading } = useQuery<Invoice[]>({
-    queryKey: ["/api/invoices"],
-  });
+  const { data: invoices = [], isLoading } = useInvoices();
+  const deleteInvoice = useDeleteInvoice();
 
   const filtered = useMemo(() => {
     return invoices.filter((i) => {
@@ -546,13 +491,10 @@ function InvoicesList({
                         onClick={(e) => {
                           e.stopPropagation();
                           if (!confirm(`Delete invoice ${inv.invoiceNumber}?`)) return;
-                          apiRequest("DELETE", `/api/invoices/${inv.id}`)
-                            .then(() => {
-                              queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-                              queryClient.invalidateQueries({ queryKey: ["/api/invoices/aging"] });
-                              toast({ title: "Invoice deleted" });
-                            })
-                            .catch((err) => toast({ title: "Delete failed", description: err.message, variant: "destructive" }));
+                          deleteInvoice.mutate(inv.id, {
+                            onSuccess: () => toast({ title: "Invoice deleted" }),
+                            onError: (err: Error) => toast({ title: "Delete failed", description: err.message, variant: "destructive" }),
+                          });
                         }}
                         data-testid={`button-delete-invoice-${inv.id}`}
                       >
@@ -571,7 +513,6 @@ function InvoicesList({
 
 function CreateInvoiceDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (id: number) => void }) {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const today = new Date().toISOString().slice(0, 10);
   const [facility, setFacility] = useState<string>("");
   const [invoiceDate, setInvoiceDate] = useState(today);
@@ -579,29 +520,31 @@ function CreateInvoiceDialog({ open, onClose, onCreated }: { open: boolean; onCl
   const [toDate, setToDate] = useState("");
   const [notes, setNotes] = useState("");
 
-  const create = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/invoices", {
+  const create = useCreateInvoice();
+
+  function submitCreate() {
+    create.mutate(
+      {
         facility,
         invoiceDate,
         fromDate: fromDate || null,
         toDate: toDate || null,
         notes: notes || null,
-      });
-      return res.json() as Promise<Invoice>;
-    },
-    onSuccess: (inv) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices/aging"] });
-      toast({ title: "Invoice created", description: inv.invoiceNumber });
-      setFacility("");
-      setFromDate("");
-      setToDate("");
-      setNotes("");
-      onCreated(inv.id);
-    },
-    onError: (e: Error) => toast({ title: "Failed to create invoice", description: e.message, variant: "destructive" }),
-  });
+      },
+      {
+        onSuccess: (inv) => {
+          toast({ title: "Invoice created", description: inv.invoiceNumber });
+          setFacility("");
+          setFromDate("");
+          setToDate("");
+          setNotes("");
+          onCreated(inv.id);
+        },
+        onError: (e: Error) =>
+          toast({ title: "Failed to create invoice", description: e.message, variant: "destructive" }),
+      },
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -645,7 +588,7 @@ function CreateInvoiceDialog({ open, onClose, onCreated }: { open: boolean; onCl
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
-            onClick={() => create.mutate()}
+            onClick={submitCreate}
             disabled={!facility || !invoiceDate || create.isPending}
             data-testid="button-submit-create-invoice"
           >
@@ -679,11 +622,8 @@ function InvoiceDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [downloading, setDownloading] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
 
-  const { data, isLoading } = useQuery<{ invoice: Invoice; lineItems: InvoiceLineItem[]; payments: InvoicePayment[] }>({
-    queryKey: ["/api/invoices", id],
-  });
+  const { data, isLoading } = useInvoice(id);
 
-  const queryClient = useQueryClient();
   const today = new Date().toISOString().slice(0, 10);
   const [payAmount, setPayAmount] = useState("");
   const [payDate, setPayDate] = useState(today);
@@ -691,55 +631,34 @@ function InvoiceDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [payReference, setPayReference] = useState("");
   const [payNote, setPayNote] = useState("");
 
-  const recordPayment = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/invoices/${id}/payments`, {
+  const recordPaymentMut = useRecordPayment(id);
+  const deletePayment = useDeletePayment(id);
+
+  function submitRecordPayment() {
+    recordPaymentMut.mutate(
+      {
         amount: payAmount,
         paymentDate: payDate,
         method: payMethod,
         reference: payReference || null,
         note: payNote || null,
-      });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices", id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-      toast({ title: "Payment recorded" });
-      setPayAmount("");
-      setPayReference("");
-      setPayNote("");
-      setPayDate(today);
-      setPayMethod("Check");
-    },
-    onError: (e: Error) => toast({ title: "Failed to record payment", description: e.message, variant: "destructive" }),
-  });
+      },
+      {
+        onSuccess: () => {
+          toast({ title: "Payment recorded" });
+          setPayAmount("");
+          setPayReference("");
+          setPayNote("");
+          setPayDate(today);
+          setPayMethod("Check");
+        },
+        onError: (e: Error) =>
+          toast({ title: "Failed to record payment", description: e.message, variant: "destructive" }),
+      },
+    );
+  }
 
-  const deletePayment = useMutation({
-    mutationFn: async (paymentId: number) => {
-      const res = await apiRequest("DELETE", `/api/invoices/${id}/payments/${paymentId}`);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices", id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-      toast({ title: "Payment removed" });
-    },
-    onError: (e: Error) => toast({ title: "Failed to remove payment", description: e.message, variant: "destructive" }),
-  });
-
-  const markSent = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("PATCH", `/api/invoices/${id}/status`, { status: "Sent" });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices", id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-      toast({ title: "Invoice marked as Sent" });
-    },
-    onError: (e: Error) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
-  });
+  const recordPayment = { mutate: submitRecordPayment, isPending: recordPaymentMut.isPending };
   async function handleDownloadPdf() {
     if (!printRef.current || !data) return;
     setDownloading(true);
@@ -747,8 +666,8 @@ function InvoiceDetail({ id, onBack }: { id: number; onBack: () => void }) {
       const html2pdf = (await import("html2pdf.js")).default;
       const { options } = pdfOptionsFor(data.invoice);
       await html2pdf().set(options).from(printRef.current).save();
-    } catch (err: any) {
-      toast({ title: "PDF export failed", description: err.message, variant: "destructive" });
+    } catch (err: unknown) {
+      toast({ title: "PDF export failed", description: err instanceof Error ? err.message : "PDF export failed", variant: "destructive" });
     } finally {
       setDownloading(false);
     }
@@ -1093,7 +1012,6 @@ function EmailInvoiceDialog({
   generatePdfBase64: () => Promise<{ base64: string; filename: string }>;
 }) {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
 
   const defaultTo = clinic.billingContactEmail ?? "";
   const defaultSubject = `Invoice ${invoice.invoiceNumber} from ${clinic.name}`;
@@ -1128,32 +1046,38 @@ function EmailInvoiceDialog({
       .filter((s) => s.length > 0);
   }
 
-  const send = useMutation({
-    mutationFn: async () => {
+  const sendMut = useSendInvoiceEmail(invoice.id);
+
+  async function submitSend() {
+    try {
       const toList = splitAddresses(to);
       const ccList = splitAddresses(cc);
       if (toList.length === 0) throw new Error("At least one recipient is required.");
-
       const { base64, filename } = await generatePdfBase64();
-      const res = await apiRequest("POST", `/api/invoices/${invoice.id}/send-email`, {
-        to: toList,
-        cc: ccList,
-        subject,
-        message,
-        pdfBase64: base64,
-        pdfFilename: filename,
-      });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices", invoice.id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-      toast({ title: "Invoice emailed", description: `Sent to ${to}` });
-      onClose();
-    },
-    onError: (e: Error) =>
-      toast({ title: "Failed to send invoice", description: e.message, variant: "destructive" }),
-  });
+      sendMut.mutate(
+        {
+          to: toList,
+          cc: ccList,
+          subject,
+          message,
+          pdfBase64: base64,
+          pdfFilename: filename,
+        },
+        {
+          onSuccess: () => {
+            toast({ title: "Invoice emailed", description: `Sent to ${to}` });
+            onClose();
+          },
+          onError: (e: Error) =>
+            toast({ title: "Email failed", description: e.message, variant: "destructive" }),
+        },
+      );
+    } catch (e: unknown) {
+      toast({ title: "Email failed", description: e instanceof Error ? e.message : "Email failed", variant: "destructive" });
+    }
+  }
+
+  const send = { mutate: submitSend, isPending: sendMut.isPending };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>

@@ -1,7 +1,33 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import {
+  useScreeningBatches,
+  useScreeningBatch,
+  useCreateBatch,
+  useDeleteBatch,
+  useUpdateBatch,
+  useAssignScheduler,
+  useAddPatient,
+  useImportPatientsText,
+  useImportPatientsFile,
+  useUpdatePatient,
+  useDeletePatient,
+  useStartBatchAnalysis,
+  useAnalyzePatient,
+  useInvalidateBatch,
+  fetchAnalysisStatus,
+  type ScreeningBatchWithPatients as ScreeningBatchWithPatientsHook,
+} from "@/hooks/api/screening-batches";
+import {
+  useTestHistory,
+  useImportTestHistoryText,
+  useImportTestHistoryFile,
+  useDeleteTestHistoryRecord,
+  useClearTestHistory,
+} from "@/hooks/api/test-history";
+import { useScheduleDashboard } from "@/hooks/api/dashboard";
+import { useOutreachSchedulers } from "@/hooks/api/outreach";
+import { queryClient } from "@/lib/queryClient";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,7 +38,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useSidebar, SidebarTrigger } from "@/components/ui/sidebar";
 import { PageHeader } from "@/components/PageHeader";
 import { AlertTriangle, Database, FileText, Loader2, Lock, Plus, Search, Trash2, Upload, User, X } from "lucide-react";
-import type { ScreeningBatch, PatientScreening, PatientTestHistory, OutreachScheduler } from "@shared/schema";
+import type { PatientScreening, OutreachScheduler } from "@shared/schema";
 import type { ReasoningValue } from "@/lib/pdfGeneration";
 import { VALID_FACILITIES } from "@shared/plexus";
 import { HomeSidebar } from "@/components/HomeSidebar";
@@ -23,7 +49,7 @@ import { PatientCard } from "@/components/PatientCard";
 import { AppointmentModal } from "@/components/AppointmentModal";
 import { BatchHeader } from "@/components/BatchHeader";
 
-export type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[]; assignedScheduler?: OutreachScheduler | null };
+export type ScreeningBatchWithPatients = ScreeningBatchWithPatientsHook;
 
 const FACILITIES = VALID_FACILITIES;
 const IMPORT_ACCESS_CODE = "1234";
@@ -71,56 +97,53 @@ export default function Home() {
   const view = activeTab.type === "history" ? "history" : activeTab.type === "references" ? "references" : activeTab.type === "schedule" ? "schedule" : "home";
 
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const { setOpen: setSidebarOpen } = useSidebar();
+  const invalidateBatch = useInvalidateBatch();
 
-  const { data: batches = [], isLoading: batchesLoading } = useQuery<ScreeningBatchWithPatients[]>({ queryKey: ["/api/screening-batches"] });
-  const { data: selectedBatch, isLoading: batchLoading } = useQuery<ScreeningBatchWithPatients>({
-    queryKey: ["/api/screening-batches", selectedBatchId],
-    enabled: !!selectedBatchId,
-    refetchInterval: (query) => query.state.data?.status === "processing" ? 2000 : false,
-  });
-  const { data: testHistory = [], isLoading: historyLoading } = useQuery<PatientTestHistory[]>({
-    queryKey: ["/api/test-history"],
-    enabled: view === "history" || view === "references" || tabs.some((t) => t.type === "history" || t.type === "references"),
-  });
-  const { data: dashboardData, isLoading: dashboardLoading } = useQuery<ScheduleDashboardResponse>({
-    queryKey: ["/api/schedule/dashboard", dashboardWeekOverride || "current"],
-    queryFn: async () => {
-      const url = dashboardWeekOverride ? `/api/schedule/dashboard?weekStart=${encodeURIComponent(dashboardWeekOverride)}` : "/api/schedule/dashboard";
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
+  const { data: batches = [], isLoading: batchesLoading } = useScreeningBatches();
+  const { data: selectedBatch, isLoading: batchLoading } = useScreeningBatch(selectedBatchId, { pollWhileProcessing: true });
+  const historyEnabled = view === "history" || view === "references" || tabs.some((t) => t.type === "history" || t.type === "references");
+  const { data: testHistory = [], isLoading: historyLoading } = useTestHistory(historyEnabled);
+  const { data: dashboardData, isLoading: dashboardLoading } = useScheduleDashboard({
+    weekOverride: dashboardWeekOverride,
     enabled: view === "home",
-    refetchInterval: 120000,
   });
-  const { data: outreachSchedulers = [] } = useQuery<OutreachScheduler[]>({
-    queryKey: ["/api/outreach/schedulers"],
-  });
+  const { data: outreachSchedulers = [] } = useOutreachSchedulers<OutreachScheduler>();
 
-  const importHistoryMutation = useMutation({
-    mutationFn: async (text: string) => { const res = await apiRequest("POST", "/api/test-history/import", { text }); return res.json(); },
-    onSuccess: (data) => { queryClient.invalidateQueries({ queryKey: ["/api/test-history"] }); toast({ title: `Imported ${data.imported} records` }); setHistoryPasteText(""); },
-    onError: (e: unknown) => toast({ title: "Import failed", description: e instanceof Error ? e.message : "Import failed", variant: "destructive" }),
-  });
-  const importHistoryFileMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData(); formData.append("file", file);
-      const res = await fetch("/api/test-history/import", { method: "POST", credentials: "include", body: formData });
-      if (!res.ok) throw new Error((await res.json()).error || "Import failed"); return res.json();
-    },
-    onSuccess: (data) => { queryClient.invalidateQueries({ queryKey: ["/api/test-history"] }); toast({ title: `Imported ${data.imported} records` }); },
-    onError: (e: unknown) => toast({ title: "Import failed", description: e instanceof Error ? e.message : "Import failed", variant: "destructive" }),
-  });
-  const deleteHistoryMutation = useMutation({
-    mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/test-history/${id}`); },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/test-history"] }),
-  });
-  const clearHistoryMutation = useMutation({
-    mutationFn: async () => { await apiRequest("DELETE", "/api/test-history"); },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/test-history"] }); toast({ title: "All history cleared" }); },
-  });
+  const importHistoryTextMut = useImportTestHistoryText();
+  const importHistoryFileMut = useImportTestHistoryFile();
+  const deleteHistoryMut = useDeleteTestHistoryRecord();
+  const clearHistoryMut = useClearTestHistory();
+
+  const importHistoryMutation = {
+    mutate: (text: string, opts?: { onSuccess?: () => void }) =>
+      importHistoryTextMut.mutate(text, {
+        onSuccess: (data) => {
+          toast({ title: `Imported ${data.imported} records` });
+          setHistoryPasteText("");
+          opts?.onSuccess?.();
+        },
+        onError: (e: unknown) =>
+          toast({ title: "Import failed", description: e instanceof Error ? e.message : "Import failed", variant: "destructive" }),
+      }),
+    isPending: importHistoryTextMut.isPending,
+  };
+  const importHistoryFileMutation = {
+    mutate: (file: File) =>
+      importHistoryFileMut.mutate(file, {
+        onSuccess: (data) => toast({ title: `Imported ${data.imported} records` }),
+        onError: (e: unknown) =>
+          toast({ title: "Import failed", description: e instanceof Error ? e.message : "Import failed", variant: "destructive" }),
+      }),
+    isPending: importHistoryFileMut.isPending,
+  };
+  const deleteHistoryMutation = { mutate: (id: number) => deleteHistoryMut.mutate(id) };
+  const clearHistoryMutation = {
+    mutate: () =>
+      clearHistoryMut.mutate(undefined, {
+        onSuccess: () => toast({ title: "All history cleared" }),
+      }),
+  };
 
   const openScheduleTab = useCallback((batchId: number, label: string) => {
     const existingIdx = tabs.findIndex((t) => t.type === "schedule" && t.batchId === batchId);
@@ -148,138 +171,164 @@ export default function Home() {
     setActiveTabIndex((prev) => { if (index < prev) return prev - 1; if (index === prev) return Math.max(0, index - 1); return prev; });
   }, []);
 
-  const createBatchMutation = useMutation({
-    mutationFn: async ({ name, facility, scheduleDate }: { name: string; facility: string; scheduleDate?: string }) => {
-      const res = await apiRequest("POST", "/api/batches", { name, facility, scheduleDate }); return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      openScheduleTab(data.id, data.name || "New Schedule");
-      if (data.requiresManualAssignment) {
-        const pendingAssignment = {
-          batchId: data.id,
-          batchName: data.name || "New Schedule",
-          availableSchedulers: data.availableSchedulers ?? [],
-        };
-        sessionStorage.setItem("pendingSchedulerAssignment", JSON.stringify(pendingAssignment));
-        setAssignSchedulerModal(pendingAssignment);
-      }
-    },
-  });
-  const assignSchedulerMutation = useMutation({
-    mutationFn: async ({ batchId, schedulerId }: { batchId: number; schedulerId: number | null }) => {
-      const res = await apiRequest("POST", `/api/batches/${batchId}/assign-scheduler`, { schedulerId });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-      sessionStorage.removeItem("pendingSchedulerAssignment");
-      setAssignSchedulerModal(null);
-      toast({ title: "Scheduler assigned" });
-    },
-    onError: (e: unknown) => toast({ title: "Assignment failed", description: e instanceof Error ? e.message : "Failed to assign scheduler", variant: "destructive" }),
-  });
-  const addPatientMutation = useMutation({
-    mutationFn: async ({ batchId, name, time, age, gender, dob, phoneNumber, insurance, diagnoses, history, medications, previousTests, previousTestsDate, noPreviousTests, patientType, notes }: { batchId: number; name: string; time?: string; age?: string | number; gender?: string; dob?: string; phoneNumber?: string; insurance?: string; diagnoses?: string; history?: string; medications?: string; previousTests?: string; previousTestsDate?: string; noPreviousTests?: boolean; patientType?: string; notes?: string }) => {
-      const res = await apiRequest("POST", `/api/batches/${batchId}/patients`, { name, time, age, gender, dob, phoneNumber, insurance, diagnoses, history, medications, previousTests, previousTestsDate, noPreviousTests, patientType, notes }); return res.json();
-    },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] }); queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] }); },
-  });
-  const importTextMutation = useMutation({
-    mutationFn: async ({ batchId, text }: { batchId: number; text: string }) => {
-      const res = await apiRequest("POST", `/api/batches/${batchId}/import-text`, { text }); return res.json();
-    },
-    onSuccess: (data) => { queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] }); queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] }); setPasteText(""); toast({ title: `Imported ${data.imported} patients` }); },
-  });
-  const importFileMutation = useMutation({
-    mutationFn: async ({ batchId, formData }: { batchId: number; formData: FormData }) => {
-      const res = await fetch(`/api/batches/${batchId}/import-file`, { method: "POST", credentials: "include", body: formData });
-      if (!res.ok) throw new Error(await res.text()); return res.json();
-    },
-    onSuccess: (data) => { queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] }); queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] }); toast({ title: `Imported ${data.imported} patients` }); },
-  });
-  const updatePatientMutation = useMutation({
-    mutationFn: async ({ id, updates }: { id: number; updates: Record<string, unknown> }) => { const res = await apiRequest("PATCH", `/api/patients/${id}`, updates); return res.json(); },
-    onSuccess: (updatedPatient: PatientScreening, { id }) => {
-      const batchId = updatedPatient.batchId ?? selectedBatchId;
-      queryClient.setQueryData<ScreeningBatchWithPatients>(["/api/screening-batches", batchId], (old) => {
-        if (!old) return old;
-        return { ...old, patients: (old.patients || []).map((p) => p.id === id ? { ...p, ...updatedPatient } : p) };
+  const createBatchMut = useCreateBatch();
+  const createBatchMutation = {
+    mutate: (
+      input: { name: string; facility: string; scheduleDate?: string },
+      opts?: { onSuccess?: () => void },
+    ) =>
+      createBatchMut.mutate(input, {
+        onSuccess: (data) => {
+          openScheduleTab(data.id, data.name || "New Schedule");
+          if (data.requiresManualAssignment) {
+            const pendingAssignment = {
+              batchId: data.id,
+              batchName: data.name || "New Schedule",
+              availableSchedulers: data.availableSchedulers ?? [],
+            };
+            sessionStorage.setItem("pendingSchedulerAssignment", JSON.stringify(pendingAssignment));
+            setAssignSchedulerModal(pendingAssignment);
+          }
+          opts?.onSuccess?.();
+        },
+      }),
+    isPending: createBatchMut.isPending,
+  };
+
+  const assignSchedulerMut = useAssignScheduler();
+  const assignSchedulerMutation = {
+    mutate: (input: { batchId: number; schedulerId: number | null }) =>
+      assignSchedulerMut.mutate(input, {
+        onSuccess: () => {
+          sessionStorage.removeItem("pendingSchedulerAssignment");
+          setAssignSchedulerModal(null);
+          toast({ title: "Scheduler assigned" });
+        },
+        onError: (e: unknown) =>
+          toast({ title: "Assignment failed", description: e instanceof Error ? e.message : "Failed to assign scheduler", variant: "destructive" }),
+      }),
+    isPending: assignSchedulerMut.isPending,
+  };
+
+  const addPatientMutation = useAddPatient();
+
+  const importTextMut = useImportPatientsText();
+  const importTextMutation = {
+    mutate: (input: { batchId: number; text: string }) =>
+      importTextMut.mutate(input, {
+        onSuccess: (data) => { setPasteText(""); toast({ title: `Imported ${data.imported} patients` }); },
+      }),
+    isPending: importTextMut.isPending,
+  };
+
+  const importFileMut = useImportPatientsFile();
+  const importFileMutation = {
+    mutate: (input: { batchId: number; formData: FormData }) =>
+      importFileMut.mutate(input, {
+        onSuccess: (data) => toast({ title: `Imported ${data.imported} patients` }),
+      }),
+    isPending: importFileMut.isPending,
+  };
+
+  const updatePatientMut = useUpdatePatient();
+  const updatePatientMutation = {
+    mutate: (input: { id: number; updates: Record<string, unknown> }) =>
+      updatePatientMut.mutate(input, {
+        onError: (err: unknown) => {
+          toast({ title: "Update failed", description: err instanceof Error ? err.message : "Something went wrong", variant: "destructive" });
+          invalidateBatch(selectedBatchId);
+        },
+      }),
+  };
+
+  const deletePatientMut = useDeletePatient();
+  const deletePatientMutation = {
+    mutate: (id: number) =>
+      deletePatientMut.mutate(id, {
+        onSuccess: () => invalidateBatch(selectedBatchId),
+      }),
+  };
+
+  const deleteBatchMut = useDeleteBatch();
+  const deleteBatchMutation = {
+    mutate: (id: number) =>
+      deleteBatchMut.mutate(id, {
+        onSuccess: (deletedId) => {
+          const tabIdx = tabs.findIndex((t) => t.type === "schedule" && t.batchId === deletedId);
+          if (tabIdx >= 0) closeTab(tabIdx);
+        },
+      }),
+    mutateAsync: deleteBatchMut.mutateAsync,
+    isPending: deleteBatchMut.isPending,
+  };
+
+  const updateBatchMut = useUpdateBatch();
+  const updateClinicianMutation = {
+    mutate: (input: { id: number; clinicianName: string }) =>
+      updateBatchMut.mutate({ id: input.id, updates: { clinicianName: input.clinicianName } }),
+  };
+
+  const startAnalysisMut = useStartBatchAnalysis();
+  // Tracks the full analyze-all lifecycle (start mutation + foreground poll
+  // loop). Pure mutation `isPending` flips back to false the moment the POST
+  // resolves, which would let the user re-trigger analysis mid-poll. Keep
+  // this true until polling settles.
+  const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
+  const analyzeAllMutation = {
+    mutate: (batchId: number) => {
+      if (isAnalyzingAll) return;
+      setIsAnalyzingAll(true);
+      startAnalysisMut.mutate(batchId, {
+        onSuccess: async (data) => {
+          const total = data.patientCount || 0;
+          setAnalysisProgress({ completed: 0, total });
+          const MAX_POLLS = 300;
+          try {
+            for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
+              const statusData = await fetchAnalysisStatus(batchId);
+              const completed = statusData.completedPatients ?? 0;
+              setAnalysisProgress({ completed, total: statusData.totalPatients || total });
+              if (statusData.status === "completed") {
+                invalidateBatch(batchId);
+                setAnalysisProgress(null);
+                toast({ title: "Analysis complete", description: "All patients have been screened." });
+                setTabs((prev) => prev.map((tab, i) => i === activeTabIndex && tab.type === "schedule" ? { ...tab, viewMode: "results" as const } : tab));
+                return;
+              }
+              if (statusData.status === "failed") {
+                invalidateBatch(batchId);
+                throw new Error(statusData.errorMessage || "Analysis failed. Click Generate All to try again.");
+              }
+              await new Promise((r) => setTimeout(r, 3000));
+            }
+            throw new Error("Analysis is taking longer than expected. Click Generate All to resume.");
+          } catch (err: unknown) {
+            setAnalysisProgress(null);
+            toast({ title: "Analysis failed", description: err instanceof Error ? err.message : "Analysis failed", variant: "destructive" });
+          } finally {
+            setIsAnalyzingAll(false);
+          }
+        },
+        onError: (err: Error) => {
+          setAnalysisProgress(null);
+          setIsAnalyzingAll(false);
+          toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
+        },
       });
     },
-    onError: (err: unknown) => {
-      toast({ title: "Update failed", description: err instanceof Error ? err.message : "Something went wrong", variant: "destructive" });
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-    },
-  });
-  const deletePatientMutation = useMutation({
-    mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/patients/${id}`); },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] }); queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] }); },
-  });
-  const deleteBatchMutation = useMutation({
-    mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/screening-batches/${id}`); },
-    onSuccess: (_, deletedId) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      const tabIdx = tabs.findIndex((t) => t.type === "schedule" && t.batchId === deletedId);
-      if (tabIdx >= 0) closeTab(tabIdx);
-    },
-  });
-  const updateClinicianMutation = useMutation({
-    mutationFn: async ({ id, clinicianName }: { id: number; clinicianName: string }) => { await apiRequest("PATCH", `/api/screening-batches/${id}`, { clinicianName }); },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] }),
-  });
-  const analyzeAllMutation = useMutation({
-    mutationFn: async (batchId: number) => {
-      const res = await apiRequest("POST", `/api/batches/${batchId}/analyze`);
-      const data = await res.json();
-      const total = data.patientCount || 0;
-      setAnalysisProgress({ completed: 0, total });
-      const MAX_POLLS = 300;
-      const poll = async (attempt = 0): Promise<void> => {
-        if (attempt >= MAX_POLLS) throw new Error("Analysis is taking longer than expected. Click Generate All to resume.");
-        const statusRes = await fetch(`/api/batches/${batchId}/analysis-status`, { credentials: "include" });
-        if (!statusRes.ok) throw new Error("Lost connection during analysis. Click Generate All to resume.");
-        const statusData = await statusRes.json();
-        const completed = statusData.completedPatients ?? 0;
-        setAnalysisProgress({ completed, total: statusData.totalPatients || total });
-        if (statusData.status === "completed") {
-          queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", batchId] });
-          return;
-        }
-        if (statusData.status === "failed") {
-          queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", batchId] });
-          throw new Error(statusData.errorMessage || "Analysis failed. Click Generate All to try again.");
-        }
-        if (statusData.status === "not_started") {
-          await new Promise((r) => setTimeout(r, 3000));
-          return poll(attempt + 1);
-        }
-        await new Promise((r) => setTimeout(r, 3000));
-        return poll(attempt + 1);
-      };
-      await poll();
-      return data;
-    },
-    onSuccess: () => {
-      setAnalysisProgress(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      toast({ title: "Analysis complete", description: "All patients have been screened." });
-      setTabs((prev) => prev.map((tab, i) => i === activeTabIndex && tab.type === "schedule" ? { ...tab, viewMode: "results" as const } : tab));
-    },
-    onError: (err: Error) => { setAnalysisProgress(null); toast({ title: "Analysis failed", description: err.message, variant: "destructive" }); },
-  });
+    isPending: startAnalysisMut.isPending || isAnalyzingAll,
+  };
+
+  const analyzePatientMut = useAnalyzePatient();
   const analyzeOnePatient = useCallback(async (patientId: number) => {
     setAnalyzingPatients((prev) => new Set(prev).add(patientId));
     try {
-      const res = await apiRequest("POST", `/api/patients/${patientId}/analyze`);
-      const body = await res.json().catch(() => ({}));
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
+      const body = await analyzePatientMut.mutateAsync(patientId);
+      invalidateBatch(selectedBatchId);
       queryClient.invalidateQueries({ queryKey: ["/api/schedule/dashboard"] });
-      const handoff = body?.autoCommittedSchedulerName
+      const handoff = body.autoCommittedSchedulerName
         ? `Sent to ${body.autoCommittedSchedulerName}.`
-        : body?.commitStatus && body.commitStatus !== "Draft"
+        : body.commitStatus && body.commitStatus !== "Draft"
           ? "Sent to schedulers."
           : undefined;
       toast({ title: "Patient analyzed", description: handoff });
@@ -288,7 +337,7 @@ export default function Home() {
     } finally {
       setAnalyzingPatients((prev) => { const next = new Set(prev); next.delete(patientId); return next; });
     }
-  }, [selectedBatchId, queryClient, toast]);
+  }, [selectedBatchId, invalidateBatch, toast, analyzePatientMut]);
 
   const handleFileUpload = useCallback((files: FileList | File[]) => {
     if (!selectedBatchId) return;
@@ -349,22 +398,9 @@ export default function Home() {
     const poll = async (): Promise<void> => {
       if (cancelled) return;
       try {
-        const res = await fetch(`/api/batches/${selectedBatchId}/analysis-status`, { credentials: "include" });
+        const data = await fetchAnalysisStatus(selectedBatchId);
         if (cancelled) return;
-        if (!res.ok) {
-          consecutiveErrors++;
-          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-            autoPollingRef.current = false;
-            setIsAutoPolling(false);
-            setAnalysisProgress(null);
-            return;
-          }
-          await new Promise((r) => setTimeout(r, 3000));
-          return poll();
-        }
         consecutiveErrors = 0;
-        const data = await res.json();
-        if (cancelled) return;
         setAnalysisProgress({ completed: data.completedPatients ?? 0, total: data.totalPatients ?? 0 });
         if (data.status === "completed" || data.status === "failed") {
           autoPollingRef.current = false;
@@ -411,8 +447,7 @@ export default function Home() {
     setAnalysisProgress(null);
     autoPollingRef.current = false;
     setIsAutoPolling(false);
-    queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-    queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+    invalidateBatch(selectedBatchId);
     if (currentStatus === "completed") {
       toast({ title: "Analysis complete", description: "All patients have been screened." });
       setTabs((prev) => prev.map((tab) => tab.type === "schedule" && tab.batchId === selectedBatchId ? { ...tab, viewMode: "results" as const } : tab));
