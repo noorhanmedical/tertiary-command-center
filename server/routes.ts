@@ -270,7 +270,7 @@ export async function registerRoutes(
     if (id === req.session.userId) {
       return res.status(400).json({ error: "Cannot delete your own account" });
     }
-    await storage.deleteUser(id);
+    await storage.deleteUser(String(id));
     return res.json({ ok: true });
   });
 
@@ -279,11 +279,11 @@ export async function registerRoutes(
     if (id === req.session.userId) {
       return res.status(400).json({ error: "You cannot deactivate your own account" });
     }
-    const target = await storage.getUser(id);
+    const target = await storage.getUser(String(id));
     if (!target) {
       return res.status(404).json({ error: "User not found" });
     }
-    await storage.deactivateUser(id);
+    await storage.deactivateUser(String(id));
     return res.json({ ok: true });
   });
 
@@ -292,9 +292,9 @@ export async function registerRoutes(
     if (!parsed.success) {
       return res.status(400).json({ error: `Invalid role. Must be one of: ${USER_ROLES.join(", ")}` });
     }
-    const target = await storage.getUser(req.params.id);
+    const target = await storage.getUser(String(req.params.id));
     if (!target) return res.status(404).json({ error: "User not found" });
-    await storage.updateUserRole(req.params.id, parsed.data.role);
+    await storage.updateUserRole(String(req.params.id), parsed.data.role);
     return res.json({ id: target.id, username: target.username, role: parsed.data.role });
   });
 

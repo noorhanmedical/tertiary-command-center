@@ -176,7 +176,7 @@ export function registerInvoiceRoutes(app: Express) {
 
   app.get("/api/invoices/:id", requireBillerOrAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(String(req.params.id), 10);
       const invoice = await storage.getInvoice(id);
       if (!invoice) return res.status(404).json({ error: "Invoice not found" });
       const lineItems = await storage.getInvoiceLineItems(id);
@@ -258,7 +258,7 @@ export function registerInvoiceRoutes(app: Express) {
 
   app.patch("/api/invoices/:id/status", requireBillerOrAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(String(req.params.id), 10);
       const parsed = updateStatusSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "Invalid status" });
       const updated = await storage.updateInvoiceStatus(id, parsed.data.status);
@@ -272,7 +272,7 @@ export function registerInvoiceRoutes(app: Express) {
 
   app.post("/api/invoices/:id/send-email", requireBillerOrAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(String(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid invoice id" });
 
       const parsed = sendInvoiceEmailSchema.safeParse(req.body);
@@ -346,7 +346,7 @@ export function registerInvoiceRoutes(app: Express) {
 
   app.get("/api/invoices/:id/payments", requireBillerOrAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(String(req.params.id), 10);
       const payments = await storage.getInvoicePayments(id);
       res.json(payments);
     } catch (error: any) {
@@ -356,7 +356,7 @@ export function registerInvoiceRoutes(app: Express) {
 
   app.post("/api/invoices/:id/payments", requireBillerOrAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(String(req.params.id), 10);
       const invoice = await storage.getInvoice(id);
       if (!invoice) return res.status(404).json({ error: "Invoice not found" });
       if (invoice.status === "Draft") {
@@ -383,8 +383,8 @@ export function registerInvoiceRoutes(app: Express) {
 
   app.delete("/api/invoices/:id/payments/:paymentId", requireBillerOrAdmin, async (req, res) => {
     try {
-      const invoiceId = parseInt(req.params.id);
-      const paymentId = parseInt(req.params.paymentId);
+      const invoiceId = parseInt(String(req.params.id), 10);
+      const paymentId = parseInt(String(req.params.paymentId), 10);
       if (isNaN(invoiceId) || isNaN(paymentId)) {
         return res.status(400).json({ error: "Invalid invoice or payment id" });
       }
@@ -399,7 +399,7 @@ export function registerInvoiceRoutes(app: Express) {
 
   app.delete("/api/invoices/:id", requireBillerOrAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(String(req.params.id), 10);
       await storage.deleteInvoice(id);
       void logAudit(req, "delete", "invoice", id, null);
       res.status(204).send();

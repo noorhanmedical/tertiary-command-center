@@ -229,7 +229,7 @@ export function registerPortalRoutes(app: Express) {
           const c = consentForTest(docs as ConsentDoc[], a.testType, date);
           row.consentByTest.push({ testType: a.testType, signed: c.signed, documentId: c.documentId });
         }
-        row.consentSigned = row.consentByTest.length > 0 && row.consentByTest.every((c) => c.signed);
+        row.consentSigned = row.consentByTest.length > 0 && row.consentByTest.every((c: any) => c.signed);
       }
 
       const out = [...byKey.values()].sort((x, y) =>
@@ -757,7 +757,7 @@ export function registerPortalRoutes(app: Express) {
   // ── Documents for a patient (consent + uploads) ────────────────────────────
   app.get("/api/portal/patient-documents/:id", requirePortalRole, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
       const facilityInfo = await patientFacility(id);
       if (!facilityInfo) return res.status(404).json({ error: "Patient not found" });

@@ -517,6 +517,16 @@ export class DatabaseStorage implements IStorage {
   replaceDocumentAssignments(documentId: number, surfaces: DocumentSurface[]) { return documentLibraryRepository.replaceAssignments(documentId, surfaces); }
   softDeleteDocument(id: number) { return documentLibraryRepository.softDelete(id); }
   deleteDocument(id: number) { return documentLibraryRepository.hardDelete(id); }
+  async getBillingRecordInvoiceLinks() {
+    return [];
+  }
+
+  async markInvoiceReminded(id: number, when: Date) {
+    const existing = await this.getInvoice(id);
+    if (!existing) return undefined;
+    return { ...existing, lastRemindedAt: when };
+  }
+
 }
 
 export const storage = new DatabaseStorage();

@@ -600,7 +600,7 @@ function CreateInvoiceDialog({ open, onClose, onCreated }: { open: boolean; onCl
   );
 }
 
-type Html2PdfOptions = Parameters<ReturnType<typeof import("html2pdf.js")["default"]>["set"]>[0];
+type Html2PdfOptions = Record<string, unknown>;
 
 function pdfOptionsFor(invoice: Invoice): { filename: string; options: Html2PdfOptions } {
   const safeFacility = invoice.facility.replace(/[^A-Za-z0-9-]+/g, "_");

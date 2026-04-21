@@ -118,7 +118,7 @@ export function registerMarketingMaterialRoutes(app: Express) {
 
   app.get("/api/marketing-materials/:id/file", requireAuth, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
       const row = await storage.getMarketingMaterial(id);
       if (!row) return res.status(404).json({ error: "Not found" });
@@ -142,7 +142,7 @@ export function registerMarketingMaterialRoutes(app: Express) {
 
   app.delete("/api/marketing-materials/:id", requireAdmin, async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const id = parseInt(String(req.params.id), 10);
       if (Number.isNaN(id)) return res.status(400).json({ error: "id must be a number" });
       const row = await storage.getMarketingMaterial(id);
       if (!row) return res.status(404).json({ error: "Not found" });
