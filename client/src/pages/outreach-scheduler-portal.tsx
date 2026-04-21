@@ -283,10 +283,10 @@ export default function OutreachSchedulerPortalPage() {
   const [callListBookTime, setCallListBookTime] = useState<string>("");
   const [scrollToSlot, setScrollToSlot] = useState<{ time: string; testType: string } | null>(null);
   const [bookingPanelOpen, setBookingPanelOpen] = useState(false);
-  const [expandedSection, setExpandedSection] = useState<"calendar" | "email" | "materials" | "callList" | "tasks" | "currentCall" | null>(null);
+  const [expandedSection, setExpandedSection] = useState<"calendar" | "email" | "materials" | "tasks" | "currentCall" | "messages" | null>(null);
 
   // Playfield tabs (persist across patient changes; per-patient labeled)
-  type ExpandedKind = "currentCall" | "calendar" | "email" | "materials" | "callList" | "tasks";
+  type ExpandedKind = "currentCall" | "calendar" | "email" | "materials" | "tasks" | "messages";
   type PlayfieldTabKind = ExpandedKind | "thread";
   type PlayfieldTab = { id: string; kind: PlayfieldTabKind; patientId?: number; patientName?: string; label: string };
   function tabKindToExpanded(kind: PlayfieldTabKind): ExpandedKind | null {
@@ -294,8 +294,6 @@ export default function OutreachSchedulerPortalPage() {
   }
   const [playfieldTabs, setPlayfieldTabs] = useState<PlayfieldTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  // Floating iOS-style messages popout
-  const [messagesOpen, setMessagesOpen] = useState(false);
 
   // Call flow state
   const [expandedTimeline, setExpandedTimeline] = useState<Set<number>>(new Set());
@@ -553,7 +551,7 @@ export default function OutreachSchedulerPortalPage() {
     const id = `${kind}:${threadId ?? patientId ?? "global"}`;
     const labelBase: Record<PlayfieldTabKind, string> = {
       currentCall: "Call", calendar: "Calendar", email: "Email", materials: "Materials",
-      callList: "Call list", tasks: "Tasks", thread: "Thread",
+      tasks: "Tasks", messages: "Messages", thread: "Thread",
     };
     const label = patientName ? `${labelBase[kind]} · ${patientName}` : labelBase[kind];
     setPlayfieldTabs((prev) => (prev.some((t) => t.id === id) ? prev : [...prev, { id, kind, patientId, patientName, label }]));
@@ -764,124 +762,173 @@ export default function OutreachSchedulerPortalPage() {
           </div>
         </header>
 
-        {/* ── Cockpit grid: icon rail + tools + playfield + call list ── */}
-        <div className="grid gap-5 xl:grid-cols-[64px_280px_1fr_360px] xl:flex-1 xl:min-h-0">
+        {/* ── Cockpit grid: icon rail · playfield · call list ── */}
+        <div className="grid gap-5 xl:grid-cols-[64px_1fr_360px] xl:flex-1 xl:min-h-0">
 
-          {/* ─── ICON RAIL: Email · Materials · Messages ─── */}
+          {/* ─── ICON RAIL: Schedule · Tasks · Email · Materials · Messages ─── */}
           <div className="hidden xl:flex flex-col items-center gap-3 rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl py-4">
-            <button
-              type="button"
-              title="Email"
-              onClick={() => openPlayfieldTab({ kind: "email" })}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-600"
-              data-testid="portal-icon-email"
-            >
-              <Mail className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              title="Marketing materials"
-              onClick={() => openPlayfieldTab({ kind: "materials" })}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 hover:border-violet-300 hover:text-violet-600"
-              data-testid="portal-icon-materials"
-            >
-              <FileText className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              title="Messages"
-              onClick={() => setMessagesOpen((v) => !v)}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:text-emerald-600"
-              data-testid="portal-icon-messages"
-            >
-              <MessageCircle className="h-5 w-5" />
-            </button>
-          </div>
-
-          {/* ─── LEFT PANEL: Tri-clinic calendar + Communication hub + Tasks ─── */}
-          <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl divide-y divide-slate-100/80 overflow-hidden xl:flex xl:flex-col xl:min-h-0 xl:overflow-y-auto">
-            <ToolsPanel
-              facility={card.facility}
-              todayAppointments={todayAppointments}
-              onCancelAppointment={(a) => setCancelTarget(a)}
-              selectedItem={selectedItem}
-              bookingPanelOpen={bookingPanelOpen}
-              setBookingPanelOpen={setBookingPanelOpen}
-              calYear={calYear}
-              calMonth={calMonth}
-              setCalMonth={setCalMonth}
-              setCalYear={setCalYear}
-              selectedDay={selectedDay}
-              setSelectedDay={setSelectedDay}
-              bookedDates={bookedDates}
-              appointments={appointments}
-              selectedDateStr={selectedDateStr}
-              setBookSlot={setBookSlot}
-              setBookName={setBookName}
-              setBookLinkedPatient={setBookLinkedPatient}
-              setBookPatientSearch={setBookPatientSearch}
-              setCancelTarget={setCancelTarget}
-              scrollToSlot={scrollToSlot}
-              expandedSection={expandedSection}
-              setExpandedSection={setExpandedSection}
+            {/* Schedule */}
+            <RailIcon
+              title="Schedule"
+              icon={<Calendar className="h-5 w-5" />}
+              hoverClass="hover:border-blue-300 hover:text-blue-600"
+              testId="portal-icon-schedule"
+              onExpand={() => openPlayfieldTab({ kind: "calendar" })}
+              popoverClassName="w-[360px] p-0"
+              popoverContent={
+                <div className="max-h-[520px] overflow-y-auto">
+                  <TriClinicCalendar
+                    facility={card.facility}
+                    appointments={appointments}
+                    selectedItem={selectedItem}
+                    calYear={calYear}
+                    calMonth={calMonth}
+                    setCalMonth={setCalMonth}
+                    setCalYear={setCalYear}
+                    selectedDay={selectedDay}
+                    setSelectedDay={setSelectedDay}
+                    onConfirmSlot={(slot) => {
+                      setBookSlot(slot);
+                      if (selectedItem) {
+                        setBookLinkedPatient(selectedItem);
+                        setBookName("");
+                        setBookPatientSearch("");
+                      }
+                    }}
+                  />
+                </div>
+              }
             />
 
-            {/* ── Tasks list (no tile chrome — flat list) ── */}
-            <div className="px-4 pt-3 pb-4 flex flex-col min-h-0" data-testid="portal-left-tasks">
-              <div className="mb-2 flex items-center gap-2">
-                <ListTodo className="h-4 w-4 text-violet-600" />
-                <h2 className="text-sm font-semibold text-slate-800">Tasks</h2>
-                {(urgentTasks.length + openTasks.length) > 0 && (
-                  <Badge className="rounded-full bg-violet-100 text-violet-700 text-[10px]">
-                    {urgentTasks.length + openTasks.length}
-                  </Badge>
-                )}
-                <button
-                  type="button"
-                  onClick={() => openPlayfieldTab({ kind: "tasks" })}
-                  title="Open in playing field"
-                  className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
-                  data-testid="portal-expand-left-tasks"
-                >
-                  <Maximize2 className="h-3 w-3" />
-                </button>
-              </div>
-              {(urgentTasks.length + openTasks.length) === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-5 text-center text-xs text-slate-400">
-                  No open tasks
+            {/* Tasks */}
+            <RailIcon
+              title="Tasks"
+              icon={<ListTodo className="h-5 w-5" />}
+              hoverClass="hover:border-violet-300 hover:text-violet-600"
+              testId="portal-icon-tasks"
+              badge={urgentTasks.length + openTasks.length}
+              onExpand={() => openPlayfieldTab({ kind: "tasks" })}
+              popoverClassName="w-[320px] p-3"
+              popoverContent={
+                <div data-testid="portal-rail-tasks-popover">
+                  <div className="mb-2 flex items-center gap-2">
+                    <ListTodo className="h-4 w-4 text-violet-600" />
+                    <h2 className="text-sm font-semibold text-slate-800">Tasks</h2>
+                    {(urgentTasks.length + openTasks.length) > 0 && (
+                      <Badge className="rounded-full bg-violet-100 text-violet-700 text-[10px]">
+                        {urgentTasks.length + openTasks.length}
+                      </Badge>
+                    )}
+                  </div>
+                  {(urgentTasks.length + openTasks.length) === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-5 text-center text-xs text-slate-400">
+                      No open tasks
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 overflow-y-auto pr-1 max-h-[360px]">
+                      {[
+                        ...urgentTasks.map((t) => ({ task: t, isUrgent: true as const })),
+                        ...openTasks
+                          .filter((t) => !urgentTasks.some((u) => u.id === t.id))
+                          .map((t) => ({ task: t, isUrgent: false as const })),
+                      ].map(({ task, isUrgent }) => (
+                        <button
+                          key={task.id}
+                          type="button"
+                          onClick={() => openTaskDrawer(task)}
+                          className={`flex w-full items-start gap-2 rounded-xl border px-2.5 py-2 text-left transition ${
+                            isUrgent
+                              ? "border-orange-200 bg-orange-50/40 hover:border-orange-300"
+                              : "border-slate-100 bg-white hover:border-violet-200"
+                          }`}
+                          data-testid={`portal-rail-task-${task.id}`}
+                        >
+                          {isUrgent && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-orange-500 ring-2 ring-orange-200" />}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="truncate text-xs font-medium text-slate-800">{task.title}</span>
+                              {unreadTaskIds.has(task.id) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />}
+                            </div>
+                            {task.patientName && <p className="mt-0.5 truncate text-[11px] text-slate-500">{task.patientName}</p>}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="space-y-1.5 overflow-y-auto pr-1 max-h-[340px]">
-                  {[
-                    ...urgentTasks.map((t) => ({ task: t, isUrgent: true as const })),
-                    ...openTasks
-                      .filter((t) => !urgentTasks.some((u) => u.id === t.id))
-                      .map((t) => ({ task: t, isUrgent: false as const })),
-                  ].map(({ task, isUrgent }) => (
-                    <button
-                      key={task.id}
-                      type="button"
-                      onClick={() => openTaskDrawer(task)}
-                      className={`flex w-full items-start gap-2 rounded-xl border px-2.5 py-2 text-left transition ${
-                        isUrgent
-                          ? "border-orange-200 bg-orange-50/40 hover:border-orange-300"
-                          : "border-slate-100 bg-white hover:border-violet-200"
-                      }`}
-                      data-testid={`portal-left-task-${task.id}`}
-                    >
-                      {isUrgent && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-orange-500 ring-2 ring-orange-200" />}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate text-xs font-medium text-slate-800">{task.title}</span>
-                          {unreadTaskIds.has(task.id) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />}
-                        </div>
-                        {task.patientName && <p className="mt-0.5 truncate text-[11px] text-slate-500">{task.patientName}</p>}
-                      </div>
-                    </button>
-                  ))}
+              }
+            />
+
+            {/* Email */}
+            <RailIcon
+              title="Email"
+              icon={<Mail className="h-5 w-5" />}
+              hoverClass="hover:border-emerald-300 hover:text-emerald-600"
+              testId="portal-icon-email"
+              onExpand={() => openPlayfieldTab({ kind: "email" })}
+              popoverClassName="w-[360px] p-3"
+              popoverContent={
+                <EmailComposer selectedItem={selectedItem} facility={card.facility} />
+              }
+            />
+
+            {/* Marketing materials */}
+            <RailIcon
+              title="Marketing materials"
+              icon={<FileText className="h-5 w-5" />}
+              hoverClass="hover:border-amber-300 hover:text-amber-600"
+              testId="portal-icon-materials"
+              onExpand={() => openPlayfieldTab({ kind: "materials" })}
+              popoverClassName="w-[360px] p-3"
+              popoverContent={
+                <div className="max-h-[480px] overflow-y-auto">
+                  <MaterialsPanel selectedItem={selectedItem} />
                 </div>
-              )}
-            </div>
+              }
+            />
+
+            {/* Messages */}
+            <RailIcon
+              title="Messages"
+              icon={<MessageCircle className="h-5 w-5" />}
+              hoverClass="hover:border-emerald-300 hover:text-emerald-600"
+              testId="portal-icon-messages"
+              onExpand={() => openPlayfieldTab({ kind: "messages" })}
+              popoverClassName="w-[320px] p-3"
+              popoverContent={
+                <div data-testid="portal-rail-messages-popover">
+                  <div className="mb-2 flex items-center gap-2">
+                    <MessageCircle className="h-4 w-4 text-emerald-600" />
+                    <h2 className="text-sm font-semibold text-slate-800">Messages</h2>
+                  </div>
+                  {[...urgentTasks, ...openTasks.filter((t) => !urgentTasks.some((u) => u.id === t.id))].length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-5 text-center text-xs text-slate-400">
+                      No active threads
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 overflow-y-auto pr-1 max-h-[360px]">
+                      {[...urgentTasks, ...openTasks.filter((t) => !urgentTasks.some((u) => u.id === t.id))].map((task) => (
+                        <button
+                          key={task.id}
+                          type="button"
+                          onClick={() => openTaskDrawer(task)}
+                          className="flex w-full items-start gap-2 rounded-xl border border-slate-100 bg-white px-2.5 py-2 text-left transition hover:border-emerald-200"
+                          data-testid={`portal-rail-message-${task.id}`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="truncate text-xs font-medium text-slate-800">{task.title}</span>
+                              {unreadTaskIds.has(task.id) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />}
+                            </div>
+                            {task.patientName && <p className="mt-0.5 truncate text-[11px] text-slate-500">{task.patientName}</p>}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              }
+            />
           </div>
 
           {/* ─── CENTER PANEL: Full-bleed playfield with tabs + floating AI bar ─── */}
@@ -1046,25 +1093,16 @@ export default function OutreachSchedulerPortalPage() {
           </div>
 
           {/* ─── RIGHT PANEL: Call list (full height) ────── */}
-          <div className="min-w-0 flex flex-col max-h-[calc(100vh-140px)] xl:max-h-none xl:min-h-0">
+          <div className="min-w-0 flex flex-col max-h-[calc(100vh-140px)] xl:max-h-none xl:min-h-0 xl:h-full">
 
           {/* Call list — full height */}
-          <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden flex flex-col min-h-0">
+          <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden flex flex-col min-h-0 flex-1">
             <div className="px-5 pt-5 pb-4 flex flex-col flex-1 min-h-0">
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <h2 className="text-lg font-semibold text-slate-900">Call list</h2>
               <Badge variant="outline" className="rounded-full text-[11px] text-slate-500">
                 {sortedCallList.length} {sortedCallList.length === 1 ? "patient" : "patients"}
               </Badge>
-              <button
-                type="button"
-                onClick={() => openPlayfieldTab({ kind: "callList" })}
-                title="Expand to playing field"
-                className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
-                data-testid="portal-expand-call-list"
-              >
-                <Maximize2 className="h-3.5 w-3.5" />
-              </button>
             </div>
 
             {sortedCallList.length === 0 ? (
@@ -1271,89 +1309,6 @@ export default function OutreachSchedulerPortalPage() {
             </div>
           </div>
 
-          {/* Tasks tile moved into left rail (see ToolsPanel sibling block) */}
-          <div className="hidden" data-testid="portal-tasks-tile-removed">
-            <div className="px-5 pt-4 pb-4 flex flex-col flex-1 min-h-0">
-              <div className="mb-3 flex items-center gap-2">
-                <ListTodo className="h-4 w-4 text-violet-600" />
-                <h2 className="text-sm font-semibold text-slate-800">Tasks</h2>
-                {(urgentTasks.length + openTasks.length) > 0 && (
-                  <Badge className="rounded-full bg-violet-100 text-violet-700 text-[10px]">
-                    {urgentTasks.length + openTasks.length}
-                  </Badge>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setExpandedSection("tasks")}
-                  title="Expand to playing field"
-                  className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
-                  data-testid="portal-expand-tasks"
-                >
-                  <Maximize2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              {(urgentTasks.length + openTasks.length) === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-400">
-                  No open tasks
-                </div>
-              ) : (
-                <div className="flex-1 overflow-y-auto pr-1 space-y-2">
-                  {[
-                    ...urgentTasks.map((t) => ({ task: t, isUrgent: true as const })),
-                    ...openTasks
-                      .filter((t) => !urgentTasks.some((u) => u.id === t.id))
-                      .map((t) => ({ task: t, isUrgent: false as const })),
-                  ].map(({ task, isUrgent }) => {
-                    const userMap = new Map<string, UserEntry>(users.map((u) => [u.id, u]));
-                    const requester = task.createdByUserId ? (userMap.get(task.createdByUserId)?.username ?? task.createdByUserId) : "Unknown";
-                    const timeRemaining = isUrgent ? calcTimeRemaining(task.urgency, task.createdAt) : null;
-                    const isOverdue = timeRemaining === "Overdue";
-                    return (
-                      <button
-                        key={task.id}
-                        type="button"
-                        onClick={() => openTaskDrawer(task)}
-                        className={`flex w-full items-start gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
-                          isUrgent
-                            ? "border-orange-200 bg-orange-50/40 hover:border-orange-300 hover:bg-orange-50/70"
-                            : "border-slate-100 bg-white hover:border-violet-200 hover:bg-violet-50/40"
-                        }`}
-                        data-testid={`portal-task-item-${task.id}`}
-                      >
-                        {isUrgent && (
-                          <span
-                            className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-orange-500 ring-2 ring-orange-200"
-                            title="Urgent"
-                            data-testid={`portal-task-urgent-dot-${task.id}`}
-                          />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate text-sm font-medium text-slate-800">{task.title}</span>
-                            {unreadTaskIds.has(task.id) && <span className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />}
-                          </div>
-                          {task.patientName && <p className="mt-0.5 truncate text-xs text-slate-500">Patient: {task.patientName}</p>}
-                          {isUrgent && (
-                            <div className="mt-1 flex items-center gap-2 text-[11px]">
-                              <span className={isOverdue ? "text-red-600 font-medium" : "text-orange-700"}>
-                                <Clock className="inline h-3 w-3 mr-0.5" />{timeRemaining}
-                              </span>
-                              <span className="text-slate-400">· {requester}</span>
-                            </div>
-                          )}
-                        </div>
-                        {task.urgency !== "none" && (
-                          <Badge className={`shrink-0 rounded-full border text-[10px] ${urgencyBadgeClass(task.urgency)}`}>
-                            {urgencyShortLabel(task.urgency)}
-                          </Badge>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
           </div>
         </div>
       </div>
@@ -1551,62 +1506,6 @@ export default function OutreachSchedulerPortalPage() {
         );
       })()}
 
-      {/* Floating iOS-style messages popout (right edge, does NOT shrink playfield) */}
-      {messagesOpen && (
-        <div
-          className="fixed right-4 bottom-4 z-40 w-80 max-h-[60vh] rounded-3xl border border-white/70 bg-white/95 shadow-[0_24px_80px_rgba(15,23,42,0.25)] backdrop-blur-xl flex flex-col overflow-hidden"
-          data-testid="portal-messages-popout"
-        >
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100">
-            <MessageCircle className="h-4 w-4 text-emerald-600" />
-            <h3 className="text-sm font-semibold text-slate-800 flex-1">Messages</h3>
-            <button
-              type="button"
-              onClick={() => setMessagesOpen(false)}
-              className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-              data-testid="portal-messages-close"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1.5">
-            {[...urgentTasks, ...openTasks.filter((t) => !urgentTasks.some((u) => u.id === t.id))].length === 0 ? (
-              <div className="px-3 py-8 text-center text-xs text-slate-400">No active threads</div>
-            ) : (
-              [...urgentTasks, ...openTasks.filter((t) => !urgentTasks.some((u) => u.id === t.id))].map((task) => (
-                <div key={task.id} className="flex items-start gap-2 rounded-2xl border border-slate-100 bg-white px-3 py-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate text-xs font-semibold text-slate-800">{task.title}</span>
-                      {unreadTaskIds.has(task.id) && <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />}
-                    </div>
-                    {task.patientName && <p className="truncate text-[11px] text-slate-500">{task.patientName}</p>}
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <button
-                      type="button"
-                      onClick={() => openTaskDrawer(task)}
-                      className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600 hover:border-emerald-300 hover:text-emerald-700"
-                      data-testid={`portal-msg-open-${task.id}`}
-                    >
-                      Open
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openPlayfieldTab({ kind: "thread", patientId: task.patientScreeningId ?? undefined, patientName: task.patientName ?? undefined, threadId: String(task.id) })}
-                      className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600 hover:border-indigo-300 hover:text-indigo-700"
-                      data-testid={`portal-msg-tab-${task.id}`}
-                    >
-                      Tab
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Task drawer */}
       {taskDrawerPatientId !== null && currentUser && (
         <TaskDrawer
@@ -1623,6 +1522,71 @@ export default function OutreachSchedulerPortalPage() {
 }
 
 // ─── Subcomponents ────────────────────────────────────────────────────────────
+
+function RailIcon({
+  icon,
+  title,
+  hoverClass,
+  testId,
+  popoverContent,
+  popoverClassName,
+  onExpand,
+  badge,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  hoverClass: string;
+  testId: string;
+  popoverContent: React.ReactNode;
+  popoverClassName?: string;
+  onExpand?: () => void;
+  badge?: number;
+}) {
+  return (
+    <div className="relative group">
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            title={title}
+            className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 transition ${hoverClass}`}
+            data-testid={testId}
+          >
+            {icon}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          side="right"
+          align="start"
+          sideOffset={12}
+          className={popoverClassName}
+          data-testid={`${testId}-popover`}
+        >
+          {popoverContent}
+        </PopoverContent>
+      </Popover>
+      {onExpand && (
+        <button
+          type="button"
+          onClick={onExpand}
+          title="Open in playing field"
+          className="absolute -bottom-1 -right-1 inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity hover:border-indigo-300 hover:text-indigo-600 focus:opacity-100"
+          data-testid={`${testId}-expand`}
+        >
+          <Maximize2 className="h-2.5 w-2.5" />
+        </button>
+      )}
+      {badge != null && badge > 0 && (
+        <span
+          className="absolute -top-1 -right-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white shadow-sm"
+          data-testid={`${testId}-badge`}
+        >
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
+    </div>
+  );
+}
 
 function MetricTile({ icon, label, value, accent, badge }: { icon: React.ReactNode; label: string; value: number | string; accent: string; badge?: string }) {
   return (
@@ -2182,8 +2146,8 @@ function ToolsPanel(props: {
   setBookPatientSearch: (s: string) => void;
   setCancelTarget: (a: AncillaryAppointment | null) => void;
   scrollToSlot: { time: string; testType: string } | null;
-  expandedSection?: "calendar" | "email" | "materials" | "callList" | "tasks" | "currentCall" | null;
-  setExpandedSection?: (s: "calendar" | "email" | "materials" | "callList" | "tasks" | "currentCall" | null) => void;
+  expandedSection?: "calendar" | "email" | "materials" | "tasks" | "currentCall" | null;
+  setExpandedSection?: (s: "calendar" | "email" | "materials" | "tasks" | "currentCall" | null) => void;
 }) {
   const {
     facility, todayAppointments, selectedItem, bookingPanelOpen, setBookingPanelOpen,
@@ -2993,7 +2957,7 @@ function ToolsPanel(props: {
 
   // ─── Expanded ("playing field") view rendered in the center column ──────
   function ExpandedSectionView(props: {
-    section: "calendar" | "email" | "materials" | "callList" | "tasks" | "currentCall";
+    section: "calendar" | "email" | "materials" | "tasks" | "currentCall" | "messages";
     onClose: () => void;
     facility: string;
     appointments: AncillaryAppointment[];
@@ -3023,9 +2987,9 @@ function ToolsPanel(props: {
       calendar: "Booking calendar",
       email: "Email composer",
       materials: "Marketing materials",
-      callList: "Call list",
       tasks: "Tasks",
       currentCall: "Current call",
+      messages: "Messages",
     };
     return (
       <div
@@ -3036,6 +3000,7 @@ function ToolsPanel(props: {
           {section === "calendar" && <Calendar className="h-4 w-4 text-blue-600" />}
           {section === "email" && <Mail className="h-4 w-4 text-emerald-600" />}
           {section === "materials" && <Megaphone className="h-4 w-4 text-amber-600" />}
+          {section === "messages" && <MessageCircle className="h-4 w-4 text-emerald-600" />}
           <h2 className="text-base font-semibold text-slate-800">{titleMap[section]}</h2>
           <button
             type="button"
@@ -3069,70 +3034,6 @@ function ToolsPanel(props: {
         {section === "materials" && (
           <div className="p-6">
             <MaterialsPanel fullWidth selectedItem={props.selectedItem} />
-          </div>
-        )}
-        {section === "callList" && (
-          <div className="p-6 space-y-2 max-h-[70vh] overflow-y-auto">
-            {props.sortedCallList.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-12 text-center text-sm text-slate-400">
-                Call list is empty
-              </div>
-            ) : (
-              props.sortedCallList.map(({ item, bucket }) => {
-                const latest = props.latestCallByPatient.get(item.patientId);
-                return (
-                  <div
-                    key={item.patientId}
-                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3 hover:border-indigo-300 hover:shadow-sm transition"
-                    data-testid={`expanded-call-row-${item.patientId}`}
-                  >
-                    <div className="flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => { props.selectPatient(item.patientId); onClose(); }}
-                        className="flex-1 min-w-0 text-left"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-slate-900">{item.patientName}</span>
-                          <Badge className={`rounded-full border text-[10px] ${statusBadgeClass(item.appointmentStatus)}`}>
-                            {statusLabel(item.appointmentStatus)}
-                          </Badge>
-                          {latest && (
-                            <Badge variant="outline" className="rounded-full text-[10px] text-slate-500">
-                              Last: {latest.outcome.replace("_", " ")}
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="mt-0.5 text-xs text-slate-500">
-                          {item.facility} · {item.providerName}
-                          {item.qualifyingTests.length > 0 && ` · ${item.qualifyingTests.join(", ")}`}
-                        </p>
-                      </button>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <a
-                          href={`tel:${digitsOnly(item.phoneNumber)}`}
-                          onClick={() => props.selectPatient(item.patientId)}
-                          title={`Call ${item.phoneNumber}`}
-                          className="flex h-9 items-center gap-1.5 rounded-full border border-blue-200 bg-white px-3 text-xs font-medium text-blue-700 hover:border-blue-300 hover:bg-blue-50"
-                          data-testid={`expanded-call-tel-${item.patientId}`}
-                        >
-                          <Phone className="h-3.5 w-3.5" /> {item.phoneNumber}
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => { props.selectPatient(item.patientId); props.setCallListBookPatient(item); }}
-                          title="Add to schedule"
-                          className="flex h-9 w-9 items-center justify-center rounded-full border border-violet-200 bg-white text-violet-600 hover:border-violet-300 hover:bg-violet-50"
-                          data-testid={`expanded-call-book-${item.patientId}`}
-                        >
-                          <CalendarPlus className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
           </div>
         )}
         {section === "tasks" && (
@@ -3186,6 +3087,34 @@ function ToolsPanel(props: {
                   </button>
                 );
               })
+            )}
+          </div>
+        )}
+        {section === "messages" && (
+          <div className="p-6 space-y-2 max-h-[70vh] overflow-y-auto">
+            {[...props.urgentTasks, ...props.openTasks.filter((t) => !props.urgentTasks.some((u) => u.id === t.id))].length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-12 text-center text-sm text-slate-400">
+                No active threads
+              </div>
+            ) : (
+              [...props.urgentTasks, ...props.openTasks.filter((t) => !props.urgentTasks.some((u) => u.id === t.id))].map((task) => (
+                <button
+                  key={task.id}
+                  type="button"
+                  onClick={() => { props.openTaskDrawer(task); onClose(); }}
+                  className="flex w-full items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-emerald-300"
+                  data-testid={`expanded-message-${task.id}`}
+                >
+                  <MessageCircle className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-800">{task.title}</span>
+                      {props.unreadTaskIds.has(task.id) && <span className="h-2 w-2 rounded-full bg-blue-500" />}
+                    </div>
+                    {task.patientName && <p className="mt-0.5 text-xs text-slate-500">Patient: {task.patientName}</p>}
+                  </div>
+                </button>
+              ))
             )}
           </div>
         )}
