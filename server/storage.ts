@@ -1,5 +1,8 @@
 import { db } from "./db";
 import bcrypt from "bcryptjs";
+import { usersRepository } from "./repositories/users.repo";
+import { auditRepository } from "./repositories/audit.repo";
+import { ptoRepository } from "./repositories/pto.repo";
 import {
   screeningBatches,
   patientScreenings,
@@ -391,59 +394,47 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
-  async getUser(id: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user;
+  // ── Users ────────────────────────────────────────────────────────────────
+  // Delegated to server/repositories/users.repo.ts. New code should prefer
+  // importing `usersRepository` directly.
+  getUser(id: string): Promise<User | undefined> {
+    return usersRepository.getById(id);
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
-    return user;
+  getUserByUsername(username: string): Promise<User | undefined> {
+    return usersRepository.getByUsername(username);
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const hashed = await bcrypt.hash(insertUser.password, 12);
-    const [user] = await db.insert(users).values({ ...insertUser, password: hashed }).returning();
-    return user;
+  createUser(insertUser: InsertUser): Promise<User> {
+    return usersRepository.create(insertUser);
   }
 
-  async getUserCount(): Promise<number> {
-    const result = await db.select({ count: sql<number>`count(*)::int` }).from(users);
-    return result[0]?.count ?? 0;
+  getUserCount(): Promise<number> {
+    return usersRepository.count();
   }
 
-  async updateUserPassword(id: string, plaintext: string): Promise<void> {
-    const hashed = await bcrypt.hash(plaintext, 12);
-    await db.update(users).set({ password: hashed }).where(eq(users.id, id));
+  updateUserPassword(id: string, plaintext: string): Promise<void> {
+    return usersRepository.updatePassword(id, plaintext);
   }
 
-  async updateUserRole(id: string, role: string): Promise<void> {
-    await db.update(users).set({ role }).where(eq(users.id, id));
+  updateUserRole(id: string, role: string): Promise<void> {
+    return usersRepository.updateRole(id, role);
   }
 
-  async validateUserPassword(username: string, plaintext: string): Promise<User | null> {
-    const user = await this.getUserByUsername(username);
-    if (!user) return null;
-    const match = await bcrypt.compare(plaintext, user.password);
-    return match ? user : null;
+  validateUserPassword(username: string, plaintext: string): Promise<User | null> {
+    return usersRepository.validatePassword(username, plaintext);
   }
 
-  async getAllUsers(): Promise<Omit<User, "password">[]> {
-    const rows = await db.select({
-      id: users.id,
-      username: users.username,
-      role: users.role,
-      active: users.active,
-    }).from(users).orderBy(asc(users.username));
-    return rows;
+  getAllUsers(): Promise<Omit<User, "password">[]> {
+    return usersRepository.listAll();
   }
 
-  async deactivateUser(id: string): Promise<void> {
-    await db.update(users).set({ active: false }).where(eq(users.id, id));
+  deactivateUser(id: string): Promise<void> {
+    return usersRepository.deactivate(id);
   }
 
-  async deleteUser(id: string): Promise<void> {
-    await db.delete(users).where(eq(users.id, id));
+  deleteUser(id: string): Promise<void> {
+    return usersRepository.remove(id);
   }
 
   async createScreeningBatch(batch: InsertScreeningBatch): Promise<ScreeningBatch> {
@@ -1405,42 +1396,25 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ── PTO Requests ─────────────────────────────────────────────────────────
-  async createPtoRequest(record: InsertPtoRequest): Promise<PtoRequest> {
-    const [created] = await db.insert(ptoRequests).values({
-      userId: record.userId,
-      startDate: record.startDate,
-      endDate: record.endDate,
-      note: record.note ?? null,
-    }).returning();
-    return created;
+  // Delegated to server/repositories/pto.repo.ts.
+  createPtoRequest(record: InsertPtoRequest): Promise<PtoRequest> {
+    return ptoRepository.create(record);
   }
 
-  async getPtoRequests(filters: { userId?: string; status?: string; fromDate?: string; toDate?: string } = {}): Promise<PtoRequest[]> {
-    const conditions = [];
-    if (filters.userId) conditions.push(eq(ptoRequests.userId, filters.userId));
-    if (filters.status) conditions.push(eq(ptoRequests.status, filters.status));
-    if (filters.fromDate) conditions.push(gte(ptoRequests.endDate, filters.fromDate));
-    if (filters.toDate) conditions.push(lte(ptoRequests.startDate, filters.toDate));
-    return db.select().from(ptoRequests)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(desc(ptoRequests.createdAt));
+  getPtoRequests(filters: { userId?: string; status?: string; fromDate?: string; toDate?: string } = {}): Promise<PtoRequest[]> {
+    return ptoRepository.list(filters);
   }
 
-  async getPtoRequest(id: number): Promise<PtoRequest | undefined> {
-    const [r] = await db.select().from(ptoRequests).where(eq(ptoRequests.id, id));
-    return r;
+  getPtoRequest(id: number): Promise<PtoRequest | undefined> {
+    return ptoRepository.getById(id);
   }
 
-  async reviewPtoRequest(id: number, status: "approved" | "denied", reviewedBy: string): Promise<PtoRequest | undefined> {
-    const [updated] = await db.update(ptoRequests)
-      .set({ status, reviewedBy, reviewedAt: new Date() })
-      .where(eq(ptoRequests.id, id))
-      .returning();
-    return updated;
+  reviewPtoRequest(id: number, status: "approved" | "denied", reviewedBy: string): Promise<PtoRequest | undefined> {
+    return ptoRepository.review(id, status, reviewedBy);
   }
 
-  async deletePtoRequest(id: number): Promise<void> {
-    await db.delete(ptoRequests).where(eq(ptoRequests.id, id));
+  deletePtoRequest(id: number): Promise<void> {
+    return ptoRepository.remove(id);
   }
 
   async createAnalysisJob(record: InsertAnalysisJob): Promise<AnalysisJob> {
@@ -1806,30 +1780,20 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(plexusTasks.createdAt));
   }
 
-  async createAuditLog(record: InsertAuditLog): Promise<AuditLog> {
-    const [entry] = await db.insert(auditLog).values(record).returning();
-    return entry;
+  // ── Audit Log ────────────────────────────────────────────────────────────
+  // Delegated to server/repositories/audit.repo.ts.
+  createAuditLog(record: InsertAuditLog): Promise<AuditLog> {
+    return auditRepository.create(record);
   }
 
-  async getAuditLogs(filters?: {
+  getAuditLogs(filters?: {
     userId?: string;
     entityType?: string;
     fromDate?: Date;
     toDate?: Date;
     limit?: number;
   }): Promise<AuditLog[]> {
-    const conditions = [];
-    if (filters?.userId) conditions.push(eq(auditLog.userId, filters.userId));
-    if (filters?.entityType) conditions.push(eq(auditLog.entityType, filters.entityType));
-    if (filters?.fromDate) conditions.push(gte(auditLog.createdAt, filters.fromDate));
-    if (filters?.toDate) conditions.push(lte(auditLog.createdAt, filters.toDate));
-
-    const query = db.select().from(auditLog)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(desc(auditLog.createdAt))
-      .limit(filters?.limit ?? 200);
-
-    return query;
+    return auditRepository.list(filters);
   }
 
   async getAllMarketingMaterials(): Promise<MarketingMaterial[]> {
@@ -1859,7 +1823,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ── Document Library ─────────────────────────────────────────────────────────
-  // Used by `/api/document-library/*` and any internal surface (technician
+  // Used by `/api/documents-library/*` and any internal surface (technician
   // consent picker, scheduler resources, etc.) that wants to list documents.
   async createDocument(record: InsertDocument): Promise<Document> {
     const [row] = await db.insert(documents).values(record).returning();

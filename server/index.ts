@@ -6,6 +6,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { errorHandler } from "./middleware/errorHandler";
 import { validateEnv } from "./lib/validateEnv";
+import { startBackgroundServices, stopBackgroundServices } from "./lifecycle";
 
 // Single source of truth for required env + production storage provider check.
 validateEnv();
@@ -153,6 +154,11 @@ process.on("uncaughtException", (err) => {
     },
     () => {
       log(`serving on port ${port}`);
+      // Start recurring background services after the HTTP server is up so
+      // health checks and request routing aren't blocked by their first tick.
+      // Each job acquires a Postgres advisory lock per tick so multiple ECS
+      // tasks never double-fire.
+      startBackgroundServices();
       import("./integrations/fileStorage").then(({ getStorageProvider }) => {
         if (getStorageProvider() !== "google_drive") {
           log(`Storage provider: ${getStorageProvider()} — skipping Google Drive folder tree initialization`, "startup");
@@ -188,8 +194,15 @@ process.on("uncaughtException", (err) => {
 
     httpServer.close(async (err) => {
       if (err) console.error("[shutdown] httpServer.close error:", err.message);
-      log("HTTP server closed. Closing WebSocket upgrade listeners...", "shutdown");
+      log("HTTP server closed. Stopping background services...", "shutdown");
 
+      try {
+        await stopBackgroundServices();
+      } catch (svcErr: any) {
+        console.error("[shutdown] Error stopping background services:", svcErr?.message ?? svcErr);
+      }
+
+      log("Closing WebSocket upgrade listeners...", "shutdown");
       // Detach any registered upgrade handlers (Vite HMR in dev attaches one).
       try { httpServer.removeAllListeners("upgrade"); } catch {}
 

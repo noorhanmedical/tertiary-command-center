@@ -580,8 +580,8 @@ function mountRoutes(app: Express, basePath: string) {
 }
 
 export function registerDocumentLibraryRoutes(app: Express) {
-  // Canonical path per task spec.
+  // Canonical path per task spec. Frontend callers use this path exclusively;
+  // the legacy `/api/document-library` alias was removed in the architecture
+  // canonicalization pass (task #308).
   mountRoutes(app, "/api/documents-library");
-  // Backward-compat alias used by the initial UI implementation.
-  mountRoutes(app, "/api/document-library");
 }

@@ -13,18 +13,26 @@ const TICK_MS = Number(process.env.CALL_LIST_TICK_MS ?? 60 * 60 * 1000); // hour
 const BUILD_HOUR = Number(process.env.CALL_LIST_BUILD_HOUR ?? 7);
 const lastBuiltDate = new Set<string>();
 let started = false;
+let kickoffTimer: NodeJS.Timeout | null = null;
+let tickInterval: NodeJS.Timeout | null = null;
 
 export function startMorningRebuildScheduler() {
   if (started) return;
   if (process.env.NODE_ENV === "test") return;
   if (process.env.MORNING_REBUILD_DISABLED === "1") return;
   started = true;
-  setTimeout(() => {
+  kickoffTimer = setTimeout(() => {
     runOnce().catch((err) => console.error("[morningRebuild] first tick:", err));
-    setInterval(() => {
+    tickInterval = setInterval(() => {
       runOnce().catch((err) => console.error("[morningRebuild] tick:", err));
     }, TICK_MS);
   }, 60_000);
+}
+
+export function stopMorningRebuildScheduler() {
+  if (kickoffTimer) { clearTimeout(kickoffTimer); kickoffTimer = null; }
+  if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+  started = false;
 }
 
 export async function runOnce(now: Date = new Date()): Promise<void> {

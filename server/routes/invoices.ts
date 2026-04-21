@@ -8,7 +8,7 @@ import { sendOutreachEmail } from "../services/emailService";
 const requireBillerOrAdmin = (req: Request, res: Response, next: NextFunction) => {
   const role = req.session?.role;
   if (role !== "admin" && role !== "biller") {
-    return res.status(403).json({ message: "Forbidden — requires admin or biller role" });
+    return res.status(403).json({ error: "Forbidden — requires admin or biller role" });
   }
   return next();
 };
@@ -65,8 +65,9 @@ function num(v: string | null | undefined): number {
 }
 
 function userIdOf(req: Request): string | null {
-  const u = (req as Request & { user?: { id?: string } }).user;
-  return u?.id ?? null;
+  // Session is the canonical identity source — req.user was a leftover from a
+  // passport-style auth that this app never adopted.
+  return req.session?.userId ?? null;
 }
 
 export function registerInvoiceRoutes(app: Express) {

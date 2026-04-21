@@ -13,8 +13,8 @@ import { documentBlobs, generatedNotes, uploadedDocuments } from "@shared/schema
 import { eq, and, desc } from "drizzle-orm";
 
 function requireAdmin(req: any, res: any, next: any) {
-  if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
-  if (req.session?.role !== "admin") return res.status(403).json({ message: "Admin only" });
+  if (!req.session?.userId) return res.status(401).json({ error: "Not authenticated" });
+  if (req.session?.role !== "admin") return res.status(403).json({ error: "Admin only" });
   return next();
 }
 

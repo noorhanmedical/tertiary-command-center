@@ -44,6 +44,23 @@ Authentication and session management are implemented using per-user login sessi
 
 Frontend component structure has been modularized, breaking down a monolithic `home.tsx` into focused, reusable components like `PatientCard.tsx`, `ClinicalDataEditor.tsx`, and `ResultsView.tsx`, improving maintainability and development efficiency.
 
+**Background-service lifecycle**: Recurring in-process work (`absenceWatcher`, `morningRebuildScheduler`) is started from `server/lifecycle.ts` (`startBackgroundServices()`) after the HTTP server binds, and stopped from the SIGTERM handler via `stopBackgroundServices()`. Each tick acquires a Postgres advisory lock (`server/lib/advisoryLock.ts`) so multiple ECS tasks running in parallel never double-fire. Sheets sync (`runPatientsSyncWithLock`, `runBillingSyncWithLock`, `runExportNotesWithLock`) and the morning call-list rebuild use the same lock pattern.
+
+**API conventions**: Error responses use `{ error: string, code?: string }` (see `server/middleware/errorHandler.ts`). Auth and user-management routes are zod-validated. The Document Library is mounted only at `/api/documents-library` (the legacy `/api/document-library` alias was removed). Frontend formatters (`formatDate`, `formatTime12`, `formatDateHeader`, `formatCurrency`, `formatPatientNameShort`, `getInitials`) live in `client/src/lib/format.ts`; existing callers will be migrated incrementally.
+
+**Architecture canonicalization (task #308)**: This codebase is mid-way through a multi-phase refactor toward AWS multi-task readiness.
+
+*Landed in this pass:*
+- Lifecycle separation + clean SIGTERM shutdown (`server/lifecycle.ts`).
+- Advisory-locked background jobs (verified across `absenceWatcher`, `morningRebuildScheduler`, `syncService`).
+- Error-shape standardization to `{ error, code? }`.
+- `userIdOf` session-source bug fix in invoices.
+- Canonical formatter module (`client/src/lib/format.ts`).
+- **Schema modularization**: `shared/schema.ts` is now a thin barrel that re-exports from per-domain files under `shared/schema/<domain>.ts` (`users`, `screening`, `patientHistory`, `notes`, `billing`, `appointments`, `analysisJobs`, `plexus`, `audit`, `outreach`, `invoices`, `documents`, `outbox`, `pto`, `appSettings`). New code should prefer the domain-keyed import path. The shared internal helper `_common.ts` re-exports drizzle/zod primitives but is **not** re-exported by the barrel — drizzle's relational extractor would otherwise iterate non-table values like the zod `z` namespace and crash.
+- **Repository extraction (Phase 2 starter)**: `server/repositories/<domain>.repo.ts` for `users`, `pto`, and `audit`. The legacy `DatabaseStorage` god-object now delegates these methods to the repositories (no behavior change), so existing routes keep working while new code can import the focused repository directly.
+
+*Remaining work tracked as follow-ups (#316/#317/#318):* finish extracting the rest of the repositories from `server/storage.ts`, build a `client/src/hooks/api/<domain>.ts` layer to canonicalize fetch/cache logic, and decompose god-components like the 3,100-line `outreach-scheduler-portal.tsx`.
+
 **Server directory structure** is organized into distinct layers: `server/integrations/` holds external system adapters (Google Drive, Google Sheets, S3, file storage factory); `server/middleware/` holds cross-cutting concerns (error handler, OpenAI concurrency rate limiter — capped at `OPENAI_MAX_CONCURRENT`, default 10); `server/parsers/` holds file-format-specific parsers (`excel.ts`, `csv.ts`, `pdf.ts`, `plainText.ts`, `types.ts`). `server/services/ingest.ts` is the orchestrator/dispatcher — it exports `parseFileBuffer(buffer, filename, mimetype?)` for single-call file dispatch by extension, plus re-exports all individual parser APIs for backward compatibility with existing call sites in routes.
 
 ## External Dependencies

@@ -16,8 +16,6 @@ import { registerEmailRoutes } from "./routes/email";
 import { registerPtoRoutes } from "./routes/pto";
 import { registerSchedulerAssignmentRoutes } from "./routes/schedulerAssignments";
 import { registerSchedulerAiRoutes } from "./routes/schedulerAi";
-import { startAbsenceWatcher } from "./services/absenceWatcher";
-import { startMorningRebuildScheduler } from "./services/morningRebuildScheduler";
 import { registerSettingsRoutes } from "./routes/settings";
 import { registerAppointmentRoutes } from "./routes/appointments";
 import { registerAdminRoutes } from "./routes/admin";
@@ -77,17 +75,25 @@ export async function registerRoutes(
   }
 
   // ─── Auth endpoints (exempt from session requirement) ─────────────────────
+  // Error responses use the standard `{ error }` shape (see middleware/errorHandler.ts).
+  const { z } = await import("zod");
+  const loginSchema = z.object({
+    username: z.string().min(1, "Username is required"),
+    password: z.string().min(1, "Password is required"),
+  });
+
   app.post("/api/auth/login", async (req, res) => {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ message: "Username and password are required" });
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
     }
+    const { username, password } = parsed.data;
     const user = await storage.validateUserPassword(username, password);
     if (!user) {
-      return res.status(401).json({ message: "Invalid username or password" });
+      return res.status(401).json({ error: "Invalid username or password" });
     }
     if (user.active === false) {
-      return res.status(403).json({ message: "This account has been deactivated. Contact your administrator." });
+      return res.status(403).json({ error: "This account has been deactivated. Contact your administrator." });
     }
     req.session.userId = user.id;
     req.session.username = user.username;
@@ -104,7 +110,7 @@ export async function registerRoutes(
 
   app.get("/api/auth/me", (req, res) => {
     if (!req.session.userId) {
-      return res.status(401).json({ message: "Not authenticated" });
+      return res.status(401).json({ error: "Not authenticated" });
     }
     return res.json({ id: req.session.userId, username: req.session.username, role: req.session.role ?? "clinician" });
   });
@@ -132,17 +138,17 @@ export async function registerRoutes(
 
   const requireAuth = (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
     if (!req.session.userId) {
-      return res.status(401).json({ message: "Not authenticated" });
+      return res.status(401).json({ error: "Not authenticated" });
     }
     return next();
   };
 
   const requireAdmin = (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
     if (!req.session.userId) {
-      return res.status(401).json({ message: "Not authenticated" });
+      return res.status(401).json({ error: "Not authenticated" });
     }
     if (req.session.role !== "admin") {
-      return res.status(403).json({ message: "Forbidden — admin access required" });
+      return res.status(403).json({ error: "Forbidden — admin access required" });
     }
     return next();
   };
@@ -150,7 +156,7 @@ export async function registerRoutes(
   const requireRole = (...roles: string[]) => (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
     const role = req.session.role ?? "clinician";
     if (!roles.includes(role)) {
-      return res.status(403).json({ message: `Forbidden — requires one of: ${roles.join(", ")}` });
+      return res.status(403).json({ error: `Forbidden — requires one of: ${roles.join(", ")}` });
     }
     return next();
   };
@@ -202,8 +208,6 @@ export async function registerRoutes(
   registerPtoRoutes(app);
   registerSchedulerAssignmentRoutes(app);
   registerSchedulerAiRoutes(app);
-  startAbsenceWatcher();
-  startMorningRebuildScheduler();
   registerSettingsRoutes(app);
   registerAppointmentRoutes(app);
   registerAdminRoutes(app);
@@ -233,14 +237,29 @@ export async function registerRoutes(
     return res.json(allUsers.map((u) => ({ id: u.id, username: u.username, role: u.role })));
   });
 
+  const { USER_ROLES } = await import("@shared/schema");
+  const createUserSchema = z.object({
+    username: z.string().trim().min(1, "Username is required"),
+    password: z.string().min(1, "Password is required"),
+    role: z.enum(USER_ROLES).optional(),
+  });
+  const roleUpdateSchema = z.object({
+    role: z.enum(USER_ROLES),
+  });
+  const changePasswordSchema = z.object({
+    currentPassword: z.string().min(1),
+    newPassword: z.string().min(1),
+  });
+
   app.post("/api/users", requireAdmin, async (req, res) => {
-    const { username, password, role } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ message: "Username and password are required" });
+    const parsed = createUserSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
     }
+    const { username, password, role } = parsed.data;
     const existing = await storage.getUserByUsername(username);
     if (existing) {
-      return res.status(409).json({ message: "Username already exists" });
+      return res.status(409).json({ error: "Username already exists" });
     }
     const user = await storage.createUser({ username, password, role: role || "clinician" });
     return res.status(201).json({ id: user.id, username: user.username, role: user.role });
@@ -249,7 +268,7 @@ export async function registerRoutes(
   app.delete("/api/users/:id", requireAdmin, async (req, res) => {
     const { id } = req.params;
     if (id === req.session.userId) {
-      return res.status(400).json({ message: "Cannot delete your own account" });
+      return res.status(400).json({ error: "Cannot delete your own account" });
     }
     await storage.deleteUser(id);
     return res.json({ ok: true });
@@ -258,42 +277,40 @@ export async function registerRoutes(
   app.patch("/api/users/:id/deactivate", requireAdmin, async (req, res) => {
     const { id } = req.params;
     if (id === req.session.userId) {
-      return res.status(400).json({ message: "You cannot deactivate your own account" });
+      return res.status(400).json({ error: "You cannot deactivate your own account" });
     }
     const target = await storage.getUser(id);
     if (!target) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(404).json({ error: "User not found" });
     }
     await storage.deactivateUser(id);
     return res.json({ ok: true });
   });
 
   app.patch("/api/users/:id/role", requireAdmin, async (req, res) => {
-    const { role } = req.body;
-    if (!role) return res.status(400).json({ message: "role is required" });
-    const { USER_ROLES } = await import("@shared/schema");
-    if (!USER_ROLES.includes(role)) {
-      return res.status(400).json({ message: `Invalid role. Must be one of: ${USER_ROLES.join(", ")}` });
+    const parsed = roleUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: `Invalid role. Must be one of: ${USER_ROLES.join(", ")}` });
     }
     const target = await storage.getUser(req.params.id);
-    if (!target) return res.status(404).json({ message: "User not found" });
-    await storage.updateUserRole(req.params.id, role);
-    return res.json({ id: target.id, username: target.username, role });
+    if (!target) return res.status(404).json({ error: "User not found" });
+    await storage.updateUserRole(req.params.id, parsed.data.role);
+    return res.json({ id: target.id, username: target.username, role: parsed.data.role });
   });
 
   app.post("/api/auth/change-password", async (req, res) => {
     if (!req.session.userId) {
-      return res.status(401).json({ message: "Not authenticated" });
+      return res.status(401).json({ error: "Not authenticated" });
     }
-    const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ message: "currentPassword and newPassword are required" });
+    const parsed = changePasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "currentPassword and newPassword are required" });
     }
-    const user = await storage.validateUserPassword(req.session.username!, currentPassword);
+    const user = await storage.validateUserPassword(req.session.username!, parsed.data.currentPassword);
     if (!user) {
-      return res.status(401).json({ message: "Current password is incorrect" });
+      return res.status(401).json({ error: "Current password is incorrect" });
     }
-    await storage.updateUserPassword(req.session.userId, newPassword);
+    await storage.updateUserPassword(req.session.userId, parsed.data.newPassword);
     return res.json({ ok: true });
   });
 

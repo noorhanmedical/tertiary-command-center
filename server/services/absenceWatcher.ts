@@ -29,6 +29,8 @@ const AUTO_EXECUTE_MIN = Number(process.env.ABSENCE_AUTO_EXECUTE_MIN ?? 30);
 const ENABLE_AI_PROPOSAL = process.env.ABSENCE_AI_PROPOSAL_DISABLED !== "1";
 
 let started = false;
+let kickoffTimer: NodeJS.Timeout | null = null;
+let tickInterval: NodeJS.Timeout | null = null;
 
 export function startAbsenceWatcher() {
   if (started) return;
@@ -36,12 +38,18 @@ export function startAbsenceWatcher() {
   if (process.env.ABSENCE_WATCHER_DISABLED === "1") return;
   started = true;
   // Stagger first tick a bit so app start isn't slowed.
-  setTimeout(() => {
+  kickoffTimer = setTimeout(() => {
     runOnce().catch((err) => console.error("[absenceWatcher] first tick:", err));
-    setInterval(() => {
+    tickInterval = setInterval(() => {
       runOnce().catch((err) => console.error("[absenceWatcher] tick:", err));
     }, TICK_MS);
   }, 30_000);
+}
+
+export function stopAbsenceWatcher() {
+  if (kickoffTimer) { clearTimeout(kickoffTimer); kickoffTimer = null; }
+  if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+  started = false;
 }
 
 export async function runOnce(now: Date = new Date()): Promise<void> {
