@@ -7,246 +7,31 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   ChevronLeft,
-  ChevronRight,
   Calendar,
   Clock,
   MapPin,
   X,
   Brain,
   Activity,
-  Plus,
+  ArrowLeft,
 } from "lucide-react";
+import { PageHeader, HeaderPill, HeaderStatusPill } from "@/components/PageHeader";
 import type { AncillaryAppointment } from "@shared/schema";
 import { Link } from "wouter";
+import {
+  MiniCalendar,
+  SlotGrid,
+  toDateKey,
+  formatTime12,
+  isBrainWave,
+} from "@/components/clinic-calendar";
+import type { BookingSlot } from "@/components/clinic-calendar";
+import { VALID_FACILITIES } from "@shared/plexus";
 
-const FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
-type Facility = typeof FACILITIES[number];
-
-const ALL_TESTS = [
-  "BrainWave",
-  "VitalWave",
-  "Bilateral Carotid Duplex",
-  "Echocardiogram TTE",
-  "Stress Echocardiogram",
-  "Lower Extremity Venous Duplex",
-  "Upper Extremity Venous Duplex",
-  "Renal Artery Doppler",
-  "Lower Extremity Arterial Doppler",
-  "Upper Extremity Arterial Doppler",
-  "Abdominal Aortic Aneurysm Duplex",
-];
-
-function toDateKey(y: number, m: number, d: number): string {
-  return `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-}
-
-function formatTime12(time24: string): string {
-  const [h, m] = time24.split(":").map(Number);
-  const suffix = h >= 12 ? "PM" : "AM";
-  const hour = h % 12 || 12;
-  return `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
-}
-
-function generateBrainWaveSlots(): string[] {
-  const slots: string[] = [];
-  for (let h = 8; h <= 16; h++) {
-    slots.push(`${String(h).padStart(2, "0")}:00`);
-  }
-  return slots;
-}
-
-function generateVitalWaveSlots(): string[] {
-  const slots: string[] = [];
-  for (let h = 8; h <= 16; h++) {
-    slots.push(`${String(h).padStart(2, "0")}:00`);
-    if (h < 16) slots.push(`${String(h).padStart(2, "0")}:30`);
-  }
-  slots.push("16:30");
-  return slots;
-}
-
-const BRAINWAVE_SLOTS = generateBrainWaveSlots();
-const VITALWAVE_SLOTS = generateVitalWaveSlots();
-
-function getTestSlots(testType: string): string[] {
-  if (testType === "VitalWave") return VITALWAVE_SLOTS;
-  if (testType === "BrainWave") return BRAINWAVE_SLOTS;
-  return BRAINWAVE_SLOTS;
-}
-
-function isBrainWave(t: string) { return t.toLowerCase().includes("brain"); }
-function isVitalWave(t: string) { return t.toLowerCase().includes("vital"); }
-
-type BookingSlot = { time: string; testType: "BrainWave" | "VitalWave" };
-
-function MiniCalendar({
-  year,
-  month,
-  onPrev,
-  onNext,
-  onSelectDay,
-  selectedDay,
-  bookedDates,
-}: {
-  year: number;
-  month: number;
-  onPrev: () => void;
-  onNext: () => void;
-  onSelectDay: (d: number) => void;
-  selectedDay: number | null;
-  bookedDates: Set<string>;
-}) {
-  const firstDow = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const today = new Date();
-  const todayKey = toDateKey(today.getFullYear(), today.getMonth(), today.getDate());
-  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-
-  const cells: (number | null)[] = [];
-  for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  while (cells.length % 7 !== 0) cells.push(null);
-
-  return (
-    <div className="select-none">
-      <div className="flex items-center justify-between mb-3">
-        <Button variant="ghost" size="sm" onClick={onPrev} className="h-7 w-7 p-0" data-testid="cal-prev">
-          <ChevronLeft className="w-4 h-4" />
-        </Button>
-        <span className="text-sm font-semibold text-slate-800">{monthNames[month]} {year}</span>
-        <Button variant="ghost" size="sm" onClick={onNext} className="h-7 w-7 p-0" data-testid="cal-next">
-          <ChevronRight className="w-4 h-4" />
-        </Button>
-      </div>
-      <div className="grid grid-cols-7 gap-0.5 mb-1">
-        {["Su","Mo","Tu","We","Th","Fr","Sa"].map((d) => (
-          <div key={d} className="text-center text-[10px] font-medium text-slate-400 py-1">{d}</div>
-        ))}
-      </div>
-      <div className="grid grid-cols-7 gap-0.5">
-        {cells.map((d, i) => {
-          if (!d) return <div key={i} />;
-          const key = toDateKey(year, month, d);
-          const isToday = key === todayKey;
-          const isSelected = d === selectedDay;
-          const hasBooking = bookedDates.has(key);
-          return (
-            <button
-              key={i}
-              onClick={() => onSelectDay(d)}
-              data-testid={`cal-day-${d}`}
-              className={`relative flex flex-col items-center justify-center h-8 w-full rounded text-xs font-medium transition-colors
-                ${isSelected ? "bg-primary text-white" : isToday ? "bg-primary/10 text-primary font-bold" : "hover:bg-slate-100 text-slate-700"}
-              `}
-            >
-              {d}
-              {hasBooking && (
-                <span className={`absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full ${isSelected ? "bg-white" : "bg-primary"}`} />
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-type SlotGridProps = {
-  appointments: AncillaryAppointment[];
-  selectedDate: string;
-  facility: Facility;
-  onBook: (slot: BookingSlot) => void;
-  onCancel: (appt: AncillaryAppointment) => void;
-};
-
-function SlotGrid({ appointments, selectedDate, facility: _facility, onBook, onCancel }: SlotGridProps) {
-  const bookedBW = new Map<string, AncillaryAppointment>();
-  const bookedVW = new Map<string, AncillaryAppointment>();
-  for (const a of appointments) {
-    if (a.scheduledDate !== selectedDate) continue;
-    if (a.status !== "scheduled") continue;
-    if (isVitalWave(a.testType)) bookedVW.set(a.scheduledTime, a);
-    else bookedBW.set(a.scheduledTime, a);
-  }
-
-  return (
-    <div className="grid grid-cols-2 gap-4 mt-4">
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Brain className="w-4 h-4 text-violet-600" />
-          <span className="text-sm font-semibold text-violet-700">BrainWave</span>
-          <Badge variant="secondary" className="text-[10px] bg-violet-100 text-violet-700">1 hr slots</Badge>
-        </div>
-        <div className="space-y-1">
-          {BRAINWAVE_SLOTS.map((slot) => {
-            const appt = bookedBW.get(slot);
-            return (
-              <div key={slot} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs border transition-colors
-                ${appt ? "bg-violet-50 border-violet-200" : "bg-white border-slate-200 hover:border-violet-300 hover:bg-violet-50/50 cursor-pointer"}`}
-                onClick={() => !appt && onBook({ time: slot, testType: "BrainWave" })}
-                data-testid={`slot-brainwave-${slot}`}
-              >
-                <span className={`font-medium ${appt ? "text-violet-700" : "text-slate-600"}`}>{formatTime12(slot)}</span>
-                {appt ? (
-                  <div className="flex items-center gap-1">
-                    <span className="text-violet-800 font-semibold truncate max-w-[100px]">{appt.patientName}</span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onCancel(appt); }}
-                      className="text-red-400 hover:text-red-600 ml-1"
-                      data-testid={`cancel-appt-${appt.id}`}
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <span className="text-slate-400 text-[10px]">Available</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Activity className="w-4 h-4 text-red-500" />
-          <span className="text-sm font-semibold text-red-600">VitalWave</span>
-          <Badge variant="secondary" className="text-[10px] bg-red-100 text-red-600">30 min slots</Badge>
-        </div>
-        <div className="space-y-1">
-          {VITALWAVE_SLOTS.map((slot) => {
-            const appt = bookedVW.get(slot);
-            return (
-              <div key={slot} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs border transition-colors
-                ${appt ? "bg-red-50 border-red-200" : "bg-white border-slate-200 hover:border-red-300 hover:bg-red-50/50 cursor-pointer"}`}
-                onClick={() => !appt && onBook({ time: slot, testType: "VitalWave" })}
-                data-testid={`slot-vitalwave-${slot}`}
-              >
-                <span className={`font-medium ${appt ? "text-red-700" : "text-slate-600"}`}>{formatTime12(slot)}</span>
-                {appt ? (
-                  <div className="flex items-center gap-1">
-                    <span className="text-red-800 font-semibold truncate max-w-[100px]">{appt.patientName}</span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onCancel(appt); }}
-                      className="text-red-400 hover:text-red-600 ml-1"
-                      data-testid={`cancel-appt-${appt.id}`}
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <span className="text-slate-400 text-[10px]">Available</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
+const FACILITIES = VALID_FACILITIES;
+type Facility = typeof VALID_FACILITIES[number];
 
 function ClinicTab({ facility }: { facility: Facility }) {
   const today = new Date();
@@ -262,10 +47,7 @@ function ClinicTab({ facility }: { facility: Facility }) {
   const { data: appointments = [] } = useQuery<AncillaryAppointment[]>({
     queryKey: ["/api/appointments", facility],
     queryFn: async () => {
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch(`/api/appointments?facility=${encodeURIComponent(facility)}`, { headers });
+      const res = await fetch(`/api/appointments?facility=${encodeURIComponent(facility)}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
@@ -290,6 +72,9 @@ function ClinicTab({ facility }: { facility: Facility }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      // Refresh the outreach dashboard so the affected patient's derived
+      // visit/outreach type recomputes on the next poll.
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
       toast({ title: "Appointment booked" });
       setBookSlot(null);
       setBookName("");
@@ -306,6 +91,9 @@ function ClinicTab({ facility }: { facility: Facility }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      // Cancellation may flip a patient's derived type back to outreach;
+      // refresh the dashboard so the call list updates next poll.
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
       toast({ title: "Appointment cancelled" });
       setCancelTarget(null);
     },
@@ -340,6 +128,7 @@ function ClinicTab({ facility }: { facility: Facility }) {
           onSelectDay={setSelectedDay}
           selectedDay={selectedDay}
           bookedDates={bookedDates}
+          testIdPrefix="cal"
         />
         {selectedDateStr && (
           <div className="mt-4 pt-4 border-t border-slate-100">
@@ -354,7 +143,7 @@ function ClinicTab({ facility }: { facility: Facility }) {
                       <span className="font-semibold text-slate-700">{formatTime12(a.scheduledTime)}</span>
                       <span className="text-slate-500 ml-1.5">{a.patientName}</span>
                     </div>
-                    <Badge variant="secondary" className={`text-[9px] ${isBrainWave(a.testType) ? "bg-violet-100 text-violet-700" : "bg-red-100 text-red-600"}`}>
+                    <Badge variant="secondary" className={`text-[9px] ${isBrainWave(a.testType) ? "bg-violet-100 text-violet-700" : "bg-rose-100 text-rose-800"}`}>
                       {isBrainWave(a.testType) ? "BW" : "VW"}
                     </Badge>
                   </div>
@@ -383,7 +172,6 @@ function ClinicTab({ facility }: { facility: Facility }) {
             <SlotGrid
               appointments={appointments}
               selectedDate={selectedDateStr!}
-              facility={facility}
               onBook={(slot) => { setBookSlot(slot); setBookName(""); }}
               onCancel={(appt) => setCancelTarget(appt)}
             />
@@ -398,7 +186,7 @@ function ClinicTab({ facility }: { facility: Facility }) {
           </DialogHeader>
           <div className="space-y-3 py-1">
             <div className="flex items-center gap-2 text-sm text-slate-600">
-              {bookSlot?.testType === "BrainWave" ? <Brain className="w-4 h-4 text-violet-600" /> : <Activity className="w-4 h-4 text-red-500" />}
+              {bookSlot?.testType === "BrainWave" ? <Brain className="w-4 h-4 text-violet-600" /> : <Activity className="w-4 h-4 text-rose-700" />}
               <span className="font-medium">{bookSlot?.testType}</span>
               <span className="text-slate-400">·</span>
               <Clock className="w-3.5 h-3.5 text-slate-400" />
@@ -474,26 +262,25 @@ export default function AppointmentsPage() {
 
   return (
     <div className="min-h-screen bg-[hsl(210,35%,96%)]">
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Calendar className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-800">Ancillary Appointments</h1>
-              <p className="text-xs text-slate-500">Schedule BrainWave and VitalWave appointments by clinic</p>
-            </div>
-          </div>
-          <Link href="/" data-testid="link-back-home">
-            <Button variant="ghost" size="sm" className="text-slate-600 gap-1.5">
-              <ChevronLeft className="w-4 h-4" />
-              Back to Home
-            </Button>
-          </Link>
-        </div>
+      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        <PageHeader
+          variant="light"
+          icon={Calendar}
+          titleTestId="text-calendar-header-title"
+          eyebrow="ANCILLARY SCHEDULING"
+          title="Ancillary Appointments"
+          subtitle="Schedule BrainWave and VitalWave appointments by clinic."
+          actions={
+            <>
+              <HeaderStatusPill />
+              <Link href="/" data-testid="link-back-home">
+                <HeaderPill icon={<ArrowLeft className="w-3.5 h-3.5" />}>Back to Home</HeaderPill>
+              </Link>
+            </>
+          }
+        />
 
-        <div className="flex gap-1 mb-6 bg-white rounded-xl border border-slate-200 p-1 w-fit shadow-sm">
+        <div className="flex gap-1 bg-white rounded-xl border border-slate-200 p-1 w-fit shadow-sm">
           {FACILITIES.map((f) => (
             <button
               key={f}

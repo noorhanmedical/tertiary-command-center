@@ -43,6 +43,7 @@ import {
   resolveClinicianNpi,
 } from "@shared/plexus";
 import { apiRequest } from "@/lib/queryClient";
+import { PageHeader } from "@/components/PageHeader";
 
 type Step = "patient" | "service" | "screening" | "documents";
 
@@ -202,27 +203,26 @@ export default function PlexusPage() {
   return (
     <div className="flex flex-col h-full relative z-10 bg-slate-50 dark:bg-background">
       <header className="bg-white dark:bg-card border-b border-slate-200 dark:border-border sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-2 text-slate-600 dark:text-muted-foreground h-8 px-2"
-            onClick={handleBack}
-            data-testid="button-back"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </Button>
-          <div className="h-5 w-px bg-slate-200 dark:bg-border" />
-          <ClipboardList className="w-5 h-5 text-primary" />
-          <div>
-            <h1 className="text-base font-bold tracking-tight text-slate-900 dark:text-foreground">
-              Plexus Documents
-            </h1>
-            <p className="text-xs text-slate-500 dark:text-muted-foreground">
-              Generate pre-procedure, post-procedure, and billing documents
-            </p>
-          </div>
+        <div className="max-w-4xl mx-auto px-4 py-3">
+          <PageHeader
+            eyebrow="PLEXUS ANCILLARY · DOCUMENTS"
+            icon={ClipboardList}
+            iconAccent="bg-primary/10 text-primary"
+            title="Plexus Documents"
+            subtitle="Generate pre-procedure, post-procedure, and billing documents"
+            actions={
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-2 text-slate-600 dark:text-muted-foreground"
+                onClick={handleBack}
+                data-testid="button-back"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </Button>
+            }
+          />
         </div>
 
         <div className="max-w-4xl mx-auto px-4 pb-3">

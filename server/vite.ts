@@ -11,7 +11,7 @@ const viteLogger = createLogger();
 export async function setupVite(server: Server, app: Express) {
   const serverOptions = {
     middlewareMode: true,
-    hmr: { server, path: "/vite-hmr" },
+    hmr: { server, clientPort: 443, protocol: "wss" },
     allowedHosts: true as const,
   };
 
@@ -21,6 +21,10 @@ export async function setupVite(server: Server, app: Express) {
     customLogger: {
       ...viteLogger,
       error: (msg, options) => {
+        if (msg.includes("handleUpgrade() was called more than once")) {
+          viteLogger.warn("[vite] Suppressed duplicate WebSocket upgrade (harmless reconnect race)", options);
+          return;
+        }
         viteLogger.error(msg, options);
         process.exit(1);
       },

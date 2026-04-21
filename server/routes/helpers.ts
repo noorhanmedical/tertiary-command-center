@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { VALID_FACILITIES } from "../../shared/plexus";
 
-export const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
+export { VALID_FACILITIES };
 
 const MONTH_MAP: Record<string, number> = {
   january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
@@ -126,9 +127,14 @@ export const addPatientSchema = z.object({
   gender: z.string().optional(),
   dob: z.string().optional(),
   phoneNumber: z.string().optional(),
+  insurance: z.string().optional(),
   diagnoses: z.string().optional(),
   history: z.string().optional(),
   medications: z.string().optional(),
+  previousTests: z.string().optional(),
+  previousTestsDate: z.string().optional(),
+  noPreviousTests: z.boolean().optional(),
+  patientType: z.string().optional(),
   notes: z.string().optional(),
 });
 

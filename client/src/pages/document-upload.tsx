@@ -6,14 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Upload, FileText, CheckCircle, ExternalLink, Loader2, ScanText, ClipboardList } from "lucide-react";
+import { VALID_FACILITIES } from "@shared/plexus";
+import { PageHeader } from "@/components/PageHeader";
 
-const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
-function authHeaders(): Record<string, string> {
-  if (API_KEY) return { Authorization: `Bearer ${API_KEY}` };
-  return {};
-}
-
-const VALID_FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
 const ANCILLARY_TYPES = ["BrainWave", "VitalWave", "Ultrasound"] as const;
 
 type DocType = "report" | "informed_consent" | "screening_form";
@@ -52,7 +47,6 @@ function UploadCard({ docType, title, description, color, icon }: UploadCardProp
       formData.append("file", f);
       const res = await fetch("/api/documents/ocr-name", {
         method: "POST",
-        headers: authHeaders(),
         body: formData,
         credentials: "include",
       });
@@ -76,7 +70,6 @@ function UploadCard({ docType, title, description, color, icon }: UploadCardProp
       formData.append("file", file);
       const res = await fetch("/api/documents/upload", {
         method: "POST",
-        headers: authHeaders(),
         body: formData,
         credentials: "include",
       });
@@ -268,15 +261,14 @@ export default function DocumentUploadPage() {
   return (
     <div className="flex-1 overflow-y-auto p-6 bg-[hsl(210,35%,96%)]">
       <div className="max-w-5xl mx-auto">
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-1">
-            <Upload className="w-7 h-7 text-indigo-600" />
-            <h1 className="text-2xl font-bold text-slate-900">Document Upload</h1>
-          </div>
-          <p className="text-sm text-slate-500 ml-10">
-            Upload patient reports, informed consent forms, and screening forms to Google Drive. Patient names are auto-extracted via AI.
-          </p>
-        </div>
+        <PageHeader
+          eyebrow="PLEXUS ANCILLARY · UPLOADS"
+          icon={Upload}
+          iconAccent="bg-indigo-100 text-indigo-700"
+          title="Document Upload"
+          subtitle="Upload patient reports, informed consent forms, and screening forms to Google Drive. Patient names are auto-extracted via AI."
+          className="mb-8"
+        />
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           <UploadCard

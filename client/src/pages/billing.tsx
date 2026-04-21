@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, type CSSProperties } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { VALID_FACILITIES } from "@shared/plexus";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,8 +36,15 @@ import {
   Banknote,
   CircleDot,
   SlidersHorizontal,
+  Trash2,
+  TrendingUp,
+  Receipt,
+  Wallet,
+  Timer,
+  Download,
 } from "lucide-react";
 import { SiGooglesheets, SiGoogledrive } from "react-icons/si";
+import { PageHeader } from "@/components/PageHeader";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -48,6 +56,8 @@ type BillingRecord = {
   facility: string | null;
   dateOfService: string | null;
   patientName: string;
+  dob: string | null;
+  mrn: string | null;
   clinician: string | null;
   insuranceInfo: string | null;
   documentationStatus: string | null;
@@ -58,11 +68,31 @@ type BillingRecord = {
   dateSubmitted: string | null;
   followUpDate: string | null;
   paidAmount: string | null;
+  insurancePaidAmount: string | null;
+  secondaryPaidAmount: string | null;
   totalCharges: string | null;
   allowedAmount: string | null;
   patientResponsibility: string | null;
   adjustmentAmount: string | null;
+  lastBillerUpdate: string | null;
+  nextAction: string | null;
+  billingNotes: string | null;
   createdAt: string;
+};
+
+type InvoiceLink = {
+  billingRecordId: number;
+  invoiceId: number;
+  invoiceNumber: string;
+  status: "Draft" | "Sent" | "Partially Paid" | "Paid" | string;
+  totalBalance: string;
+};
+
+type AgingResponse = {
+  totals: {
+    totalBalance: string;
+    invoiceCount: number;
+  };
 };
 
 type NoteSection = { heading: string; body: string };
@@ -84,27 +114,24 @@ type GeneratedNote = {
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
-const FACILITY_OPTIONS = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"];
+const FACILITY_OPTIONS = [...VALID_FACILITIES];
 
 const SERVICE_TYPE_OPTIONS = [
   "BrainWave",
   "VitalWave",
-  "Carotid Duplex",
-  "Renal Artery Duplex",
-  "Aorta/Iliac Duplex",
-  "Mesenteric Artery Duplex",
-  "Lower Extremity Arterial Duplex",
+  "Bilateral Carotid Duplex",
+  "Echocardiogram TTE",
+  "Renal Artery Doppler",
+  "Lower Extremity Arterial Doppler",
+  "Abdominal Aortic Aneurysm Duplex",
   "Lower Extremity Venous Duplex",
+  "Stress Echocardiogram",
+  "Upper Extremity Arterial Doppler",
   "Upper Extremity Venous Duplex",
-  "ABI (Ankle-Brachial Index)",
-  "TBI (Toe-Brachial Index)",
 ];
 
 const PRIMARY_INSURANCE_OPTIONS = ["Medicare", "Medicare Advantage", "PPO", "HMO", "Medicaid", "Self Pay"];
-const DOC_STATUS_OPTIONS = ["Preprocedure Order Note", "Billing Document", "Hx, Dx, Rx"];
-const CLAIM_STATUS_OPTIONS = ["Not Billed", "Submitted", "Accepted", "Rejected", "Pending", "Denied"];
-const PAYER_STATUS_OPTIONS = ["Pending", "Accepted", "Rejected", "Denied", "Paid"];
-const PAYMENT_STATUS_OPTIONS = ["Unpaid", "Partial", "Paid"];
+const CLAIM_STATUS_OPTIONS = ["Not Billed", "Submitted", "Accepted", "Pending", "Denied", "Rejected"];
 
 const DOC_KIND_LABELS: Record<string, string> = {
   preProcedureOrder: "Pre-Procedure Order",
@@ -122,36 +149,11 @@ const DOC_KIND_COLORS: Record<string, string> = {
 // ─── Smart Status Logic ─────────────────────────────────────────────────────
 
 function applySmartStatus(
-  current: Partial<BillingRecord>,
+  _current: Partial<BillingRecord>,
   field: keyof BillingRecord,
   value: string | null
 ): Record<string, string | null> {
-  const updates: Record<string, string | null> = { [field]: value };
-
-  const paidAmount = field === "paidAmount" ? value : current.paidAmount;
-  const balanceRemaining = field === "balanceRemaining" ? value : current.balanceRemaining;
-
-  if (field === "billingStatus") {
-    if (value === "Denied") updates.response = "Denied";
-    else if (value === "Rejected") updates.response = "Rejected";
-  }
-
-  if (field === "paidAmount" || field === "balanceRemaining") {
-    const effectivePaid = parseFloat((field === "paidAmount" ? value : paidAmount) ?? "0") || 0;
-    const effectiveBalance = parseFloat((field === "balanceRemaining" ? value : balanceRemaining) ?? "0") || 0;
-    if (effectiveBalance === 0 && effectivePaid > 0) {
-      updates.paidStatus = "Paid";
-    } else if (effectivePaid > 0 && effectiveBalance > 0) {
-      updates.paidStatus = "Partial";
-    }
-  } else {
-    const paid = parseFloat(paidAmount ?? "0") || 0;
-    const balance = parseFloat(balanceRemaining ?? "0") || 0;
-    if (balance === 0 && paid > 0) updates.paidStatus = "Paid";
-    else if (paid > 0 && balance > 0) updates.paidStatus = "Partial";
-  }
-
-  return updates;
+  return { [field]: value };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -164,33 +166,26 @@ function formatDate(dateStr: string | null): string {
   return new Date(yyyy, mm - 1, dd).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function calcDaysInAR(dateSubmitted: string | null): number | null {
-  if (!dateSubmitted) return null;
-  const start = new Date(dateSubmitted);
-  if (isNaN(start.getTime())) return null;
-  return Math.max(0, Math.round((Date.now() - start.getTime()) / 86400000));
-}
 
 function rowAccentClass(record: BillingRecord): string {
   const cs = record.billingStatus ?? "";
-  const ps = record.paidStatus ?? "";
-  const rs = record.response ?? "";
-  const days = calcDaysInAR(record.dateSubmitted);
-  if (cs === "Denied" || cs === "Rejected" || rs === "Denied" || rs === "Rejected") return "bg-red-50/70 border-l-2 border-l-red-300";
-  if (days !== null && days >= 90) return "bg-red-50/50 border-l-2 border-l-red-200";
-  if (ps === "Paid") return "bg-emerald-50/60 border-l-2 border-l-emerald-300";
-  if (cs === "Pending" || rs === "Pending") return "bg-amber-50/50 border-l-2 border-l-amber-200";
+  if (cs === "Denied" || cs === "Rejected") return "bg-red-50/70 border-l-2 border-l-red-300";
+  if (cs === "Accepted" || cs === "Paid In Full") return "bg-emerald-50/60 border-l-2 border-l-emerald-300";
+  if (cs === "Pending" || cs === "Submitted") return "bg-amber-50/50 border-l-2 border-l-amber-200";
   return "";
 }
 
 function statusBadgeClass(value: string | null): string {
   if (!value) return "bg-slate-100 text-slate-500 border-slate-200";
   const v = value.toLowerCase();
-  if (v === "paid" || v === "accepted") return "bg-emerald-100 text-emerald-800 border-emerald-200";
+  if (v === "paid" || v === "accepted" || v === "paid in full" || v === "complete") return "bg-emerald-100 text-emerald-800 border-emerald-200";
   if (v === "denied" || v === "rejected") return "bg-red-100 text-red-800 border-red-200";
   if (v === "pending" || v === "submitted") return "bg-amber-100 text-amber-800 border-amber-200";
-  if (v === "partial") return "bg-blue-100 text-blue-800 border-blue-200";
-  if (v === "not billed") return "bg-slate-100 text-slate-600 border-slate-200";
+  if (v === "partial" || v === "partial payment" || v === "partially paid") return "bg-amber-100 text-amber-800 border-amber-200";
+  if (v === "sent") return "bg-blue-100 text-blue-800 border-blue-200";
+  if (v === "draft") return "bg-slate-100 text-slate-700 border-slate-200";
+  if (v === "not billed" || v === "not started") return "bg-slate-100 text-slate-600 border-slate-200";
+  if (v === "preprocedure order note" || v === "post-procedure note" || v === "billing document") return "bg-indigo-100 text-indigo-800 border-indigo-200";
   return "bg-slate-100 text-slate-600 border-slate-200";
 }
 
@@ -198,11 +193,11 @@ function statusBadgeClass(value: string | null): string {
 
 function statusDotColor(value: string | null): string {
   const v = (value ?? "").toLowerCase();
-  if (v === "paid" || v === "accepted") return "bg-emerald-500";
+  if (v === "paid" || v === "accepted" || v === "paid in full" || v === "complete") return "bg-emerald-500";
   if (v === "denied" || v === "rejected") return "bg-red-500";
   if (v === "pending" || v === "submitted") return "bg-amber-400";
-  if (v === "partial") return "bg-blue-500";
-  if (v === "not billed") return "bg-slate-300";
+  if (v === "partial" || v === "partial payment") return "bg-blue-500";
+  if (v === "not billed" || v === "not started") return "bg-slate-300";
   return "bg-slate-300";
 }
 
@@ -601,21 +596,52 @@ function NotesModal({
 
 // ─── Add Row Modal ──────────────────────────────────────────────────────────
 
+type AddRowData = {
+  patientName: string;
+  dob: string;
+  mrn: string;
+  dateOfService: string;
+  facility: string;
+  clinician: string;
+  service: string;
+  insuranceInfo: string;
+  batchId?: number | null;
+};
+
 function AddRowModal({ onClose, onAdd }: {
   onClose: () => void;
-  onAdd: (data: { patientName: string; dateOfService: string; facility: string; clinician: string; service: string; insuranceInfo: string }) => void;
+  onAdd: (data: AddRowData) => void;
 }) {
   const [patientName, setPatientName] = useState("");
+  const [dob, setDob] = useState("");
+  const [mrn, setMrn] = useState("");
   const [dateOfService, setDateOfService] = useState("");
   const [facility, setFacility] = useState("");
   const [clinician, setClinician] = useState("");
   const [service, setService] = useState("");
   const [insuranceInfo, setInsuranceInfo] = useState("");
+  const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
+
+  const { data: batches = [] } = useQuery<{ id: number; name: string; scheduleDate: string | null; facility: string | null; clinicianName: string | null }[]>({
+    queryKey: ["/api/screening-batches"],
+  });
+
+  function handleBatchSelect(batchId: number | null) {
+    setSelectedBatchId(batchId);
+    if (batchId) {
+      const batch = batches.find((b) => b.id === batchId);
+      if (batch) {
+        if (batch.scheduleDate) setDateOfService(batch.scheduleDate);
+        if (batch.facility) setFacility(batch.facility);
+        if (batch.clinicianName) setClinician(batch.clinicianName);
+      }
+    }
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!patientName.trim()) return;
-    onAdd({ patientName: patientName.trim(), dateOfService, facility, clinician, service, insuranceInfo });
+    onAdd({ patientName: patientName.trim(), dob, mrn, dateOfService, facility, clinician, service, insuranceInfo, batchId: selectedBatchId });
     onClose();
   }
 
@@ -628,9 +654,40 @@ function AddRowModal({ onClose, onAdd }: {
         </div>
         <form onSubmit={submit} className="p-5 space-y-3">
           <div>
+            <label className="text-xs font-medium text-slate-600 block mb-1">Link to Schedule (optional)</label>
+            <select
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              value={selectedBatchId ?? ""}
+              onChange={(e) => handleBatchSelect(e.target.value ? Number(e.target.value) : null)}
+              data-testid="select-add-row-batch"
+            >
+              <option value="">— none (manual entry) —</option>
+              {batches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}{b.scheduleDate ? ` · ${b.scheduleDate}` : ""}
+                </option>
+              ))}
+            </select>
+            {selectedBatchId && (
+              <p className="text-[11px] text-blue-600 mt-1">Date of service will be auto-filled from the selected schedule date.</p>
+            )}
+          </div>
+          <div>
             <label className="text-xs font-medium text-slate-600 block mb-1">Patient Name *</label>
             <input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="Full name" autoFocus data-testid="input-add-row-patient-name" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">DOB</label>
+              <input type="date" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                value={dob} onChange={(e) => setDob(e.target.value)} data-testid="input-add-row-dob" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">MRN</label>
+              <input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                value={mrn} onChange={(e) => setMrn(e.target.value)} placeholder="MRN #" data-testid="input-add-row-mrn" />
+            </div>
           </div>
           <div>
             <label className="text-xs font-medium text-slate-600 block mb-1">Date of Service</label>
@@ -685,7 +742,7 @@ function SortIcon({ field, sortField, sortDir }: { field: string; sortField: str
 
 // ─── Main page ───────────────────────────────────────────────────────────────
 
-type SortableField = "facility" | "clinician" | "service" | "billingStatus" | "response" | "paidStatus";
+type SortableField = "clinician" | "service" | "billingStatus" | "insuranceInfo";
 
 export default function BillingPage() {
   const { toast } = useToast();
@@ -694,30 +751,57 @@ export default function BillingPage() {
   const [showAddRow, setShowAddRow] = useState(false);
   const [billingSyncedAt, setBillingSyncedAt] = useState<string | null>(null);
   const [billingSheetUrl, setBillingSheetUrl] = useState<string | null>(null);
+  const [masterSheetUrl, setMasterSheetUrl] = useState<string | null>(null);
+  const [facilitySheetUrls, setFacilitySheetUrls] = useState<Record<string, string>>({});
   const [exportingNoteIds, setExportingNoteIds] = useState<Set<number>>(new Set());
 
-  const [filterFacility, setFilterFacility] = useState("");
+  const [facilityTab, setFacilityTab] = useState<string>("All");
   const [filterProvider, setFilterProvider] = useState("");
   const [filterService, setFilterService] = useState("");
   const [filterClaimStatus, setFilterClaimStatus] = useState("");
-  const [filterPayerStatus, setFilterPayerStatus] = useState("");
-  const [filterPaymentStatus, setFilterPaymentStatus] = useState("");
 
   const [sortField, setSortField] = useState<SortableField | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const { data: records = [], isLoading } = useQuery<BillingRecord[]>({ queryKey: ["/api/billing-records"] });
   const { data: allNotes = [] } = useQuery<GeneratedNote[]>({ queryKey: ["/api/generated-notes"] });
+  const { data: invoiceLinks = [] } = useQuery<InvoiceLink[]>({ queryKey: ["/api/billing-records/invoice-links"] });
+  const { data: aging } = useQuery<AgingResponse>({ queryKey: ["/api/invoices/aging"] });
+
+  const invoiceLinkByRecord = useMemo(() => {
+    // Server returns newest invoice first; keep the first (most recent)
+    // entry per billing record so display is deterministic when a
+    // billing record has been included on more than one invoice.
+    const map = new Map<number, InvoiceLink>();
+    for (const link of invoiceLinks) {
+      if (!map.has(link.billingRecordId)) map.set(link.billingRecordId, link);
+    }
+    return map;
+  }, [invoiceLinks]);
+
+  const outstandingTotal = aging ? parseFloat(aging.totals.totalBalance) : 0;
+  const outstandingCount = aging?.totals.invoiceCount ?? 0;
 
   const { data: googleStatus } = useQuery<{
-    sheets: { connected: boolean; lastSyncedBilling: string | null; billingSpreadsheetUrl: string | null };
+    sheets: {
+      connected: boolean;
+      lastSyncedBilling: string | null;
+      billingSpreadsheetUrl: string | null;
+      masterBillingSpreadsheetUrl: string | null;
+      billingDriveFolderUrl: string | null;
+      facilityBillingSpreadsheetUrls: Record<string, string>;
+    };
     drive: { connected: boolean; email: string | null };
   }>({ queryKey: ["/api/google/status"], refetchInterval: 30000 });
 
   useEffect(() => {
     if (!googleStatus?.sheets) return;
     setBillingSyncedAt(googleStatus.sheets.lastSyncedBilling ?? null);
-    setBillingSheetUrl(googleStatus.sheets.billingSpreadsheetUrl ?? null);
+    const master = googleStatus.sheets.masterBillingSpreadsheetUrl ?? googleStatus.sheets.billingSpreadsheetUrl ?? null;
+    setBillingSheetUrl(master);
+    setMasterSheetUrl(googleStatus.sheets.masterBillingSpreadsheetUrl ?? null);
+    const facUrls = googleStatus.sheets.facilityBillingSpreadsheetUrls;
+    if (facUrls && typeof facUrls === "object") setFacilitySheetUrls(facUrls);
   }, [googleStatus]);
 
   const updateMutation = useMutation({
@@ -727,8 +811,14 @@ export default function BillingPage() {
     onError: (err: Error) => { toast({ title: "Save failed", description: err.message, variant: "destructive" }); },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/billing-records/${id}`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/billing-records"] }); toast({ title: "Record deleted" }); },
+    onError: (err: Error) => { toast({ title: "Delete failed", description: err.message, variant: "destructive" }); },
+  });
+
   const createMutation = useMutation({
-    mutationFn: (body: Record<string, string | null>) => apiRequest("POST", "/api/billing-records", body),
+    mutationFn: (body: { service: string; patientName: string; dob?: string | null; mrn?: string | null; dateOfService: string | null; facility: string | null; clinician: string | null; insuranceInfo: string | null; batchId?: number | null }) => apiRequest("POST", "/api/billing-records", body),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/billing-records"] }); toast({ title: "Row added" }); },
     onError: (err: Error) => { toast({ title: "Failed to add row", description: err.message, variant: "destructive" }); },
   });
@@ -755,8 +845,18 @@ export default function BillingPage() {
     onSuccess: (data) => {
       if (data.syncedAt) {
         setBillingSyncedAt(data.syncedAt);
-        if (data.spreadsheetUrl) setBillingSheetUrl(data.spreadsheetUrl);
-        toast({ title: "Synced to Google Sheets", description: `${data.recordCount} records pushed` });
+        if (data.masterSpreadsheetUrl) {
+          setMasterSheetUrl(data.masterSpreadsheetUrl);
+          setBillingSheetUrl(data.masterSpreadsheetUrl);
+        } else if (data.spreadsheetUrl) {
+          setBillingSheetUrl(data.spreadsheetUrl);
+        }
+        if (data.facilitySpreadsheetUrls) setFacilitySheetUrls(data.facilitySpreadsheetUrls);
+        if (data.masterSyncError) {
+          toast({ title: "Synced (master tracker error)", description: `Facility sheets updated but master tracker failed: ${data.masterSyncError}`, variant: "destructive" });
+        } else {
+          toast({ title: "Synced to Google Sheets", description: `${data.recordCount} records pushed` });
+        }
       } else {
         toast({ title: "Sync queued" });
       }
@@ -764,19 +864,35 @@ export default function BillingPage() {
     onError: (err: Error) => { toast({ title: "Sync failed", description: err.message, variant: "destructive" }); },
   });
 
+  const importFromSheetMutation = useMutation({
+    mutationFn: async () => { const res = await apiRequest("POST", "/api/billing-records/import-from-sheet"); return res.json(); },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/billing-records"] });
+      if (data.total === 0) {
+        toast({ title: "Nothing to import", description: "No records found in connected sheets." });
+      } else {
+        toast({ title: "Import complete", description: `${data.created} created, ${data.updated} updated from Google Sheets.` });
+      }
+    },
+    onError: (err: Error) => { toast({ title: "Import failed", description: err.message, variant: "destructive" }); },
+  });
+
   function handleSave(id: number, field: keyof BillingRecord, value: string | null, record: BillingRecord) {
     const updates = applySmartStatus(record, field, value);
     updateMutation.mutate({ id, updates });
   }
 
-  function handleAddRow(data: { patientName: string; dateOfService: string; facility: string; clinician: string; service: string; insuranceInfo: string }) {
+  function handleAddRow(data: AddRowData) {
     createMutation.mutate({
       service: data.service || "BrainWave",
       patientName: data.patientName,
+      dob: data.dob || null,
+      mrn: data.mrn || null,
       dateOfService: data.dateOfService || null,
       facility: data.facility || null,
       clinician: data.clinician || null,
       insuranceInfo: data.insuranceInfo || null,
+      batchId: data.batchId ?? null,
     });
   }
 
@@ -785,23 +901,29 @@ export default function BillingPage() {
     return Array.from(set).sort();
   }, [records]);
 
+  const metrics = useMemo(() => {
+    const src = facilityTab === "All" ? records : records.filter(r => r.facility === facilityTab);
+    const totalRecords = src.length;
+    const totalPrimary = src.reduce((s, r) => s + (parseFloat(r.paidAmount ?? "0") || 0), 0);
+    const totalInsurance = src.reduce((s, r) => s + (parseFloat(r.insurancePaidAmount ?? "0") || 0), 0);
+    const totalSecondary = src.reduce((s, r) => s + (parseFloat(r.secondaryPaidAmount ?? "0") || 0), 0);
+    const totalPatientResp = src.reduce((s, r) => s + (parseFloat(r.patientResponsibility ?? "0") || 0), 0);
+    return { totalRecords, totalPrimary, totalInsurance, totalSecondary, totalPatientResp };
+  }, [records, facilityTab]);
+
   const filtered = useMemo(() => {
     let result = records;
-    if (filterFacility) result = result.filter((r) => r.facility === filterFacility);
+    if (facilityTab !== "All") result = result.filter((r) => r.facility === facilityTab);
     if (filterProvider) result = result.filter((r) => r.clinician === filterProvider);
     if (filterService) result = result.filter((r) => r.service === filterService);
     if (filterClaimStatus) result = result.filter((r) => r.billingStatus === filterClaimStatus);
-    if (filterPayerStatus) result = result.filter((r) => r.response === filterPayerStatus);
-    if (filterPaymentStatus) result = result.filter((r) => r.paidStatus === filterPaymentStatus);
 
     if (sortField) {
       const fieldMap: Record<SortableField, keyof BillingRecord> = {
-        facility: "facility",
-        clinician: "clinician",
         service: "service",
+        clinician: "clinician",
         billingStatus: "billingStatus",
-        response: "response",
-        paidStatus: "paidStatus",
+        insuranceInfo: "insuranceInfo",
       };
       const key = fieldMap[sortField];
       result = [...result].sort((a, b) => {
@@ -811,7 +933,7 @@ export default function BillingPage() {
       });
     }
     return result;
-  }, [records, filterFacility, filterProvider, filterService, filterClaimStatus, filterPayerStatus, filterPaymentStatus, sortField, sortDir]);
+  }, [records, facilityTab, filterProvider, filterService, filterClaimStatus, sortField, sortDir]);
 
   function toggleSort(field: SortableField) {
     if (sortField === field) {
@@ -834,104 +956,164 @@ export default function BillingPage() {
   }
 
   const sortableHeaders: { label: string; field: SortableField }[] = [
-    { label: "Facility", field: "facility" },
-    { label: "Rendering Provider", field: "clinician" },
-    { label: "Service Type", field: "service" },
+    { label: "Clinician", field: "clinician" },
+    { label: "Test", field: "service" },
     { label: "Claim Status", field: "billingStatus" },
-    { label: "Payer Status", field: "response" },
-    { label: "Payment Status", field: "paidStatus" },
+    { label: "Insurance Info", field: "insuranceInfo" },
   ];
 
   const isSortable = (label: string) => sortableHeaders.some((h) => h.label === label);
   const getSortField = (label: string) => sortableHeaders.find((h) => h.label === label)?.field ?? null;
 
   const columns = [
-    { label: "Date of Service", w: 110 },
-    { label: "Patient Name", w: 130 },
-    { label: "Facility", w: 130 },
-    { label: "Rendering Provider", w: 130 },
-    { label: "Service Type", w: 150 },
-    { label: "Primary Insurance", w: 130 },
-    { label: "Documentation Status", w: 190 },
-    { label: "Claim Status", w: 110 },
-    { label: "Payer Status", w: 110 },
-    { label: "Date Submitted", w: 120 },
-    { label: "Days in A/R", w: 80 },
-    { label: "Follow-Up Date", w: 120 },
-    { label: "Payment Status", w: 110 },
-    { label: "Paid Amount", w: 100 },
-    { label: "Total Charges", w: 100 },
-    { label: "Allowed Amount", w: 110 },
-    { label: "Patient Responsibility", w: 130 },
-    { label: "Adjustment Amount", w: 120 },
-    { label: "Balance Remaining", w: 120 },
+    { label: "DOS", w: 110 },
+    { label: "Test", w: 185 },
+    { label: "Patient", w: 150 },
+    { label: "DOB", w: 105 },
+    { label: "MRN", w: 100 },
+    { label: "Clinician", w: 145 },
+    { label: "Insurance Info", w: 160 },
+    { label: "Screening", w: 90, docKind: "screening" },
+    { label: "Order Note", w: 95, docKind: "preProcedureOrder" },
+    { label: "Report", w: 75, docKind: "report" },
+    { label: "Procedure Note", w: 115, docKind: "postProcedureNote" },
+    { label: "Billing Doc", w: 90, docKind: "billing" },
+    { label: "Primary Paid Amount", w: 145 },
+    { label: "Insurance Paid Amount", w: 155 },
+    { label: "Secondary Paid Amount", w: 155 },
+    { label: "Patient Responsibility Amount", w: 200 },
+    { label: "Claim Status", w: 130 },
+    { label: "Invoice", w: 175 },
+    { label: "Last Biller Update", w: 145 },
+    { label: "Next Action", w: 140 },
+    { label: "Billing Notes", w: 200 },
+    { label: "", w: 48 },
   ];
 
+  const fmtMoney = (v: number) => v === 0 ? "$0" : `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
   return (
-    <main className="flex-1 overflow-hidden flex flex-col bg-[hsl(210,35%,96%)]" data-testid="billing-page">
+    <main className="flex-1 overflow-hidden flex flex-col bg-slate-50" data-testid="billing-page">
       {/* Header */}
-      <div className="shrink-0 px-5 py-4 border-b border-slate-200 bg-white">
-        <div className="flex items-center gap-3 mb-3">
-          <Link href="/">
-            <Button variant="ghost" size="sm" className="gap-1.5 text-slate-600 hover:text-slate-900" data-testid="button-back-home">
-              <ArrowLeft className="w-4 h-4" />Home
-            </Button>
-          </Link>
-        </div>
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <DollarSign className="w-6 h-6 text-emerald-600 shrink-0" />
-            <div>
-              <h1 className="text-xl font-bold text-slate-900" data-testid="text-billing-title">Billing</h1>
-              <p className="text-xs text-slate-500 mt-0.5">Track billing status for screened patients</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => syncBillingMutation.mutate()} disabled={syncBillingMutation.isPending}
-              className="gap-1.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50" data-testid="button-sync-billing-sheets">
+      <div className="shrink-0 bg-white border-b border-slate-200">
+        <div className="px-5 pt-4 pb-3">
+          <PageHeader
+            backHref="/"
+            eyebrow="PLEXUS ANCILLARY · BILLING"
+            icon={DollarSign}
+            iconAccent="bg-emerald-100 text-emerald-700"
+            title="Billing Tracker"
+            subtitle="Ancillary service claims & payments"
+            titleTestId="text-billing-title"
+            actions={
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+            <Button size="sm" variant="outline" onClick={() => syncBillingMutation.mutate()} disabled={syncBillingMutation.isPending || importFromSheetMutation.isPending}
+              className="gap-1.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50 h-8 text-xs" data-testid="button-sync-billing-sheets">
               {syncBillingMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <SiGooglesheets className="w-3.5 h-3.5" />}
               Sync to Sheets
             </Button>
+            <Button size="sm" variant="outline" onClick={() => importFromSheetMutation.mutate()} disabled={importFromSheetMutation.isPending || syncBillingMutation.isPending}
+              className="gap-1.5 text-blue-700 border-blue-200 hover:bg-blue-50 h-8 text-xs" data-testid="button-import-from-sheet">
+              {importFromSheetMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              Import from Sheet
+            </Button>
+            <div className="h-4 w-px bg-slate-200" />
+            {(() => {
+              const openUrl = masterSheetUrl ?? billingSheetUrl ?? (googleStatus?.sheets?.billingDriveFolderUrl ?? null);
+              if (!openUrl) return null;
+              return (
+                <a href={openUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-[10px] text-emerald-600 hover:underline inline-flex items-center gap-1"
+                  title="Open Plexus Billing Tracker in Google Sheets"
+                  data-testid="link-active-billing-sheet">
+                  <SiGooglesheets className="w-3 h-3" />Open Billing Sheet
+                </a>
+              );
+            })()}
             {billingSyncedAt && (
               <span className="text-[10px] text-slate-400 whitespace-nowrap">
                 Synced {new Date(billingSyncedAt).toLocaleTimeString()}
-                {billingSheetUrl && (
-                  <a href={billingSheetUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-emerald-600 hover:underline inline-flex items-center gap-0.5">
-                    <ExternalLink className="w-2.5 h-2.5" />Open
-                  </a>
-                )}
               </span>
             )}
-            {googleStatus?.drive?.email && (
-              <span className="text-[10px] text-slate-400 whitespace-nowrap" data-testid="text-drive-email-billing">
-                Drive: {googleStatus.drive.email}
-              </span>
-            )}
-            <Button size="sm" variant="outline" className="gap-1.5 text-xs h-8" onClick={() => setShowAddRow(true)} data-testid="button-add-billing-row">
+            <Button size="sm" variant="outline" className="gap-1.5 text-xs h-8 text-slate-600" onClick={() => setShowAddRow(true)} data-testid="button-add-billing-row">
               <Plus className="w-3.5 h-3.5" />Add Row
             </Button>
-          </div>
+              </div>
+            }
+          />
         </div>
 
-        {/* Filter Bar */}
-        <div className="flex items-center gap-2 mt-3 flex-wrap">
-          <div className="flex items-center gap-1 text-slate-400">
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-semibold uppercase tracking-wider">Filter</span>
-          </div>
-          <FilterPill icon={Building2} label="Facility" value={filterFacility} options={FACILITY_OPTIONS} onChange={setFilterFacility} testId="select-filter-facility" />
+        {/* Metrics bar */}
+        <div className="px-5 pb-3 grid grid-cols-3 lg:grid-cols-6 gap-3" data-testid="billing-metrics">
+          {[
+            { icon: Receipt, label: "Total Records", value: String(metrics.totalRecords), color: "text-slate-700", bg: "bg-slate-100", testid: "metric-total-records" },
+            { icon: Wallet, label: "Primary Paid", value: fmtMoney(metrics.totalPrimary), color: "text-emerald-700", bg: "bg-emerald-50", testid: "metric-primary-paid" },
+            { icon: TrendingUp, label: "Insurance Paid", value: fmtMoney(metrics.totalInsurance), color: "text-blue-700", bg: "bg-blue-50", testid: "metric-insurance-paid" },
+            { icon: Banknote, label: "Secondary Paid", value: fmtMoney(metrics.totalSecondary), color: "text-violet-700", bg: "bg-violet-50", testid: "metric-secondary-paid" },
+            { icon: Timer, label: "Patient Responsibility", value: fmtMoney(metrics.totalPatientResp), color: "text-amber-700", bg: "bg-amber-50", testid: "metric-patient-responsibility" },
+          ].map(({ icon: Icon, label, value, color, bg, testid }) => (
+            <div key={label} className={`rounded-xl px-3.5 py-2.5 ${bg} flex items-center gap-3`} data-testid={testid}>
+              <Icon className={`w-4 h-4 shrink-0 ${color}`} />
+              <div>
+                <div className={`text-sm font-bold leading-none ${color}`}>{value}</div>
+                <div className="text-[10px] text-slate-500 mt-0.5 leading-none">{label}</div>
+              </div>
+            </div>
+          ))}
+          <Link
+            href="/invoices"
+            className="rounded-xl px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 transition-colors flex items-center gap-3 cursor-pointer"
+            data-testid="metric-outstanding-invoices"
+            title={`${outstandingCount} unpaid invoice${outstandingCount === 1 ? "" : "s"} — click to view`}
+          >
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-700" />
+            <div>
+              <div className="text-sm font-bold leading-none text-rose-700" data-testid="text-outstanding-balance">
+                {fmtMoney(outstandingTotal)}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5 leading-none">
+                Outstanding · {outstandingCount} invoice{outstandingCount === 1 ? "" : "s"}
+              </div>
+            </div>
+          </Link>
+        </div>
+
+        {/* Facility tabs */}
+        <div className="px-5 flex items-center gap-1 border-t border-slate-100 pt-2 pb-0" data-testid="facility-tabs">
+          {["All", ...FACILITY_OPTIONS].map((fac) => {
+            return (
+              <div key={fac} className="flex items-center gap-0">
+                <button
+                  onClick={() => setFacilityTab(fac)}
+                  data-testid={`tab-facility-${fac.replace(/\s+/g, "-").toLowerCase()}`}
+                  className={`px-3.5 py-2 text-[12px] font-medium rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
+                    facilityTab === fac
+                      ? "border-emerald-500 text-emerald-700 bg-emerald-50/50"
+                      : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  {fac}
+                  <span className="ml-1.5 text-[10px] bg-slate-200 text-slate-500 rounded-full px-1.5 py-0.5">
+                    {fac === "All" ? records.length : records.filter(r => r.facility === fac).length}
+                  </span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Secondary filter bar */}
+        <div className="flex items-center gap-2 px-5 py-2 border-t border-slate-100 flex-wrap bg-slate-50/60">
+          <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400 shrink-0" />
           <FilterPill icon={User} label="Provider" value={filterProvider} options={uniqueProviders} onChange={setFilterProvider} testId="select-filter-provider" />
           <FilterPill icon={Scan} label="Service" value={filterService} options={SERVICE_TYPE_OPTIONS} onChange={setFilterService} testId="select-filter-service" />
           <FilterPill icon={ClipboardList} label="Claim Status" value={filterClaimStatus} options={CLAIM_STATUS_OPTIONS} onChange={setFilterClaimStatus} testId="select-filter-claim-status" />
-          <FilterPill icon={AlertCircle} label="Payer Status" value={filterPayerStatus} options={PAYER_STATUS_OPTIONS} onChange={setFilterPayerStatus} testId="select-filter-payer-status" />
-          <FilterPill icon={Banknote} label="Payment" value={filterPaymentStatus} options={PAYMENT_STATUS_OPTIONS} onChange={setFilterPaymentStatus} testId="select-filter-payment-status" />
-          {(filterFacility || filterProvider || filterService || filterClaimStatus || filterPayerStatus || filterPaymentStatus) && (
+          {(filterProvider || filterService || filterClaimStatus) && (
             <button
-              className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-600 px-2.5 py-1.5 rounded-full border border-red-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-              onClick={() => { setFilterFacility(""); setFilterProvider(""); setFilterService(""); setFilterClaimStatus(""); setFilterPayerStatus(""); setFilterPaymentStatus(""); }}
+              className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-600 px-2.5 py-1 rounded-full border border-red-200 hover:border-red-300 hover:bg-red-50 transition-colors"
+              onClick={() => { setFilterProvider(""); setFilterService(""); setFilterClaimStatus(""); }}
               data-testid="button-clear-filters">
-              <X className="w-3 h-3" />
-              Clear
+              <X className="w-3 h-3" />Clear
             </button>
           )}
           <span className="text-[10px] text-slate-400 ml-auto font-medium">{filtered.length} record{filtered.length !== 1 ? "s" : ""}</span>
@@ -946,24 +1128,29 @@ export default function BillingPage() {
           <div className="flex flex-col items-center justify-center py-20 text-center px-6">
             <DollarSign className="w-10 h-10 text-slate-300 mb-3" />
             <p className="text-slate-500 font-medium">No billing records found</p>
-            <p className="text-sm text-slate-400 mt-1">
-              Complete a schedule or click Add Row to enter one manually.
-            </p>
+            <p className="text-sm text-slate-400 mt-1">Complete a schedule or click Add Row to enter one manually.</p>
           </div>
         ) : (
           <div className="min-w-max">
-            <table className="border-collapse text-xs" data-testid="billing-table">
+            <table className="border-collapse w-full" style={{ fontSize: 11 }} data-testid="billing-table">
               <thead>
-                <tr className="bg-white border-b border-slate-100 sticky top-0 z-10" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                  {columns.map((col) => {
+                <tr className="bg-white border-b-2 border-slate-200 sticky top-0 z-20" style={{ boxShadow: "0 2px 4px rgba(0,0,0,0.06)" }}>
+                  {columns.map((col, ci) => {
                     const sortable = isSortable(col.label);
                     const sf = getSortField(col.label);
+                    const isSticky0 = ci === 0;
+                    const isSticky1 = ci === 1;
+                    const stickyStyle: CSSProperties = isSticky0
+                      ? { minWidth: col.w, position: "sticky", left: 0, zIndex: 30, background: "white", boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }
+                      : isSticky1
+                      ? { minWidth: col.w, position: "sticky", left: 120, zIndex: 30, background: "white", boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }
+                      : { minWidth: col.w };
                     return (
-                      <th key={col.label}
-                        className={`px-2 py-2.5 text-left font-semibold text-slate-400 uppercase tracking-widest border-r border-slate-100 whitespace-nowrap last:border-r-0 text-[9px] ${sortable ? "cursor-pointer hover:bg-slate-50 select-none" : ""}`}
-                        style={{ minWidth: col.w }}
+                      <th key={col.label || "_actions"}
+                        className={`px-3 py-3 text-left font-semibold text-slate-500 uppercase tracking-wider border-r border-slate-100 whitespace-nowrap last:border-r-0 text-[10px] ${sortable ? "cursor-pointer hover:bg-slate-50 select-none" : ""}`}
+                        style={stickyStyle}
                         onClick={sortable && sf ? () => toggleSort(sf as SortableField) : undefined}
-                        data-testid={`th-billing-${col.label.replace(/\s+/g, "-").toLowerCase()}`}
+                        data-testid={col.label ? `th-billing-${col.label.replace(/\s+/g, "-").toLowerCase()}` : "th-billing-actions"}
                       >
                         <span className="flex items-center gap-1">
                           {col.label}
@@ -976,106 +1163,148 @@ export default function BillingPage() {
               </thead>
               <tbody>
                 {filtered.map((record, ri) => {
-                  const days = calcDaysInAR(record.dateSubmitted);
                   const accent = rowAccentClass(record);
-                  const base = "bg-white";
+                  const isEven = ri % 2 === 0;
+                  const rowBg = accent || (isEven ? "bg-white" : "bg-slate-50/60");
+                  // doc kind check helper — uses allNotes in scope
+                  const hasDocKind = (docKind: string) => {
+                    if (record.patientId === null) return false;
+                    return allNotes.some(n => n.patientId === record.patientId && n.service === record.service && n.docKind === docKind);
+                  };
+                  const docCell = (docKind: string, recordId: number) => (
+                    <td className="px-3 py-2 border-r border-slate-100 align-middle text-center" data-testid={`cell-${docKind}-${recordId}`}>
+                      {hasDocKind(docKind)
+                        ? <span className="text-emerald-600 font-bold">✓</span>
+                        : <span className="text-slate-300">—</span>}
+                    </td>
+                  );
                   return (
                     <tr key={record.id}
-                      className={`border-b border-slate-100 hover:brightness-95 transition-all ${accent || base}`}
+                      className={`border-b border-slate-100 hover:bg-blue-50/30 transition-colors ${rowBg}`}
                       data-testid={`billing-row-${record.id}`}>
-                      {/* Date of Service */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
+                      {/* DOS — sticky col 0 */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle"
+                        style={{ position: "sticky", left: 0, zIndex: 1, background: isEven ? "white" : "rgb(248 250 252 / 0.6)" }}>
                         <DateCell value={record.dateOfService} recordId={record.id} field="dateOfService" onSave={handleSave} record={record} />
                       </td>
-                      {/* Patient Name */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <EditableCell value={record.patientName} recordId={record.id} field="patientName" onSave={handleSave} record={record} />
-                      </td>
-                      {/* Facility */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <DropdownCell value={record.facility} recordId={record.id} field="facility" options={FACILITY_OPTIONS} onSave={handleSave} record={record} badgeStyle={false} />
-                      </td>
-                      {/* Rendering Provider */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <EditableCell value={record.clinician} recordId={record.id} field="clinician" onSave={handleSave} record={record} placeholder="—" />
-                      </td>
-                      {/* Service Type */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
+                      {/* Test — sticky col 1 */}
+                      <td className="px-3 py-2 border-r border-slate-200 align-middle"
+                        style={{ position: "sticky", left: 110, zIndex: 1, background: isEven ? "white" : "rgb(248 250 252 / 0.6)", boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>
                         <DropdownCell value={record.service} recordId={record.id} field="service" options={SERVICE_TYPE_OPTIONS} onSave={handleSave} record={record} badgeStyle={false} />
                       </td>
-                      {/* Primary Insurance */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <DropdownCell value={record.insuranceInfo} recordId={record.id} field="insuranceInfo" options={PRIMARY_INSURANCE_OPTIONS} onSave={handleSave} record={record} badgeStyle={false} />
-                      </td>
-                      {/* Documentation Status — includes notes viewer */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
+                      {/* Patient */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle font-medium text-slate-800">
                         <div className="flex items-center gap-1.5">
-                          <DropdownCell value={record.documentationStatus} recordId={record.id} field="documentationStatus" options={DOC_STATUS_OPTIONS} onSave={handleSave} record={record} badgeStyle={false} />
-                          <button
-                            className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap transition-all hover:shadow-sm ${
-                              hasNotes(record)
-                                ? "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 font-medium"
-                                : "bg-slate-50 text-slate-300 border-slate-200 hover:bg-slate-100"
-                            }`}
-                            onClick={() => openDocModal(record)}
-                            title={hasNotes(record) ? "View generated documents" : "No documents yet"}
-                            data-testid={`button-doc-${record.id}`}
-                          >
-                            {hasNotes(record) ? <><FileText className="w-2.5 h-2.5" />Docs</> : "—"}
-                          </button>
+                          <EditableCell value={record.patientName} recordId={record.id} field="patientName" onSave={handleSave} record={record} />
+                          {hasNotes(record) && (
+                            <button
+                              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 font-medium whitespace-nowrap transition-all"
+                              onClick={() => openDocModal(record)}
+                              data-testid={`button-doc-${record.id}`}
+                            >
+                              <FileText className="w-2.5 h-2.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
-                      {/* Claim Status */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <DropdownCell value={record.billingStatus} recordId={record.id} field="billingStatus" options={CLAIM_STATUS_OPTIONS} onSave={handleSave} record={record} />
+                      {/* DOB */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <EditableCell value={record.dob} recordId={record.id} field="dob" onSave={handleSave} record={record} placeholder="—" />
                       </td>
-                      {/* Payer Status */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <DropdownCell value={record.response} recordId={record.id} field="response" options={PAYER_STATUS_OPTIONS} onSave={handleSave} record={record} />
+                      {/* MRN */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <EditableCell value={record.mrn} recordId={record.id} field="mrn" onSave={handleSave} record={record} placeholder="—" />
                       </td>
-                      {/* Date Submitted */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <DateCell value={record.dateSubmitted} recordId={record.id} field="dateSubmitted" onSave={handleSave} record={record} />
+                      {/* Clinician */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <EditableCell value={record.clinician} recordId={record.id} field="clinician" onSave={handleSave} record={record} placeholder="—" />
                       </td>
-                      {/* Days in A/R — computed */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle text-center" data-testid={`cell-billing-days-ar-${record.id}`}>
-                        {days !== null ? (
-                          <span className={`text-xs font-semibold ${days >= 90 ? "text-red-600" : days >= 30 ? "text-amber-600" : "text-emerald-700"}`}>{days}d</span>
-                        ) : (
-                          <span className="text-slate-300 text-xs">—</span>
-                        )}
+                      {/* Insurance Info */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <DropdownCell value={record.insuranceInfo} recordId={record.id} field="insuranceInfo" options={PRIMARY_INSURANCE_OPTIONS} onSave={handleSave} record={record} badgeStyle={false} />
                       </td>
-                      {/* Follow-Up Date */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <DateCell value={record.followUpDate} recordId={record.id} field="followUpDate" onSave={handleSave} record={record} />
-                      </td>
-                      {/* Payment Status */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <DropdownCell value={record.paidStatus} recordId={record.id} field="paidStatus" options={PAYMENT_STATUS_OPTIONS} onSave={handleSave} record={record} />
-                      </td>
-                      {/* Paid Amount */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
+                      {/* Doc status columns — read-only */}
+                      {docCell("screening", record.id)}
+                      {docCell("preProcedureOrder", record.id)}
+                      {docCell("report", record.id)}
+                      {docCell("postProcedureNote", record.id)}
+                      {docCell("billing", record.id)}
+                      {/* Primary Paid Amount */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
                         <NumericCell value={record.paidAmount} recordId={record.id} field="paidAmount" onSave={handleSave} record={record} />
                       </td>
-                      {/* Total Charges */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <NumericCell value={record.totalCharges} recordId={record.id} field="totalCharges" onSave={handleSave} record={record} />
+                      {/* Insurance Paid Amount */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <NumericCell value={record.insurancePaidAmount} recordId={record.id} field="insurancePaidAmount" onSave={handleSave} record={record} />
                       </td>
-                      {/* Allowed Amount */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <NumericCell value={record.allowedAmount} recordId={record.id} field="allowedAmount" onSave={handleSave} record={record} />
+                      {/* Secondary Paid Amount */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <NumericCell value={record.secondaryPaidAmount} recordId={record.id} field="secondaryPaidAmount" onSave={handleSave} record={record} />
                       </td>
-                      {/* Patient Responsibility */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
+                      {/* Patient Responsibility Amount */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
                         <NumericCell value={record.patientResponsibility} recordId={record.id} field="patientResponsibility" onSave={handleSave} record={record} />
                       </td>
-                      {/* Adjustment Amount */}
-                      <td className="px-2 py-1 border-r border-slate-100 align-middle">
-                        <NumericCell value={record.adjustmentAmount} recordId={record.id} field="adjustmentAmount" onSave={handleSave} record={record} />
+                      {/* Claim Status */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <DropdownCell value={record.billingStatus} recordId={record.id} field="billingStatus" options={CLAIM_STATUS_OPTIONS} onSave={handleSave} record={record} />
                       </td>
-                      {/* Balance Remaining */}
-                      <td className="px-2 py-1 align-middle">
-                        <NumericCell value={record.balanceRemaining} recordId={record.id} field="balanceRemaining" onSave={handleSave} record={record} />
+                      {/* Invoice */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle" data-testid={`cell-invoice-${record.id}`}>
+                        {(() => {
+                          const link = invoiceLinkByRecord.get(record.id);
+                          if (!link) {
+                            return <span className="text-slate-300 italic text-[11px]">—</span>;
+                          }
+                          const balance = parseFloat(link.totalBalance);
+                          return (
+                            <Link
+                              href={`/invoices?invoice=${link.invoiceId}`}
+                              className="flex items-center gap-1.5 text-[11px] hover:underline group"
+                              data-testid={`link-invoice-${record.id}`}
+                            >
+                              <Receipt className="w-3 h-3 text-slate-400 group-hover:text-blue-600 shrink-0" />
+                              <div className="flex flex-col leading-tight min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-medium text-blue-600 truncate" data-testid={`text-invoice-number-${record.id}`}>
+                                    {link.invoiceNumber}
+                                  </span>
+                                  <Badge variant="outline" className={`text-[9px] px-1.5 py-0 h-4 ${statusBadgeClass(link.status)}`} data-testid={`badge-invoice-status-${record.id}`}>
+                                    {link.status}
+                                  </Badge>
+                                </div>
+                                {balance > 0.005 && (
+                                  <span className="text-[10px] text-rose-600 tabular-nums" data-testid={`text-invoice-balance-${record.id}`}>
+                                    Bal: ${balance.toFixed(2)}
+                                  </span>
+                                )}
+                              </div>
+                            </Link>
+                          );
+                        })()}
+                      </td>
+                      {/* Last Biller Update */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <EditableCell value={record.lastBillerUpdate} recordId={record.id} field="lastBillerUpdate" onSave={handleSave} record={record} placeholder="—" />
+                      </td>
+                      {/* Next Action */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <EditableCell value={record.nextAction} recordId={record.id} field="nextAction" onSave={handleSave} record={record} placeholder="—" />
+                      </td>
+                      {/* Billing Notes */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle">
+                        <EditableCell value={record.billingNotes} recordId={record.id} field="billingNotes" onSave={handleSave} record={record} placeholder="—" />
+                      </td>
+                      {/* Actions */}
+                      <td className="px-2 py-2 align-middle text-center">
+                        <button
+                          className="p-1 rounded hover:bg-red-50 text-slate-300 hover:text-red-400 transition-colors"
+                          onClick={() => { if (confirm(`Delete record for ${record.patientName}?`)) deleteMutation.mutate(record.id); }}
+                          data-testid={`button-delete-${record.id}`}
+                          title="Delete row"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </td>
                     </tr>
                   );

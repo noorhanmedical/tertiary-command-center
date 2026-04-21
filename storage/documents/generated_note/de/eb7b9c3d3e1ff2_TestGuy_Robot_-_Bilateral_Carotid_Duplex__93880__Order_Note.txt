@@ -1,0 +1,8 @@
+Patient
+TestGuy Robot (TEST FIXTURE)
+
+Order
+Order Bilateral Carotid Duplex (93880) for clinical evaluation.
+
+Indication
+Test fixture - automated verification only.

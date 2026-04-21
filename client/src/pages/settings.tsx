@@ -1,21 +1,25 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
 import {
   ArrowLeft,
+  Database,
+  Settings as SettingsIcon,
+  Sheet,
+  Users2,
   Plus,
   Pencil,
   Trash2,
   Check,
   X,
-  Settings as SettingsIcon,
+  Lock,
+  HardDrive,
+  BellRing,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -23,62 +27,409 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { OutreachScheduler } from "@shared/schema";
+import { VALID_FACILITIES } from "@shared/plexus";
+import { PageHeader } from "@/components/PageHeader";
 
-const VALID_FACILITIES = [
-  "Taylor Family Practice",
-  "NWPG - Spring",
-  "NWPG - Veterans",
-] as const;
-
+const FACILITIES = VALID_FACILITIES;
 type Facility = (typeof VALID_FACILITIES)[number];
 
-function shellClass() {
-  return "rounded-3xl border border-white/60 bg-white/75 backdrop-blur-xl shadow-[0_18px_60px_rgba(15,23,42,0.10)]";
+const DEFAULT_SCHEDULERS: { name: string; facility: Facility }[] = [
+  { name: "Callista", facility: "Taylor Family Practice" },
+  { name: "Roilan",   facility: "NWPG - Spring" },
+  { name: "Ashraful", facility: "NWPG - Veterans" },
+  { name: "Brian",    facility: "Taylor Family Practice" },
+];
+
+type TeamMember = {
+  id: string;
+  name: string;
+  initials: string;
+  role: string;
+};
+
+type ClinicSpreadsheetConnection = {
+  clinicKey: string;
+  clinicLabel: string;
+  spreadsheetId: string;
+  patientTabName: string;
+  calendarTabName: string;
+};
+
+type SettingsSnapshot = {
+  teamMembers: TeamMember[];
+  clinicSpreadsheetConnections: ClinicSpreadsheetConnection[];
+  sharedCalendarSpreadsheetId: string;
+  storageProvider?: "google_drive" | "s3";
+};
+
+type OutreachScheduler = {
+  id: number;
+  name: string;
+  facility: string;
+  capacityPercent: number;
+  createdAt: string;
+};
+
+const CAPACITY_OPTIONS = [25, 50, 75, 100] as const;
+
+type DistributionRow = {
+  id: number;
+  name: string;
+  facility: string;
+  capacityPercent: number;
+  userId: string | null;
+  onPtoToday: boolean;
+  activeCount: number;
+  reassignedInCount: number;
+  lastCallAt: string | null;
+};
+
+function formatLastActivity(iso: string | null): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "—";
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h ${mins % 60}m ago`;
 }
 
-type FormState = { name: string; facility: Facility | "" };
-const EMPTY_FORM: FormState = { name: "", facility: "" };
+function CallListDistributionCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useQuery<{ asOfDate: string; rows: DistributionRow[] }>({
+    queryKey: ["/api/scheduler-assignments/dashboard"],
+    refetchInterval: 60_000,
+  });
+
+  const rebuildMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/scheduler-assignments/rebuild", {});
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Rebuild failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-assignments/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-assignments"] });
+      toast({ title: "Call lists rebuilt for today" });
+    },
+    onError: (e: Error) => toast({ title: "Rebuild failed", description: e.message, variant: "destructive" }),
+  });
+
+  const redistributeMutation = useMutation({
+    mutationFn: async (schedulerId: number) => {
+      const res = await apiRequest("POST", "/api/scheduler-assignments/redistribute", {
+        schedulerId,
+        reason: "manual_redistribute",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Redistribute failed");
+      }
+      return res.json();
+    },
+    onSuccess: (summary: { released: number; reassigned: number; unassigned: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-assignments/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-assignments"] });
+      toast({
+        title: "Redistributed",
+        description: `Released ${summary.released}, reassigned ${summary.reassigned}, unplaced ${summary.unassigned}`,
+      });
+    },
+    onError: (e: Error) => toast({ title: "Redistribute failed", description: e.message, variant: "destructive" }),
+  });
+
+  const rows = data?.rows ?? [];
+
+  return (
+    <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <SettingsIcon className="h-5 w-5 text-indigo-600" />
+          <h2 className="text-lg font-semibold text-slate-900">Call-List Distribution</h2>
+          {data?.asOfDate && (
+            <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600">
+              {data.asOfDate}
+            </Badge>
+          )}
+        </div>
+        <Button
+          size="sm"
+          onClick={() => rebuildMutation.mutate()}
+          disabled={rebuildMutation.isPending}
+          className="h-8 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700"
+          data-testid="button-rebuild-distribution"
+        >
+          {rebuildMutation.isPending ? "Rebuilding…" : "Run distribution now"}
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-12 animate-pulse rounded-2xl bg-slate-100" />
+          ))}
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-center text-sm text-slate-400">
+          No schedulers configured yet.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div
+              key={r.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white/80 p-3"
+              data-testid={`distribution-row-${r.id}`}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-900">{r.name}</span>
+                  <Badge className={`rounded-full border text-[10px] ${facilityColor(r.facility)}`}>
+                    {r.facility}
+                  </Badge>
+                  {r.onPtoToday && (
+                    <Badge className="rounded-full border bg-amber-50 text-amber-700 border-amber-200 text-[10px]">
+                      PTO today
+                    </Badge>
+                  )}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500" data-testid={`distribution-meta-${r.id}`}>
+                  Capacity {r.capacityPercent}% · Queue {r.activeCount}
+                  {r.reassignedInCount > 0 && ` · ↩ ${r.reassignedInCount} reassigned in`}
+                  {` · Last activity ${formatLastActivity(r.lastCallAt)}`}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => redistributeMutation.mutate(r.id)}
+                disabled={redistributeMutation.isPending || r.activeCount === 0}
+                className="h-8 rounded-xl text-xs"
+                data-testid={`button-redistribute-${r.id}`}
+              >
+                Redistribute
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function facilityColor(f: string) {
+  if (f.includes("Spring")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (f.includes("Veteran")) return "bg-violet-50 text-violet-700 border-violet-200";
+  return "bg-blue-50 text-blue-700 border-blue-200";
+}
+
+function InvoiceReminderSettingsCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useQuery<{ thresholdDays: number; defaultThresholdDays: number }>({
+    queryKey: ["/api/settings/invoice-reminders"],
+  });
+  const [draft, setDraft] = useState<string>("");
+
+  useEffect(() => {
+    if (data?.thresholdDays != null) setDraft(String(data.thresholdDays));
+  }, [data?.thresholdDays]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (thresholdDays: number) => {
+      const res = await apiRequest("POST", "/api/settings/invoice-reminders", { thresholdDays });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/invoice-reminders"] });
+      toast({ title: "Reminder threshold saved" });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Failed to save", description: err.message, variant: "destructive" }),
+  });
+
+  const runMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/settings/invoice-reminders/run", {});
+      return res.json() as Promise<{ threshold: number; evaluated: number; reminded: number }>;
+    },
+    onSuccess: (summary) => {
+      toast({
+        title: "Reminder sweep complete",
+        description: `Evaluated ${summary.evaluated} overdue invoice(s), created ${summary.reminded} reminder task(s).`,
+      });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Reminder sweep failed", description: err.message, variant: "destructive" }),
+  });
+
+  const parsedDraft = parseInt(draft, 10);
+  const draftValid = Number.isFinite(parsedDraft) && parsedDraft >= 1 && parsedDraft <= 365;
+  const isDirty = draftValid && data && parsedDraft !== data.thresholdDays;
+
+  return (
+    <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+      <div className="mb-4 flex items-center gap-2">
+        <BellRing className="h-5 w-5 text-rose-600" />
+        <h2 className="text-lg font-semibold text-slate-900">Overdue Invoice Reminders</h2>
+      </div>
+      <p className="mb-3 text-sm text-slate-600">
+        Each morning, invoices in <em>Sent</em> or <em>Partially Paid</em> status with a non-zero
+        balance older than this many days create an urgent Plexus task for the billing team.
+        Each invoice is re-surfaced at most once per window.
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1">Threshold (days)</label>
+          <Input
+            type="number"
+            min={1}
+            max={365}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            disabled={isLoading}
+            className="h-9 w-32 rounded-xl"
+            data-testid="input-invoice-reminder-threshold"
+          />
+        </div>
+        <Button
+          onClick={() => draftValid && saveMutation.mutate(parsedDraft)}
+          disabled={!isDirty || saveMutation.isPending}
+          className="h-9 rounded-xl bg-rose-600 text-white hover:bg-rose-700"
+          data-testid="button-save-invoice-reminder-threshold"
+        >
+          {saveMutation.isPending ? "Saving…" : "Save threshold"}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => runMutation.mutate()}
+          disabled={runMutation.isPending}
+          className="h-9 rounded-xl"
+          data-testid="button-run-invoice-reminders"
+        >
+          {runMutation.isPending ? "Running…" : "Run reminder sweep now"}
+        </Button>
+      </div>
+      {data && (
+        <p className="mt-3 text-xs text-slate-500" data-testid="text-invoice-reminder-current">
+          Currently reminding on invoices ≥ {data.thresholdDays} day(s) old (default {data.defaultThresholdDays}).
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function ChangePasswordCard() {
+  const { toast } = useToast();
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (newPw !== confirm) { toast({ title: "Passwords do not match", variant: "destructive" }); return; }
+    if (newPw.length < 6) { toast({ title: "New password must be at least 6 characters", variant: "destructive" }); return; }
+    setLoading(true);
+    try {
+      await apiRequest("POST", "/api/auth/change-password", { currentPassword: currentPw, newPassword: newPw });
+      toast({ title: "Password changed successfully" });
+      setCurrentPw(""); setNewPw(""); setConfirm("");
+    } catch (err: any) {
+      const msg = err.message || "Failed to change password";
+      toast({ title: msg.includes("401") ? "Current password is incorrect" : msg, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+      <div className="mb-4 flex items-center gap-2">
+        <Lock className="h-5 w-5 text-indigo-700" />
+        <h2 className="text-lg font-semibold text-slate-900">Change Password</h2>
+      </div>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3 max-w-sm">
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1">Current password</label>
+          <Input type="password" value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} className="rounded-xl" data-testid="input-current-password" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1">New password</label>
+          <Input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} className="rounded-xl" data-testid="input-new-password" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1">Confirm new password</label>
+          <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="rounded-xl" data-testid="input-confirm-password" />
+        </div>
+        <Button type="submit" disabled={loading || !currentPw || !newPw || !confirm} className="w-fit rounded-xl bg-indigo-600 text-white hover:bg-indigo-700" data-testid="button-change-password">
+          {loading ? "Changing…" : "Change Password"}
+        </Button>
+      </form>
+    </Card>
+  );
+}
 
 export default function SettingsPage() {
+  const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [showAdd, setShowAdd] = useState(false);
-  const [addForm, setAddForm] = useState<FormState>(EMPTY_FORM);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<FormState>(EMPTY_FORM);
 
-  const { data: schedulers = [], isLoading } = useQuery<OutreachScheduler[]>({
+  const { data } = useQuery<SettingsSnapshot>({
+    queryKey: ["/api/settings/platform"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings/platform");
+      if (!res.ok) throw new Error("Failed to load settings");
+      return res.json();
+    },
+  });
+
+  const {
+    data: schedulers = [],
+    isLoading: schedulersLoading,
+  } = useQuery<OutreachScheduler[]>({
     queryKey: ["/api/outreach/schedulers"],
   });
 
+  const [newName, setNewName] = useState("");
+  const [newFacility, setNewFacility] = useState<Facility>("Taylor Family Practice");
+  const [newCapacity, setNewCapacity] = useState<number>(100);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editFacility, setEditFacility] = useState<Facility>("Taylor Family Practice");
+  const [editCapacity, setEditCapacity] = useState<number>(100);
+  const seededRef = useRef(false);
+
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; facility: string }) =>
-      apiRequest("POST", "/api/outreach/schedulers", data),
+    mutationFn: (body: { name: string; facility: string; capacityPercent?: number }) =>
+      apiRequest("POST", "/api/outreach/schedulers", body).then((r) => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/schedulers"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
-      setAddForm(EMPTY_FORM);
-      setShowAdd(false);
+      setNewName("");
+      setNewFacility("Taylor Family Practice");
+      setNewCapacity(100);
       toast({ title: "Scheduler added" });
     },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
+    onError: (err: Error) =>
+      toast({ title: "Failed to add scheduler", description: err.message, variant: "destructive" }),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: { name: string; facility: string } }) =>
-      apiRequest("PATCH", `/api/outreach/schedulers/${id}`, data),
+    mutationFn: ({ id, body }: { id: number; body: { name: string; facility: string; capacityPercent: number } }) =>
+      apiRequest("PATCH", `/api/outreach/schedulers/${id}`, body).then((r) => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/schedulers"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
       setEditingId(null);
       toast({ title: "Scheduler updated" });
     },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
+    onError: (err: Error) =>
+      toast({ title: "Update failed", description: err.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -86,227 +437,326 @@ export default function SettingsPage() {
       apiRequest("DELETE", `/api/outreach/schedulers/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/schedulers"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
       toast({ title: "Scheduler removed" });
     },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
+    onError: (err: Error) =>
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" }),
   });
 
+  useEffect(() => {
+    if (schedulersLoading) return;
+    if (schedulers.length > 0) return;
+    if (seededRef.current) return;
+    seededRef.current = true;
+    DEFAULT_SCHEDULERS.forEach(({ name, facility }) => {
+      createMutation.mutate({ name, facility });
+    });
+  }, [schedulersLoading, schedulers.length]);
+
+  function startEdit(s: OutreachScheduler) {
+    setEditingId(s.id);
+    setEditName(s.name);
+    setEditFacility(s.facility as Facility);
+    setEditCapacity(s.capacityPercent ?? 100);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+  }
+
+  function submitEdit(id: number) {
+    if (!editName.trim()) return;
+    updateMutation.mutate({ id, body: { name: editName.trim(), facility: editFacility, capacityPercent: editCapacity } });
+  }
+
   function handleAdd() {
-    if (!addForm.name.trim() || !addForm.facility) return;
-    createMutation.mutate({ name: addForm.name.trim(), facility: addForm.facility });
-  }
-
-  function startEdit(sc: OutreachScheduler) {
-    setEditingId(sc.id);
-    setEditForm({ name: sc.name, facility: sc.facility as Facility });
-  }
-
-  function handleSaveEdit() {
-    if (!editingId || !editForm.name.trim() || !editForm.facility) return;
-    updateMutation.mutate({ id: editingId, data: { name: editForm.name.trim(), facility: editForm.facility } });
+    if (!newName.trim()) return;
+    createMutation.mutate({ name: newName.trim(), facility: newFacility, capacityPercent: newCapacity });
   }
 
   return (
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
-      <div className="mx-auto flex w-full max-w-[960px] flex-col gap-6 px-6 py-6">
+      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-6 py-6">
+        <PageHeader
+          backHref="/"
+          eyebrow="PLEXUS ANCILLARY · SETTINGS"
+          icon={SettingsIcon}
+          title="Settings"
+          subtitle="Team members, patient databases, and clinic spreadsheet connections."
+        />
 
-        {/* Header */}
-        <div className="flex flex-wrap items-center gap-3">
-          <Button asChild variant="outline" className="rounded-2xl border-white/60 bg-white/80 backdrop-blur">
-            <Link href="/"><ArrowLeft className="mr-2 h-4 w-4" />Back</Link>
-          </Button>
-          <div className="flex items-center gap-2">
-            <div className="rounded-2xl bg-slate-900/5 p-2 text-slate-700">
-              <SettingsIcon className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Settings</h1>
-              <p className="text-sm text-slate-500">Manage scheduler coverage assignments for Outreach.</p>
-            </div>
+        {/* Static Team Members card */}
+        <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+          <div className="mb-4 flex items-center gap-2">
+            <Database className="h-5 w-5 text-blue-700" />
+            <h2 className="text-lg font-semibold text-slate-900">Team Members</h2>
           </div>
-        </div>
-
-        {/* Scheduler Coverage section */}
-        <Card className={`${shellClass()} p-6`}>
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">Scheduler Coverage</h2>
-              <p className="text-sm text-slate-500">
-                Each entry maps a team member to the clinic they cover. One row per clinic per person.
-              </p>
-            </div>
-            <Button
-              onClick={() => { setShowAdd(true); setAddForm(EMPTY_FORM); }}
-              className="rounded-2xl"
-              data-testid="button-add-scheduler"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Add Scheduler
-            </Button>
-          </div>
-
-          {/* Add form */}
-          {showAdd && (
-            <div className="mb-4 rounded-2xl border border-blue-200/60 bg-blue-50/60 p-4">
-              <p className="mb-3 text-sm font-medium text-slate-700">New Scheduler</p>
-              <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-500">Name</Label>
-                  <Input
-                    value={addForm.name}
-                    onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
-                    placeholder="e.g. Maria"
-                    className="rounded-xl"
-                    data-testid="input-scheduler-name"
-                    onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-500">Assigned Clinic</Label>
-                  <Select
-                    value={addForm.facility}
-                    onValueChange={(v) => setAddForm((f) => ({ ...f, facility: v as Facility }))}
-                  >
-                    <SelectTrigger className="rounded-xl" data-testid="select-scheduler-facility">
-                      <SelectValue placeholder="Select clinic" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {VALID_FACILITIES.map((f) => (
-                        <SelectItem key={f} value={f}>{f}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-end gap-2">
-                  <Button
-                    onClick={handleAdd}
-                    disabled={!addForm.name.trim() || !addForm.facility || createMutation.isPending}
-                    className="rounded-xl"
-                    data-testid="button-confirm-add-scheduler"
-                  >
-                    <Check className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowAdd(false)}
-                    className="rounded-xl"
-                    data-testid="button-cancel-add-scheduler"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+          <div className="grid gap-3 md:grid-cols-3">
+            {(data?.teamMembers || []).map((member) => (
+              <div key={member.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-100 text-sm font-semibold text-blue-700">
+                    {member.initials}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-900">{member.name}</p>
+                    <p className="text-sm text-slate-500">{member.role}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            ))}
+          </div>
+        </Card>
 
-          {/* Scheduler list */}
-          {isLoading ? (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
-              Loading schedulers…
+        {/* Scheduler Team */}
+        <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Users2 className="h-5 w-5 text-violet-600" />
+              <h2 className="text-lg font-semibold text-slate-900">Scheduler Team</h2>
             </div>
-          ) : schedulers.length === 0 && !showAdd ? (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
-              No schedulers configured yet. Click "Add Scheduler" to get started.
+            <Badge variant="outline" className="rounded-full border-violet-200 bg-violet-50 text-violet-700">
+              {schedulers.length} member{schedulers.length !== 1 ? "s" : ""}
+            </Badge>
+          </div>
+
+          {schedulersLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-14 animate-pulse rounded-2xl bg-slate-100" />
+              ))}
+            </div>
+          ) : schedulers.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-center text-sm text-slate-400">
+              Setting up default team members…
             </div>
           ) : (
             <div className="space-y-2">
-              {schedulers.map((sc) =>
-                editingId === sc.id ? (
+              {schedulers.map((s) =>
+                editingId === s.id ? (
                   <div
-                    key={sc.id}
-                    className="rounded-2xl border border-blue-200/60 bg-blue-50/40 p-4"
-                    data-testid={`scheduler-edit-row-${sc.id}`}
+                    key={s.id}
+                    className="flex flex-wrap items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50/60 p-3"
+                    data-testid={`scheduler-edit-row-${s.id}`}
                   >
-                    <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-                      <div className="space-y-1">
-                        <Label className="text-xs text-slate-500">Name</Label>
-                        <Input
-                          value={editForm.name}
-                          onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
-                          className="rounded-xl"
-                          data-testid={`input-edit-name-${sc.id}`}
-                          onKeyDown={(e) => e.key === "Enter" && handleSaveEdit()}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs text-slate-500">Assigned Clinic</Label>
-                        <Select
-                          value={editForm.facility}
-                          onValueChange={(v) => setEditForm((f) => ({ ...f, facility: v as Facility }))}
-                        >
-                          <SelectTrigger className="rounded-xl" data-testid={`select-edit-facility-${sc.id}`}>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {VALID_FACILITIES.map((f) => (
-                              <SelectItem key={f} value={f}>{f}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex items-end gap-2">
-                        <Button
-                          onClick={handleSaveEdit}
-                          disabled={!editForm.name.trim() || !editForm.facility || updateMutation.isPending}
-                          className="rounded-xl"
-                          data-testid={`button-save-edit-${sc.id}`}
-                        >
-                          <Check className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          onClick={() => setEditingId(null)}
-                          className="rounded-xl"
-                          data-testid={`button-cancel-edit-${sc.id}`}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
+                    <Input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="h-8 w-36 rounded-xl text-sm"
+                      placeholder="Name"
+                      data-testid={`input-edit-name-${s.id}`}
+                    />
+                    <Select value={editFacility} onValueChange={(v) => setEditFacility(v as Facility)}>
+                      <SelectTrigger className="h-8 w-52 rounded-xl text-sm" data-testid={`select-edit-facility-${s.id}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {FACILITIES.map((f) => (
+                          <SelectItem key={f} value={f}>{f}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={String(editCapacity)} onValueChange={(v) => setEditCapacity(parseInt(v, 10))}>
+                      <SelectTrigger className="h-8 w-28 rounded-xl text-sm" data-testid={`select-edit-capacity-${s.id}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CAPACITY_OPTIONS.map((c) => (
+                          <SelectItem key={c} value={String(c)}>{c}% calls</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      size="sm"
+                      className="h-8 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+                      onClick={() => submitEdit(s.id)}
+                      disabled={updateMutation.isPending}
+                      data-testid={`button-save-scheduler-${s.id}`}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 rounded-xl"
+                      onClick={cancelEdit}
+                      data-testid={`button-cancel-edit-${s.id}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
                 ) : (
                   <div
-                    key={sc.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-sm"
-                    data-testid={`scheduler-row-${sc.id}`}
+                    key={s.id}
+                    className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50/60 px-4 py-3 hover:border-slate-200"
+                    data-testid={`scheduler-row-${s.id}`}
                   >
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="text-sm font-semibold text-slate-900" data-testid={`text-scheduler-name-${sc.id}`}>
-                        {sc.name}
-                      </span>
-                      <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-50 text-slate-600 text-xs">
-                        {sc.facility}
-                      </Badge>
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-xs font-semibold text-violet-700">
+                        {s.name.slice(0, 2).toUpperCase()}
+                      </div>
+                      <p className="font-medium text-slate-900">{s.name}</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button
+                      <Badge
                         variant="outline"
-                        size="sm"
-                        onClick={() => startEdit(sc)}
-                        className="rounded-xl h-8 w-8 p-0"
-                        data-testid={`button-edit-scheduler-${sc.id}`}
+                        className={`rounded-full border text-xs ${facilityColor(s.facility)}`}
+                        data-testid={`badge-facility-${s.id}`}
+                      >
+                        {s.facility}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="rounded-full border-slate-200 bg-white text-xs text-slate-600"
+                        data-testid={`badge-capacity-${s.id}`}
+                        title="Share of the workday spent on calls — drives capacity-weighted patient distribution."
+                      >
+                        {s.capacityPercent ?? 100}% calls
+                      </Badge>
+                      <button
+                        type="button"
+                        onClick={() => startEdit(s)}
+                        className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                        data-testid={`button-edit-scheduler-${s.id}`}
                       >
                         <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => deleteMutation.mutate(sc.id)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteMutation.mutate(s.id)}
                         disabled={deleteMutation.isPending}
-                        className="rounded-xl h-8 w-8 p-0 text-red-600 hover:bg-red-50 hover:border-red-200"
-                        data-testid={`button-delete-scheduler-${sc.id}`}
+                        className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                        data-testid={`button-delete-scheduler-${s.id}`}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      </button>
                     </div>
                   </div>
-                ),
+                )
               )}
             </div>
           )}
+
+          {/* Add Member form */}
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-white/60 p-3">
+            <Plus className="h-4 w-4 shrink-0 text-slate-400" />
+            <Input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+              placeholder="Scheduler name"
+              className="h-8 w-40 rounded-xl text-sm"
+              data-testid="input-new-scheduler-name"
+            />
+            <Select value={newFacility} onValueChange={(v) => setNewFacility(v as Facility)}>
+              <SelectTrigger className="h-8 w-52 rounded-xl text-sm" data-testid="select-new-scheduler-facility">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FACILITIES.map((f) => (
+                  <SelectItem key={f} value={f}>{f}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={String(newCapacity)} onValueChange={(v) => setNewCapacity(parseInt(v, 10))}>
+              <SelectTrigger className="h-8 w-32 rounded-xl text-sm" data-testid="select-new-scheduler-capacity">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CAPACITY_OPTIONS.map((c) => (
+                  <SelectItem key={c} value={String(c)}>{c}% calls</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              onClick={handleAdd}
+              disabled={!newName.trim() || createMutation.isPending}
+              className="h-8 rounded-xl bg-violet-600 text-white hover:bg-violet-700"
+              data-testid="button-add-scheduler"
+            >
+              Add Member
+            </Button>
+          </div>
+        </Card>
+
+        {/* Call-list distribution */}
+        <CallListDistributionCard />
+
+        {/* Overdue invoice reminders */}
+        <InvoiceReminderSettingsCard />
+
+        {/* Change Password */}
+        <ChangePasswordCard />
+
+        {/* Clinic Spreadsheet Connections */}
+        <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+          <div className="mb-4 flex items-center gap-2">
+            <Sheet className="h-5 w-5 text-green-700" />
+            <h2 className="text-lg font-semibold text-slate-900">Clinic Spreadsheet Connections</h2>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            {(data?.clinicSpreadsheetConnections || []).map((conn) => (
+              <div key={conn.clinicKey} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-semibold text-slate-900">{conn.clinicLabel}</p>
+                  <Badge variant="outline" className="rounded-full border-slate-200 bg-white text-slate-700">
+                    {conn.clinicKey}
+                  </Badge>
+                </div>
+                <div className="mt-3 space-y-1 text-sm text-slate-600">
+                  <p>Spreadsheet ID: {conn.spreadsheetId || "Not configured"}</p>
+                  <p>Patient tab: {conn.patientTabName}</p>
+                  <p>Calendar tab: {conn.calendarTabName}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
+            Shared calendar spreadsheet ID: {data?.sharedCalendarSpreadsheetId || "Not configured"}
+          </div>
+        </Card>
+
+        {/* Storage Provider */}
+        <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+          <div className="mb-4 flex items-center gap-2">
+            <HardDrive className="h-5 w-5 text-indigo-600" />
+            <h2 className="text-lg font-semibold text-slate-900">File Storage Provider</h2>
+          </div>
+          <div className="flex items-center gap-3">
+            {data?.storageProvider === "s3" ? (
+              <>
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100">
+                  <HardDrive className="h-5 w-5 text-orange-600" />
+                </div>
+                <div>
+                  <p className="font-semibold text-slate-900">AWS S3</p>
+                  <p className="text-sm text-slate-500">Clinical documents and reports stored in Amazon S3</p>
+                </div>
+                <Badge variant="outline" className="ml-auto rounded-full border-orange-200 bg-orange-50 text-orange-700" data-testid="badge-storage-provider">
+                  S3
+                </Badge>
+              </>
+            ) : (
+              <>
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100">
+                  <HardDrive className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="font-semibold text-slate-900">Google Drive</p>
+                  <p className="text-sm text-slate-500">Clinical documents and reports stored in Google Drive</p>
+                </div>
+                <Badge variant="outline" className="ml-auto rounded-full border-blue-200 bg-blue-50 text-blue-700" data-testid="badge-storage-provider">
+                  Google Drive
+                </Badge>
+              </>
+            )}
+          </div>
+          <p className="mt-3 text-xs text-slate-500">
+            Storage provider is configured via the <code className="rounded bg-slate-100 px-1 py-0.5 font-mono">STORAGE_PROVIDER</code> environment variable
+            (<code className="rounded bg-slate-100 px-1 py-0.5 font-mono">google_drive</code> or <code className="rounded bg-slate-100 px-1 py-0.5 font-mono">s3</code>).
+          </p>
         </Card>
       </div>
     </div>

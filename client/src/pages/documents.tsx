@@ -9,6 +9,7 @@ import { ArrowLeft, FileText, Building2, Calendar, ChevronDown, ChevronRight, Co
 import { SiGoogledrive } from "react-icons/si";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
 import { DocumentSection } from "@/components/DocumentSection";
+import { PageHeader } from "@/components/PageHeader";
 type NoteSection = { heading: string; body: string };
 
 function noteNeedsDx(sections: NoteSection[], docKind: string): boolean {
@@ -298,24 +299,17 @@ export default function DocumentsPage() {
   return (
     <main className="flex-1 overflow-y-auto bg-[hsl(210,35%,96%)]">
       <div className="max-w-3xl mx-auto px-5 py-8">
-        <div className="flex items-center gap-3 mb-6">
-          <Link href="/">
-            <Button variant="ghost" size="sm" className="gap-1.5 text-slate-600 hover:text-slate-900" data-testid="button-back-home">
-              <ArrowLeft className="w-4 h-4" />
-              Home
-            </Button>
-          </Link>
-        </div>
-
-        <div className="flex items-center justify-between gap-4 mb-8">
-          <div className="flex items-center gap-3">
-            <FileText className="w-7 h-7 text-teal-600" />
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900">Ancillary Documents</h1>
-              <p className="text-sm text-slate-500 mt-0.5">Auto-generated notes organized by clinic, date, and patient</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
+        <PageHeader
+          backHref="/"
+          backLabel="Home"
+          eyebrow="PLEXUS ANCILLARY · DOCUMENTS"
+          icon={FileText}
+          iconAccent="bg-teal-100 text-teal-700"
+          title="Ancillary Documents"
+          subtitle="Auto-generated notes organized by clinic, date, and patient"
+          className="mb-8"
+          actions={
+            <>
             <Link href="/plexus">
               <Button
                 variant="outline"
@@ -372,8 +366,9 @@ export default function DocumentsPage() {
                 Sync All to Drive
               </Button>
             )}
-          </div>
-        </div>
+            </>
+          }
+        />
 
         {isLoading ? (
           <div className="flex items-center justify-center py-16">

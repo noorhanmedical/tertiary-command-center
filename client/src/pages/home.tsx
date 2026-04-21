@@ -1,273 +1,59 @@
-import { useState, useCallback, useEffect } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
-import { autoGeneratePatientNotes } from "@/lib/noteGeneration";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useToast } from "@/hooks/use-toast";
 import {
-  generateClinicianPDF,
-  generatePlexusPDF,
-  type ReasoningValue,
-} from "@/lib/pdfGeneration";
-import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
+  useScreeningBatches,
+  useScreeningBatch,
+  useCreateBatch,
+  useDeleteBatch,
+  useUpdateBatch,
+  useAssignScheduler,
+  useAddPatient,
+  useImportPatientsText,
+  useImportPatientsFile,
+  useUpdatePatient,
+  useDeletePatient,
+  useStartBatchAnalysis,
+  useAnalyzePatient,
+  useInvalidateBatch,
+  fetchAnalysisStatus,
+  type ScreeningBatchWithPatients as ScreeningBatchWithPatientsHook,
+} from "@/hooks/api/screening-batches";
+import {
+  useTestHistory,
+  useImportTestHistoryText,
+  useImportTestHistoryFile,
+  useDeleteTestHistoryRecord,
+  useClearTestHistory,
+} from "@/hooks/api/test-history";
+import { useScheduleDashboard } from "@/hooks/api/dashboard";
+import { useOutreachSchedulers } from "@/hooks/api/outreach";
+import { queryClient } from "@/lib/queryClient";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Calendar as CalendarPicker } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
-import { categoryIcons, categoryLabels, categoryStyles, getAncillaryCategory, getBadgeColor, isImagingTest, type AncillaryCategory } from "@/features/schedule/ancillaryMeta";
-import { QualificationReasoningDialog } from "@/features/schedule/QualificationReasoningDialog";
-import { CompletedTestsDialog } from "@/features/schedule/CompletedTestsDialog";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarTrigger,
-  useSidebar,
-} from "@/components/ui/sidebar";
-import {
-  Upload,
-  FileText,
-  Brain,
-  Activity,
-  Scan,
-  Loader2,
-  ChevronDown, // used in sidebar/results
-  ChevronRight,
-  ChevronLeft,
-  Download,
-  Stethoscope,
-  Pill,
-  Zap,
-  Check,
-  Trash2,
-  MessageCircle,
-  GraduationCap,
-  Plus,
-  Sparkles,
-  Calendar,
-  X,
-  Clock,
-  PanelLeft,
-  Database,
-  AlertTriangle,
-  Search,
-  Users,
-  DollarSign,
-  Building2,
-  Share2,
-  Copy,
-  Printer,
-  Users2,
-  Archive,
-  Lock,
-  Phone,
-  ClipboardList,
-  RefreshCw,
-  Settings,
-} from "lucide-react";
-import { Link, useLocation } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { ScreeningBatch, PatientScreening, PatientTestHistory, AncillaryAppointment } from "@shared/schema";
-import { SiGooglesheets } from "react-icons/si";
-import { ExternalLink } from "lucide-react";
-import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
-import { PlexusDrive } from "@/components/PlexusDrive";
-import { type GeneratedDocument } from "@shared/plexus";
+import { useSidebar, SidebarTrigger } from "@/components/ui/sidebar";
+import { PageHeader } from "@/components/PageHeader";
+import { AlertTriangle, Database, FileText, Loader2, Lock, Plus, Search, Trash2, Upload, User, X } from "lucide-react";
+import type { PatientScreening, OutreachScheduler } from "@shared/schema";
+import type { ReasoningValue } from "@/lib/pdfGeneration";
+import { VALID_FACILITIES } from "@shared/plexus";
+import { HomeSidebar } from "@/components/HomeSidebar";
+import { HomeDashboard, type ScheduleDashboardResponse } from "@/components/HomeDashboard";
+import { PatientDirectoryView } from "@/components/PatientDirectoryView";
+import { ResultsView } from "@/components/ResultsView";
+import { PatientCard } from "@/components/PatientCard";
+import { AppointmentModal } from "@/components/AppointmentModal";
+import { BatchHeader } from "@/components/BatchHeader";
 
-type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
+export type ScreeningBatchWithPatients = ScreeningBatchWithPatientsHook;
 
-const ULTRASOUND_TESTS = ["carotid", "echo", "stress", "venous", "duplex", "renal", "arterial", "aortic", "aneurysm", "aaa", "93880", "93306", "93975", "93925", "93930", "93978", "93350", "93971", "93970"];
-
-
-
-
-const ALL_AVAILABLE_TESTS: string[] = [
-  "BrainWave",
-  "VitalWave",
-  "Bilateral Carotid Duplex",
-  "Echocardiogram TTE",
-  "Stress Echocardiogram",
-  "Lower Extremity Venous Duplex",
-  "Upper Extremity Venous Duplex",
-  "Renal Artery Doppler",
-  "Lower Extremity Arterial Doppler",
-  "Upper Extremity Arterial Doppler",
-  "Abdominal Aortic Aneurysm Duplex",
-];
-
-function StepTimeline({ current, onNavigate, canGoToResults }: { current: "home" | "build" | "results"; onNavigate: (step: "home" | "build" | "results") => void; canGoToResults: boolean }) {
-  const steps = [
-    { id: "home" as const, label: "Home", num: 1 },
-    { id: "build" as const, label: "Build Schedule", num: 2 },
-    { id: "results" as const, label: "Final Schedule", num: 3 },
-  ];
-  const currentIdx = steps.findIndex((s) => s.id === current);
-
-  return (
-    <div className="flex items-center justify-center gap-0 py-2 px-4 border-b bg-white/50 dark:bg-card/50" data-testid="step-timeline">
-      {steps.map((step, i) => {
-        const isActive = step.id === current;
-        const isPast = i < currentIdx;
-        const isClickable = true;
-
-        return (
-          <div key={step.id} className="flex items-center">
-            {i > 0 && (
-              <div className={`w-8 sm:w-12 h-px mx-1 ${isPast || isActive ? "bg-primary" : "bg-border"}`} />
-            )}
-            <Button
-              variant={isActive ? "default" : "ghost"}
-              size="sm"
-              onClick={() => isClickable && onNavigate(step.id)}
-              disabled={!isClickable}
-              className={`gap-1.5 text-xs ${
-                isActive
-                  ? ""
-                  : isPast
-                  ? "text-primary"
-                  : ""
-              }`}
-              data-testid={`step-${step.id}`}
-            >
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
-                isActive
-                  ? "bg-primary-foreground text-primary"
-                  : isPast
-                  ? "bg-primary/20 text-primary"
-                  : "bg-muted text-muted-foreground"
-              }`}>
-                {isPast ? <Check className="w-3 h-3" /> : step.num}
-              </span>
-              <span className="hidden sm:inline">{step.label}</span>
-            </Button>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-
-const FACILITIES = ["Taylor Family Practice", "NWPG - Spring", "NWPG - Veterans"] as const;
-type Facility = typeof FACILITIES[number];
-
-const APPOINTMENT_STATUSES = ["Completed", "No Show", "Rescheduled", "Scheduled Different Day", "Cancelled", "Pending"] as const;
-type AppointmentStatus = typeof APPOINTMENT_STATUSES[number];
-
+const FACILITIES = VALID_FACILITIES;
 const IMPORT_ACCESS_CODE = "1234";
-
 type TabItem = { type: "home" } | { type: "history" } | { type: "references" } | { type: "schedule"; batchId: number; label: string; viewMode?: "build" | "results" };
-
-function ScheduleTile() {
-  const fmt12 = (time24: string) => {
-    const [h, m] = time24.split(":").map(Number);
-    return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
-  };
-
-  const { data: appts = [], isLoading } = useQuery<AncillaryAppointment[]>({
-    queryKey: ["/api/appointments/schedule-tile"],
-    queryFn: async () => {
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch("/api/appointments?upcoming=true", { headers });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 60000,
-  });
-
-  const grouped: Record<string, AncillaryAppointment[]> = {};
-  for (const a of appts) {
-    if (!grouped[a.scheduledDate]) grouped[a.scheduledDate] = [];
-    grouped[a.scheduledDate].push(a);
-  }
-  const sortedDates = Object.keys(grouped).sort();
-
-  function testTypeBadge(testType: string) {
-    if (testType === "BrainWave") return { label: "BrainWave", cls: "bg-violet-100 text-violet-700" };
-    if (testType === "VitalWave") return { label: "VitalWave", cls: "bg-red-100 text-red-600" };
-    return { label: testType, cls: "bg-emerald-100 text-emerald-700" };
-  }
-
-  function formatDateHeader(dateStr: string) {
-    const d = new Date(dateStr + "T00:00:00");
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
-    if (d.getTime() === today.getTime()) return "Today";
-    if (d.getTime() === tomorrow.getTime()) return "Tomorrow";
-    return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-  }
-
-  if (isLoading) {
-    return (
-      <div className="space-y-2 animate-pulse">
-        {[...Array(3)].map((_, i) => (
-          <div key={i} className="h-8 bg-slate-100 rounded-lg" />
-        ))}
-      </div>
-    );
-  }
-
-  if (appts.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-10 text-center" data-testid="schedule-tile-empty">
-        <Calendar className="w-10 h-10 text-slate-300 mb-3" strokeWidth={1.5} />
-        <p className="text-sm font-medium text-slate-500 mb-1">No appointments scheduled</p>
-        <span className="text-xs text-primary font-medium hover:underline cursor-pointer" data-testid="link-schedule-go">
-          Go to Schedule →
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <div data-testid="schedule-tile-list" className="max-h-[400px] overflow-y-auto pr-1">
-      <div className="space-y-4">
-        {sortedDates.map((dateStr) => (
-          <div key={dateStr}>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-                {formatDateHeader(dateStr)}
-              </span>
-              <div className="flex-1 h-px bg-slate-100" />
-            </div>
-            <div className="space-y-1">
-              {grouped[dateStr].map((a) => {
-                const badge = testTypeBadge(a.testType);
-                return (
-                  <div
-                    key={a.id}
-                    className="flex items-center gap-3 px-3 py-2 rounded-xl bg-slate-50/80 border border-slate-100 hover:bg-slate-100/70 transition-colors"
-                    data-testid={`schedule-tile-row-${a.id}`}
-                  >
-                    <span className="text-xs font-semibold text-primary w-16 shrink-0 tabular-nums">{fmt12(a.scheduledTime)}</span>
-                    <span className="text-xs font-medium text-slate-800 flex-1 truncate">{a.patientName}</span>
-                    <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
-                    <span className="text-[10px] text-slate-400 shrink-0 truncate max-w-[120px]">{a.facility}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 export default function Home() {
   const [tabs, setTabs] = useState<TabItem[]>([{ type: "home" }]);
@@ -284,16 +70,7 @@ export default function Home() {
   const [dirPasteText, setDirPasteText] = useState("");
   const [dirSearch, setDirSearch] = useState("");
   const [selectedBatchIds, setSelectedBatchIds] = useState<Set<number>>(new Set());
-
-  const activeTab = tabs[activeTabIndex] || tabs[0] || { type: "home" };
-  const selectedBatchId = activeTab.type === "schedule" ? activeTab.batchId : null;
-  const scheduleViewMode = activeTab.type === "schedule" ? (activeTab.viewMode || "build") : null;
-  const view = activeTab.type === "history" ? "history" : activeTab.type === "references" ? "references" : activeTab.type === "schedule" ? "schedule" : "home";
-
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const { setOpen: setSidebarOpen } = useSidebar();
-  const [, setLocation] = useLocation();
+  const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
   const [newScheduleDialogOpen, setNewScheduleDialogOpen] = useState(false);
   const [newScheduleDate, setNewScheduleDate] = useState<Date | undefined>(new Date());
   const [newScheduleFacility, setNewScheduleFacility] = useState<string>("");
@@ -301,813 +78,467 @@ export default function Home() {
   const [importCodeInput, setImportCodeInput] = useState("");
   const [importCodeError, setImportCodeError] = useState(false);
   const [scheduleModalPatient, setScheduleModalPatient] = useState<PatientScreening | null>(null);
+  const [dashboardWeekOverride, setDashboardWeekOverride] = useState<string | null>(null);
+  const [dashboardClinicKey, setDashboardClinicKey] = useState<string | null>(null);
+  const [isAutoPolling, setIsAutoPolling] = useState(false);
+  const [assignSchedulerModal, setAssignSchedulerModal] = useState<{
+    batchId: number;
+    batchName: string;
+    availableSchedulers: OutreachScheduler[];
+  } | null>(null);
+  const autoPollingRef = useRef(false);
+  const prevBatchStatusRef = useRef<string | undefined>(undefined);
+  const wasAutoPollingRef = useRef(false);
+  const trackedBatchIdRef = useRef<number | null>(null);
 
-  const { data: batches = [], isLoading: batchesLoading } = useQuery<ScreeningBatchWithPatients[]>({
-    queryKey: ["/api/screening-batches"],
+  const activeTab = tabs[activeTabIndex] || tabs[0] || { type: "home" };
+  const selectedBatchId = activeTab.type === "schedule" ? activeTab.batchId : null;
+  const scheduleViewMode = activeTab.type === "schedule" ? (activeTab.viewMode || "build") : null;
+  const view = activeTab.type === "history" ? "history" : activeTab.type === "references" ? "references" : activeTab.type === "schedule" ? "schedule" : "home";
+
+  const { toast } = useToast();
+  const { setOpen: setSidebarOpen } = useSidebar();
+  const invalidateBatch = useInvalidateBatch();
+
+  const { data: batches = [], isLoading: batchesLoading } = useScreeningBatches();
+  const { data: selectedBatch, isLoading: batchLoading } = useScreeningBatch(selectedBatchId, { pollWhileProcessing: true });
+  const historyEnabled = view === "history" || view === "references" || tabs.some((t) => t.type === "history" || t.type === "references");
+  const { data: testHistory = [], isLoading: historyLoading } = useTestHistory(historyEnabled);
+  const { data: dashboardData, isLoading: dashboardLoading } = useScheduleDashboard({
+    weekOverride: dashboardWeekOverride,
+    enabled: view === "home",
   });
+  const { data: outreachSchedulers = [] } = useOutreachSchedulers<OutreachScheduler>();
 
-  const { data: selectedBatch, isLoading: batchLoading } = useQuery<ScreeningBatchWithPatients>({
-    queryKey: ["/api/screening-batches", selectedBatchId],
-    enabled: !!selectedBatchId,
-    refetchInterval: (query) => query.state.data?.status === "processing" ? 2000 : false,
-  });
+  const importHistoryTextMut = useImportTestHistoryText();
+  const importHistoryFileMut = useImportTestHistoryFile();
+  const deleteHistoryMut = useDeleteTestHistoryRecord();
+  const clearHistoryMut = useClearTestHistory();
 
-  const { data: testHistory = [], isLoading: historyLoading } = useQuery<PatientTestHistory[]>({
-    queryKey: ["/api/test-history"],
-    enabled: view === "history" || view === "references" || tabs.some((t) => t.type === "history" || t.type === "references"),
-  });
+  const importHistoryMutation = {
+    mutate: (text: string, opts?: { onSuccess?: () => void }) =>
+      importHistoryTextMut.mutate(text, {
+        onSuccess: (data) => {
+          toast({ title: `Imported ${data.imported} records` });
+          setHistoryPasteText("");
+          opts?.onSuccess?.();
+        },
+        onError: (e: unknown) =>
+          toast({ title: "Import failed", description: e instanceof Error ? e.message : "Import failed", variant: "destructive" }),
+      }),
+    isPending: importHistoryTextMut.isPending,
+  };
+  const importHistoryFileMutation = {
+    mutate: (file: File) =>
+      importHistoryFileMut.mutate(file, {
+        onSuccess: (data) => toast({ title: `Imported ${data.imported} records` }),
+        onError: (e: unknown) =>
+          toast({ title: "Import failed", description: e instanceof Error ? e.message : "Import failed", variant: "destructive" }),
+      }),
+    isPending: importHistoryFileMut.isPending,
+  };
+  const deleteHistoryMutation = { mutate: (id: number) => deleteHistoryMut.mutate(id) };
+  const clearHistoryMutation = {
+    mutate: () =>
+      clearHistoryMut.mutate(undefined, {
+        onSuccess: () => toast({ title: "All history cleared" }),
+      }),
+  };
 
-  const importHistoryMutation = useMutation({
-    mutationFn: async (text: string) => {
-      const res = await apiRequest("POST", "/api/test-history/import", { text });
-      return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/test-history"] });
-      toast({ title: `Imported ${data.imported} records` });
-      setHistoryPasteText("");
-    },
-    onError: (e: any) => {
-      toast({ title: "Import failed", description: e.message, variant: "destructive" });
-    },
-  });
-
-  const importHistoryFileMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData();
-      formData.append("file", file);
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch("/api/test-history/import", { method: "POST", headers, body: formData });
-      if (!res.ok) throw new Error((await res.json()).error || "Import failed");
-      return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/test-history"] });
-      toast({ title: `Imported ${data.imported} records` });
-    },
-    onError: (e: any) => {
-      toast({ title: "Import failed", description: e.message, variant: "destructive" });
-    },
-  });
-
-  const deleteHistoryMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/test-history/${id}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/test-history"] });
-    },
-  });
-
-  const clearHistoryMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("DELETE", "/api/test-history");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/test-history"] });
-      toast({ title: "All history cleared" });
-    },
-  });
-
-
-  const openScheduleTab = useCallback((batchId: number, label: string, status?: string) => {
+  const openScheduleTab = useCallback((batchId: number, label: string) => {
     const existingIdx = tabs.findIndex((t) => t.type === "schedule" && t.batchId === batchId);
-    if (existingIdx >= 0) {
-      setActiveTabIndex(existingIdx);
-    } else {
-      const newTab: TabItem = { type: "schedule", batchId, label };
-      setTabs((prev) => [...prev, newTab]);
-      setActiveTabIndex(tabs.length);
-    }
+    if (existingIdx >= 0) { setActiveTabIndex(existingIdx); }
+    else { setTabs((prev) => [...prev, { type: "schedule", batchId, label }]); setActiveTabIndex(tabs.length); }
   }, [tabs]);
 
-  const closeTab = useCallback((index: number) => {
-    setTabs((prev) => {
-      const next = prev.filter((_, i) => i !== index);
-      if (next.length === 0) return [{ type: "home" as const }];
-      return next;
-    });
-    setActiveTabIndex((prev) => {
-      if (index < prev) return prev - 1;
-      if (index === prev) return Math.max(0, index - 1);
-      return prev;
-    });
+  useEffect(() => {
+    const stored = sessionStorage.getItem("pendingSchedulerAssignment");
+    if (stored) {
+      try {
+        const pending = JSON.parse(stored) as { batchId: number; batchName: string; availableSchedulers: OutreachScheduler[] };
+        if (pending.batchId && pending.batchName) {
+          openScheduleTab(pending.batchId, pending.batchName);
+          setAssignSchedulerModal(pending);
+        }
+      } catch {
+        sessionStorage.removeItem("pendingSchedulerAssignment");
+      }
+    }
   }, []);
 
-  const createBatchMutation = useMutation({
-    mutationFn: async ({ name, facility, scheduleDate }: { name: string; facility: string; scheduleDate?: string }) => {
-      const res = await apiRequest("POST", "/api/batches", { name, facility, scheduleDate });
-      return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      openScheduleTab(data.id, data.name || "New Schedule");
-    },
-  });
+  const closeTab = useCallback((index: number) => {
+    setTabs((prev) => { const next = prev.filter((_, i) => i !== index); return next.length === 0 ? [{ type: "home" as const }] : next; });
+    setActiveTabIndex((prev) => { if (index < prev) return prev - 1; if (index === prev) return Math.max(0, index - 1); return prev; });
+  }, []);
 
-  const addPatientMutation = useMutation({
-    mutationFn: async ({ batchId, name, time }: { batchId: number; name: string; time?: string }) => {
-      const res = await apiRequest("POST", `/api/batches/${batchId}/patients`, { name, time });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-    },
-  });
-
-  const importTextMutation = useMutation({
-    mutationFn: async ({ batchId, text }: { batchId: number; text: string }) => {
-      const res = await apiRequest("POST", `/api/batches/${batchId}/import-text`, { text });
-      return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      setPasteText("");
-      toast({ title: `Imported ${data.imported} patients` });
-    },
-  });
-
-  const importFileMutation = useMutation({
-    mutationFn: async ({ batchId, formData }: { batchId: number; formData: FormData }) => {
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch(`/api/batches/${batchId}/import-file`, { method: "POST", headers, body: formData });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      toast({ title: `Imported ${data.imported} patients` });
-    },
-  });
-
-  const updatePatientMutation = useMutation({
-    mutationFn: async ({ id, updates }: { id: number; updates: any }) => {
-      const res = await apiRequest("PATCH", `/api/patients/${id}`, updates);
-      return res.json();
-    },
-    onSuccess: (updatedPatient: PatientScreening, { id }) => {
-      const batchId = updatedPatient.batchId ?? selectedBatchId;
-      queryClient.setQueryData<ScreeningBatchWithPatients>(
-        ["/api/screening-batches", batchId],
-        (old) => {
-          if (!old) return old;
-          return {
-            ...old,
-            patients: (old.patients || []).map((p) =>
-              p.id === id ? { ...p, ...updatedPatient } : p
-            ),
-          };
-        }
-      );
-    },
-    onError: (err: unknown) => {
-      const msg = err instanceof Error ? err.message : "Something went wrong";
-      toast({ title: "Update failed", description: msg, variant: "destructive" });
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-    },
-  });
-
-  const deletePatientMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/patients/${id}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-    },
-  });
-
-  const deleteBatchMutation = useMutation({
-    mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/screening-batches/${id}`);
-    },
-    onSuccess: (_, deletedId) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      const tabIdx = tabs.findIndex((t) => t.type === "schedule" && t.batchId === deletedId);
-      if (tabIdx >= 0) closeTab(tabIdx);
-    },
-  });
-
-  const updateClinicianMutation = useMutation({
-    mutationFn: async ({ id, clinicianName }: { id: number; clinicianName: string }) => {
-      await apiRequest("PATCH", `/api/screening-batches/${id}`, { clinicianName });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-    },
-  });
-
-  useEffect(() => {
-    setClinicianInput(selectedBatch?.clinicianName || "");
-  }, [selectedBatch?.id, selectedBatch?.clinicianName]);
-
-  useEffect(() => {
-    if (selectedBatchIds.size === 0) return;
-    const validIds = new Set(batches.map((b) => b.id));
-    setSelectedBatchIds((prev) => {
-      const pruned = new Set(Array.from(prev).filter((id) => validIds.has(id)));
-      return pruned.size === prev.size ? prev : pruned;
-    });
-  }, [batches]);
-
-  const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
-
-  const analyzeAllMutation = useMutation({
-    mutationFn: async (batchId: number) => {
-      const res = await apiRequest("POST", `/api/batches/${batchId}/analyze`);
-      const data = await res.json();
-      const total = data.patientCount || 0;
-      setAnalysisProgress({ completed: 0, total });
-
-      const MAX_POLLS = 180; // 6 minutes max (180 × 2s)
-      let lastCompletedCount = 0;
-      let stallStreak = 0;
-
-      const pollProgress = async (attempt = 0): Promise<void> => {
-        if (attempt >= MAX_POLLS) {
-          throw new Error("Analysis is taking longer than expected. Click Generate All to resume.");
-        }
-
-        const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-        const pollHeaders: Record<string, string> = {};
-        if (apiKey) pollHeaders["Authorization"] = `Bearer ${apiKey}`;
-        const batchRes = await fetch(`/api/screening-batches/${batchId}`, { headers: pollHeaders });
-        if (!batchRes.ok) throw new Error("Lost connection during analysis. Click Generate All to resume.");
-        const batchData = await batchRes.json();
-
-        const completedCount = (batchData.patients || []).filter((p: any) => p.status === "completed").length;
-        setAnalysisProgress({ completed: completedCount, total });
-        queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", batchId] });
-
-        if (batchData.status === "completed") return;
-
-        if (batchData.status === "error" || batchData.status === "draft") {
-          throw new Error("Analysis stopped unexpectedly. Click Generate All to try again.");
-        }
-
-        // Detect stall: no new patients completing for 2 minutes AFTER the first one finishes
-        if (completedCount > lastCompletedCount) {
-          lastCompletedCount = completedCount;
-          stallStreak = 0;
-        } else if (lastCompletedCount > 0) {
-          // Only start stall counting after at least one patient completes
-          stallStreak++;
-          if (stallStreak >= 60) {
-            throw new Error("Analysis appears stalled. Click Generate All to resume.");
+  const createBatchMut = useCreateBatch();
+  const createBatchMutation = {
+    mutate: (
+      input: { name: string; facility: string; scheduleDate?: string },
+      opts?: { onSuccess?: () => void },
+    ) =>
+      createBatchMut.mutate(input, {
+        onSuccess: (data) => {
+          openScheduleTab(data.id, data.name || "New Schedule");
+          if (data.requiresManualAssignment) {
+            const pendingAssignment = {
+              batchId: data.id,
+              batchName: data.name || "New Schedule",
+              availableSchedulers: data.availableSchedulers ?? [],
+            };
+            sessionStorage.setItem("pendingSchedulerAssignment", JSON.stringify(pendingAssignment));
+            setAssignSchedulerModal(pendingAssignment);
           }
-        }
+          opts?.onSuccess?.();
+        },
+      }),
+    isPending: createBatchMut.isPending,
+  };
 
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        return pollProgress(attempt + 1);
-      };
+  const assignSchedulerMut = useAssignScheduler();
+  const assignSchedulerMutation = {
+    mutate: (input: { batchId: number; schedulerId: number | null }) =>
+      assignSchedulerMut.mutate(input, {
+        onSuccess: () => {
+          sessionStorage.removeItem("pendingSchedulerAssignment");
+          setAssignSchedulerModal(null);
+          toast({ title: "Scheduler assigned" });
+        },
+        onError: (e: unknown) =>
+          toast({ title: "Assignment failed", description: e instanceof Error ? e.message : "Failed to assign scheduler", variant: "destructive" }),
+      }),
+    isPending: assignSchedulerMut.isPending,
+  };
 
-      await pollProgress();
-      return data;
-    },
-    onSuccess: () => {
-      setAnalysisProgress(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      toast({ title: "Analysis complete", description: "All patients have been screened." });
-      setTabs((prev) => prev.map((tab, i) => {
-        if (i === activeTabIndex && tab.type === "schedule") return { ...tab, viewMode: "results" as const };
-        return tab;
-      }));
-    },
-    onError: (err: Error) => {
-      setAnalysisProgress(null);
-      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
-    },
-  });
+  const addPatientMutation = useAddPatient();
 
+  const importTextMut = useImportPatientsText();
+  const importTextMutation = {
+    mutate: (input: { batchId: number; text: string }) =>
+      importTextMut.mutate(input, {
+        onSuccess: (data) => { setPasteText(""); toast({ title: `Imported ${data.imported} patients` }); },
+      }),
+    isPending: importTextMut.isPending,
+  };
+
+  const importFileMut = useImportPatientsFile();
+  const importFileMutation = {
+    mutate: (input: { batchId: number; formData: FormData }) =>
+      importFileMut.mutate(input, {
+        onSuccess: (data) => toast({ title: `Imported ${data.imported} patients` }),
+      }),
+    isPending: importFileMut.isPending,
+  };
+
+  const updatePatientMut = useUpdatePatient();
+  const updatePatientMutation = {
+    mutate: (input: { id: number; updates: Record<string, unknown> }) =>
+      updatePatientMut.mutate(input, {
+        onError: (err: unknown) => {
+          toast({ title: "Update failed", description: err instanceof Error ? err.message : "Something went wrong", variant: "destructive" });
+          invalidateBatch(selectedBatchId);
+        },
+      }),
+  };
+
+  const deletePatientMut = useDeletePatient();
+  const deletePatientMutation = {
+    mutate: (id: number) =>
+      deletePatientMut.mutate(id, {
+        onSuccess: () => invalidateBatch(selectedBatchId),
+      }),
+  };
+
+  const deleteBatchMut = useDeleteBatch();
+  const deleteBatchMutation = {
+    mutate: (id: number) =>
+      deleteBatchMut.mutate(id, {
+        onSuccess: (deletedId) => {
+          const tabIdx = tabs.findIndex((t) => t.type === "schedule" && t.batchId === deletedId);
+          if (tabIdx >= 0) closeTab(tabIdx);
+        },
+      }),
+    mutateAsync: deleteBatchMut.mutateAsync,
+    isPending: deleteBatchMut.isPending,
+  };
+
+  const updateBatchMut = useUpdateBatch();
+  const updateClinicianMutation = {
+    mutate: (input: { id: number; clinicianName: string }) =>
+      updateBatchMut.mutate({ id: input.id, updates: { clinicianName: input.clinicianName } }),
+  };
+
+  const startAnalysisMut = useStartBatchAnalysis();
+  // Tracks the full analyze-all lifecycle (start mutation + foreground poll
+  // loop). Pure mutation `isPending` flips back to false the moment the POST
+  // resolves, which would let the user re-trigger analysis mid-poll. Keep
+  // this true until polling settles.
+  const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
+  const analyzeAllMutation = {
+    mutate: (batchId: number) => {
+      if (isAnalyzingAll) return;
+      setIsAnalyzingAll(true);
+      startAnalysisMut.mutate(batchId, {
+        onSuccess: async (data) => {
+          const total = data.patientCount || 0;
+          setAnalysisProgress({ completed: 0, total });
+          const MAX_POLLS = 300;
+          try {
+            for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
+              const statusData = await fetchAnalysisStatus(batchId);
+              const completed = statusData.completedPatients ?? 0;
+              setAnalysisProgress({ completed, total: statusData.totalPatients || total });
+              if (statusData.status === "completed") {
+                invalidateBatch(batchId);
+                setAnalysisProgress(null);
+                toast({ title: "Analysis complete", description: "All patients have been screened." });
+                setTabs((prev) => prev.map((tab, i) => i === activeTabIndex && tab.type === "schedule" ? { ...tab, viewMode: "results" as const } : tab));
+                return;
+              }
+              if (statusData.status === "failed") {
+                invalidateBatch(batchId);
+                throw new Error(statusData.errorMessage || "Analysis failed. Click Generate All to try again.");
+              }
+              await new Promise((r) => setTimeout(r, 3000));
+            }
+            throw new Error("Analysis is taking longer than expected. Click Generate All to resume.");
+          } catch (err: unknown) {
+            setAnalysisProgress(null);
+            toast({ title: "Analysis failed", description: err instanceof Error ? err.message : "Analysis failed", variant: "destructive" });
+          } finally {
+            setIsAnalyzingAll(false);
+          }
+        },
+        onError: (err: Error) => {
+          setAnalysisProgress(null);
+          setIsAnalyzingAll(false);
+          toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
+        },
+      });
+    },
+    isPending: startAnalysisMut.isPending || isAnalyzingAll,
+  };
+
+  const analyzePatientMut = useAnalyzePatient();
   const analyzeOnePatient = useCallback(async (patientId: number) => {
     setAnalyzingPatients((prev) => new Set(prev).add(patientId));
     try {
-      const res = await apiRequest("POST", `/api/patients/${patientId}/analyze`);
-      await res.json();
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", selectedBatchId] });
-      toast({ title: "Patient analyzed" });
-    } catch (err: any) {
-      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
+      const body = await analyzePatientMut.mutateAsync(patientId);
+      invalidateBatch(selectedBatchId);
+      queryClient.invalidateQueries({ queryKey: ["/api/schedule/dashboard"] });
+      const handoff = body.autoCommittedSchedulerName
+        ? `Sent to ${body.autoCommittedSchedulerName}.`
+        : body.commitStatus && body.commitStatus !== "Draft"
+          ? "Sent to schedulers."
+          : undefined;
+      toast({ title: "Patient analyzed", description: handoff });
+    } catch (err: unknown) {
+      toast({ title: "Analysis failed", description: err instanceof Error ? err.message : "Analysis failed", variant: "destructive" });
     } finally {
-      setAnalyzingPatients((prev) => {
-        const next = new Set(prev);
-        next.delete(patientId);
-        return next;
-      });
+      setAnalyzingPatients((prev) => { const next = new Set(prev); next.delete(patientId); return next; });
     }
-  }, [selectedBatchId, queryClient, toast]);
+  }, [selectedBatchId, invalidateBatch, toast, analyzePatientMut]);
 
-  const handleFileUpload = useCallback(
-    (files: FileList | File[]) => {
-      if (!selectedBatchId) return;
-      const formData = new FormData();
-      Array.from(files).forEach((file) => formData.append("files", file));
-      importFileMutation.mutate({ batchId: selectedBatchId, formData });
-    },
-    [selectedBatchId, importFileMutation]
-  );
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setDragOver(false);
-      if (e.dataTransfer.files.length > 0) handleFileUpload(e.dataTransfer.files);
-    },
-    [handleFileUpload]
-  );
-
+  const handleFileUpload = useCallback((files: FileList | File[]) => {
+    if (!selectedBatchId) return;
+    const formData = new FormData(); Array.from(files).forEach((file) => formData.append("files", file));
+    importFileMutation.mutate({ batchId: selectedBatchId, formData });
+  }, [selectedBatchId, importFileMutation]);
+  const handleDrop = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files.length > 0) handleFileUpload(e.dataTransfer.files); }, [handleFileUpload]);
   const handleExport = useCallback(async () => {
     if (!selectedBatchId) return;
-    const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-    const exportHeaders: Record<string, string> = {};
-    if (apiKey) exportHeaders["Authorization"] = `Bearer ${apiKey}`;
-    const res = await fetch(`/api/screening-batches/${selectedBatchId}/export`, { headers: exportHeaders });
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `screening-results-${selectedBatchId}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const res = await fetch(`/api/screening-batches/${selectedBatchId}/export`, { credentials: "include" });
+    const blob = await res.blob(); const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `screening-results-${selectedBatchId}.csv`; a.click(); URL.revokeObjectURL(url);
   }, [selectedBatchId]);
 
   const patients = selectedBatch?.patients || [];
-  const isProcessing = analyzeAllMutation.isPending;
+  const isProcessing = analyzeAllMutation.isPending || isAutoPolling;
   const completedCount = patients.filter((p) => p.status === "completed").length;
 
   const setScheduleViewMode = useCallback((mode: "build" | "results") => {
-    setTabs((prev) => prev.map((tab, i) => {
-      if (i === activeTabIndex && tab.type === "schedule") {
-        return { ...tab, viewMode: mode };
-      }
-      return tab;
-    }));
+    setTabs((prev) => prev.map((tab, i) => i === activeTabIndex && tab.type === "schedule" ? { ...tab, viewMode: mode } : tab));
   }, [activeTabIndex]);
-
   const handleTimelineNav = useCallback((step: "home" | "build" | "results") => {
-    if (step === "home") {
-      const homeIdx = tabs.findIndex((t) => t.type === "home");
-      if (homeIdx >= 0) setActiveTabIndex(homeIdx);
-      else {
-        setTabs((prev) => [{ type: "home" }, ...prev]);
-        setActiveTabIndex(0);
-      }
-    } else if (step === "build" || step === "results") {
-      setScheduleViewMode(step);
-    }
+    if (step === "home") { const hi = tabs.findIndex((t) => t.type === "home"); if (hi >= 0) setActiveTabIndex(hi); else { setTabs((prev) => [{ type: "home" }, ...prev]); setActiveTabIndex(0); } }
+    else setScheduleViewMode(step);
   }, [tabs, setScheduleViewMode]);
-
-  const handleSelectSchedule = useCallback((batch: ScreeningBatchWithPatients) => {
-    openScheduleTab(batch.id, batch.name);
-    setSidebarOpen(false);
-  }, [openScheduleTab, setSidebarOpen]);
-
-  const handleNewSchedule = useCallback(() => {
-    setNewScheduleDate(new Date());
-    setNewScheduleDialogOpen(true);
-  }, []);
-
+  const handleSelectSchedule = useCallback((batch: ScreeningBatchWithPatients) => { openScheduleTab(batch.id, batch.name); setSidebarOpen(false); }, [openScheduleTab, setSidebarOpen]);
+  const handleNewSchedule = useCallback(() => { setNewScheduleDate(new Date()); setNewScheduleDialogOpen(true); }, []);
   const handleNewScheduleConfirm = useCallback(() => {
     const date = newScheduleDate ?? new Date();
-    const _d = date;
-    const scheduleDateStr = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
-    createBatchMutation.mutate({ name: `Schedule - ${date.toLocaleDateString()}`, facility: newScheduleFacility, scheduleDate: scheduleDateStr }, {
-      onSuccess: () => {
-        setNewScheduleDialogOpen(false);
-        setNewScheduleFacility("");
-      },
-    });
+    const sd = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    createBatchMutation.mutate({ name: `Schedule - ${date.toLocaleDateString()}`, facility: newScheduleFacility, scheduleDate: sd }, { onSuccess: () => { setNewScheduleDialogOpen(false); setNewScheduleFacility(""); } });
   }, [createBatchMutation, newScheduleDate, newScheduleFacility]);
-
   const openHistoryTab = useCallback(() => {
-    const existingIdx = tabs.findIndex((t) => t.type === "history");
-    if (existingIdx >= 0) {
-      setActiveTabIndex(existingIdx);
-    } else {
-      setTabs((prev) => [...prev, { type: "history" }]);
-      setActiveTabIndex(tabs.length);
-    }
+    const i = tabs.findIndex((t) => t.type === "history"); if (i >= 0) setActiveTabIndex(i); else { setTabs((prev) => [...prev, { type: "history" }]); setActiveTabIndex(tabs.length); }
+  }, [tabs]);
+  const openReferencesTab = useCallback(() => {
+    const i = tabs.findIndex((t) => t.type === "references"); if (i >= 0) setActiveTabIndex(i); else { setTabs((prev) => [...prev, { type: "references" }]); setActiveTabIndex(tabs.length); }
   }, [tabs]);
 
-  const openReferencesTab = useCallback(() => {
-    const existingIdx = tabs.findIndex((t) => t.type === "references");
-    if (existingIdx >= 0) {
-      setActiveTabIndex(existingIdx);
-    } else {
-      setTabs((prev) => [...prev, { type: "references" }]);
-      setActiveTabIndex(tabs.length);
+  useEffect(() => { setClinicianInput(selectedBatch?.clinicianName || ""); }, [selectedBatch?.id, selectedBatch?.clinicianName]);
+  useEffect(() => {
+    if (selectedBatchIds.size === 0) return;
+    const validIds = new Set(batches.map((b) => b.id));
+    setSelectedBatchIds((prev) => { const pruned = new Set(Array.from(prev).filter((id) => validIds.has(id))); return pruned.size === prev.size ? prev : pruned; });
+  }, [batches]);
+
+  useEffect(() => {
+    if (!selectedBatchId || !selectedBatch || selectedBatch.status !== "processing" || analyzeAllMutation.isPending || autoPollingRef.current) {
+      return;
     }
-  }, [tabs]);
+    autoPollingRef.current = true;
+    wasAutoPollingRef.current = true;
+    setIsAutoPolling(true);
+    let cancelled = false;
+    let consecutiveErrors = 0;
+    const MAX_CONSECUTIVE_ERRORS = 5;
+
+    const poll = async (): Promise<void> => {
+      if (cancelled) return;
+      try {
+        const data = await fetchAnalysisStatus(selectedBatchId);
+        if (cancelled) return;
+        consecutiveErrors = 0;
+        setAnalysisProgress({ completed: data.completedPatients ?? 0, total: data.totalPatients ?? 0 });
+        if (data.status === "completed" || data.status === "failed") {
+          autoPollingRef.current = false;
+          setIsAutoPolling(false);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 3000));
+        return poll();
+      } catch {
+        consecutiveErrors++;
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          autoPollingRef.current = false;
+          setIsAutoPolling(false);
+          setAnalysisProgress(null);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 3000));
+        return poll();
+      }
+    };
+
+    poll();
+
+    return () => {
+      cancelled = true;
+      autoPollingRef.current = false;
+      setIsAutoPolling(false);
+    };
+  }, [selectedBatchId, selectedBatch?.status, analyzeAllMutation.isPending]);
+
+  useEffect(() => {
+    if (trackedBatchIdRef.current !== selectedBatchId) {
+      trackedBatchIdRef.current = selectedBatchId;
+      prevBatchStatusRef.current = selectedBatch?.status;
+      wasAutoPollingRef.current = false;
+      return;
+    }
+    const prevStatus = prevBatchStatusRef.current;
+    const currentStatus = selectedBatch?.status;
+    prevBatchStatusRef.current = currentStatus;
+    if (prevStatus !== "processing" || currentStatus === "processing") return;
+    if (!wasAutoPollingRef.current) return;
+    wasAutoPollingRef.current = false;
+    setAnalysisProgress(null);
+    autoPollingRef.current = false;
+    setIsAutoPolling(false);
+    invalidateBatch(selectedBatchId);
+    if (currentStatus === "completed") {
+      toast({ title: "Analysis complete", description: "All patients have been screened." });
+      setTabs((prev) => prev.map((tab) => tab.type === "schedule" && tab.batchId === selectedBatchId ? { ...tab, viewMode: "results" as const } : tab));
+    } else if (currentStatus === "failed") {
+      toast({ title: "Analysis failed", description: "Analysis failed. Click Generate All to try again.", variant: "destructive" });
+    }
+  }, [selectedBatch?.status, selectedBatchId]);
 
   return (
     <>
-      <Sidebar collapsible="offcanvas" data-testid="sidebar-history">
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>Tools</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    onClick={() => {
-                      openHistoryTab();
-                      setSidebarOpen(false);
-                    }}
-                    isActive={view === "history"}
-                    data-testid="sidebar-patient-history"
-                  >
-                    <Database className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Patient History</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    onClick={() => {
-                      openReferencesTab();
-                      setSidebarOpen(false);
-                    }}
-                    isActive={view === "references"}
-                    data-testid="sidebar-patient-directory"
-                  >
-                    <Users className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">Patient Directory</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild data-testid="sidebar-archive">
-                    <Link href="/archive" onClick={() => setSidebarOpen(false)}>
-                      <Archive className="w-4 h-4 shrink-0" />
-                      <span className="text-sm font-medium">Patient Archive</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild data-testid="sidebar-documents">
-                    <Link href="/documents" onClick={() => setSidebarOpen(false)}>
-                      <FileText className="w-4 h-4 shrink-0" />
-                      <span className="text-sm font-medium">Ancillary Documents</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild data-testid="sidebar-document-upload">
-                    <Link href="/document-upload" onClick={() => setSidebarOpen(false)}>
-                      <Upload className="w-4 h-4 shrink-0" />
-                      <span className="text-sm font-medium">Document Upload</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild data-testid="sidebar-appointments">
-                    <Link href="/appointments" onClick={() => setSidebarOpen(false)}>
-                      <Calendar className="w-4 h-4 shrink-0" />
-                      <span className="text-sm font-medium">Appointments</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild data-testid="sidebar-outreach">
-                    <Link href="/outreach" onClick={() => setSidebarOpen(false)}>
-                      <Phone className="w-4 h-4 shrink-0" />
-                      <span className="text-sm font-medium">Outreach</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild data-testid="sidebar-billing">
-                    <Link href="/billing" onClick={() => setSidebarOpen(false)}>
-                      <DollarSign className="w-4 h-4 shrink-0" />
-                      <span className="text-sm font-medium">Billing</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild data-testid="sidebar-settings">
-                    <Link href="/settings" onClick={() => setSidebarOpen(false)}>
-                      <Settings className="w-4 h-4 shrink-0" />
-                      <span className="text-sm font-medium">Settings</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-          <SidebarGroup>
-            <div className="flex items-center justify-between px-2 pt-2 pb-1">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Schedule History</span>
-              {batches.length > 0 && (
-                <button
-                  className="text-[10px] text-primary hover:underline"
-                  onClick={() =>
-                    setSelectedBatchIds(selectedBatchIds.size === batches.length
-                      ? new Set()
-                      : new Set(batches.map((b) => b.id))
-                    )
-                  }
-                  data-testid="button-select-all-schedules"
-                >
-                  {selectedBatchIds.size === batches.length && batches.length > 0 ? "Deselect All" : "Select All"}
-                </button>
-              )}
-            </div>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    onClick={() => {
-                      handleNewSchedule();
-                      setSidebarOpen(false);
-                    }}
-                    data-testid="sidebar-new-schedule"
-                  >
-                    <Plus className="w-4 h-4 shrink-0" />
-                    <span className="text-sm font-medium">New Schedule</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                {batchesLoading ? (
-                  <div className="flex items-center justify-center py-4">
-                    <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                  </div>
-                ) : batches.length === 0 ? (
-                  <div className="px-2 py-3 text-xs text-muted-foreground text-center">
-                    No schedules yet
-                  </div>
-                ) : (
-                  batches.map((batch) => (
-                    <SidebarMenuItem key={batch.id}>
-                      <div className="flex items-center w-full group">
-                        <Checkbox
-                          checked={selectedBatchIds.has(batch.id)}
-                          onCheckedChange={() => {
-                            setSelectedBatchIds((prev) => {
-                              const next = new Set(prev);
-                              next.has(batch.id) ? next.delete(batch.id) : next.add(batch.id);
-                              return next;
-                            });
-                          }}
-                          className="shrink-0 ml-1 mr-1 opacity-40 group-hover:opacity-100 data-[state=checked]:opacity-100 transition-opacity"
-                          data-testid={`checkbox-schedule-${batch.id}`}
-                        />
-                        <SidebarMenuButton
-                          onClick={() => handleSelectSchedule(batch)}
-                          isActive={selectedBatchId === batch.id}
-                          tooltip={batch.name}
-                          data-testid={`sidebar-schedule-${batch.id}`}
-                          className="flex-1 min-w-0"
-                        >
-                          <Calendar className="w-4 h-4 shrink-0" />
-                          <div className="flex flex-col min-w-0">
-                            <span className="truncate text-sm">{batch.name}</span>
-                            <span className="text-[10px] text-muted-foreground">
-                              {batch.patientCount} patients
-                              {batch.status === "completed" && " · Complete"}
-                            </span>
-                          </div>
-                        </SidebarMenuButton>
-                        {selectedBatchIds.size === 0 && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-1"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (confirm(`Delete "${batch.name}"?`)) deleteBatchMutation.mutate(batch.id);
-                            }}
-                            data-testid={`button-delete-schedule-${batch.id}`}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        )}
-                      </div>
-                    </SidebarMenuItem>
-                  ))
-                )}
-              </SidebarMenu>
-              {selectedBatchIds.size > 0 && (
-                <div className="px-2 pt-2 pb-1">
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="w-full text-xs h-7 gap-1"
-                    onClick={async () => {
-                      if (!confirm(`Delete ${selectedBatchIds.size} schedule(s)?`)) return;
-                      for (const id of Array.from(selectedBatchIds)) {
-                        await deleteBatchMutation.mutateAsync(id);
-                      }
-                      setSelectedBatchIds(new Set());
-                    }}
-                    data-testid="button-delete-selected-schedules"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    Delete Selected ({selectedBatchIds.size})
-                  </Button>
-                </div>
-              )}
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-      </Sidebar>
+      <HomeSidebar
+        view={view}
+        batches={batches}
+        batchesLoading={batchesLoading}
+        selectedBatchId={selectedBatchId}
+        selectedBatchIds={selectedBatchIds}
+        setSelectedBatchIds={setSelectedBatchIds}
+        onHistoryTab={openHistoryTab}
+        onReferencesTab={openReferencesTab}
+        onNewSchedule={handleNewSchedule}
+        onSelectSchedule={handleSelectSchedule}
+        onDeleteBatch={(id) => deleteBatchMutation.mutate(id)}
+        onDeleteSelected={async () => {
+          if (!confirm(`Delete ${selectedBatchIds.size} schedule(s)?`)) return;
+          for (const id of Array.from(selectedBatchIds)) await deleteBatchMutation.mutateAsync(id);
+          setSelectedBatchIds(new Set());
+        }}
+        isDeletingBatch={deleteBatchMutation.isPending}
+        setSidebarOpen={setSidebarOpen}
+      />
 
       <div className="flex flex-col flex-1 min-w-0 relative bg-background">
-        <div className="bg-[#1e3a5f]/95 backdrop-blur-sm flex items-center gap-0 px-2 shrink-0 overflow-x-auto" data-testid="tab-bar">
-          {tabs.map((tab, i) => {
-            const isActive = i === activeTabIndex;
-            const label = tab.type === "home" ? "Home" : tab.type === "history" ? "Patient History" : tab.type === "references" ? "Patient Directory" : tab.label;
-            const canClose = tabs.length > 1;
-            return (
-              <div
-                key={`${tab.type}-${tab.type === "schedule" ? tab.batchId : i}`}
-                className={`flex items-center gap-1.5 px-4 py-2 cursor-pointer text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                  isActive
-                    ? "bg-white/15 text-white border-white"
-                    : "text-blue-200/70 border-transparent hover:text-white hover:bg-white/5"
-                }`}
-                onClick={() => setActiveTabIndex(i)}
-                data-testid={`tab-${tab.type}${tab.type === "schedule" ? `-${tab.batchId}` : ""}`}
-              >
-                <span className="truncate max-w-[180px]">{label}</span>
-                {canClose && (
-                  <button
-                    className="ml-1 p-0.5 rounded hover:bg-white/20 transition-colors"
-                    onClick={(e) => { e.stopPropagation(); closeTab(i); }}
-                    data-testid={`button-close-tab-${i}`}
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          <button
-            className="flex items-center gap-1 px-3 py-2 text-blue-200/60 hover:text-white transition-colors text-sm"
-            onClick={handleNewSchedule}
-            data-testid="button-new-tab"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
         {view === "history" ? (
           <div className="flex flex-col h-full relative z-10">
-            <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
-              <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
-                <div className="flex items-center gap-2">
-                  <SidebarTrigger data-testid="button-sidebar-toggle-history" />
-                  <div>
-                    <h1 className="text-base font-bold tracking-tight flex items-center gap-2">
-                      <Database className="w-4 h-4" />
-                      Patient Test History
-                    </h1>
-                    <p className="text-xs text-muted-foreground">{testHistory.length} records</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {testHistory.length > 0 && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        if (confirm("Clear all test history records?")) clearHistoryMutation.mutate();
-                      }}
-                      className="gap-1.5 text-red-600"
-                      data-testid="button-clear-history"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Clear All
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </header>
             <div className="flex-1 overflow-auto p-4">
               <div className="max-w-5xl mx-auto space-y-4">
+                <PageHeader
+                  eyebrow="PLEXUS ANCILLARY · PATIENT HISTORY"
+                  icon={Database}
+                  iconAccent="bg-slate-900/8 text-slate-700"
+                  title="Patient Test History"
+                  subtitle={`${testHistory.length} record${testHistory.length === 1 ? "" : "s"}`}
+                  actions={
+                    <>
+                      <SidebarTrigger data-testid="button-sidebar-toggle-history" />
+                      {testHistory.length > 0 && (
+                        <Button variant="outline" size="sm" onClick={() => { if (confirm("Clear all test history records?")) clearHistoryMutation.mutate(); }} className="gap-1.5 text-red-600" data-testid="button-clear-history">
+                          <Trash2 className="w-3.5 h-3.5" /> Clear All
+                        </Button>
+                      )}
+                    </>
+                  }
+                />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Card className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Upload className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-sm font-semibold">Upload File</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-2">Import from Excel, CSV, or text files. CSV columns: PatientName, TestName, DOS, InsuranceType</p>
-                    <input
-                      type="file"
-                      accept=".xlsx,.xls,.csv,.txt"
-                      className="text-xs"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) importHistoryFileMutation.mutate(file);
-                        e.target.value = "";
-                      }}
-                      data-testid="input-history-file"
-                    />
-                    {importHistoryFileMutation.isPending && (
-                      <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
-                        <Loader2 className="w-3 h-3 animate-spin" /> Importing...
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2 mb-2"><Upload className="w-4 h-4 text-muted-foreground" /><span className="text-sm font-semibold">Upload File</span></div>
+                    <p className="text-xs text-muted-foreground mb-2">Import from Excel, CSV, or text files. Columns: PatientName, TestName, DOS, InsuranceType</p>
+                    <input type="file" accept=".xlsx,.xls,.csv,.txt" className="text-xs" onChange={(e) => { const file = e.target.files?.[0]; if (file) importHistoryFileMutation.mutate(file); e.target.value = ""; }} data-testid="input-history-file" />
+                    {importHistoryFileMutation.isPending && <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Importing...</div>}
                   </Card>
                   <Card className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <FileText className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-sm font-semibold">Paste Data</span>
-                    </div>
-                    <Textarea
-                      placeholder="Paste patient test history data here..."
-                      value={historyPasteText}
-                      onChange={(e) => setHistoryPasteText(e.target.value)}
-                      className="text-xs min-h-[80px] mb-2"
-                      data-testid="input-history-paste"
-                    />
-                    <Button
-                      size="sm"
-                      disabled={!historyPasteText.trim() || importHistoryMutation.isPending}
-                      onClick={() => importHistoryMutation.mutate(historyPasteText)}
-                      className="gap-1.5"
-                      data-testid="button-import-history"
-                    >
-                      {importHistoryMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                      Import
+                    <div className="flex items-center gap-2 mb-2"><FileText className="w-4 h-4 text-muted-foreground" /><span className="text-sm font-semibold">Paste Data</span></div>
+                    <Textarea placeholder="Paste patient test history data here..." value={historyPasteText} onChange={(e) => setHistoryPasteText(e.target.value)} className="text-xs min-h-[80px] mb-2" data-testid="input-history-paste" />
+                    <Button size="sm" disabled={!historyPasteText.trim() || importHistoryMutation.isPending} onClick={() => importHistoryMutation.mutate(historyPasteText)} className="gap-1.5" data-testid="button-import-history">
+                      {importHistoryMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Import
                     </Button>
                   </Card>
                 </div>
-
                 {testHistory.length > 0 && (
                   <Card className="p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Search className="w-4 h-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search by patient name..."
-                        value={historySearch}
-                        onChange={(e) => setHistorySearch(e.target.value)}
-                        className="text-xs h-8 max-w-xs"
-                        data-testid="input-history-search"
-                      />
-                    </div>
+                    <div className="flex items-center gap-2 mb-3"><Search className="w-4 h-4 text-muted-foreground" /><Input placeholder="Search by patient name..." value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} className="text-xs h-8 max-w-xs" data-testid="input-history-search" /></div>
                     <div className="overflow-auto max-h-[60vh]">
                       <table className="w-full border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-slate-100 dark:bg-muted">
-                            <th className="border px-3 py-2 text-left font-semibold">Patient Name</th>
-                            <th className="border px-3 py-2 text-left font-semibold">Test</th>
-                            <th className="border px-3 py-2 text-left font-semibold">Date of Service</th>
-                            <th className="border px-3 py-2 text-left font-semibold">Insurance</th>
-                            <th className="border px-3 py-2 text-left font-semibold">Clinic</th>
-                            <th className="border px-3 py-2 text-left font-semibold w-10"></th>
-                          </tr>
-                        </thead>
+                        <thead><tr className="bg-slate-100 dark:bg-muted"><th className="border px-3 py-2 text-left font-semibold">Patient Name</th><th className="border px-3 py-2 text-left font-semibold">Test</th><th className="border px-3 py-2 text-left font-semibold">Date of Service</th><th className="border px-3 py-2 text-left font-semibold">Insurance</th><th className="border px-3 py-2 text-left font-semibold">Clinic</th><th className="border px-3 py-2 text-left font-semibold w-10"></th></tr></thead>
                         <tbody>
-                          {testHistory
-                            .filter((r) => !historySearch || r.patientName.toLowerCase().includes(historySearch.toLowerCase()))
-                            .map((record) => (
-                              <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-muted/30" data-testid={`row-history-${record.id}`}>
-                                <td className="border px-3 py-1.5">{record.patientName}</td>
-                                <td className="border px-3 py-1.5">{record.testName}</td>
-                                <td className="border px-3 py-1.5">{record.dateOfService}</td>
-                                <td className="border px-3 py-1.5">
-                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                    record.insuranceType === "medicare"
-                                      ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                                      : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
-                                  }`}>
-                                    {record.insuranceType.toUpperCase()}
-                                  </span>
-                                </td>
-                                <td className="border px-3 py-1.5">
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                                    {record.clinic || "NWPG"}
-                                  </span>
-                                </td>
-                                <td className="border px-3 py-1.5">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    onClick={() => deleteHistoryMutation.mutate(record.id)}
-                                    data-testid={`button-delete-history-${record.id}`}
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </Button>
-                                </td>
-                              </tr>
-                            ))}
+                          {testHistory.filter((r) => !historySearch || r.patientName.toLowerCase().includes(historySearch.toLowerCase())).map((record) => (
+                            <tr key={record.id} className="hover:bg-slate-50 dark:hover:bg-muted/30" data-testid={`row-history-${record.id}`}>
+                              <td className="border px-3 py-1.5">{record.patientName}</td>
+                              <td className="border px-3 py-1.5">{record.testName}</td>
+                              <td className="border px-3 py-1.5">{record.dateOfService}</td>
+                              <td className="border px-3 py-1.5"><span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${record.insuranceType === "medicare" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"}`}>{record.insuranceType.toUpperCase()}</span></td>
+                              <td className="border px-3 py-1.5"><span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">{record.clinic || "NWPG"}</span></td>
+                              <td className="border px-3 py-1.5"><Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteHistoryMutation.mutate(record.id)} data-testid={`button-delete-history-${record.id}`}><X className="w-3 h-3" /></Button></td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
                   </Card>
                 )}
-
-                {historyLoading && (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-                  </div>
-                )}
+                {historyLoading && <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
               </div>
             </div>
           </div>
@@ -1120,9 +551,7 @@ export default function Home() {
             dirSearch={dirSearch}
             setDirSearch={setDirSearch}
             onImportFile={(file) => importHistoryFileMutation.mutate(file)}
-            onImportText={(text) => {
-              importHistoryMutation.mutate(text, { onSuccess: () => setDirPasteText("") });
-            }}
+            onImportText={(text) => importHistoryMutation.mutate(text, { onSuccess: () => setDirPasteText("") })}
             onClearAll={() => { if (confirm("Clear all patient history records?")) clearHistoryMutation.mutate(); }}
             importFilePending={importHistoryFileMutation.isPending}
             importTextPending={importHistoryMutation.isPending}
@@ -1145,67 +574,26 @@ export default function Home() {
           />
         ) : view === "schedule" && selectedBatchId ? (
           <div className="flex flex-col h-full relative z-10">
-            <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
-              <StepTimeline current="build" onNavigate={handleTimelineNav} canGoToResults={completedCount > 0} />
-              <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
-                <div className="flex items-center gap-2">
-                  <SidebarTrigger data-testid="button-sidebar-toggle" />
-                  <div>
-                    <h1 className="text-base font-bold tracking-tight" data-testid="text-schedule-name">{selectedBatch?.name || "Loading..."}</h1>
-                    <div className="flex items-center gap-1 mt-0.5">
-                      <input
-                        type="text"
-                        placeholder="Clinician / Provider"
-                        value={clinicianInput}
-                        onChange={(e) => setClinicianInput(e.target.value)}
-                        onBlur={() => {
-                          if (selectedBatchId) {
-                            updateClinicianMutation.mutate({ id: selectedBatchId, clinicianName: clinicianInput });
-                          }
-                        }}
-                        className="text-xs text-muted-foreground bg-transparent border-0 border-b border-dashed border-muted-foreground/40 focus:border-primary focus:outline-none px-0 py-0.5 w-44 placeholder:text-muted-foreground/50"
-                        data-testid="input-clinician-name"
-                      />
-                    </div>
-                    {selectedBatch?.facility && (
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <Building2 className="w-3 h-3 text-muted-foreground" />
-                        <span className="text-xs text-muted-foreground" data-testid="text-facility-build">{selectedBatch.facility}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {patients.length > 0 && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        if (confirm("Delete all patients from this schedule?")) {
-                          patients.forEach((p) => deletePatientMutation.mutate(p.id));
-                        }
-                      }}
-                      disabled={isProcessing}
-                      className="gap-1.5"
-                      data-testid="button-delete-all"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Delete All
-                    </Button>
-                  )}
-                  <Button
-                    onClick={() => analyzeAllMutation.mutate(selectedBatchId!)}
-                    disabled={isProcessing || patients.length === 0}
-                    className="gap-1.5"
-                    data-testid="button-generate-all"
-                  >
-                    {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                    Generate All
-                  </Button>
-                </div>
-              </div>
-            </header>
-
+            <BatchHeader
+              selectedBatch={selectedBatch}
+              selectedBatchId={selectedBatchId}
+              clinicianInput={clinicianInput}
+              setClinicianInput={setClinicianInput}
+              patients={patients}
+              isProcessing={isProcessing}
+              analysisProgress={analysisProgress}
+              completedCount={completedCount}
+              onNavigate={handleTimelineNav}
+              onDeleteAll={() => { if (confirm("Delete all patients from this schedule?")) patients.forEach((p) => deletePatientMutation.mutate(p.id)); }}
+              onGenerateAll={() => analyzeAllMutation.mutate(selectedBatchId!)}
+              onUpdateClinician={(clinicianName) => updateClinicianMutation.mutate({ id: selectedBatchId!, clinicianName })}
+              schedulers={outreachSchedulers}
+              onAssignScheduler={selectedBatch ? () => setAssignSchedulerModal({
+                batchId: selectedBatch.id,
+                batchName: selectedBatch.name,
+                availableSchedulers: outreachSchedulers.filter((s) => s.facility === selectedBatch.facility),
+              }) : undefined}
+            />
             <main className="flex-1 overflow-auto">
               <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
                 {isProcessing && (
@@ -1213,421 +601,122 @@ export default function Home() {
                     <div className="flex flex-col items-center gap-3">
                       <Loader2 className="w-10 h-10 text-primary animate-spin" />
                       <p className="font-semibold">Analyzing patients...</p>
-                      {analysisProgress && (
-                        <>
-                          <p className="text-sm text-muted-foreground" data-testid="text-analysis-progress">
-                            {analysisProgress.completed} of {analysisProgress.total} completed
-                          </p>
+                      {analysisProgress ? (
+                        <><p className="text-sm text-muted-foreground" data-testid="text-analysis-progress">{analysisProgress.completed} of {analysisProgress.total} completed</p>
                           <div className="w-full max-w-xs bg-slate-200 dark:bg-muted rounded-full h-2 overflow-hidden">
-                            <div
-                              className="h-full bg-primary rounded-full transition-all duration-500 ease-out"
-                              style={{ width: `${analysisProgress.total > 0 ? (analysisProgress.completed / analysisProgress.total) * 100 : 0}%` }}
-                            />
-                          </div>
-                        </>
-                      )}
-                      {!analysisProgress && (
-                        <p className="text-sm text-muted-foreground">Starting AI screening...</p>
-                      )}
+                            <div className="h-full bg-primary rounded-full transition-all duration-500 ease-out" style={{ width: `${analysisProgress.total > 0 ? (analysisProgress.completed / analysisProgress.total) * 100 : 0}%` }} /></div></>
+                      ) : <p className="text-sm text-muted-foreground">Starting AI screening...</p>}
                     </div>
                   </Card>
                 )}
-
                 <section>
                   <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Add Patients</h2>
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                     {importUnlocked ? (
                       <>
                         <Card className="p-4">
-                          <div className="flex items-center gap-2 mb-3">
-                            <Upload className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-base font-semibold">Upload File</span>
-                          </div>
-                          <div
-                            className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${
-                              dragOver ? "border-primary bg-primary/5" : "border-border"
-                            }`}
-                            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                            onDragLeave={() => setDragOver(false)}
-                            onDrop={handleDrop}
-                            onClick={() => {
-                              const input = document.createElement("input");
-                              input.type = "file";
-                              input.multiple = true;
-                              input.accept = ".xlsx,.xls,.csv,.txt,.text,.pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp";
-                              input.onchange = (e) => {
-                                const files = (e.target as HTMLInputElement).files;
-                                if (files) handleFileUpload(files);
-                              };
-                              input.click();
-                            }}
-                            data-testid="dropzone-upload"
-                          >
-                            {importFileMutation.isPending ? (
-                              <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
-                            ) : (
-                              <>
-                                <Upload className="w-6 h-6 text-muted-foreground mb-1.5" />
-                                <p className="text-xs text-muted-foreground text-center">Drop files or click to browse</p>
-                                <p className="text-[10px] text-muted-foreground mt-0.5">Excel, CSV, PDF, images, text</p>
-                              </>
-                            )}
+                          <div className="flex items-center gap-2 mb-3"><Upload className="w-4 h-4 text-muted-foreground" /><span className="text-base font-semibold">Upload File</span></div>
+                          <div className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${dragOver ? "border-primary bg-primary/5" : "border-border"}`}
+                            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop}
+                            onClick={() => { const input = document.createElement("input"); input.type = "file"; input.multiple = true; input.accept = ".xlsx,.xls,.csv,.txt,.text,.pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp"; input.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) handleFileUpload(files); }; input.click(); }}
+                            data-testid="dropzone-upload">
+                            {importFileMutation.isPending ? <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" /> : <><Upload className="w-6 h-6 text-muted-foreground mb-1.5" /><p className="text-xs text-muted-foreground text-center">Drop files or click to browse</p><p className="text-[10px] text-muted-foreground mt-0.5">Excel, CSV, PDF, images, text</p></>}
                           </div>
                         </Card>
-
                         <Card className="p-4">
-                          <div className="flex items-center gap-2 mb-3">
-                            <FileText className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-base font-semibold">Paste List</span>
-                          </div>
-                          <Textarea
-                            placeholder={"Paste patient list here — it will import automatically\n\n9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
-                            className="min-h-[82px] resize-none text-sm mb-2"
-                            value={pasteText}
-                            onChange={(e) => setPasteText(e.target.value)}
-                            onPaste={(e) => {
-                              const pasted = e.clipboardData.getData("text");
-                              if (pasted.trim() && selectedBatchId) {
-                                e.preventDefault();
-                                setPasteText(pasted);
-                                importTextMutation.mutate({ batchId: selectedBatchId, text: pasted.trim() });
-                              }
-                            }}
-                            data-testid="input-paste-list"
-                          />
-                          <Button
-                            className="w-full gap-1.5"
-                            variant="outline"
-                            onClick={() => {
-                              if (!pasteText.trim() || !selectedBatchId) return;
-                              importTextMutation.mutate({ batchId: selectedBatchId, text: pasteText.trim() });
-                            }}
-                            disabled={!pasteText.trim() || importTextMutation.isPending}
-                            data-testid="button-import-text"
-                          >
-                            {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                            Import List
+                          <div className="flex items-center gap-2 mb-3"><FileText className="w-4 h-4 text-muted-foreground" /><span className="text-base font-semibold">Paste List</span></div>
+                          <Textarea placeholder={"Paste patient list here — it will import automatically\n\n9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"} className="min-h-[82px] resize-none text-sm mb-2" value={pasteText} onChange={(e) => setPasteText(e.target.value)}
+                            onPaste={(e) => { const pasted = e.clipboardData.getData("text"); if (pasted.trim() && selectedBatchId) { e.preventDefault(); setPasteText(pasted); importTextMutation.mutate({ batchId: selectedBatchId, text: pasted.trim() }); } }} data-testid="input-paste-list" />
+                          <Button className="w-full gap-1.5" variant="outline" onClick={() => { if (!pasteText.trim() || !selectedBatchId) return; importTextMutation.mutate({ batchId: selectedBatchId, text: pasteText.trim() }); }} disabled={!pasteText.trim() || importTextMutation.isPending} data-testid="button-import-text">
+                            {importTextMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Import List
                           </Button>
                         </Card>
                       </>
                     ) : (
                       <Card className="p-4 col-span-1 lg:col-span-2">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Lock className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-base font-semibold">Import Access</span>
-                        </div>
-                        <p className="text-xs text-muted-foreground mb-3">
-                          File upload and paste import require an access code. Manual entry is always available.
-                        </p>
+                        <div className="flex items-center gap-2 mb-3"><Lock className="w-4 h-4 text-muted-foreground" /><span className="text-base font-semibold">Import Access</span></div>
+                        <p className="text-xs text-muted-foreground mb-3">File upload and paste import require an access code. Manual entry is always available.</p>
                         <div className="flex items-center gap-2">
-                          <Input
-                            type="password"
-                            inputMode="numeric"
-                            maxLength={4}
-                            placeholder="Enter 4-digit code"
-                            value={importCodeInput}
-                            onChange={(e) => {
-                              setImportCodeInput(e.target.value.replace(/\D/g, "").slice(0, 4));
-                              setImportCodeError(false);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                if (importCodeInput === IMPORT_ACCESS_CODE) {
-                                  setImportUnlocked(true);
-                                  setImportCodeInput("");
-                                  setImportCodeError(false);
-                                } else {
-                                  setImportCodeError(true);
-                                  setImportCodeInput("");
-                                }
-                              }
-                            }}
-                            className={`max-w-[160px] ${importCodeError ? "border-red-400" : ""}`}
-                            data-testid="input-import-code"
-                          />
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              if (importCodeInput === IMPORT_ACCESS_CODE) {
-                                setImportUnlocked(true);
-                                setImportCodeInput("");
-                                setImportCodeError(false);
-                              } else {
-                                setImportCodeError(true);
-                                setImportCodeInput("");
-                              }
-                            }}
-                            data-testid="button-import-unlock"
-                          >
-                            Unlock
-                          </Button>
+                          <Input type="password" inputMode="numeric" maxLength={4} placeholder="Enter 4-digit code" value={importCodeInput}
+                            onChange={(e) => { setImportCodeInput(e.target.value.replace(/\D/g, "").slice(0, 4)); setImportCodeError(false); }}
+                            onKeyDown={(e) => { if (e.key === "Enter") { if (importCodeInput === IMPORT_ACCESS_CODE) { setImportUnlocked(true); setImportCodeInput(""); setImportCodeError(false); } else { setImportCodeError(true); setImportCodeInput(""); } } }}
+                            className={`max-w-[160px] ${importCodeError ? "border-red-400" : ""}`} data-testid="input-import-code" />
+                          <Button size="sm" onClick={() => { if (importCodeInput === IMPORT_ACCESS_CODE) { setImportUnlocked(true); setImportCodeInput(""); setImportCodeError(false); } else { setImportCodeError(true); setImportCodeInput(""); } }} data-testid="button-import-unlock">Unlock</Button>
                         </div>
-                        {importCodeError && (
-                          <p className="text-xs text-red-500 mt-1.5" data-testid="text-import-code-error">Incorrect code. Please try again.</p>
-                        )}
+                        {importCodeError && <p className="text-xs text-red-500 mt-1.5" data-testid="text-import-code-error">Incorrect code. Please try again.</p>}
                       </Card>
                     )}
-
                     <Card className="p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Plus className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-base font-semibold">Manual Entry</span>
-                      </div>
-                      <Button
-                        className="w-full gap-1.5"
-                        onClick={() => {
-                          if (!selectedBatchId) return;
-                          addPatientMutation.mutate({ batchId: selectedBatchId, name: "", time: undefined });
-                        }}
-                        disabled={addPatientMutation.isPending}
-                        data-testid="button-add-patient"
-                      >
-                        {addPatientMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                        Add Patient
+                      <div className="flex items-center gap-2 mb-3"><Plus className="w-4 h-4 text-muted-foreground" /><span className="text-base font-semibold">Manual Entry</span></div>
+                      <Button className="w-full gap-1.5" onClick={() => { if (!selectedBatchId) return; addPatientMutation.mutate({ batchId: selectedBatchId, name: "", time: undefined }); }} disabled={addPatientMutation.isPending} data-testid="button-add-patient">
+                        {addPatientMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add Patient
                       </Button>
                     </Card>
                   </div>
                 </section>
-
                 {patients.length > 0 && (
                   <section>
                     <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-                      <h2 className="text-base font-semibold text-muted-foreground uppercase tracking-wider">
-                        Schedule Generator ({patients.length})
-                      </h2>
-                      {completedCount > 0 && (
-                        <span className="text-xs text-muted-foreground">
-                          {completedCount}/{patients.length} analyzed
-                        </span>
-                      )}
+                      <h2 className="text-base font-semibold text-muted-foreground uppercase tracking-wider">Schedule Generator ({patients.length})</h2>
+                      {completedCount > 0 && <span className="text-xs text-muted-foreground">{completedCount}/{patients.length} analyzed</span>}
                     </div>
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                       {patients.map((patient) => (
                         <PatientCard
                           key={patient.id}
                           patient={patient}
                           isAnalyzing={analyzingPatients.has(patient.id)}
-                          onUpdate={(field, value) => {
-                            const updates: Record<string, unknown> = { [field]: value };
-                            if (field === "time") {
-                              updates.patientType = (value as string).trim() ? "visit" : "outreach";
-                            }
-                            updatePatientMutation.mutate({ id: patient.id, updates });
-                          }}
+                          onUpdate={(field, value) => updatePatientMutation.mutate({ id: patient.id, updates: { [field]: value } })}
                           onDelete={() => deletePatientMutation.mutate(patient.id)}
                           onAnalyze={() => analyzeOnePatient(patient.id)}
                           onOpenScheduleModal={(p) => setScheduleModalPatient(p)}
+                          schedulerName={selectedBatch?.assignedScheduler?.name ?? null}
+                          batchScheduleDate={selectedBatch?.scheduleDate ?? null}
                         />
                       ))}
                     </div>
                   </section>
                 )}
-
-                {patients.length === 0 && !isProcessing && (
-                  <div className="text-center py-16 text-muted-foreground">
-                    <FileText className="w-10 h-10 mx-auto mb-3 opacity-40" />
-                    <p className="text-sm">No patients yet. Use the options above to add patients.</p>
-                  </div>
-                )}
               </div>
             </main>
           </div>
         ) : (
-          <div className="flex flex-col h-full">
-            <header className="sticky top-0 z-50 bg-white/80 dark:bg-card/80 backdrop-blur-xl border-b border-slate-200/60">
-              <div className="px-8 py-3 flex items-center">
-                <SidebarTrigger data-testid="button-sidebar-toggle-home" />
-              </div>
-            </header>
-
-            <main className="flex-1 overflow-auto">
-              <div className="max-w-5xl mx-auto px-8 pt-10 pb-16">
-                <div className="mb-12 text-center">
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="w-16 h-16 rounded-2xl bg-indigo-500 flex items-center justify-center shadow-md">
-                      <Activity className="w-9 h-9 text-white" />
-                    </div>
-                    <div>
-                      <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-foreground" data-testid="text-home-heading">
-                        Plexus
-                      </h2>
-                      <p className="text-sm text-slate-500 dark:text-muted-foreground mt-0.5 tracking-wide uppercase font-medium">
-                        Ancillary Screening
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-                  <Card
-                    className={`group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03] ${createBatchMutation.isPending ? "pointer-events-none opacity-60" : ""}`}
-                    onClick={handleNewSchedule}
-                    data-testid="tile-new-schedule"
-                  >
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                      {createBatchMutation.isPending ? (
-                        <Loader2 className="w-14 h-14 text-indigo-500 animate-spin" strokeWidth={1.75} />
-                      ) : (
-                        <Plus className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                      )}
-                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-new-schedule">New Schedule</span>
-                    </div>
-                  </Card>
-
-                  <Card
-                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                    onClick={() => setLocation("/documents")}
-                    data-testid="tile-documents"
-                  >
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                      <FileText className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
-                    </div>
-                  </Card>
-
-                  <Link href="/document-upload">
-                    <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                      data-testid="tile-document-upload"
-                    >
-                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                        <Upload className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-document-upload">Document Upload</span>
-                      </div>
-                    </Card>
-                  </Link>
-
-                  <Link href="/billing">
-                    <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                      data-testid="tile-billing"
-                    >
-                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                        <DollarSign className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-billing">Billing</span>
-                      </div>
-                    </Card>
-                  </Link>
-
-                  <Card
-                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                    onClick={openReferencesTab}
-                    data-testid="tile-patient-directory"
-                  >
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                      <Users className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                      <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
-                    </div>
-                  </Card>
-
-                  <Link href="/outreach">
-                    <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                      data-testid="tile-outreach"
-                    >
-                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                        <Phone className="w-14 h-14 text-indigo-500" strokeWidth={1.75} />
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach">Outreach</span>
-                      </div>
-                    </Card>
-                  </Link>
-
-                  <Link href="/settings">
-                    <Card
-                      className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-transform duration-100 active:scale-95 hover:scale-[1.03]"
-                      data-testid="tile-settings"
-                    >
-                      <div className="aspect-square flex flex-col items-center justify-center gap-3 p-5">
-                        <Settings className="w-14 h-14 text-slate-500" strokeWidth={1.75} />
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground text-center leading-tight" data-testid="text-tile-settings">Settings</span>
-                      </div>
-                    </Card>
-                  </Link>
-                </div>
-
-                <Link href="/appointments">
-                  <Card
-                    className="group cursor-pointer rounded-2xl bg-white dark:bg-card border border-slate-200/60 dark:border-border shadow-sm transition-shadow hover:shadow-md mt-4"
-                    data-testid="tile-appointments"
-                  >
-                    <div className="p-5">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                            <Calendar className="w-5 h-5 text-primary" strokeWidth={1.75} />
-                          </div>
-                          <div>
-                            <span className="text-base font-bold text-slate-800 dark:text-foreground" data-testid="text-tile-appointments">Schedule</span>
-                            <p className="text-xs text-slate-500">Ancillary appointment schedule</p>
-                          </div>
-                        </div>
-                        <span className="text-xs text-primary font-medium group-hover:underline shrink-0">View Full Schedule →</span>
-                      </div>
-                      <ScheduleTile />
-                    </div>
-                  </Card>
-                </Link>
-
-                {batches.length > 0 && (
-                  <div className="mt-10">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setSidebarOpen(true)}
-                      className="gap-2 text-sm"
-                      data-testid="button-view-history"
-                    >
-                      <Clock className="w-4 h-4" />
-                      Schedule History ({batches.length})
-                    </Button>
-                  </div>
-                )}
-
-                <QualificationModeSettings />
-
-                <PlexusDrive />
-              </div>
-            </main>
-          </div>
+          <HomeDashboard
+            batches={batches}
+            dashboardData={dashboardData}
+            dashboardLoading={dashboardLoading}
+            dashboardWeekOverride={dashboardWeekOverride}
+            setDashboardWeekOverride={setDashboardWeekOverride}
+            dashboardClinicKey={dashboardClinicKey}
+            setDashboardClinicKey={setDashboardClinicKey}
+            onNewSchedule={handleNewSchedule}
+            onOpenDir={openReferencesTab}
+            onOpenSidebar={() => setSidebarOpen(true)}
+            onOpenSchedule={(batchId) => {
+              const b = batches.find((x) => x.id === batchId);
+              openScheduleTab(batchId, b?.name || "Schedule");
+            }}
+            isCreatingBatch={createBatchMutation.isPending}
+          />
         )}
       </div>
 
       <Dialog open={newScheduleDialogOpen} onOpenChange={(v) => { if (!v) setNewScheduleDialogOpen(false); }}>
         <DialogContent className="max-w-sm" data-testid="dialog-new-schedule">
-          <DialogHeader>
-            <DialogTitle>New Schedule</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>New Schedule</DialogTitle></DialogHeader>
           <div className="flex justify-center py-2">
-            <CalendarPicker
-              mode="single"
-              selected={newScheduleDate}
-              onSelect={setNewScheduleDate}
-              initialFocus
-              data-testid="calendar-new-schedule"
-            />
+            <CalendarPicker mode="single" selected={newScheduleDate} onSelect={setNewScheduleDate} initialFocus data-testid="calendar-new-schedule" />
           </div>
           <div className="px-1 pb-2">
             <label className="text-sm font-medium text-muted-foreground mb-1 block">Facility</label>
             <Select value={newScheduleFacility} onValueChange={setNewScheduleFacility}>
-              <SelectTrigger data-testid="select-facility">
-                <SelectValue placeholder="Select a facility..." />
-              </SelectTrigger>
-              <SelectContent>
-                {FACILITIES.map((f) => (
-                  <SelectItem key={f} value={f}>{f}</SelectItem>
-                ))}
-              </SelectContent>
+              <SelectTrigger data-testid="select-facility"><SelectValue placeholder="Select a facility..." /></SelectTrigger>
+              <SelectContent>{FACILITIES.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setNewScheduleDialogOpen(false)} data-testid="button-cancel-new-schedule">
-              Cancel
-            </Button>
-            <Button
-              onClick={handleNewScheduleConfirm}
-              disabled={createBatchMutation.isPending || !newScheduleFacility}
-              data-testid="button-create-new-schedule"
-            >
+            <Button variant="outline" onClick={() => setNewScheduleDialogOpen(false)} data-testid="button-cancel-new-schedule">Cancel</Button>
+            <Button onClick={handleNewScheduleConfirm} disabled={createBatchMutation.isPending || !newScheduleFacility} data-testid="button-create-new-schedule">
               {createBatchMutation.isPending ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>
@@ -1635,1854 +724,64 @@ export default function Home() {
       </Dialog>
 
       {scheduleModalPatient && (
-        <PatientScheduleModal
+        <AppointmentModal
           patient={scheduleModalPatient}
           onClose={() => setScheduleModalPatient(null)}
+          defaultDate={selectedBatch?.scheduleDate ?? undefined}
         />
       )}
-    </>
-  );
-}
 
-function PatientScheduleModal({ patient, onClose }: { patient: PatientScreening; onClose: () => void }) {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const today = new Date();
-  const [calYear, setCalYear] = useState(today.getFullYear());
-  const [calMonth, setCalMonth] = useState(today.getMonth());
-  const [selectedDay, setSelectedDay] = useState<number | null>(null);
-  const [selectedTestType, setSelectedTestType] = useState<string>(() => {
-    const qt = patient.qualifyingTests || [];
-    if (qt.includes("BrainWave")) return "BrainWave";
-    if (qt.includes("VitalWave")) return "VitalWave";
-    return "BrainWave";
-  });
-
-  const facility = (patient.facility as string) || "Taylor Family Practice";
-
-  const { data: appointments = [] } = useQuery<AncillaryAppointment[]>({
-    queryKey: ["/api/appointments", facility],
-    queryFn: async () => {
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch(`/api/appointments?facility=${encodeURIComponent(facility)}`, { headers });
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
-
-  const { data: patientAppts = [] } = useQuery<AncillaryAppointment[]>({
-    queryKey: ["/api/appointments/patient", patient.id],
-    queryFn: async () => {
-      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-      const headers: Record<string, string> = {};
-      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-      const res = await fetch(`/api/appointments/patient/${patient.id}`, { headers });
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
-
-  const bookMutation = useMutation({
-    mutationFn: async ({ scheduledTime }: { scheduledTime: string }) => {
-      const scheduledDate = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(selectedDay!).padStart(2, "0")}`;
-      const res = await apiRequest("POST", "/api/appointments", {
-        patientScreeningId: patient.id,
-        patientName: patient.name,
-        facility,
-        scheduledDate,
-        scheduledTime,
-        testType: selectedTestType,
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to book");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/appointments/upcoming"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/appointments/patient", patient.id] });
-      toast({ title: "Appointment booked!", description: `${patient.name} scheduled for ${selectedTestType}` });
-      onClose();
-    },
-    onError: (e: Error) => {
-      toast({ title: "Booking failed", description: e.message, variant: "destructive" });
-    },
-  });
-
-  const isVW = selectedTestType === "VitalWave";
-  const slots = isVW
-    ? (() => { const s: string[] = []; for (let h = 8; h <= 16; h++) { s.push(`${String(h).padStart(2, "0")}:00`); if (h < 16) s.push(`${String(h).padStart(2, "0")}:30`); } s.push("16:30"); return s; })()
-    : (() => { const s: string[] = []; for (let h = 8; h <= 16; h++) { s.push(`${String(h).padStart(2, "0")}:00`); } return s; })();
-
-  const selectedDateStr = selectedDay
-    ? `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(selectedDay).padStart(2, "0")}`
-    : null;
-
-  const bookedSlots = new Set(
-    appointments
-      .filter((a) => {
-        if (a.scheduledDate !== selectedDateStr || a.status !== "scheduled") return false;
-        const aIsVW = a.testType === "VitalWave";
-        return aIsVW === isVW;
-      })
-      .map((a) => a.scheduledTime)
-  );
-
-  const bookedDates = new Set<string>(
-    appointments.filter((a) => a.status === "scheduled").map((a) => a.scheduledDate)
-  );
-
-  function fmt12(time24: string) {
-    const [h, m] = time24.split(":").map(Number);
-    return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
-  }
-
-  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-
-  const firstDow = new Date(calYear, calMonth, 1).getDay();
-  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
-  const cells: (number | null)[] = [];
-  for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-
-  const scheduledForThisPatient = patientAppts.filter((a) => a.status === "scheduled");
-
-  const availTests = patient.qualifyingTests && (patient.qualifyingTests as string[]).length > 0
-    ? (patient.qualifyingTests as string[])
-    : ALL_AVAILABLE_TESTS;
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="text-base flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-primary" />
-            Schedule Appointment — {patient.name}
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          {scheduledForThisPatient.length > 0 && (
-            <div className="bg-primary/5 rounded-lg px-3 py-2 border border-primary/20">
-              <p className="text-xs font-semibold text-primary mb-1.5">Existing appointments</p>
-              <div className="space-y-1">
-                {scheduledForThisPatient.map((a) => (
-                  <div key={a.id} className="text-xs text-slate-600 flex items-center gap-2">
-                    <Badge variant="secondary" className="text-[9px]">{a.testType}</Badge>
-                    <span>{new Date(a.scheduledDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
-                    <span>{fmt12(a.scheduledTime)}</span>
-                    <span className="text-slate-400">{a.facility}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-medium text-slate-700 mb-1 block">Test Type</label>
-              <Select value={selectedTestType} onValueChange={setSelectedTestType}>
-                <SelectTrigger className="text-sm" data-testid="select-modal-test-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {availTests.map((t) => (
-                    <SelectItem key={t} value={t}>{t}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-700 mb-1 block">Facility</label>
-              <div className="text-sm text-slate-600 px-3 py-2 bg-slate-50 rounded-md border border-slate-200">{facility}</div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-white rounded-xl border border-slate-200 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <Button variant="ghost" size="sm" onClick={() => {
-                  if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); }
-                  else setCalMonth((m) => m - 1);
-                }} className="h-7 w-7 p-0" data-testid="modal-cal-prev">
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <span className="text-sm font-semibold text-slate-800">{monthNames[calMonth]} {calYear}</span>
-                <Button variant="ghost" size="sm" onClick={() => {
-                  if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); }
-                  else setCalMonth((m) => m + 1);
-                }} className="h-7 w-7 p-0" data-testid="modal-cal-next">
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="grid grid-cols-7 gap-0.5 mb-1">
-                {["Su","Mo","Tu","We","Th","Fr","Sa"].map((d) => (
-                  <div key={d} className="text-center text-[10px] font-medium text-slate-400 py-1">{d}</div>
-                ))}
-              </div>
-              <div className="grid grid-cols-7 gap-0.5">
-                {cells.map((d, i) => {
-                  if (!d) return <div key={i} />;
-                  const key = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-                  const isToday = key === todayKey;
-                  const isSel = d === selectedDay;
-                  const hasBooking = bookedDates.has(key);
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => setSelectedDay(d)}
-                      data-testid={`modal-cal-day-${d}`}
-                      className={`relative flex flex-col items-center justify-center h-8 w-full rounded text-xs font-medium transition-colors
-                        ${isSel ? "bg-primary text-white" : isToday ? "bg-primary/10 text-primary font-bold" : "hover:bg-slate-100 text-slate-700"}`}
-                    >
-                      {d}
-                      {hasBooking && (
-                        <span className={`absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full ${isSel ? "bg-white" : "bg-primary"}`} />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div>
-              {!selectedDay ? (
-                <div className="flex flex-col items-center justify-center h-full text-slate-400 text-sm">
-                  <Calendar className="w-8 h-8 mb-2 opacity-30" />
-                  Select a day
+      <Dialog open={!!assignSchedulerModal} onOpenChange={() => {}}>
+        <DialogContent className="max-w-md [&>button.absolute]:hidden" data-testid="dialog-assign-scheduler" onInteractOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle>Assign Scheduler</DialogTitle>
+            <DialogDescription>
+              Same-day schedules require manual scheduler assignment. Please select a scheduler for this batch before continuing.
+            </DialogDescription>
+          </DialogHeader>
+          {assignSchedulerModal && (
+            <div className="py-2 space-y-2">
+              {assignSchedulerModal.availableSchedulers.length === 0 ? (
+                <div className="flex flex-col items-center gap-3 py-4 text-center">
+                  <AlertTriangle className="w-8 h-8 text-amber-500" />
+                  <p className="text-sm text-muted-foreground">No schedulers are assigned to <strong>{selectedBatch?.facility || "this clinic"}</strong>.</p>
+                  <p className="text-xs text-muted-foreground">The schedule will be saved without a scheduler. An urgent task will be created.</p>
                 </div>
               ) : (
-                <div>
-                  <p className="text-xs font-medium text-slate-700 mb-2">
-                    {new Date(calYear, calMonth, selectedDay).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} — {selectedTestType} slots
-                  </p>
-                  <div className="space-y-1 max-h-[280px] overflow-y-auto pr-1">
-                    {slots.map((slot) => {
-                      const isBooked = bookedSlots.has(slot);
-                      return (
-                        <button
-                          key={slot}
-                          disabled={isBooked || bookMutation.isPending}
-                          onClick={() => !isBooked && bookMutation.mutate({ scheduledTime: slot })}
-                          data-testid={`modal-slot-${slot}`}
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs border transition-colors
-                            ${isBooked
-                              ? "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed"
-                              : "bg-white border-slate-200 hover:border-primary hover:bg-primary/5 cursor-pointer text-slate-700"}`}
-                        >
-                          <span className="font-medium">{fmt12(slot)}</span>
-                          <span className={isBooked ? "text-slate-400" : "text-slate-400 text-[10px]"}>
-                            {isBooked ? "Booked" : "Available"}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                assignSchedulerModal.availableSchedulers.map((scheduler) => (
+                  <button
+                    key={scheduler.id}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border hover:border-primary hover:bg-primary/5 transition-colors text-left"
+                    onClick={() => assignSchedulerMutation.mutate({ batchId: assignSchedulerModal.batchId, schedulerId: scheduler.id })}
+                    disabled={assignSchedulerMutation.isPending}
+                    data-testid={`button-select-scheduler-${scheduler.id}`}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                      <User className="w-4 h-4 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">{scheduler.name}</p>
+                      <p className="text-xs text-muted-foreground">{scheduler.facility}</p>
+                    </div>
+                  </button>
+                ))
               )}
             </div>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function PatientCard({
-  patient,
-  isAnalyzing,
-  onUpdate,
-  onDelete,
-  onAnalyze,
-  onOpenScheduleModal,
-}: {
-  patient: PatientScreening;
-  isAnalyzing: boolean;
-  onUpdate: (field: string, value: string | string[] | boolean) => void;
-  onDelete: () => void;
-  onAnalyze: () => void;
-  onOpenScheduleModal: (patient: PatientScreening) => void;
-}) {
-  const isCompleted = patient.status === "completed";
-  const serverTests = patient.qualifyingTests || [];
-  const [localTests, setLocalTests] = useState<string[]>(serverTests);
-  const [generatingTests, setGeneratingTests] = useState<Set<string>>(new Set());
-  const cardQueryClient = useQueryClient();
-  const { toast: cardToast } = useToast();
-
-  const { data: patientAppts = [] } = useQuery<AncillaryAppointment[]>({
-    queryKey: ["/api/appointments/patient", patient.id],
-    enabled: !!patient.id,
-  });
-  const scheduledAppt = patientAppts.find((a: AncillaryAppointment) => a.status === "scheduled");
-
-  useEffect(() => { setLocalTests(patient.qualifyingTests || []); }, [patient.qualifyingTests]);
-
-  const handleAddTest = useCallback((test: string) => {
-    if (localTests.includes(test)) return;
-    const updated = [...localTests, test];
-    setLocalTests(updated);
-    onUpdate("qualifyingTests", updated);
-    setGeneratingTests(prev => new Set([...Array.from(prev), test]));
-    apiRequest("POST", `/api/patients/${patient.id}/analyze-test`, { testName: test })
-      .then(r => r.json())
-      .then((data: PatientScreening) => {
-        if (data) {
-          cardQueryClient.setQueryData<ScreeningBatchWithPatients>(
-            ["/api/screening-batches", patient.batchId],
-            (old) => {
-              if (!old) return old;
-              return {
-                ...old,
-                patients: (old.patients || []).map((p) =>
-                  p.id === patient.id ? { ...p, ...data } : p
-                ),
-              };
-            }
-          );
-        }
-      })
-      .catch(() => {
-        cardToast({ title: "Could not generate reasoning", description: `Qualification notes for ${test} were not generated. You can still proceed.`, variant: "destructive" });
-      })
-      .finally(() => {
-        setGeneratingTests(prev => {
-          const next = new Set(prev);
-          next.delete(test);
-          return next;
-        });
-      });
-  }, [localTests, onUpdate, patient.id, patient.batchId, cardQueryClient, cardToast]);
-
-  const handleRemoveTest = useCallback((test: string) => {
-    const updated = localTests.filter((t) => t !== test);
-    setLocalTests(updated);
-    onUpdate("qualifyingTests", updated);
-  }, [localTests, onUpdate]);
-
-  const tests = localTests;
-
-  const [localName, setLocalName] = useState(patient.name || "");
-  const [localTime, setLocalTime] = useState(patient.time || "");
-  const [localDob, setLocalDob] = useState(patient.dob || "");
-  const [localPhone, setLocalPhone] = useState(patient.phoneNumber || "");
-  const [localInsurance, setLocalInsurance] = useState(patient.insurance || "");
-  const [localDx, setLocalDx] = useState(patient.diagnoses || "");
-  const [localHx, setLocalHx] = useState(patient.history || "");
-  const [localRx, setLocalRx] = useState(patient.medications || "");
-  const [localPrevTests, setLocalPrevTests] = useState(patient.previousTests || "");
-  const [localPrevTestsDate, setLocalPrevTestsDate] = useState(patient.previousTestsDate || "");
-  const [localNoPrevTests, setLocalNoPrevTests] = useState(patient.noPreviousTests || false);
-  const [pasteText, setPasteText] = useState("");
-  const [isParsing, setIsParsing] = useState(false);
-
-  useEffect(() => { setLocalName(patient.name || ""); }, [patient.name]);
-  useEffect(() => { setLocalTime(patient.time || ""); }, [patient.time]);
-  useEffect(() => { setLocalDob(patient.dob || ""); }, [patient.dob]);
-  useEffect(() => { setLocalPhone(patient.phoneNumber || ""); }, [patient.phoneNumber]);
-  useEffect(() => { setLocalInsurance(patient.insurance || ""); }, [patient.insurance]);
-  useEffect(() => { setLocalDx(patient.diagnoses || ""); }, [patient.diagnoses]);
-  useEffect(() => { setLocalHx(patient.history || ""); }, [patient.history]);
-  useEffect(() => { setLocalRx(patient.medications || ""); }, [patient.medications]);
-  useEffect(() => { setLocalPrevTests(patient.previousTests || ""); }, [patient.previousTests]);
-  useEffect(() => { setLocalPrevTestsDate(patient.previousTestsDate || ""); }, [patient.previousTestsDate]);
-  useEffect(() => { setLocalNoPrevTests(patient.noPreviousTests || false); }, [patient.noPreviousTests]);
-
-  return (
-    <Card className={`overflow-visible ${isCompleted ? "ring-1 ring-emerald-200 dark:ring-emerald-800" : ""}`} data-testid={`card-patient-${patient.id}`}>
-      <div className="px-4 py-3 flex items-center justify-between gap-2 border-b flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="flex flex-col gap-1">
-            <Input
-              placeholder="Patient name"
-              value={localName}
-              onChange={(e) => setLocalName(e.target.value)}
-              onBlur={() => { if (localName !== (patient.name || "")) onUpdate("name", localName); }}
-              className="h-8 text-base font-semibold px-2"
-              data-testid={`input-patient-name-${patient.id}`}
-            />
-            <div className="flex items-center gap-1.5">
-              <Input
-                placeholder="Time"
-                value={localTime}
-                onChange={(e) => setLocalTime(e.target.value)}
-                onBlur={() => { if (localTime !== (patient.time || "")) onUpdate("time", localTime); }}
-                className="h-6 text-xs px-2"
-                data-testid={`input-patient-time-${patient.id}`}
-              />
-              <Input
-                placeholder="DOB"
-                value={localDob}
-                onChange={(e) => setLocalDob(e.target.value)}
-                onBlur={() => { if (localDob !== (patient.dob || "")) onUpdate("dob", localDob); }}
-                className="h-6 text-xs px-2"
-                data-testid={`input-patient-dob-${patient.id}`}
-              />
-              <Input
-                placeholder="Phone"
-                value={localPhone}
-                onChange={(e) => setLocalPhone(e.target.value)}
-                onBlur={() => { if (localPhone !== (patient.phoneNumber || "")) onUpdate("phoneNumber", localPhone); }}
-                className="h-6 text-xs px-2"
-                data-testid={`input-patient-phone-${patient.id}`}
-              />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Input
-                placeholder="Insurance"
-                value={localInsurance}
-                onChange={(e) => setLocalInsurance(e.target.value)}
-                onBlur={() => { if (localInsurance !== (patient.insurance || "")) onUpdate("insurance", localInsurance); }}
-                className="h-6 text-xs px-2"
-                data-testid={`input-patient-insurance-${patient.id}`}
-              />
-            </div>
-          </div>
-          {isCompleted && (
-            <Badge variant="outline" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate">
-              <Check className="w-3 h-3 text-emerald-500" /> Analyzed
-            </Badge>
           )}
-        </div>
-        <div className="flex flex-col gap-2 items-end min-w-[220px]">
-          <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onAnalyze}
-              disabled={isAnalyzing}
-              className="gap-1.5"
-              data-testid={`button-generate-${patient.id}`}
-            >
-              {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              {isCompleted ? "Re-Generate" : "Generate"}
-            </Button>
-            {scheduledAppt && (
-              <span
-                className="inline-flex items-center gap-1 text-[10px] font-medium text-primary bg-primary/10 border border-primary/20 rounded-full px-2 py-0.5"
-                data-testid={`badge-scheduled-${patient.id}`}
-              >
-                <Calendar className="w-2.5 h-2.5" />
-                Scheduled {scheduledAppt.scheduledDate}
-              </span>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => onOpenScheduleModal(patient)}
-              title="Schedule appointment"
-              className="text-muted-foreground hover:text-primary"
-              data-testid={`button-schedule-${patient.id}`}
-            >
-              <Calendar className="w-3.5 h-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => { if (confirm("Remove this patient?")) onDelete(); }}
-              title="Remove patient"
-              className="text-muted-foreground hover:text-destructive"
-              data-testid={`button-delete-patient-${patient.id}`}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-          <div className="w-full space-y-1.5">
-            <Textarea
-              placeholder="Paste patient info here — name, DOB, insurance, meds, previous tests…"
-              className="min-h-[64px] resize-none text-xs w-full"
-              value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
-              data-testid={`input-paste-info-${patient.id}`}
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!pasteText.trim() || isParsing}
-              className="gap-1.5 w-full"
-              onClick={async () => {
-                if (!pasteText.trim()) return;
-                setIsParsing(true);
-                try {
-                  const res = await apiRequest("POST", "/api/parse-patient-paste", { text: pasteText });
-                  const data: { fields?: Record<string, string>; error?: string } = await res.json();
-                  if (data.error) throw new Error(data.error);
-                  const f = data.fields || {};
-                  const updates: Array<[string, string]> = [];
-                  if (f.name && f.name !== (patient.name || "")) { setLocalName(f.name); updates.push(["name", f.name]); }
-                  if (f.dob && f.dob !== (patient.dob || "")) { setLocalDob(f.dob); updates.push(["dob", f.dob]); }
-                  if (f.phone && f.phone !== (patient.phoneNumber || "")) { setLocalPhone(f.phone); updates.push(["phoneNumber", f.phone]); }
-                  if (f.insurance && f.insurance !== (patient.insurance || "")) { setLocalInsurance(f.insurance); updates.push(["insurance", f.insurance]); }
-                  if (f.diagnoses && f.diagnoses !== (patient.diagnoses || "")) { setLocalDx(f.diagnoses); updates.push(["diagnoses", f.diagnoses]); }
-                  if (f.history && f.history !== (patient.history || "")) { setLocalHx(f.history); updates.push(["history", f.history]); }
-                  if (f.medications && f.medications !== (patient.medications || "")) { setLocalRx(f.medications); updates.push(["medications", f.medications]); }
-                  if (f.previousTests && f.previousTests !== (patient.previousTests || "")) {
-                    setLocalPrevTests(f.previousTests);
-                    updates.push(["previousTests", f.previousTests]);
-                    if (localNoPrevTests) {
-                      setLocalNoPrevTests(false);
-                      onUpdate("noPreviousTests", false);
-                    }
-                  }
-                  if (f.previousTestsDate && f.previousTestsDate !== (patient.previousTestsDate || "")) { setLocalPrevTestsDate(f.previousTestsDate); updates.push(["previousTestsDate", f.previousTestsDate]); }
-                  updates.forEach(([field, value]) => onUpdate(field, value));
-                  if (updates.length > 0) setPasteText("");
-                } catch (err: any) {
-                  cardToast({ title: "Parse failed", description: err.message || "Could not parse patient info.", variant: "destructive" });
-                } finally {
-                  setIsParsing(false);
-                }
-              }}
-              data-testid={`button-parse-paste-${patient.id}`}
-            >
-              {isParsing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              {isParsing ? "Parsing…" : "Parse & Fill"}
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <div>
-          <label className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5">
-            <Stethoscope className="w-3.5 h-3.5" /> Dx (Diagnoses)
-          </label>
-          <Textarea
-            placeholder="HTN, DM2, HLD..."
-            className="min-h-[70px] resize-none text-sm"
-            value={localDx}
-            onChange={(e) => setLocalDx(e.target.value)}
-            onBlur={() => { if (localDx !== (patient.diagnoses || "")) onUpdate("diagnoses", localDx); }}
-            data-testid={`input-dx-${patient.id}`}
-          />
-        </div>
-        <div>
-          <label className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5">
-            <FileText className="w-3.5 h-3.5" /> Hx (History / PMH)
-          </label>
-          <Textarea
-            placeholder="MI 2019, CABG, TIA..."
-            className="min-h-[70px] resize-none text-sm"
-            value={localHx}
-            onChange={(e) => setLocalHx(e.target.value)}
-            onBlur={() => { if (localHx !== (patient.history || "")) onUpdate("history", localHx); }}
-            data-testid={`input-hx-${patient.id}`}
-          />
-        </div>
-        <div>
-          <label className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5">
-            <Pill className="w-3.5 h-3.5" /> Rx (Medications)
-          </label>
-          <Textarea
-            placeholder="Metformin, Lisinopril..."
-            className="min-h-[70px] resize-none text-sm"
-            value={localRx}
-            onChange={(e) => setLocalRx(e.target.value)}
-            onBlur={() => { if (localRx !== (patient.medications || "")) onUpdate("medications", localRx); }}
-            data-testid={`input-rx-${patient.id}`}
-          />
-        </div>
-        <div className="col-span-1 md:col-span-2 lg:col-span-4">
-          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-            <label className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
-              <ClipboardList className="w-3.5 h-3.5" />
-              Previous Tests
-              {!localNoPrevTests && <span className="text-red-500 font-bold ml-0.5">*</span>}
-            </label>
-            <label className="flex items-center gap-1.5 ml-auto cursor-pointer select-none" data-testid={`label-no-prev-tests-${patient.id}`}>
-              <input
-                type="checkbox"
-                checked={localNoPrevTests}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  setLocalNoPrevTests(checked);
-                  if (checked) {
-                    setLocalPrevTests("");
-                    setLocalPrevTestsDate("");
-                    onUpdate("noPreviousTests", true);
-                    onUpdate("previousTests", "");
-                    onUpdate("previousTestsDate", "");
-                  } else {
-                    onUpdate("noPreviousTests", false);
-                  }
-                }}
-                className="w-3.5 h-3.5 accent-primary"
-                data-testid={`checkbox-no-prev-tests-${patient.id}`}
-              />
-              <span className="text-xs text-muted-foreground">No previous tests</span>
-            </label>
-          </div>
-          <div className={`flex gap-2 ${localNoPrevTests ? "opacity-40 pointer-events-none" : ""}`}>
-            <Textarea
-              placeholder="Echo TTE 01/2024, Carotid Duplex 06/2023..."
-              className={`min-h-[60px] resize-none text-sm flex-1 ${!localNoPrevTests && !localPrevTests ? "border-red-300 focus-visible:ring-red-300" : ""}`}
-              value={localPrevTests}
-              disabled={localNoPrevTests}
-              onChange={(e) => setLocalPrevTests(e.target.value)}
-              onBlur={() => {
-                if (localPrevTests !== (patient.previousTests || "")) {
-                  onUpdate("previousTests", localPrevTests);
-                  const extracted = extractMostRecentDate(localPrevTests);
-                  if (extracted) {
-                    const yr = extracted.getFullYear();
-                    const mo = String(extracted.getMonth() + 1).padStart(2, "0");
-                    const dy = String(extracted.getDate()).padStart(2, "0");
-                    const dateStr = `${yr}-${mo}-${dy}`;
-                    if (dateStr !== localPrevTestsDate) {
-                      setLocalPrevTestsDate(dateStr);
-                      onUpdate("previousTestsDate", dateStr);
-                    }
-                  }
-                }
-              }}
-              data-testid={`input-prev-tests-${patient.id}`}
-            />
-            <div className="flex flex-col gap-1 w-32 shrink-0">
-              <label className="text-xs text-muted-foreground font-medium">Most Recent Date</label>
-              <Input
-                placeholder="YYYY-MM-DD"
-                value={localPrevTestsDate}
-                disabled={localNoPrevTests}
-                onChange={(e) => setLocalPrevTestsDate(e.target.value)}
-                onBlur={() => { if (localPrevTestsDate !== (patient.previousTestsDate || "")) onUpdate("previousTestsDate", localPrevTestsDate); }}
-                className="h-8 text-xs px-2"
-                data-testid={`input-prev-tests-date-${patient.id}`}
-              />
-            </div>
-          </div>
-          {!localNoPrevTests && !localPrevTests && (
-            <p className="text-xs text-red-500 mt-1" data-testid={`text-prev-tests-required-${patient.id}`}>Required — enter previous tests or check "No previous tests"</p>
-          )}
-        </div>
-      </div>
-
-      <div className="px-4 pb-3">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {tests.length > 0 && (
-            <>
-              <span className="text-xs text-muted-foreground mr-1">Qualifying:</span>
-              {tests.map((test) => {
-                const cat = getAncillaryCategory(test);
-                const isGenerating = generatingTests.has(test);
-                return (
-                  <span key={test} className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md text-[10px] font-medium ${getBadgeColor(cat)}`}>
-                    {isGenerating && <Loader2 className="w-2.5 h-2.5 animate-spin shrink-0" />}
-                    {test}
-                    <button
-                      className="rounded hover:bg-black/10 transition-colors p-0.5 -mr-0.5 shrink-0"
-                      title={`Remove ${test}`}
-                      onClick={() => handleRemoveTest(test)}
-                      data-testid={`button-remove-test-${patient.id}-${test.replace(/\s+/g, "-")}`}
-                    >
-                      <X className="w-2.5 h-2.5" />
-                    </button>
-                  </span>
-                );
-              })}
-            </>
-          )}
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-6 px-2 text-[10px] gap-1"
-                data-testid={`button-add-test-${patient.id}`}
-              >
-                <Plus className="w-3 h-3" />
-                Add Test
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-64 p-2" align="start" data-testid={`popover-test-picker-${patient.id}`}>
-              <p className="text-xs font-semibold text-muted-foreground mb-2 px-1">Select tests to add</p>
-              <div className="space-y-1">
-                {ALL_AVAILABLE_TESTS.map((test) => {
-                  const isSelected = tests.includes(test);
-                  const cat = getAncillaryCategory(test);
-                  return (
-                    <button
-                      key={test}
-                      disabled={isSelected}
-                      onClick={() => handleAddTest(test)}
-                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors ${
-                        isSelected
-                          ? "opacity-50 cursor-not-allowed"
-                          : "hover:bg-accent cursor-pointer"
-                      }`}
-                      data-testid={`option-test-${patient.id}-${test.replace(/\s+/g, "-")}`}
-                    >
-                      <span className={`w-3.5 h-3.5 flex items-center justify-center shrink-0 rounded border ${isSelected ? "bg-primary border-primary" : "border-muted-foreground/40"}`}>
-                        {isSelected && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
-                      </span>
-                      <span className={`flex-1 ${isSelected ? "line-through" : ""}`}>{test}</span>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-sm font-medium ${getBadgeColor(cat)}`}>
-                        {cat === "brainwave" ? "BW" : cat === "vitalwave" ? "VW" : "US"}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </PopoverContent>
-          </Popover>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-
-function extractMostRecentDate(text: string | null | undefined): Date | null {
-  if (!text) return null;
-  const monthMap: Record<string, number> = {
-    january:0,february:1,march:2,april:3,may:4,june:5,
-    july:6,august:7,september:8,october:9,november:10,december:11
-  };
-  const dates: Date[] = [];
-  let m: RegExpExecArray | null;
-  const p0 = /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g;
-  while ((m = p0.exec(text)) !== null) {
-    const d = new Date(parseInt(m[3]), parseInt(m[1])-1, parseInt(m[2]));
-    if (!isNaN(d.getTime())) dates.push(d);
-  }
-  const p1 = /\b(\d{1,2})\/(\d{1,2})\/(\d{2})\b/g;
-  while ((m = p1.exec(text)) !== null) {
-    const yr = parseInt(m[3]);
-    const fullYr = yr >= 0 && yr <= 30 ? 2000 + yr : 1900 + yr;
-    const d = new Date(fullYr, parseInt(m[1])-1, parseInt(m[2]));
-    if (!isNaN(d.getTime())) dates.push(d);
-  }
-  const p2 = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
-  while ((m = p2.exec(text)) !== null) {
-    const d = new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
-    if (!isNaN(d.getTime())) dates.push(d);
-  }
-  const p3 = /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})\b/gi;
-  while ((m = p3.exec(text)) !== null) {
-    const d = new Date(parseInt(m[3]), monthMap[m[1].toLowerCase()], parseInt(m[2]));
-    if (!isNaN(d.getTime())) dates.push(d);
-  }
-  const p4 = /\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/gi;
-  while ((m = p4.exec(text)) !== null) {
-    const d = new Date(parseInt(m[3]), monthMap[m[2].toLowerCase()], parseInt(m[1]));
-    if (!isNaN(d.getTime())) dates.push(d);
-  }
-  // MM/YYYY (month/year only — day defaults to 1)
-  // Negative lookbehind (?<!\/) prevents matching DD portion of MM/DD/YYYY
-  const p5 = /(?<!\/)\b(\d{1,2})\/(\d{4})\b/g;
-  while ((m = p5.exec(text)) !== null) {
-    const mo = parseInt(m[1]);
-    const yr = parseInt(m[2]);
-    if (mo >= 1 && mo <= 12) {
-      const d = new Date(yr, mo-1, 1);
-      if (!isNaN(d.getTime())) dates.push(d);
-    }
-  }
-  if (dates.length === 0) return null;
-  return dates.reduce((a, b) => b > a ? b : a);
-}
-
-function ResultsHeaderActions({
-  patients,
-  shareButtonText,
-  onShare,
-  onExport,
-  onClinicianPdf,
-  onPlexusPdf,
-}: {
-  patients: PatientScreening[];
-  shareButtonText: string;
-  onShare: () => void;
-  onExport: () => void;
-  onClinicianPdf: () => void;
-  onPlexusPdf: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <Button variant="outline" size="sm" onClick={onShare} className="gap-1.5 rounded-xl" data-testid="button-share">
-        {shareButtonText === "Copied!" ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />} {shareButtonText}
-      </Button>
-      <Button variant="outline" size="sm" onClick={onExport} className="gap-1.5 rounded-xl" data-testid="button-export">
-        <Download className="w-3.5 h-3.5" /> Export CSV
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onClinicianPdf}
-        className="gap-1.5 rounded-xl"
-        data-testid="button-clinician-pdf"
-        disabled={patients.length === 0}
-      >
-        <Printer className="w-3.5 h-3.5" /> Clinician PDF
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onPlexusPdf}
-        className="gap-1.5 rounded-xl"
-        data-testid="button-plexus-pdf"
-        disabled={patients.length === 0}
-      >
-        <Users2 className="w-3.5 h-3.5" /> Plexus PDF
-      </Button>
-    </div>
-  );
-}
-
-function buildSharedScheduleUrl(batchId: number): string {
-  return `${window.location.origin}/schedule/${batchId}`;
-}
-
-function computeNextEligible(dos: string, insuranceType: string): { date: Date; eligible: boolean } | null {
-  if (!dos) return null;
-  const dosDate = new Date(dos.includes("T") ? dos : dos + "T00:00:00");
-  if (isNaN(dosDate.getTime())) return null;
-  const months = insuranceType === "medicare" ? 12 : 6;
-  const next = new Date(dosDate);
-  next.setMonth(next.getMonth() + months);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return { date: next, eligible: today >= next };
-}
-
-function formatDisplayDate(d: Date): string {
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-interface PatientDirectoryViewProps {
-  testHistory: PatientTestHistory[];
-  historyLoading: boolean;
-  dirPasteText: string;
-  setDirPasteText: (v: string) => void;
-  dirSearch: string;
-  setDirSearch: (v: string) => void;
-  onImportFile: (file: File) => void;
-  onImportText: (text: string) => void;
-  onClearAll: () => void;
-  importFilePending: boolean;
-  importTextPending: boolean;
-  onOpenHistory: () => void;
-}
-
-function PatientDirectoryView({ testHistory, historyLoading, dirPasteText, setDirPasteText, dirSearch, setDirSearch, onImportFile, onImportText, onClearAll, importFilePending, importTextPending, onOpenHistory }: PatientDirectoryViewProps) {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const [addRecordOpen, setAddRecordOpen] = useState(false);
-  const [addRecordName, setAddRecordName] = useState("");
-  const [addRecordTest, setAddRecordTest] = useState("");
-  const [addRecordDos, setAddRecordDos] = useState<Date | undefined>(new Date());
-  const [addRecordInsurance, setAddRecordInsurance] = useState<"ppo" | "medicare">("ppo");
-
-  const [patientsSyncedAt, setPatientsSyncedAt] = useState<string | null>(null);
-  const [patientsSheetUrl, setPatientsSheetUrl] = useState<string | null>(null);
-
-  const { data: googleStatus } = useQuery<{
-    sheets: {
-      connected: boolean;
-      lastSyncedPatients: string | null;
-      patientsSpreadsheetUrl: string | null;
-    };
-    drive: { connected: boolean; email: string | null };
-  }>({ queryKey: ["/api/google/status"], refetchInterval: 30000 });
-
-  useEffect(() => {
-    if (!googleStatus?.sheets) return;
-    setPatientsSyncedAt(googleStatus.sheets.lastSyncedPatients ?? null);
-    setPatientsSheetUrl(googleStatus.sheets.patientsSpreadsheetUrl ?? null);
-  }, [googleStatus]);
-
-  const syncPatientsMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/google/sync/patients");
-      return res.json();
-    },
-    onSuccess: (data) => {
-      if (data.syncedAt) {
-        setPatientsSyncedAt(data.syncedAt);
-        if (data.spreadsheetUrl) setPatientsSheetUrl(data.spreadsheetUrl);
-        toast({ title: "Synced to Google Sheets", description: `${data.patientCount} patients, ${data.testHistoryCount} test records pushed` });
-      } else {
-        toast({ title: "Sync queued", description: "Another sync is in progress; your changes will be included" });
-      }
-    },
-    onError: (err: Error) => {
-      toast({ title: "Sync failed", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const addRecordMutation = useMutation({
-    mutationFn: async () => {
-      const _d = addRecordDos || new Date();
-      const dos = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
-      const res = await apiRequest("POST", "/api/test-history", {
-        patientName: addRecordName.trim(),
-        testName: addRecordTest.trim(),
-        dateOfService: dos,
-        insuranceType: addRecordInsurance,
-      });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/test-history"] });
-      toast({ title: "Record added" });
-      setAddRecordOpen(false);
-      setAddRecordName("");
-      setAddRecordTest("");
-      setAddRecordDos(new Date());
-      setAddRecordInsurance("ppo");
-    },
-    onError: (e: any) => {
-      toast({ title: "Failed to add record", description: e.message, variant: "destructive" });
-    },
-  });
-
-  const patientMap = new Map<string, { displayName: string; dob?: string; records: PatientTestHistory[] }>();
-  for (const record of testHistory) {
-    const key = record.patientName.trim().toLowerCase();
-    const existing = patientMap.get(key);
-    if (existing) {
-      existing.records.push(record);
-      if (!existing.dob && record.dob) existing.dob = record.dob;
-    } else {
-      patientMap.set(key, { displayName: record.patientName, dob: record.dob || undefined, records: [record] });
-    }
-  }
-
-  const patients = Array.from(patientMap.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
-  const filtered = dirSearch ? patients.filter(p => p.displayName.toLowerCase().includes(dirSearch.toLowerCase())) : patients;
-
-  return (
-    <div className="flex flex-col h-full relative z-10">
-      <Dialog open={addRecordOpen} onOpenChange={setAddRecordOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Add Record</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 py-1">
-            <div className="space-y-1">
-              <Label className="text-xs">Patient Name</Label>
-              <Input
-                placeholder="Full name"
-                value={addRecordName}
-                onChange={(e) => setAddRecordName(e.target.value)}
-                data-testid="input-add-record-name"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Test Name</Label>
-              <Select value={addRecordTest} onValueChange={setAddRecordTest}>
-                <SelectTrigger data-testid="select-add-record-test">
-                  <SelectValue placeholder="Select test" />
-                </SelectTrigger>
-                <SelectContent>
-                  {ALL_AVAILABLE_TESTS.map((t) => (
-                    <SelectItem key={t} value={t}>{t}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Date of Service</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" className="w-full justify-start gap-2 font-normal" data-testid="button-add-record-dos">
-                    <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
-                    {addRecordDos ? `${addRecordDos.getFullYear()}-${String(addRecordDos.getMonth() + 1).padStart(2, "0")}-${String(addRecordDos.getDate()).padStart(2, "0")}` : "Pick a date"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <CalendarPicker mode="single" selected={addRecordDos} onSelect={setAddRecordDos} initialFocus />
-                </PopoverContent>
-              </Popover>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Insurance Type</Label>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant={addRecordInsurance === "ppo" ? "default" : "outline"}
-                  onClick={() => setAddRecordInsurance("ppo")}
-                  className="flex-1"
-                  data-testid="button-add-record-ppo"
-                >PPO</Button>
-                <Button
-                  size="sm"
-                  variant={addRecordInsurance === "medicare" ? "default" : "outline"}
-                  onClick={() => setAddRecordInsurance("medicare")}
-                  className="flex-1"
-                  data-testid="button-add-record-medicare"
-                >Medicare</Button>
-              </div>
-            </div>
-          </div>
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setAddRecordOpen(false)}>Cancel</Button>
-            <Button
-              size="sm"
-              disabled={!addRecordName.trim() || !addRecordTest.trim() || !addRecordDos || addRecordMutation.isPending}
-              onClick={() => addRecordMutation.mutate()}
-              data-testid="button-add-record-submit"
-            >
-              {addRecordMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-              Add Record
-            </Button>
+            {assignSchedulerModal?.availableSchedulers.length === 0 ? (
+              <Button
+                onClick={() => assignSchedulerMutation.mutate({ batchId: assignSchedulerModal!.batchId, schedulerId: null })}
+                disabled={assignSchedulerMutation.isPending}
+                data-testid="button-save-unassigned"
+              >
+                {assignSchedulerMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                Save Without Scheduler
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
-          <div className="flex items-center gap-2">
-            <SidebarTrigger data-testid="button-sidebar-toggle-dir" />
-            <div>
-              <h1 className="text-base font-bold tracking-tight flex items-center gap-2">
-                <Users className="w-4 h-4" />
-                Patient Directory
-              </h1>
-              <p className="text-xs text-muted-foreground">{patients.length} patients · {testHistory.length} completed tests</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => syncPatientsMutation.mutate()}
-                disabled={syncPatientsMutation.isPending}
-                className="gap-1.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
-                data-testid="button-sync-patients-sheets"
-              >
-                {syncPatientsMutation.isPending ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <SiGooglesheets className="w-3.5 h-3.5" />
-                )}
-                Sync to Sheets
-              </Button>
-              {patientsSyncedAt && (
-                <span className="text-[10px] text-slate-400 whitespace-nowrap">
-                  Synced {new Date(patientsSyncedAt).toLocaleTimeString()}
-                  {patientsSheetUrl && (
-                    <a href={patientsSheetUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-emerald-600 hover:underline inline-flex items-center gap-0.5">
-                      <ExternalLink className="w-2.5 h-2.5" />Open
-                    </a>
-                  )}
-                </span>
-              )}
-              {googleStatus?.drive?.email && (
-                <span className="text-[10px] text-slate-400 whitespace-nowrap" data-testid="text-drive-email-patients">
-                  Drive: {googleStatus.drive.email}
-                </span>
-              )}
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onOpenHistory}
-              className="gap-1.5"
-              data-testid="button-ancillary-test-history"
-            >
-              <ClipboardList className="w-3.5 h-3.5" />
-              Ancillary Test History
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setAddRecordOpen(true)}
-              className="gap-1.5"
-              data-testid="button-add-record"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add Record
-            </Button>
-            {testHistory.length > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onClearAll}
-                className="gap-1.5 text-red-600"
-                data-testid="button-clear-directory"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Clear All
-              </Button>
-            )}
-          </div>
-        </div>
-      </header>
-      <div className="flex-1 overflow-auto p-4">
-        <div className="max-w-5xl mx-auto space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card className="p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Upload className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm font-semibold">Upload File</span>
-              </div>
-              <p className="text-xs text-muted-foreground mb-2">Import from Excel or CSV: Name, DOB, Test, DOS, Insurance</p>
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv,.txt"
-                className="text-xs"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) onImportFile(file);
-                  e.target.value = "";
-                }}
-                data-testid="input-dir-file"
-              />
-              {importFilePending && (
-                <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
-                  <Loader2 className="w-3 h-3 animate-spin" /> Importing...
-                </div>
-              )}
-            </Card>
-            <Card className="p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <FileText className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm font-semibold">Paste Data</span>
-              </div>
-              <Textarea
-                placeholder="Paste test history data (Name, DOB, Test, Date of Service, Insurance)..."
-                value={dirPasteText}
-                onChange={(e) => setDirPasteText(e.target.value)}
-                className="text-xs min-h-[80px] mb-2"
-                data-testid="input-dir-paste"
-              />
-              <Button
-                size="sm"
-                disabled={!dirPasteText.trim() || importTextPending}
-                onClick={() => onImportText(dirPasteText)}
-                className="gap-1.5"
-                data-testid="button-import-dir"
-              >
-                {importTextPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                Import
-              </Button>
-            </Card>
-          </div>
-
-          {testHistory.length > 0 && (
-            <div className="flex items-center gap-2">
-              <Search className="w-4 h-4 text-muted-foreground shrink-0" />
-              <Input
-                placeholder="Search patients..."
-                value={dirSearch}
-                onChange={(e) => setDirSearch(e.target.value)}
-                className="text-xs h-8 max-w-xs"
-                data-testid="input-dir-search"
-              />
-            </div>
-          )}
-
-          {historyLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : filtered.length === 0 && testHistory.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <Users className="w-10 h-10 mx-auto mb-3 opacity-30" />
-              <p className="text-sm">No patient records yet. Import test history to get started.</p>
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground text-sm">No patients match your search.</div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filtered.map((patient) => {
-                const sortedRecords = [...patient.records].sort((a, b) => b.dateOfService.localeCompare(a.dateOfService));
-                return (
-                  <Card key={patient.displayName} className="p-4 space-y-3" data-testid={`card-patient-dir-${patient.displayName.replace(/\s+/g, "-").toLowerCase()}`}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-semibold text-sm text-slate-900 dark:text-foreground">{patient.displayName}</p>
-                        {patient.dob && (
-                          <p className="text-xs text-muted-foreground mt-0.5">DOB: {patient.dob}</p>
-                        )}
-                      </div>
-                      <span className="text-xs text-muted-foreground shrink-0 mt-0.5">{patient.records.length} test{patient.records.length !== 1 ? "s" : ""}</span>
-                    </div>
-                    <div className="space-y-2">
-                      {sortedRecords.map((record) => {
-                        const eligible = computeNextEligible(record.dateOfService, record.insuranceType);
-                        return (
-                          <div key={record.id} className="bg-slate-50 dark:bg-muted/40 rounded-lg px-3 py-2 space-y-1" data-testid={`row-dir-test-${record.id}`}>
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <span className="text-xs font-medium text-slate-800 dark:text-foreground">{record.testName}</span>
-                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                record.insuranceType === "medicare"
-                                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                                  : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-                              }`}>
-                                {record.insuranceType === "medicare" ? "Medicare" : "PPO"}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-2 text-[11px] flex-wrap">
-                              <span className="text-muted-foreground">DOS: {record.dateOfService}</span>
-                              {eligible ? (
-                                <span className={`font-medium ${eligible.eligible ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}`}>
-                                  {eligible.eligible ? "Eligible now" : `Eligible ${formatDisplayDate(eligible.date)}`}
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ResultsView({
-  batch,
-  patients,
-  loading,
-  onExport,
-  onNavigate,
-  expandedPatient,
-  setExpandedPatient,
-  expandedClinical,
-  setExpandedClinical,
-  selectedTestDetail,
-  setSelectedTestDetail,
-  onUpdatePatient,
-}: {
-  batch: ScreeningBatchWithPatients | undefined;
-  patients: PatientScreening[];
-  loading: boolean;
-  onExport: () => void;
-  onNavigate: (step: "home" | "build" | "results") => void;
-  expandedPatient: number | null;
-  setExpandedPatient: (id: number | null) => void;
-  expandedClinical: number | null;
-  setExpandedClinical: (id: number | null) => void;
-  selectedTestDetail: { patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null;
-  setSelectedTestDetail: (v: { patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null) => void;
-  onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
-}) {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const [, setLocation] = useLocation();
-  const [shareButtonText, setShareButtonText] = useState("Share");
-  const [pdfMode, setPdfMode] = useState<"clinician" | "plexus" | null>(null);
-  const [generatingNotesFor, setGeneratingNotesFor] = useState<Set<number>>(new Set());
-  const [patientNotes, setPatientNotes] = useState<Record<number, GeneratedDocument[]>>({});
-  const [inlineScreeningFormDoc, setInlineScreeningFormDoc] = useState<{ doc: GeneratedDocument; patient: PatientScreening } | null>(null);
-  const [completeModalPatient, setCompleteModalPatient] = useState<PatientScreening | null>(null);
-  const [selectedCompletedTests, setSelectedCompletedTests] = useState<string[]>([]);
-  const [isGeneratingCompletedDocs, setIsGeneratingCompletedDocs] = useState(false);
-
-  const { data: batchNotes = [] } = useQuery<Array<{ id: number; patientId: number; service: string; docKind: string; title: string; sections: Array<{ heading: string; body: string }> }>>({
-    queryKey: ["/api/generated-notes/batch", batch?.id],
-    enabled: !!batch?.id,
-  });
-
-  const savedNotesByPatient = batchNotes.reduce<Record<number, typeof batchNotes>>((acc, n) => {
-    if (!acc[n.patientId]) acc[n.patientId] = [];
-    acc[n.patientId].push(n);
-    return acc;
-  }, {});
-
-  const saveNotesMutation = useMutation({
-    mutationFn: async (payload: Array<{
-      patientId: number; batchId: number; facility?: string | null; scheduleDate?: string | null;
-      patientName: string; service: string; docKind: string; title: string;
-      sections: Array<{ heading: string; body: string }>;
-    }>) => {
-      const res = await apiRequest("POST", "/api/generated-notes", payload);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/generated-notes/batch", batch?.id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/generated-notes"] });
-    },
-    onError: (e: any) => {
-      toast({ title: "Failed to save notes", description: e.message, variant: "destructive" });
-    },
-  });
-
-  const completePatientWithSelectedTests = async (patient: PatientScreening, completedTests: string[]) => {
-    const uniqueCompletedTests = Array.from(new Set(completedTests)).filter(Boolean);
-
-    if (uniqueCompletedTests.length === 0) {
-      toast({
-        title: "Select completed tests",
-        description: "Choose at least one completed test before marking the patient complete.",
-        variant: "destructive",
-      });
-      return false;
-    }
-
-    if (!batch?.id) {
-      toast({
-        title: "Missing batch context",
-        description: "Could not determine the active schedule batch for note generation.",
-        variant: "destructive",
-      });
-      return false;
-    }
-
-    setIsGeneratingCompletedDocs(true);
-    setGeneratingNotesFor((prev) => new Set(Array.from(prev).concat(patient.id)));
-
-    try {
-      toast({
-        title: "Generating ancillary documents",
-        description: `Creating ancillary documents for ${patient.name}...`,
-      });
-
-      onUpdatePatient(patient.id, {
-        appointmentStatus: "completed",
-        selectedCompletedTests: uniqueCompletedTests,
-      });
-
-      const docs = await autoGeneratePatientNotes(
-        {
-          ...patient,
-          qualifyingTests: uniqueCompletedTests,
-          reasoning: (patient.reasoning ?? null) as Record<
-            string,
-            string | {
-              qualifying_factors?: string[];
-              icd10_codes?: string[];
-              clinician_understanding?: string;
-            }
-          > | null,
-        },
-        batch?.scheduleDate,
-        batch?.facility,
-        batch?.clinicianName
-      );
-
-      if (!docs || docs.length === 0) {
-        toast({
-          title: "No ancillary documents generated",
-          description: "The selected completed tests did not produce any ancillary documents.",
-          variant: "destructive",
-        });
-        return false;
-      }
-
-      setPatientNotes((prev) => ({ ...prev, [patient.id]: docs }));
-
-      const payload = docs.map((doc) => ({
-        patientId: patient.id,
-        batchId: batch.id,
-        facility: batch?.facility ?? null,
-        scheduleDate: batch?.scheduleDate ?? null,
-        patientName: patient.name,
-        service: doc.service,
-        docKind: doc.kind,
-        title: doc.title,
-        sections: doc.sections,
-      }));
-
-      await saveNotesMutation.mutateAsync(payload);
-
-      toast({
-        title: "Ancillary documents created",
-        description: `${docs.length} document${docs.length === 1 ? "" : "s"} generated for ${patient.name}.`,
-      });
-
-      return true;
-    } catch (e: any) {
-      toast({
-        title: "Failed to generate ancillary documents",
-        description: e?.message || "An unexpected error occurred while generating or saving ancillary documents.",
-        variant: "destructive",
-      });
-      return false;
-    } finally {
-      setIsGeneratingCompletedDocs(false);
-      setGeneratingNotesFor((prev) => {
-        const s = new Set(prev);
-        s.delete(patient.id);
-        return s;
-      });
-    }
-  };
-
-  const handleStatusChange = async (patient: PatientScreening, newStatus: string) => {
-    if (newStatus.toLowerCase() === "completed") {
-      const tests = patient.qualifyingTests || [];
-      if (tests.length === 0) {
-        toast({
-          title: "No qualifying tests",
-          description: "This patient has no qualifying tests to mark complete.",
-          variant: "destructive",
-        });
-        return;
-      }
-      setCompleteModalPatient(patient);
-      setSelectedCompletedTests(tests);
-      return;
-    }
-
-    onUpdatePatient(patient.id, { appointmentStatus: newStatus });
-  };
-
-  const handlePdfGenerate = useCallback((selected: PatientScreening[]) => {
-    if (!batch) return;
-    setPdfMode(null);
-    if (pdfMode === "clinician") generateClinicianPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
-    else if (pdfMode === "plexus") generatePlexusPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
-  }, [batch, pdfMode]);
-
-  const handleCompletedTestsConfirm = useCallback(async () => {
-    if (!completeModalPatient) return;
-    const ok = await completePatientWithSelectedTests(completeModalPatient, selectedCompletedTests);
-    if (!ok) return;
-    setCompleteModalPatient(null);
-    setSelectedCompletedTests([]);
-  }, [
-    completeModalPatient,
-    completePatientWithSelectedTests,
-    selectedCompletedTests,
-  ]);
-
-  const handleOpenClinicianPdf = useCallback(() => {
-    setPdfMode("clinician");
-  }, []);
-
-  const handleOpenPlexusPdf = useCallback(() => {
-    setPdfMode("plexus");
-  }, []);
-
-  const handleShare = useCallback(() => {
-    if (!batch) return;
-    const url = buildSharedScheduleUrl(batch.id);
-    navigator.clipboard.writeText(url).then(() => {
-      setShareButtonText("Copied!");
-      toast({ title: "Link copied", description: "Share link copied to clipboard" });
-      setTimeout(() => setShareButtonText("Share"), 2000);
-    }).catch(() => {
-      toast({ title: "Copy failed", description: url, variant: "destructive" });
-    });
-  }, [batch, toast]);
-
-  if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center relative z-10">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col h-full relative z-10">
-      <header className="bg-white/80 backdrop-blur-xl sticky top-0 z-50 border-b border-slate-200/60">
-        <StepTimeline current="results" onNavigate={onNavigate} canGoToResults={true} />
-        <div className="px-8 lg:px-[10%] py-3 flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-2">
-            <SidebarTrigger data-testid="button-sidebar-toggle-results" />
-            <div>
-              <h1 className="text-base font-semibold tracking-tight" data-testid="text-results-title">{batch?.name} — Final Schedule</h1>
-              {batch?.clinicianName && (
-                <p className="text-xs font-medium text-primary" data-testid="text-results-clinician">Dr. {batch.clinicianName}</p>
-              )}
-              {batch?.facility && (
-                <p className="text-xs text-slate-600 flex items-center gap-1" data-testid="text-results-facility">
-                  <Building2 className="w-3 h-3 inline" />
-                  {batch.facility}
-                </p>
-              )}
-              <p className="text-xs text-slate-900">{patients.length} patients screened</p>
-            </div>
-          </div>
-          <ResultsHeaderActions
-            patients={patients}
-            shareButtonText={shareButtonText}
-            onShare={handleShare}
-            onExport={onExport}
-            onClinicianPdf={handleOpenClinicianPdf}
-            onPlexusPdf={handleOpenPlexusPdf}
-          />
-        </div>
-      </header>
-
-      <main className="flex-1 overflow-auto bg-slate-50/50">
-        <div className="px-8 lg:px-[10%] py-6">
-          <div className="space-y-3" data-testid="table-final-schedule">
-            {patients.map((patient) => {
-              const allTests = patient.qualifyingTests || [];
-              const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
-              const qualTests = allTests.filter((t) => !isImagingTest(t));
-              const qualImaging = allTests.filter((t) => isImagingTest(t));
-              const isExpanded = expandedPatient === patient.id;
-
-              return (
-                <Card
-                  key={patient.id}
-                  className="rounded-2xl border-0 shadow-sm bg-white/85 backdrop-blur-sm overflow-hidden transition-shadow hover:shadow-md"
-                  data-testid={`row-result-${patient.id}`}
-                >
-                  <div
-                    className="p-4 cursor-pointer hover:bg-slate-50/60 transition-colors"
-                    onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-start gap-4 min-w-0 flex-1">
-                        {patient.time && (
-                          <span className="text-sm text-slate-900 font-medium shrink-0 mt-0.5 tabular-nums">{patient.time}</span>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
-                            <p className="font-semibold text-base text-slate-900 truncate">{patient.name}</p>
-                            <span className="text-xs text-slate-900">
-                              {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
-                            </span>
-                            <span
-                              className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold capitalize cursor-pointer select-none ${
-                                (patient.patientType || "visit") === "outreach"
-                                  ? "bg-orange-100 text-orange-800"
-                                  : "bg-teal-100 text-teal-800"
-                              }`}
-                              title="Click to toggle patient type"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const newType = (patient.patientType || "visit") === "visit" ? "outreach" : "visit";
-                                onUpdatePatient(patient.id, { patientType: newType });
-                              }}
-                              data-testid={`badge-patient-type-${patient.id}`}
-                            >
-                              {patient.patientType || "visit"}
-                            </span>
-                          </div>
-                          {(patient.diagnoses || patient.history || patient.medications || patient.previousTests) && (
-                            <div
-                              className="flex items-center gap-3 text-xs text-slate-900 cursor-pointer hover:text-slate-700 group mt-0.5 rounded-lg px-1 -ml-1 py-0.5 hover:bg-slate-100/70 transition-colors"
-                              onClick={(e) => { e.stopPropagation(); setExpandedClinical(expandedClinical === patient.id ? null : patient.id); }}
-                              data-testid={`button-expand-clinical-${patient.id}`}
-                            >
-                              {patient.diagnoses && (
-                                <span className="truncate max-w-[200px]">
-                                  <span className="font-semibold">Dx:</span> {patient.diagnoses}
-                                </span>
-                              )}
-                              {patient.history && (
-                                <span className="truncate max-w-[160px]">
-                                  <span className="font-semibold">Hx:</span> {patient.history}
-                                </span>
-                              )}
-                              {patient.medications && (
-                                <span className="truncate max-w-[160px]">
-                                  <span className="font-semibold">Rx:</span> {patient.medications}
-                                </span>
-                              )}
-                              {patient.previousTests && (
-                                <span className="truncate max-w-[160px]">
-                                  <span className="font-semibold">Prev:</span> {patient.previousTests}
-                                </span>
-                              )}
-                              {expandedClinical === patient.id
-                                ? <ChevronDown className="w-3 h-3 text-slate-400 shrink-0 ml-auto" />
-                                : <ChevronRight className="w-3 h-3 text-slate-400 shrink-0 ml-auto" />
-                              }
-                            </div>
-                          )}
-                          {expandedClinical === patient.id && (
-                            <div
-                              className="mt-2 rounded-xl bg-slate-50/80 border border-slate-200/70 px-4 py-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3"
-                              onClick={(e) => e.stopPropagation()}
-                              data-testid={`panel-clinical-${patient.id}`}
-                            >
-                              {patient.diagnoses && (
-                                <div>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Diagnoses</p>
-                                  <p className="text-xs text-slate-900 leading-relaxed">{patient.diagnoses}</p>
-                                </div>
-                              )}
-                              {patient.history && (
-                                <div>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">History</p>
-                                  <p className="text-xs text-slate-900 leading-relaxed">{patient.history}</p>
-                                </div>
-                              )}
-                              {patient.medications && (
-                                <div>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Medications</p>
-                                  <p className="text-xs text-slate-900 leading-relaxed">{patient.medications}</p>
-                                </div>
-                              )}
-                              {(patient.previousTests || patient.previousTestsDate) && (
-                                <div>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Previous Tests</p>
-                                  {patient.previousTests && <p className="text-xs text-slate-900 leading-relaxed">{patient.previousTests}</p>}
-                                  {patient.previousTestsDate && <p className="text-xs text-amber-700 font-medium mt-0.5">Date: {patient.previousTestsDate}</p>}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2 shrink-0">
-                        <div className="flex items-center gap-2">
-                          <select
-                            className="text-[10px] border border-slate-200 rounded-lg px-2 py-0.5 bg-white font-medium cursor-pointer capitalize focus:outline-none focus:ring-1 focus:ring-primary"
-                            value={patient.appointmentStatus || "pending"}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              handleStatusChange(patient, e.target.value);
-                            }}
-                            data-testid={`select-appointment-status-${patient.id}`}
-                          >
-                            {APPOINTMENT_STATUSES.map((s) => (
-                              <option key={s} value={s.toLowerCase()}>{s}</option>
-                            ))}
-                          </select>
-                          {allTests.length > 0 && (
-                            isExpanded
-                              ? <ChevronDown className="w-4 h-4 text-slate-400 transition-transform" />
-                              : <ChevronRight className="w-4 h-4 text-slate-400 transition-transform" />
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-[340px]">
-                          {qualTests.map((test) => (
-                            <span key={test} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor(getAncillaryCategory(test))}`}>
-                              {test}
-                            </span>
-                          ))}
-                          {qualImaging.length > 0 && (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor("ultrasound")}`}>
-                              <Scan className="w-3 h-3 mr-1" />
-                              Ultrasound Studies ({qualImaging.length})
-                            </span>
-                          )}
-                          {allTests.length === 0 && (
-                            <span className="text-xs text-slate-900 italic">No qualifying tests</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {isExpanded && allTests.length > 0 && (
-                    <div className="border-t border-slate-100 bg-slate-50/60 p-5" data-testid={`row-expanded-${patient.id}`}>
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-semibold text-base text-slate-900">{patient.name} — Ancillary Details</h3>
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setExpandedPatient(null); }} data-testid="button-close-detail">
-                          <X className="w-4 h-4 text-slate-400" />
-                        </Button>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        {(() => {
-                          const grouped: Record<string, string[]> = {};
-                          for (const test of allTests) {
-                            const cat = getAncillaryCategory(test);
-                            if (!grouped[cat]) grouped[cat] = [];
-                            grouped[cat].push(test);
-                          }
-                          return ["brainwave", "vitalwave", "ultrasound", "other"].filter((c) => grouped[c]).map((cat) => {
-                            const tests = grouped[cat];
-                            const style = categoryStyles[cat as AncillaryCategory];
-                            const IconComp = categoryIcons[cat as AncillaryCategory];
-                            return (
-                              <button
-                                key={cat}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedTestDetail({ patientId: patient.id, category: cat, tests, reasoning });
-                                }}
-                                className={`flex items-center gap-2 rounded-xl ${style.bg} border ${style.border} px-4 py-3 hover:shadow-md transition-shadow cursor-pointer text-left`}
-                                data-testid={`card-ancillary-${cat}-${patient.id}`}
-                              >
-                                <IconComp className={`w-4 h-4 ${style.icon} shrink-0`} />
-                                <span className={`font-semibold text-sm ${style.accent}`}>{categoryLabels[cat as AncillaryCategory]}</span>
-                                {tests.length > 1 && (
-                                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${getBadgeColor(cat)}`}>{tests.length}</span>
-                                )}
-                                <ChevronRight className="w-3.5 h-3.5 text-slate-400 ml-1 shrink-0" />
-                              </button>
-                            );
-                          });
-                        })()}
-                      </div>
-
-                    </div>
-                  )}
-                </Card>
-              );
-            })}
-          </div>
-        </div>
-      </main>
-
-      <QualificationReasoningDialog
-        selectedTestDetail={selectedTestDetail}
-        setSelectedTestDetail={setSelectedTestDetail}
-      />
-
-      <PdfPatientSelectDialog
-        open={pdfMode !== null}
-        mode={pdfMode}
-        patients={patients}
-        onClose={() => setPdfMode(null)}
-        onGenerate={handlePdfGenerate}
-      />
-
-      <CompletedTestsDialog
-        completeModalPatient={completeModalPatient}
-        selectedCompletedTests={selectedCompletedTests}
-        setSelectedCompletedTests={setSelectedCompletedTests}
-        setCompleteModalPatient={setCompleteModalPatient}
-        isGenerating={isGeneratingCompletedDocs}
-        onConfirm={handleCompletedTestsConfirm}
-      />
-
-      <PdfPatientSelectDialog
-        open={pdfMode !== null}
-        mode={pdfMode}
-        patients={patients}
-        onClose={() => setPdfMode(null)}
-        onGenerate={handlePdfGenerate}
-      />
-    </div>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  switch (status) {
-    case "draft":
-      return <Badge variant="outline" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate"><FileText className="w-3 h-3" /> Draft</Badge>;
-    case "processing":
-      return <Badge variant="outline" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate"><Loader2 className="w-3 h-3 animate-spin" /> Processing</Badge>;
-    case "completed":
-      return <Badge variant="outline" className="text-xs gap-1 no-default-hover-elevate no-default-active-elevate"><Check className="w-3 h-3 text-emerald-500" /> Complete</Badge>;
-    default:
-      return <Badge variant="outline" className="text-xs no-default-hover-elevate no-default-active-elevate">{status}</Badge>;
-  }
-}
-
-type QualMode = "permissive" | "standard" | "conservative";
-
-const QUAL_MODE_LABELS: Record<QualMode, string> = {
-  permissive: "Permissive",
-  standard: "Standard",
-  conservative: "Conservative",
-};
-
-const QUAL_MODE_DESCRIPTIONS: Record<QualMode, string> = {
-  permissive: "Any indirect link qualifies. Maximizes test qualification.",
-  standard: "Direct clinical connection required between diagnosis and test.",
-  conservative: "Multi-factor evidence required. More tests flagged for approval.",
-};
-
-function QualificationModeSettings() {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-
-  const { data: modes, isLoading } = useQuery<Record<string, string>>({
-    queryKey: ["/api/settings/qualification-modes"],
-  });
-
-  const [pendingModes, setPendingModes] = useState<Record<string, QualMode>>({});
-
-  const saveMutation = useMutation({
-    mutationFn: async ({ facility, mode }: { facility: string; mode: QualMode }) => {
-      const res = await apiRequest("POST", "/api/settings/qualification-modes", { facility, mode });
-      return res.json();
-    },
-    onSuccess: (_, { facility, mode }) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/settings/qualification-modes"] });
-      setPendingModes((prev) => {
-        const next = { ...prev };
-        delete next[facility];
-        return next;
-      });
-      toast({ title: "Saved", description: `${facility}: ${QUAL_MODE_LABELS[mode]}` });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to save", description: err.message, variant: "destructive" });
-    },
-  });
-
-  function getMode(facility: string): QualMode {
-    if (pendingModes[facility]) return pendingModes[facility];
-    const val = modes?.[facility];
-    if (val === "standard" || val === "conservative") return val;
-    return "permissive";
-  }
-
-  return (
-    <div className="mt-12" data-testid="section-qualification-modes">
-      <h3 className="text-sm font-semibold text-slate-500 dark:text-muted-foreground uppercase tracking-wider mb-4">
-        Qualification Mode
-      </h3>
-      <div className="space-y-3">
-        {FACILITIES.map((facility) => {
-          const currentMode = getMode(facility);
-          const savedMode: QualMode = (() => {
-            const val = modes?.[facility];
-            if (val === "standard" || val === "conservative") return val;
-            return "permissive";
-          })();
-          const isDirty = pendingModes[facility] !== undefined && pendingModes[facility] !== savedMode;
-
-          return (
-            <Card key={facility} className="p-4" data-testid={`card-qual-mode-${facility.replace(/\s+/g, "-")}`}>
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-slate-800 dark:text-foreground" data-testid={`text-facility-${facility.replace(/\s+/g, "-")}`}>{facility}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5" data-testid={`text-mode-desc-${facility.replace(/\s+/g, "-")}`}>
-                    {QUAL_MODE_DESCRIPTIONS[currentMode]}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {isLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                  ) : (
-                    <Select
-                      value={currentMode}
-                      onValueChange={(val) => {
-                        if (val === "permissive" || val === "standard" || val === "conservative") {
-                          setPendingModes((prev) => ({ ...prev, [facility]: val }));
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="w-40 h-8 text-xs" data-testid={`select-qual-mode-${facility.replace(/\s+/g, "-")}`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="permissive" data-testid="option-permissive">Permissive</SelectItem>
-                        <SelectItem value="standard" data-testid="option-standard">Standard</SelectItem>
-                        <SelectItem value="conservative" data-testid="option-conservative">Conservative</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  )}
-                  <Button
-                    size="sm"
-                    variant={isDirty ? "default" : "outline"}
-                    className="h-8 text-xs"
-                    disabled={saveMutation.isPending || !isDirty}
-                    onClick={() => saveMutation.mutate({ facility, mode: currentMode })}
-                    data-testid={`button-save-qual-mode-${facility.replace(/\s+/g, "-")}`}
-                  >
-                    {saveMutation.isPending && saveMutation.variables?.facility === facility ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      "Save"
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          );
-        })}
-      </div>
-    </div>
+    </>
   );
 }

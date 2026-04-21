@@ -36,6 +36,27 @@
       "when": 1775838100000,
       "tag": "0004_add_no_previous_tests",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1776574800000,
+      "tag": "0005_add_analysis_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1776588600000,
+      "tag": "0006_add_plexus_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1745059200000,
+      "tag": "0007_add_users_active",
+      "breakpoints": true
     }
   ]
 }
