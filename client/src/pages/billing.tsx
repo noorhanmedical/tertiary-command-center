@@ -80,6 +80,21 @@ type BillingRecord = {
   createdAt: string;
 };
 
+type InvoiceLink = {
+  billingRecordId: number;
+  invoiceId: number;
+  invoiceNumber: string;
+  status: "Draft" | "Sent" | "Partially Paid" | "Paid" | string;
+  totalBalance: string;
+};
+
+type AgingResponse = {
+  totals: {
+    totalBalance: string;
+    invoiceCount: number;
+  };
+};
+
 type NoteSection = { heading: string; body: string };
 type GeneratedNote = {
   id: number;
@@ -166,7 +181,9 @@ function statusBadgeClass(value: string | null): string {
   if (v === "paid" || v === "accepted" || v === "paid in full" || v === "complete") return "bg-emerald-100 text-emerald-800 border-emerald-200";
   if (v === "denied" || v === "rejected") return "bg-red-100 text-red-800 border-red-200";
   if (v === "pending" || v === "submitted") return "bg-amber-100 text-amber-800 border-amber-200";
-  if (v === "partial" || v === "partial payment") return "bg-blue-100 text-blue-800 border-blue-200";
+  if (v === "partial" || v === "partial payment" || v === "partially paid") return "bg-amber-100 text-amber-800 border-amber-200";
+  if (v === "sent") return "bg-blue-100 text-blue-800 border-blue-200";
+  if (v === "draft") return "bg-slate-100 text-slate-700 border-slate-200";
   if (v === "not billed" || v === "not started") return "bg-slate-100 text-slate-600 border-slate-200";
   if (v === "preprocedure order note" || v === "post-procedure note" || v === "billing document") return "bg-indigo-100 text-indigo-800 border-indigo-200";
   return "bg-slate-100 text-slate-600 border-slate-200";
@@ -748,6 +765,22 @@ export default function BillingPage() {
 
   const { data: records = [], isLoading } = useQuery<BillingRecord[]>({ queryKey: ["/api/billing-records"] });
   const { data: allNotes = [] } = useQuery<GeneratedNote[]>({ queryKey: ["/api/generated-notes"] });
+  const { data: invoiceLinks = [] } = useQuery<InvoiceLink[]>({ queryKey: ["/api/billing-records/invoice-links"] });
+  const { data: aging } = useQuery<AgingResponse>({ queryKey: ["/api/invoices/aging"] });
+
+  const invoiceLinkByRecord = useMemo(() => {
+    // Server returns newest invoice first; keep the first (most recent)
+    // entry per billing record so display is deterministic when a
+    // billing record has been included on more than one invoice.
+    const map = new Map<number, InvoiceLink>();
+    for (const link of invoiceLinks) {
+      if (!map.has(link.billingRecordId)) map.set(link.billingRecordId, link);
+    }
+    return map;
+  }, [invoiceLinks]);
+
+  const outstandingTotal = aging ? parseFloat(aging.totals.totalBalance) : 0;
+  const outstandingCount = aging?.totals.invoiceCount ?? 0;
 
   const { data: googleStatus } = useQuery<{
     sheets: {
@@ -950,6 +983,7 @@ export default function BillingPage() {
     { label: "Secondary Paid Amount", w: 155 },
     { label: "Patient Responsibility Amount", w: 200 },
     { label: "Claim Status", w: 130 },
+    { label: "Invoice", w: 175 },
     { label: "Last Biller Update", w: 145 },
     { label: "Next Action", w: 140 },
     { label: "Billing Notes", w: 200 },
@@ -1010,15 +1044,15 @@ export default function BillingPage() {
         </div>
 
         {/* Metrics bar */}
-        <div className="px-5 pb-3 grid grid-cols-5 gap-3" data-testid="billing-metrics">
+        <div className="px-5 pb-3 grid grid-cols-3 lg:grid-cols-6 gap-3" data-testid="billing-metrics">
           {[
-            { icon: Receipt, label: "Total Records", value: String(metrics.totalRecords), color: "text-slate-700", bg: "bg-slate-100" },
-            { icon: Wallet, label: "Primary Paid", value: fmtMoney(metrics.totalPrimary), color: "text-emerald-700", bg: "bg-emerald-50" },
-            { icon: TrendingUp, label: "Insurance Paid", value: fmtMoney(metrics.totalInsurance), color: "text-blue-700", bg: "bg-blue-50" },
-            { icon: Banknote, label: "Secondary Paid", value: fmtMoney(metrics.totalSecondary), color: "text-violet-700", bg: "bg-violet-50" },
-            { icon: Timer, label: "Patient Responsibility", value: fmtMoney(metrics.totalPatientResp), color: "text-amber-700", bg: "bg-amber-50" },
-          ].map(({ icon: Icon, label, value, color, bg }) => (
-            <div key={label} className={`rounded-xl px-3.5 py-2.5 ${bg} flex items-center gap-3`} data-testid={`metric-${label.replace(/\s+/g, "-").toLowerCase()}`}>
+            { icon: Receipt, label: "Total Records", value: String(metrics.totalRecords), color: "text-slate-700", bg: "bg-slate-100", testid: "metric-total-records" },
+            { icon: Wallet, label: "Primary Paid", value: fmtMoney(metrics.totalPrimary), color: "text-emerald-700", bg: "bg-emerald-50", testid: "metric-primary-paid" },
+            { icon: TrendingUp, label: "Insurance Paid", value: fmtMoney(metrics.totalInsurance), color: "text-blue-700", bg: "bg-blue-50", testid: "metric-insurance-paid" },
+            { icon: Banknote, label: "Secondary Paid", value: fmtMoney(metrics.totalSecondary), color: "text-violet-700", bg: "bg-violet-50", testid: "metric-secondary-paid" },
+            { icon: Timer, label: "Patient Responsibility", value: fmtMoney(metrics.totalPatientResp), color: "text-amber-700", bg: "bg-amber-50", testid: "metric-patient-responsibility" },
+          ].map(({ icon: Icon, label, value, color, bg, testid }) => (
+            <div key={label} className={`rounded-xl px-3.5 py-2.5 ${bg} flex items-center gap-3`} data-testid={testid}>
               <Icon className={`w-4 h-4 shrink-0 ${color}`} />
               <div>
                 <div className={`text-sm font-bold leading-none ${color}`}>{value}</div>
@@ -1026,6 +1060,22 @@ export default function BillingPage() {
               </div>
             </div>
           ))}
+          <Link
+            href="/invoices"
+            className="rounded-xl px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 transition-colors flex items-center gap-3 cursor-pointer"
+            data-testid="metric-outstanding-invoices"
+            title={`${outstandingCount} unpaid invoice${outstandingCount === 1 ? "" : "s"} — click to view`}
+          >
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-700" />
+            <div>
+              <div className="text-sm font-bold leading-none text-rose-700" data-testid="text-outstanding-balance">
+                {fmtMoney(outstandingTotal)}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5 leading-none">
+                Outstanding · {outstandingCount} invoice{outstandingCount === 1 ? "" : "s"}
+              </div>
+            </div>
+          </Link>
         </div>
 
         {/* Facility tabs */}
@@ -1198,6 +1248,40 @@ export default function BillingPage() {
                       {/* Claim Status */}
                       <td className="px-3 py-2 border-r border-slate-100 align-middle">
                         <DropdownCell value={record.billingStatus} recordId={record.id} field="billingStatus" options={CLAIM_STATUS_OPTIONS} onSave={handleSave} record={record} />
+                      </td>
+                      {/* Invoice */}
+                      <td className="px-3 py-2 border-r border-slate-100 align-middle" data-testid={`cell-invoice-${record.id}`}>
+                        {(() => {
+                          const link = invoiceLinkByRecord.get(record.id);
+                          if (!link) {
+                            return <span className="text-slate-300 italic text-[11px]">—</span>;
+                          }
+                          const balance = parseFloat(link.totalBalance);
+                          return (
+                            <Link
+                              href={`/invoices?invoice=${link.invoiceId}`}
+                              className="flex items-center gap-1.5 text-[11px] hover:underline group"
+                              data-testid={`link-invoice-${record.id}`}
+                            >
+                              <Receipt className="w-3 h-3 text-slate-400 group-hover:text-blue-600 shrink-0" />
+                              <div className="flex flex-col leading-tight min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-medium text-blue-600 truncate" data-testid={`text-invoice-number-${record.id}`}>
+                                    {link.invoiceNumber}
+                                  </span>
+                                  <Badge variant="outline" className={`text-[9px] px-1.5 py-0 h-4 ${statusBadgeClass(link.status)}`} data-testid={`badge-invoice-status-${record.id}`}>
+                                    {link.status}
+                                  </Badge>
+                                </div>
+                                {balance > 0.005 && (
+                                  <span className="text-[10px] text-rose-600 tabular-nums" data-testid={`text-invoice-balance-${record.id}`}>
+                                    Bal: ${balance.toFixed(2)}
+                                  </span>
+                                )}
+                              </div>
+                            </Link>
+                          );
+                        })()}
                       </td>
                       {/* Last Biller Update */}
                       <td className="px-3 py-2 border-r border-slate-100 align-middle">

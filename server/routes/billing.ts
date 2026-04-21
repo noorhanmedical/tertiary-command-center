@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { db } from "../db";
@@ -50,6 +50,14 @@ const createBillingRecordSchema = z.object({
   insuranceInfo: z.string().nullable().optional(),
 });
 
+const requireBillerOrAdmin = (req: Request, res: Response, next: NextFunction) => {
+  const role = req.session?.role;
+  if (role !== "admin" && role !== "biller") {
+    return res.status(403).json({ error: "Forbidden — requires admin or biller role" });
+  }
+  return next();
+};
+
 export function registerBillingRoutes(
   app: Express,
   deps: { backgroundSyncBilling: BackgroundSyncBilling }
@@ -97,6 +105,15 @@ export function registerBillingRoutes(
 
       const records = await storage.getAllBillingRecords();
       res.json(records);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/billing-records/invoice-links", requireBillerOrAdmin, async (_req, res) => {
+    try {
+      const links = await storage.getBillingRecordInvoiceLinks();
+      res.json(links);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

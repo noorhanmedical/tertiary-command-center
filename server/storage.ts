@@ -244,6 +244,13 @@ export interface IStorage {
   updateGeneratedNoteDriveInfo(id: number, driveFileId: string, driveWebViewLink: string): Promise<GeneratedNote | undefined>;
 
   getAllBillingRecords(): Promise<BillingRecord[]>;
+  getBillingRecordInvoiceLinks(): Promise<Array<{
+    billingRecordId: number;
+    invoiceId: number;
+    invoiceNumber: string;
+    status: string;
+    totalBalance: string;
+  }>>;
   getBillingRecordByPatientAndService(patientId: number, service: string): Promise<BillingRecord | undefined>;
   createBillingRecord(record: InsertBillingRecord): Promise<BillingRecord>;
   updateBillingRecord(id: number, updates: Partial<InsertBillingRecord>): Promise<BillingRecord | undefined>;
@@ -953,6 +960,37 @@ export class DatabaseStorage implements IStorage {
 
   async getAllBillingRecords(): Promise<BillingRecord[]> {
     return db.select().from(billingRecords).orderBy(desc(billingRecords.createdAt));
+  }
+
+  async getBillingRecordInvoiceLinks(): Promise<Array<{
+    billingRecordId: number;
+    invoiceId: number;
+    invoiceNumber: string;
+    status: string;
+    totalBalance: string;
+  }>> {
+    const rows = await db
+      .select({
+        billingRecordId: invoiceLineItems.billingRecordId,
+        invoiceId: invoices.id,
+        invoiceNumber: invoices.invoiceNumber,
+        status: invoices.status,
+        totalBalance: invoices.totalBalance,
+      })
+      .from(invoiceLineItems)
+      .innerJoin(invoices, eq(invoices.id, invoiceLineItems.invoiceId))
+      .where(sql`${invoiceLineItems.billingRecordId} is not null`)
+      // Newest invoice first so callers that dedupe by billingRecordId
+      // (e.g. the Billing page Map) deterministically pick the most
+      // recent invoice for each billing record.
+      .orderBy(desc(invoices.createdAt), desc(invoices.id));
+    return rows.map((r) => ({
+      billingRecordId: r.billingRecordId as number,
+      invoiceId: r.invoiceId,
+      invoiceNumber: r.invoiceNumber,
+      status: r.status,
+      totalBalance: r.totalBalance,
+    }));
   }
 
   async getBillingRecordByPatientAndService(patientId: number, service: string): Promise<BillingRecord | undefined> {

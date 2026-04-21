@@ -120,14 +120,52 @@ function statusBadgeClass(status: string): string {
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
+function readInvoiceIdFromUrl(): number | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get("invoice");
+  if (!raw) return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function setInvoiceIdInUrl(id: number | null) {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (id == null) {
+    url.searchParams.delete("invoice");
+  } else {
+    url.searchParams.set("invoice", String(id));
+  }
+  window.history.replaceState({}, "", url.toString());
+}
+
 export default function InvoicesPage() {
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(() => readInvoiceIdFromUrl());
   const [tab, setTab] = useState<"overview" | "list">("overview");
   const [filterFacility, setFilterFacility] = useState<string>("");
   const [filterBucket, setFilterBucket] = useState<AgingBucket | "">("");
 
+  useEffect(() => {
+    function handlePopState() {
+      setSelectedId(readInvoiceIdFromUrl());
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  function openInvoice(id: number) {
+    setInvoiceIdInUrl(id);
+    setSelectedId(id);
+  }
+
+  function closeInvoice() {
+    setInvoiceIdInUrl(null);
+    setSelectedId(null);
+  }
+
   if (selectedId != null) {
-    return <InvoiceDetail id={selectedId} onBack={() => setSelectedId(null)} />;
+    return <InvoiceDetail id={selectedId} onBack={closeInvoice} />;
   }
   return (
     <InvoicesShell
@@ -137,7 +175,7 @@ export default function InvoicesPage() {
       setFilterFacility={setFilterFacility}
       filterBucket={filterBucket}
       setFilterBucket={setFilterBucket}
-      onOpen={(id) => setSelectedId(id)}
+      onOpen={openInvoice}
     />
   );
 }
