@@ -194,6 +194,9 @@ export default function OutreachQualificationPage() {
       importFilePending={false}
       importTextPending={false}
       addPatientPending={false}
+      simpleHeaderMode={true}
+      simpleTitle="Outreach Qualification"
+      simpleSubtitle="Same parser and patient bars as visit patients, without requiring a committed visit schedule."
     />
   );
 }

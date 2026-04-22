@@ -48,6 +48,9 @@ interface VisitBuildPaneProps {
   importFilePending: boolean;
   importTextPending: boolean;
   addPatientPending: boolean;
+  simpleHeaderMode?: boolean;
+  simpleTitle?: string;
+  simpleSubtitle?: string;
 }
 
 export default function VisitBuildPane(props: VisitBuildPaneProps) {
@@ -88,26 +91,46 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
     importFilePending,
     importTextPending,
     addPatientPending,
+    simpleHeaderMode = false,
+    simpleTitle = "Visit Qualification",
+    simpleSubtitle = "Build patients and generate qualifications.",
   } = props;
 
   return (
     <div className="flex flex-col h-full relative z-10">
-      <BatchHeader
-        selectedBatch={selectedBatch}
-        selectedBatchId={selectedBatchId}
-        clinicianInput={clinicianInput}
-        setClinicianInput={setClinicianInput}
-        patients={patients}
-        isProcessing={isProcessing}
-        analysisProgress={analysisProgress}
-        completedCount={completedCount}
-        onNavigate={onNavigate}
-        onDeleteAll={onDeleteAll}
-        onGenerateAll={onGenerateAll}
-        onUpdateClinician={onUpdateClinician}
-        schedulers={outreachSchedulers}
-        onAssignScheduler={onAssignScheduler}
-      />
+      {simpleHeaderMode ? (
+        <div className="border-b bg-white/80 backdrop-blur-sm">
+          <div className="max-w-5xl mx-auto px-4 py-5 flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <div className="text-xs font-semibold tracking-[0.16em] uppercase text-slate-500 mb-1">
+                PLEXUS ANCILLARY
+              </div>
+              <div className="text-xl font-semibold text-slate-900">{simpleTitle}</div>
+              <div className="text-sm text-slate-500 mt-1">{simpleSubtitle}</div>
+            </div>
+            <div className="text-xs text-slate-500">
+              {completedCount}/{patients.length} qualified
+            </div>
+          </div>
+        </div>
+      ) : (
+        <BatchHeader
+          selectedBatch={selectedBatch}
+          selectedBatchId={selectedBatchId}
+          clinicianInput={clinicianInput}
+          setClinicianInput={setClinicianInput}
+          patients={patients}
+          isProcessing={isProcessing}
+          analysisProgress={analysisProgress}
+          completedCount={completedCount}
+          onNavigate={onNavigate}
+          onDeleteAll={onDeleteAll}
+          onGenerateAll={onGenerateAll}
+          onUpdateClinician={onUpdateClinician}
+          schedulers={outreachSchedulers}
+          onAssignScheduler={onAssignScheduler}
+        />
+      )}
       <main className="flex-1 overflow-auto">
         <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
           {isProcessing && (
