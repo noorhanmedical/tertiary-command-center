@@ -452,22 +452,6 @@ export function HomeDashboard({
               </div>
             </div>
           </Card>
-
-          {batches.length > 0 && (
-            <div className="max-w-5xl mx-auto mt-10">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onOpenSidebar}
-                className="gap-2 text-sm"
-                data-testid="button-view-history"
-              >
-                <Clock className="w-4 h-4" />
-                Schedule History ({batches.length})
-              </Button>
-            </div>
-          )}
-        </div>
           <div className="mt-6 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Link href="/liaison-technician-portal">
@@ -511,6 +495,24 @@ export function HomeDashboard({
               </Card>
             </div>
           </div>
+
+
+          {batches.length > 0 && (
+            <div className="max-w-5xl mx-auto mt-10">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onOpenSidebar}
+                className="gap-2 text-sm"
+                data-testid="button-view-history"
+              >
+                <Clock className="w-4 h-4" />
+                Schedule History ({batches.length})
+              </Button>
+            </div>
+          )}
+        </div>
+
 
       </main>
     </div>
