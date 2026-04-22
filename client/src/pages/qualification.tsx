@@ -1,5 +1,5 @@
 import { Card } from "@/components/ui/card";
-import { Users, CalendarDays, Phone } from "lucide-react";
+import { Users, CalendarDays } from "lucide-react";
 import { useLocation } from "wouter";
 
 export default function QualificationPage() {
@@ -21,7 +21,7 @@ export default function QualificationPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="grid grid-cols-1 gap-5">
             <Card
               className="glass-tile glass-tile-interactive group cursor-pointer"
               onClick={() => setLocation("/visit-qualification")}
@@ -32,29 +32,12 @@ export default function QualificationPage() {
                 <div className="text-center">
                   <div className="text-[18px] font-semibold text-slate-900">Visit Patient</div>
                   <div className="text-[13px] text-slate-500 mt-1">
-                    Use the existing Add Schedule / visit flow for committed clinic-day patients.
-                  </div>
-                </div>
-              </div>
-            </Card>
-
-            <Card
-              className="glass-tile glass-tile-interactive group cursor-pointer"
-              onClick={() => setLocation("/outreach-qualification")}
-              data-testid="tile-qualification-outreach"
-            >
-              <div className="aspect-[1.2/1] flex flex-col items-center justify-center gap-4 p-8">
-                <Phone className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                <div className="text-center">
-                  <div className="text-[18px] font-semibold text-slate-900">Outreach Patient</div>
-                  <div className="text-[13px] text-slate-500 mt-1">
-                    Launch standalone outreach qualification that ends in a final outreach list instead of a visit schedule.
+                    Use the existing visit schedule builder and qualification flow for committed clinic-day patients.
                   </div>
                 </div>
               </div>
             </Card>
           </div>
-
           <Card className="glass-tile mt-6">
             <div className="p-6 flex items-start gap-4">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 flex items-center justify-center shrink-0">
@@ -64,7 +47,6 @@ export default function QualificationPage() {
                 <div className="text-sm font-semibold text-slate-900">Lifecycle rule</div>
                 <div className="text-sm text-slate-600 mt-1">
                   Visit patients come from committed schedules and should flow into the global calendar and clinic workflow surfaces.
-                  Outreach patients are standalone qualified patients and should flow into outreach and remote scheduler worklists.
                 </div>
               </div>
             </div>

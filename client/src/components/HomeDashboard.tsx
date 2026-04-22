@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { PageHeader } from "@/components/PageHeader";
 import {
-  CalendarDays, ChevronLeft, ChevronRight, Clock, FileText, Loader2, Phone, Plus, Upload, Users, Stethoscope, ClipboardList,
+  CalendarDays, ChevronLeft, ChevronRight, Clock, FileText, Loader2, Phone, Plus, Upload, Users, Stethoscope, ClipboardList, Radio,
 } from "lucide-react";
 
 type DayPatient = { id: number; batchId: number; name: string; time: string | null; ancillaries: string[] };
@@ -214,6 +214,14 @@ export function HomeDashboard({
                   <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
                     <ClipboardList className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
                     <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-qualification">Qualification</span>
+                  </div>
+                </Card>
+              </Link>
+              <Link href="/outreach-qualification">
+                <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-outreach-patients">
+                  <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                    <Radio className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach-patients">Outreach Patients</span>
                   </div>
                 </Card>
               </Link>
