@@ -82,19 +82,6 @@ export default function Home() {
   const [dashboardClinicKey, setDashboardClinicKey] = useState<string | null>(null);
   const [isAutoPolling, setIsAutoPolling] = useState(false);
   const [assignSchedulerModal, setAssignSchedulerModal] = useState<{
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("qualification") === "visit") {
-      setNewScheduleDialogOpen(true);
-      params.delete("qualification");
-      const next =
-        window.location.pathname +
-        (params.toString() ? `?${params.toString()}` : "") +
-        window.location.hash;
-      window.history.replaceState({}, "", next);
-    }
-  }, []);
     batchId: number;
     batchName: string;
     availableSchedulers: OutreachScheduler[];
