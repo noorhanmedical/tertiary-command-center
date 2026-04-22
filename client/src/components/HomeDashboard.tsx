@@ -152,77 +152,41 @@ export function HomeDashboard({
               className="mb-10"
             />
 
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-              <Card
-                className="glass-tile glass-tile-interactive group cursor-pointer"
-                onClick={onOpenDir}
-                data-testid="tile-patient-directory"
-              >
-                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                  <Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
-                </div>
-              </Card>
-
-              <Card
-                className={`glass-tile glass-tile-interactive group cursor-pointer ${isCreatingBatch ? "pointer-events-none opacity-60" : ""}`}
-                onClick={onNewSchedule}
-                data-testid="tile-visit-patients"
-              >
-                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                  {isCreatingBatch
-                    ? <Loader2 className="glass-tile-icon w-14 h-14 text-indigo-900 animate-spin" strokeWidth={1.5} />
-                    : <Plus className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
-                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-visit-patients">Visit Patients</span>
-                </div>
-              </Card>
-
-              <Link href="/outreach-qualification">
-                <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-outreach-patients">
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Card
+                  className="glass-tile glass-tile-interactive group cursor-pointer"
+                  onClick={onOpenDir}
+                  data-testid="tile-patient-directory"
+                >
                   <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                    <Radio className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach-patients">Outreach Patients</span>
+                    <Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
                   </div>
                 </Card>
-              </Link>
 
-              <Link href="/liaison-technician-portal">
-                <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-liaison-technician-portal">
+                <Card
+                  className={`glass-tile glass-tile-interactive group cursor-pointer ${isCreatingBatch ? "pointer-events-none opacity-60" : ""}`}
+                  onClick={onNewSchedule}
+                  data-testid="tile-visit-patients"
+                >
                   <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                    <Stethoscope className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-liaison-technician-portal">Liaison Technician Portal</span>
+                    {isCreatingBatch
+                      ? <Loader2 className="glass-tile-icon w-14 h-14 text-indigo-900 animate-spin" strokeWidth={1.5} />
+                      : <Plus className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
+                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-visit-patients">Visit Patients</span>
                   </div>
                 </Card>
-              </Link>
 
-              <Link href="/scheduler-portal">
-                <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-scheduler-portal">
-                  <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                    <Phone className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-scheduler-portal">Scheduler Portal</span>
-                  </div>
-                </Card>
-              </Link>
-
-              <Link href="/document-upload">
-                <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-document-upload">
-                  <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                    <Upload className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-document-upload">Document Upload</span>
-                  </div>
-                </Card>
-              </Link>
-
-              <Card
-                className="glass-tile glass-tile-interactive group cursor-pointer"
-                onClick={() => setLocation("/documents")}
-                data-testid="tile-documents"
-              >
-                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                  <FileText className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
-                </div>
-              </Card>
+                <Link href="/outreach-qualification">
+                  <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-outreach-patients">
+                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                      <Radio className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach-patients">Outreach Patients</span>
+                    </div>
+                  </Card>
+                </Link>
+              </div>
             </div>
           </div>
 
