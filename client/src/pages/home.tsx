@@ -92,6 +92,16 @@ export default function Home() {
   const wasAutoPollingRef = useRef(false);
   const trackedBatchIdRef = useRef<number | null>(null);
 
+
+  useEffect(() => {
+    if (sessionStorage.getItem("launchNewScheduleFromQualification") === "1") {
+      sessionStorage.removeItem("launchNewScheduleFromQualification");
+      setNewScheduleDate(new Date());
+      setNewScheduleDialogOpen(true);
+    }
+  }, []);
+
+
   const activeTab = tabs[activeTabIndex] || tabs[0] || { type: "home" };
   const selectedBatchId = activeTab.type === "schedule" ? activeTab.batchId : null;
   const scheduleViewMode = activeTab.type === "schedule" ? (activeTab.viewMode || "build") : null;
