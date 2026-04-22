@@ -1,18 +1,22 @@
 import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { FileBarChart, FileText, Plus, Share2, Trash2 } from "lucide-react";
+import { FileBarChart, FileText, Share2 } from "lucide-react";
 import QualificationIntakePane from "@/components/qualification/QualificationIntakePane";
+import QualificationPatientCardsPane from "@/components/qualification/QualificationPatientCardsPane";
 
-type OutreachPatientRow = {
+type OutreachPatient = {
   id: number;
   name: string;
-  time: string;
+  time?: string;
+  status: "draft" | "processing" | "completed";
   qualifyingTests: string[];
+  clinicianPdfUrl?: string | null;
+  plexusPdfUrl?: string | null;
+  reasoning?: Record<string, unknown>;
 };
 
-function parsePatientLines(text: string): OutreachPatientRow[] {
+function parsePatientLines(text: string): OutreachPatient[] {
   const lines = text
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -39,7 +43,11 @@ function parsePatientLines(text: string): OutreachPatientRow[] {
       id: nextId++,
       name,
       time,
+      status: "draft",
       qualifyingTests: [],
+      clinicianPdfUrl: null,
+      plexusPdfUrl: null,
+      reasoning: {},
     };
   });
 }
@@ -50,10 +58,11 @@ export default function OutreachQualificationPage() {
   const [importUnlocked, setImportUnlocked] = useState(false);
   const [importCodeInput, setImportCodeInput] = useState("");
   const [importCodeError, setImportCodeError] = useState(false);
-  const [patients, setPatients] = useState<OutreachPatientRow[]>([]);
+  const [patients, setPatients] = useState<OutreachPatient[]>([]);
+  const [analyzingPatients, setAnalyzingPatients] = useState<Set<number>>(new Set());
 
   const completedCount = useMemo(
-    () => patients.filter((p) => p.qualifyingTests.length > 0).length,
+    () => patients.filter((p) => p.status === "completed").length,
     [patients]
   );
 
@@ -78,31 +87,48 @@ export default function OutreachQualificationPage() {
         id: Date.now(),
         name: "",
         time: "",
+        status: "draft",
         qualifyingTests: [],
+        clinicianPdfUrl: null,
+        plexusPdfUrl: null,
+        reasoning: {},
       },
     ]);
   };
 
-  const updatePatient = (id: number, updates: Partial<OutreachPatientRow>) => {
-    setPatients((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
+  const updatePatient = (id: number, updates: Record<string, unknown>) => {
+    setPatients((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
+    );
   };
 
   const deletePatient = (id: number) => {
     setPatients((prev) => prev.filter((p) => p.id !== id));
   };
 
-  const qualifyPatient = (id: number) => {
-    setPatients((prev) =>
-      prev.map((p) =>
-        p.id === id
-          ? {
-              ...p,
-              qualifyingTests:
-                p.qualifyingTests.length > 0 ? p.qualifyingTests : ["BrainWave"],
-            }
-          : p
-      )
-    );
+  const analyzeOnePatient = async (id: number) => {
+    setAnalyzingPatients((prev) => new Set(prev).add(id));
+    try {
+      await new Promise((r) => setTimeout(r, 500));
+      setPatients((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? {
+                ...p,
+                status: "completed",
+                qualifyingTests:
+                  p.qualifyingTests.length > 0 ? p.qualifyingTests : ["BrainWave"],
+              }
+            : p
+        )
+      );
+    } finally {
+      setAnalyzingPatients((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
   };
 
   return (
@@ -113,11 +139,14 @@ export default function OutreachQualificationPage() {
             <div className="text-xs font-semibold tracking-[0.18em] text-slate-500 uppercase mb-3">
               PLEXUS ANCILLARY · OUTREACH QUALIFICATION
             </div>
-            <h1 className="text-3xl font-semibold text-slate-900 tracking-tight" data-testid="text-outreach-qualification-heading">
+            <h1
+              className="text-3xl font-semibold text-slate-900 tracking-tight"
+              data-testid="text-outreach-qualification-heading"
+            >
               Outreach Qualification
             </h1>
             <p className="text-sm text-slate-500 mt-2">
-              Standalone outreach patients with parser intake, patient bars, qualification, and final outreach list.
+              Same parser and patient bars as the visit flow, without requiring a committed visit schedule.
             </p>
           </div>
 
@@ -146,10 +175,23 @@ export default function OutreachQualificationPage() {
             addPatientTestId="button-add-outreach-patient"
           />
 
+          <QualificationPatientCardsPane
+            title="Final Outreach List"
+            patients={patients as any[]}
+            analyzingPatients={analyzingPatients}
+            completedCount={completedCount}
+            onUpdatePatient={(id, updates) => updatePatient(id, updates)}
+            onDeletePatient={(id) => deletePatient(id)}
+            onAnalyzeOnePatient={(id) => analyzeOnePatient(id)}
+            onOpenScheduleModal={() => {}}
+            schedulerName={null}
+            batchScheduleDate={null}
+          />
+
           <section>
             <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
               <h2 className="text-base font-semibold text-muted-foreground uppercase tracking-wider">
-                Final Outreach List ({patients.length})
+                Outreach Outputs
               </h2>
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" data-testid="button-outreach-clinician-pdf">
@@ -164,65 +206,11 @@ export default function OutreachQualificationPage() {
               </div>
             </div>
 
-            <div className="mb-3 text-xs text-slate-500">
-              {completedCount}/{patients.length} qualified
-            </div>
-
-            <div className="space-y-4">
-              {patients.map((patient) => (
-                <Card key={patient.id} className="p-4">
-                  <div className="grid grid-cols-1 md:grid-cols-[1.2fr_180px_auto_auto] gap-3 items-start">
-                    <Input
-                      value={patient.name}
-                      onChange={(e) => updatePatient(patient.id, { name: e.target.value })}
-                      placeholder="Patient name"
-                      data-testid={`outreach-patient-name-${patient.id}`}
-                    />
-                    <Input
-                      value={patient.time}
-                      onChange={(e) => updatePatient(patient.id, { time: e.target.value })}
-                      placeholder="Time (optional)"
-                      data-testid={`outreach-patient-time-${patient.id}`}
-                    />
-                    <Button
-                      variant="outline"
-                      onClick={() => qualifyPatient(patient.id)}
-                      data-testid={`button-qualify-outreach-${patient.id}`}
-                    >
-                      <Plus className="w-4 h-4 mr-1" />
-                      Qualify
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => deletePatient(patient.id)}
-                      data-testid={`button-delete-outreach-${patient.id}`}
-                    >
-                      <Trash2 className="w-4 h-4 mr-1" />
-                      Delete
-                    </Button>
-                  </div>
-
-                  <div className="mt-3 text-sm text-slate-600">
-                    {patient.qualifyingTests.length > 0 ? (
-                      <div>
-                        <span className="font-medium text-slate-900">Qualified:</span>{" "}
-                        {patient.qualifyingTests.join(", ")}
-                      </div>
-                    ) : (
-                      <div className="text-slate-400">Not qualified yet</div>
-                    )}
-                  </div>
-                </Card>
-              ))}
-
-              {patients.length === 0 && (
-                <Card className="p-6">
-                  <div className="text-sm text-slate-500">
-                    Add outreach patients using upload, paste list, or manual entry.
-                  </div>
-                </Card>
-              )}
-            </div>
+            <Card className="p-6">
+              <div className="text-sm text-slate-500">
+                Outreach patients now use the same parser intake and the same patient bars as visit patients.
+              </div>
+            </Card>
           </section>
         </div>
       </div>
