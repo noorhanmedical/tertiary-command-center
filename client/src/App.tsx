@@ -100,6 +100,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/technician-portal" component={TechnicianPortalPage} />
                 <Route path="/liaison-portal" component={LiaisonPortalPage} />
         <Route path="/qualification" component={QualificationPage} />
+        <Route path="/visit-qualification" component={Home} />
         <Route path="/outreach-qualification" component={OutreachQualificationPage} />
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">

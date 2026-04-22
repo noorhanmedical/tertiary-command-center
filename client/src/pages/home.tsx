@@ -92,14 +92,14 @@ export default function Home() {
   const wasAutoPollingRef = useRef(false);
   const trackedBatchIdRef = useRef<number | null>(null);
 
-
   useEffect(() => {
-    if (sessionStorage.getItem("launchNewScheduleFromQualification") === "1") {
-      sessionStorage.removeItem("launchNewScheduleFromQualification");
+    if (window.location.pathname === "/visit-qualification") {
       setNewScheduleDate(new Date());
       setNewScheduleDialogOpen(true);
     }
   }, []);
+
+
 
 
   const activeTab = tabs[activeTabIndex] || tabs[0] || { type: "home" };
