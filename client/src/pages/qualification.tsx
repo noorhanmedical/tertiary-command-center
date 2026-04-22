@@ -24,7 +24,7 @@ export default function QualificationPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <Card
               className="glass-tile glass-tile-interactive group cursor-pointer"
-              onClick={() => setLocation("/?qualification=visit")}
+              onClick={() => { sessionStorage.setItem("launchNewScheduleFromQualification", "1"); window.location.assign("/"); }}
               data-testid="tile-qualification-visit"
             >
               <div className="aspect-[1.2/1] flex flex-col items-center justify-center gap-4 p-8">
