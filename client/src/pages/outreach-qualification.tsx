@@ -1,9 +1,5 @@
 import { useMemo, useState } from "react";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { FileBarChart, FileText, Share2 } from "lucide-react";
-import QualificationIntakePane from "@/components/qualification/QualificationIntakePane";
-import QualificationPatientCardsPane from "@/components/qualification/QualificationPatientCardsPane";
+import VisitBuildPane from "@/components/qualification/VisitBuildPane";
 
 type OutreachPatient = {
   id: number;
@@ -11,9 +7,6 @@ type OutreachPatient = {
   time?: string;
   status: "draft" | "processing" | "completed";
   qualifyingTests: string[];
-  clinicianPdfUrl?: string | null;
-  plexusPdfUrl?: string | null;
-  reasoning?: Record<string, unknown>;
 };
 
 function parsePatientLines(text: string): OutreachPatient[] {
@@ -45,9 +38,6 @@ function parsePatientLines(text: string): OutreachPatient[] {
       time,
       status: "draft",
       qualifyingTests: [],
-      clinicianPdfUrl: null,
-      plexusPdfUrl: null,
-      reasoning: {},
     };
   });
 }
@@ -60,10 +50,26 @@ export default function OutreachQualificationPage() {
   const [importCodeError, setImportCodeError] = useState(false);
   const [patients, setPatients] = useState<OutreachPatient[]>([]);
   const [analyzingPatients, setAnalyzingPatients] = useState<Set<number>>(new Set());
+  const [clinicianInput, setClinicianInput] = useState("");
+  const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
 
   const completedCount = useMemo(
     () => patients.filter((p) => p.status === "completed").length,
     [patients]
+  );
+
+  const outreachBatch = useMemo(
+    () =>
+      ({
+        id: -1,
+        name: "Outreach Qualification",
+        clinicianName: clinicianInput,
+        assignedScheduler: null,
+        scheduleDate: null,
+        facility: "Outreach",
+      }) as any,
+    [clinicianInput]
   );
 
   const importFromText = (text: string) => {
@@ -89,17 +95,12 @@ export default function OutreachQualificationPage() {
         time: "",
         status: "draft",
         qualifyingTests: [],
-        clinicianPdfUrl: null,
-        plexusPdfUrl: null,
-        reasoning: {},
       },
     ]);
   };
 
   const updatePatient = (id: number, updates: Record<string, unknown>) => {
-    setPatients((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
-    );
+    setPatients((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
   };
 
   const deletePatient = (id: number) => {
@@ -131,89 +132,68 @@ export default function OutreachQualificationPage() {
     }
   };
 
+  const analyzeAll = async () => {
+    if (isAnalyzingAll) return;
+    setIsAnalyzingAll(true);
+    setAnalysisProgress({ completed: 0, total: patients.length });
+    try {
+      for (let i = 0; i < patients.length; i++) {
+        const patient = patients[i];
+        await analyzeOnePatient(patient.id);
+        setAnalysisProgress({ completed: i + 1, total: patients.length });
+      }
+    } finally {
+      setIsAnalyzingAll(false);
+      setAnalysisProgress(null);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-10 pb-16">
-        <div className="max-w-5xl mx-auto space-y-6">
-          <div>
-            <div className="text-xs font-semibold tracking-[0.18em] text-slate-500 uppercase mb-3">
-              PLEXUS ANCILLARY · OUTREACH QUALIFICATION
-            </div>
-            <h1
-              className="text-3xl font-semibold text-slate-900 tracking-tight"
-              data-testid="text-outreach-qualification-heading"
-            >
-              Outreach Qualification
-            </h1>
-            <p className="text-sm text-slate-500 mt-2">
-              Same parser and patient bars as the visit flow, without requiring a committed visit schedule.
-            </p>
-          </div>
-
-          <QualificationIntakePane
-            pasteText={pasteText}
-            setPasteText={setPasteText}
-            dragOver={dragOver}
-            setDragOver={setDragOver}
-            importUnlocked={importUnlocked}
-            setImportUnlocked={setImportUnlocked}
-            importCodeInput={importCodeInput}
-            setImportCodeInput={setImportCodeInput}
-            importCodeError={importCodeError}
-            setImportCodeError={setImportCodeError}
-            onHandleFileUpload={handleFileUpload}
-            onImportText={() => {
-              if (!pasteText.trim()) return;
-              importFromText(pasteText.trim());
-            }}
-            onAddPatient={addPatient}
-            title="Add Outreach Patients"
-            pastePlaceholder={"Paste outreach patient list here\n\n9:00 AM - John Smith\nJane Doe\nBob Johnson"}
-            uploadTestId="dropzone-outreach-upload"
-            pasteTestId="input-outreach-paste-list"
-            importTextTestId="button-import-outreach-text"
-            addPatientTestId="button-add-outreach-patient"
-          />
-
-          <QualificationPatientCardsPane
-            title="Final Outreach List"
-            patients={patients as any[]}
-            analyzingPatients={analyzingPatients}
-            completedCount={completedCount}
-            onUpdatePatient={(id, updates) => updatePatient(id, updates)}
-            onDeletePatient={(id) => deletePatient(id)}
-            onAnalyzeOnePatient={(id) => analyzeOnePatient(id)}
-            onOpenScheduleModal={() => {}}
-            schedulerName={null}
-            batchScheduleDate={null}
-          />
-
-          <section>
-            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-              <h2 className="text-base font-semibold text-muted-foreground uppercase tracking-wider">
-                Outreach Outputs
-              </h2>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" data-testid="button-outreach-clinician-pdf">
-                  <FileBarChart className="w-4 h-4 mr-1" /> Clinician PDF
-                </Button>
-                <Button variant="outline" size="sm" data-testid="button-outreach-plexus-pdf">
-                  <FileText className="w-4 h-4 mr-1" /> Plexus PDF
-                </Button>
-                <Button variant="outline" size="sm" data-testid="button-outreach-share">
-                  <Share2 className="w-4 h-4 mr-1" /> Share
-                </Button>
-              </div>
-            </div>
-
-            <Card className="p-6">
-              <div className="text-sm text-slate-500">
-                Outreach patients now use the same parser intake and the same patient bars as visit patients.
-              </div>
-            </Card>
-          </section>
-        </div>
-      </div>
-    </div>
+    <VisitBuildPane
+      selectedBatch={outreachBatch}
+      selectedBatchId={-1}
+      patients={patients as any[]}
+      batchLoading={false}
+      isProcessing={isAnalyzingAll}
+      analysisProgress={analysisProgress}
+      completedCount={completedCount}
+      clinicianInput={clinicianInput}
+      setClinicianInput={setClinicianInput}
+      outreachSchedulers={[]}
+      pasteText={pasteText}
+      setPasteText={setPasteText}
+      dragOver={dragOver}
+      setDragOver={setDragOver}
+      importUnlocked={importUnlocked}
+      setImportUnlocked={setImportUnlocked}
+      importCodeInput={importCodeInput}
+      setImportCodeInput={setImportCodeInput}
+      importCodeError={importCodeError}
+      setImportCodeError={setImportCodeError}
+      analyzingPatients={analyzingPatients}
+      onNavigate={() => {}}
+      onDeleteAll={() => setPatients([])}
+      onGenerateAll={analyzeAll}
+      onUpdateClinician={(value) => setClinicianInput(value)}
+      onAssignScheduler={undefined}
+      onHandleDrop={(e) => {
+        e.preventDefault();
+        setDragOver(false);
+        if (e.dataTransfer.files.length > 0) handleFileUpload(e.dataTransfer.files);
+      }}
+      onHandleFileUpload={handleFileUpload}
+      onImportText={() => {
+        if (!pasteText.trim()) return;
+        importFromText(pasteText.trim());
+      }}
+      onAddPatient={addPatient}
+      onUpdatePatient={updatePatient}
+      onDeletePatient={deletePatient}
+      onAnalyzeOnePatient={analyzeOnePatient}
+      onOpenScheduleModal={() => {}}
+      importFilePending={false}
+      importTextPending={false}
+      addPatientPending={false}
+    />
   );
 }
