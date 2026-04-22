@@ -153,6 +153,7 @@ export function HomeDashboard({
             />
 
             <div className="space-y-4">
+              <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Card
                   className="glass-tile glass-tile-interactive group cursor-pointer"
@@ -188,7 +189,6 @@ export function HomeDashboard({
                 </Link>
               </div>
             </div>
-          </div>
 
           <Card className="glass-tile mt-6" data-testid="tile-schedule-dashboard-inline">
             <div className="p-6 lg:p-8">
@@ -469,6 +469,50 @@ export function HomeDashboard({
           )}
         </div>
       </main>
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Link href="/liaison-technician-portal">
+                <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-liaison-technician-portal">
+                  <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                    <Stethoscope className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-liaison-technician-portal">Liaison Technician Portal</span>
+                  </div>
+                </Card>
+              </Link>
+
+              <Link href="/scheduler-portal">
+                <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-scheduler-portal">
+                  <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                    <Phone className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-scheduler-portal">Scheduler Portal</span>
+                  </div>
+                </Card>
+              </Link>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Link href="/document-upload">
+                <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-document-upload">
+                  <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                    <Upload className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-document-upload">Document Upload</span>
+                  </div>
+                </Card>
+              </Link>
+
+              <Card
+                className="glass-tile glass-tile-interactive group cursor-pointer"
+                onClick={() => setLocation("/documents")}
+                data-testid="tile-documents"
+              >
+                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                  <FileText className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
+                </div>
+              </Card>
+            </div>
+          </div>
+
     </div>
   );
 }
