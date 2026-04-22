@@ -35,6 +35,7 @@ import LoginPage from "@/pages/login";
 import { GlobalNav } from "@/components/GlobalNav";
 import { TopBanner } from "@/components/TopBanner";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
+import QualificationPage from "@/pages/qualification";
 
 const SIDEBAR_STYLE = {
   "--sidebar-width": "18rem",
@@ -97,6 +98,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
         <Route path="/clinic-workflow-demo" component={ClinicWorkflowDemoPage} />
                 <Route path="/technician-portal" component={TechnicianPortalPage} />
                 <Route path="/liaison-portal" component={LiaisonPortalPage} />
+        <Route path="/qualification" component={QualificationPage} />
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">
                   <Redirect to="/plexus-tasks" />
