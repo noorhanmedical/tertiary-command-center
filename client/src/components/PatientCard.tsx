@@ -349,7 +349,7 @@ export function PatientCard({
             className={`text-[10px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 border ${
               derivedType === "visit"
                 ? "bg-sky-100 text-sky-800 border-sky-200"
-                : "bg-violet-100 text-violet-800 border-violet-200"
+                : "bg-white text-slate-800 border-slate-200"
             }`}
             title={
               derivedType === "visit"
