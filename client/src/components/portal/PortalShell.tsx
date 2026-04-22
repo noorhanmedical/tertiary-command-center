@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SignaturePad } from "./SignaturePad";
+import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 
 type Role = "technician" | "liaison";
 type CenterMode = "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart";
@@ -695,6 +696,13 @@ export function PortalShell({ role }: { role: Role }) {
 
         {/* Center: patient detail OR expanded mode */}
         <div className="overflow-y-auto min-h-0">
+          {selected && (
+            <PortalWorkflowPanel
+              patient={selected}
+              role={role}
+              selectedDate={selectedDate}
+            />
+          )}
           {centerMode === "consent" && selected ? (
             <Card className="p-6 space-y-4" data-testid="expanded-consent">
               <div className="flex items-start justify-between">

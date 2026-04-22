@@ -1,6 +1,5 @@
 import React from "react";
 import { PortalShell } from "@/components/portal/PortalShell";
-import WorkflowInlinePanel from "./WorkflowInlinePanel";
 
 type ClinicWorkflowPortalRole = "liaison" | "technician";
 
@@ -9,10 +8,5 @@ export default function ClinicWorkflowPortal({
 }: {
   role: ClinicWorkflowPortalRole;
 }) {
-  return (
-    <>
-      <WorkflowInlinePanel />
-      <PortalShell role={role} />
-    </>
-  );
+  return <PortalShell role={role} />;
 }
