@@ -24,7 +24,7 @@ export default function QualificationPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <Card
               className="glass-tile glass-tile-interactive group cursor-pointer"
-              onClick={() => setLocation("/")}
+              onClick={() => setLocation("/?qualification=visit")}
               data-testid="tile-qualification-visit"
             >
               <div className="aspect-[1.2/1] flex flex-col items-center justify-center gap-4 p-8">
@@ -32,7 +32,7 @@ export default function QualificationPage() {
                 <div className="text-center">
                   <div className="text-[18px] font-semibold text-slate-900">Visit Patient</div>
                   <div className="text-[13px] text-slate-500 mt-1">
-                    For patients that belong to a committed clinic-day visit workflow.
+                    Launch the full visit schedule builder, parser, patient bars, and qualification flow.
                   </div>
                 </div>
               </div>
@@ -40,7 +40,7 @@ export default function QualificationPage() {
 
             <Card
               className="glass-tile glass-tile-interactive group cursor-pointer"
-              onClick={() => setLocation("/outreach")}
+              onClick={() => setLocation("/outreach-qualification")}
               data-testid="tile-qualification-outreach"
             >
               <div className="aspect-[1.2/1] flex flex-col items-center justify-center gap-4 p-8">
@@ -48,7 +48,7 @@ export default function QualificationPage() {
                 <div className="text-center">
                   <div className="text-[18px] font-semibold text-slate-900">Outreach Patient</div>
                   <div className="text-[13px] text-slate-500 mt-1">
-                    For standalone qualified patients that should enter outreach workflow.
+                    Launch standalone outreach qualification that ends in a final outreach list instead of a visit schedule.
                   </div>
                 </div>
               </div>
