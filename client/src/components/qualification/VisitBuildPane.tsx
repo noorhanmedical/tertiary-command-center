@@ -100,16 +100,50 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
     <div className="flex flex-col h-full relative z-10">
       {simpleHeaderMode ? (
         <div className="border-b bg-white/80 backdrop-blur-sm">
-          <div className="max-w-5xl mx-auto px-4 py-5 flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <div className="text-xs font-semibold tracking-[0.16em] uppercase text-slate-500 mb-1">
-                PLEXUS ANCILLARY
+          <div className="max-w-5xl mx-auto px-4 py-5 space-y-4">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <div className="text-xs font-semibold tracking-[0.16em] uppercase text-slate-500 mb-1">
+                  PLEXUS ANCILLARY
+                </div>
+                <div className="text-xl font-semibold text-slate-900">{simpleTitle}</div>
+                <div className="text-sm text-slate-500 mt-1">{simpleSubtitle}</div>
               </div>
-              <div className="text-xl font-semibold text-slate-900">{simpleTitle}</div>
-              <div className="text-sm text-slate-500 mt-1">{simpleSubtitle}</div>
+              <div className="text-xs text-slate-500">
+                {completedCount}/{patients.length} qualified
+              </div>
             </div>
-            <div className="text-xs text-slate-500">
-              {completedCount}/{patients.length} qualified
+
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="min-w-[240px] flex-1 max-w-md">
+                <div className="text-xs font-medium text-slate-500 mb-1">Clinician</div>
+                <input
+                  value={clinicianInput}
+                  onChange={(e) => setClinicianInput(e.target.value)}
+                  onBlur={() => onUpdateClinician(clinicianInput)}
+                  placeholder="Enter clinician name"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  data-testid="input-simple-clinician"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  onClick={onDeleteAll}
+                  disabled={patients.length === 0}
+                  data-testid="button-simple-delete-all"
+                >
+                  Delete All
+                </Button>
+                <Button
+                  onClick={onGenerateAll}
+                  disabled={patients.length === 0 || isProcessing}
+                  data-testid="button-simple-generate-all"
+                >
+                  {isProcessing ? "Generating..." : "Generate All"}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
