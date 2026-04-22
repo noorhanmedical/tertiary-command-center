@@ -1,8 +1,7 @@
 import { Card } from "@/components/ui/card";
+import { Phone, Share2, FileBarChart, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
-import { Loader2, Upload, FileText, Plus, Lock, Phone, Share2, FileBarChart } from "lucide-react";
+import QualificationIntakePane from "./QualificationIntakePane";
 
 const IMPORT_ACCESS_CODE = "1234";
 
@@ -53,99 +52,24 @@ export default function OutreachBuildPane({
 
       <main className="flex-1 overflow-auto">
         <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-          <section>
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Add Patients</h2>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {importUnlocked ? (
-                <>
-                  <Card className="p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Upload className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-base font-semibold">Upload File</span>
-                    </div>
-                    <div
-                      className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${dragOver ? "border-primary bg-primary/5" : "border-border"}`}
-                      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                      onDragLeave={() => setDragOver(false)}
-                      data-testid="dropzone-outreach-upload"
-                    >
-                      <Upload className="w-6 h-6 text-muted-foreground mb-1.5" />
-                      <p className="text-xs text-muted-foreground text-center">Drop files or click to browse</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Excel, CSV, PDF, images, text</p>
-                    </div>
-                  </Card>
-
-                  <Card className="p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <FileText className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-base font-semibold">Paste List</span>
-                    </div>
-                    <Textarea
-                      placeholder={"Paste outreach patient list here\n\nJohn Smith\nJane Doe\nBob Johnson"}
-                      className="min-h-[82px] resize-none text-sm mb-2"
-                      value={pasteText}
-                      onChange={(e) => setPasteText(e.target.value)}
-                      data-testid="input-outreach-paste-list"
-                    />
-                    <Button className="w-full gap-1.5" variant="outline" disabled={!pasteText.trim()} data-testid="button-import-outreach-text">
-                      <Plus className="w-4 h-4" /> Import List
-                    </Button>
-                  </Card>
-                </>
-              ) : (
-                <Card className="p-4 col-span-1 lg:col-span-2">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Lock className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-base font-semibold">Import Access</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mb-3">File upload and paste import require an access code. Manual entry is always available.</p>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="password"
-                      inputMode="numeric"
-                      maxLength={4}
-                      placeholder="Enter 4-digit code"
-                      value={importCodeInput}
-                      onChange={(e) => {
-                        setImportCodeInput(e.target.value.replace(/\D/g, "").slice(0, 4));
-                        setImportCodeError(false);
-                      }}
-                      className={`max-w-[160px] ${importCodeError ? "border-red-400" : ""}`}
-                      data-testid="input-outreach-import-code"
-                    />
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        if (importCodeInput === IMPORT_ACCESS_CODE) {
-                          setImportUnlocked(true);
-                          setImportCodeInput("");
-                          setImportCodeError(false);
-                        } else {
-                          setImportCodeError(true);
-                          setImportCodeInput("");
-                        }
-                      }}
-                      data-testid="button-outreach-import-unlock"
-                    >
-                      Unlock
-                    </Button>
-                  </div>
-                  {importCodeError && <p className="text-xs text-red-500 mt-1.5">Incorrect code. Please try again.</p>}
-                </Card>
-              )}
-
-              <Card className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Plus className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-base font-semibold">Manual Entry</span>
-                </div>
-                <Button className="w-full gap-1.5" data-testid="button-add-outreach-patient">
-                  <Plus className="w-4 h-4" /> Add Patient
-                </Button>
-              </Card>
-            </div>
-          </section>
-
+          <QualificationIntakePane
+            pasteText={pasteText}
+            setPasteText={setPasteText}
+            dragOver={dragOver}
+            setDragOver={setDragOver}
+            importUnlocked={importUnlocked}
+            setImportUnlocked={setImportUnlocked}
+            importCodeInput={importCodeInput}
+            setImportCodeInput={setImportCodeInput}
+            importCodeError={importCodeError}
+            setImportCodeError={setImportCodeError}
+            title="Add Patients"
+            pastePlaceholder={"Paste outreach patient list here\n\nJohn Smith\nJane Doe\nBob Johnson"}
+            uploadTestId="dropzone-outreach-upload"
+            pasteTestId="input-outreach-paste-list"
+            importTextTestId="button-import-outreach-text"
+            addPatientTestId="button-add-outreach-patient"
+          />
           <section>
             <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
               <h2 className="text-base font-semibold text-muted-foreground uppercase tracking-wider">
