@@ -1,5 +1,5 @@
-import { PortalShell } from "@/components/portal/PortalShell";
+import ClinicWorkflowPortal from "../components/workflow/ClinicWorkflowPortal";
 
 export default function TechnicianPortalPage() {
-  return <PortalShell role="technician" />;
+  return <ClinicWorkflowPortal role="technician" />;
 }
