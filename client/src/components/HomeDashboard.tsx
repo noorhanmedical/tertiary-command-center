@@ -154,6 +154,18 @@ export function HomeDashboard({
 
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
               <Card
+                className={`glass-tile glass-tile-interactive group cursor-pointer ${isCreatingBatch ? "pointer-events-none opacity-60" : ""}`}
+                onClick={onNewSchedule}
+                data-testid="tile-new-schedule"
+              >
+                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                  {isCreatingBatch
+                    ? <Loader2 className="glass-tile-icon w-14 h-14 text-indigo-900 animate-spin" strokeWidth={1.5} />
+                    : <Plus className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
+                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-new-schedule">New Schedule</span>
+                </div>
+              </Card>
+              <Card
                 className="glass-tile glass-tile-interactive group cursor-pointer"
                 onClick={() => setLocation("/documents")}
                 data-testid="tile-documents"

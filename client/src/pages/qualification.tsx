@@ -32,7 +32,7 @@ export default function QualificationPage() {
                 <div className="text-center">
                   <div className="text-[18px] font-semibold text-slate-900">Visit Patient</div>
                   <div className="text-[13px] text-slate-500 mt-1">
-                    Launch the full visit schedule builder, parser, patient bars, and qualification flow.
+                    Use the existing Add Schedule / visit flow for committed clinic-day patients.
                   </div>
                 </div>
               </div>
