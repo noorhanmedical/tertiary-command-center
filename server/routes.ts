@@ -28,7 +28,6 @@ import { registerPortalRoutes } from "./routes/portal";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
-import clinicWorkflowRouter from "./routes/clinicWorkflow";
   backgroundSyncPatients,
   backgroundSyncBilling,
 } from "./services/syncService";
@@ -217,7 +216,6 @@ export async function registerRoutes(
   registerMarketingMaterialRoutes(app);
   registerDocumentLibraryRoutes(app);
   registerPortalRoutes(app);
-  app.use("/api/clinic-workflow", clinicWorkflowRouter);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {
