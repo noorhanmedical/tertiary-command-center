@@ -2,6 +2,7 @@ import { Card } from "@/components/ui/card";
 import { Phone, Share2, FileBarChart, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import QualificationIntakePane from "./QualificationIntakePane";
+import QualificationPatientCardsPane from "./QualificationPatientCardsPane";
 
 const IMPORT_ACCESS_CODE = "1234";
 
@@ -70,6 +71,20 @@ export default function OutreachBuildPane({
             importTextTestId="button-import-outreach-text"
             addPatientTestId="button-add-outreach-patient"
           />
+
+          <QualificationPatientCardsPane
+            title="Final Outreach List"
+            patients={[]}
+            analyzingPatients={new Set()}
+            completedCount={0}
+            onUpdatePatient={() => {}}
+            onDeletePatient={() => {}}
+            onAnalyzeOnePatient={() => {}}
+            onOpenScheduleModal={() => {}}
+            schedulerName={null}
+            batchScheduleDate={null}
+          />
+
           <section>
             <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
               <h2 className="text-base font-semibold text-muted-foreground uppercase tracking-wider">
