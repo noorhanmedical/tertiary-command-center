@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { PageHeader } from "@/components/PageHeader";
@@ -9,7 +10,7 @@ import {
 } from "lucide-react";
 
 type DayPatient = { id: number; batchId: number; name: string; time: string | null; ancillaries: string[] };
-type ClinicMonthCell = { isoDate: string; patientCount: number; ancillaryCount: number; patients?: DayPatient[] };
+type ClinicMonthCell = { isoDate: string; patientCount: number; ancillaryCount: number; patients?: DayPatient[]; providerNames?: string[]; ancillaryBreakdown?: Record<string, number> };
 type ClinicTab = {
   clinicKey: string;
   clinicLabel: string;
@@ -85,6 +86,8 @@ export function HomeDashboard({
 }: HomeDashboardProps) {
   const [, setLocation] = useLocation();
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [calendarPopupDate, setCalendarPopupDate] = useState<string | null>(null);
+  const [calendarDetailDate, setCalendarDetailDate] = useState<string | null>(null);
 
   const dashboardClinicTabs = dashboardData?.clinicTabs || [];
   const activeDashboardClinic =
@@ -114,6 +117,39 @@ export function HomeDashboard({
     }
     return map;
   }, [selectedDayPatients]);
+
+  const selectedMonthCell = useMemo<ClinicMonthCell | null>(() => {
+    if (!calendarPopupDate || !activeDashboardClinic) return null;
+    return activeDashboardClinic.monthCells.find((c) => c.isoDate === calendarPopupDate) || null;
+  }, [calendarPopupDate, activeDashboardClinic]);
+
+  const popupBreakdown = useMemo<Record<string, number>>(() => {
+    const existing = selectedMonthCell?.ancillaryBreakdown;
+    if (existing && Object.keys(existing).length > 0) return existing;
+    const map: Record<string, number> = {};
+    for (const p of selectedMonthCell?.patients ?? []) {
+      for (const a of p.ancillaries ?? []) map[a] = (map[a] || 0) + 1;
+    }
+    return map;
+  }, [selectedMonthCell]);
+
+  const popupTeamMembers = useMemo<string[]>(() => {
+    if (selectedMonthCell?.providerNames?.length) return selectedMonthCell.providerNames;
+    return [];
+  }, [selectedMonthCell]);
+
+  function countFor(labels: string[]) {
+    let total = 0;
+    for (const [name, count] of Object.entries(popupBreakdown)) {
+      const normalized = name.toLowerCase();
+      if (labels.some((label) => normalized.includes(label))) total += Number(count || 0);
+    }
+    return total;
+  }
+
+  const popupBrainwaveCount = countFor(["brainwave"]);
+  const popupVitalwaveCount = countFor(["vitalwave"]);
+  const popupUltrasoundCount = countFor(["ultrasound", "carotid", "echo", "vascular"]);
 
   // Per-clinic patient totals for the visible month, used as tab badges.
   const clinicMonthTotals = useMemo<Record<string, number>>(() => {
@@ -370,7 +406,7 @@ export function HomeDashboard({
                           <button
                             type="button"
                             key={cell.isoDate}
-                            onClick={() => setSelectedDate(cell.isoDate)}
+                            onClick={() => { setSelectedDate(cell.isoDate); setCalendarPopupDate(cell.isoDate); }}
                             className={`group text-left rounded-2xl p-2.5 min-h-[120px] flex flex-col transition-all cursor-pointer ${baseStyle}`}
                             data-testid={`dashboard-month-cell-${cell.isoDate}`}
                             aria-pressed={isSelected}
@@ -507,6 +543,135 @@ export function HomeDashboard({
           )}
         </div>
       </main>
+      <Dialog open={!!calendarPopupDate} onOpenChange={(open) => !open && setCalendarPopupDate(null)}>
+        <DialogContent className="max-w-md" data-testid="dialog-calendar-day-summary">
+          <DialogHeader>
+            <DialogTitle>
+              {calendarPopupDate
+                ? new Date(calendarPopupDate + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })
+                : "Day Summary"}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div>
+              <div className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">Team Members On</div>
+              {popupTeamMembers.length > 0 ? (
+                <div className="space-y-1">
+                  {popupTeamMembers.map((name) => (
+                    <div key={name} className="text-sm text-slate-800">{name}</div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-slate-500">No team members listed yet.</div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <Card className="p-3">
+                <div className="text-xs text-slate-500 mb-1">BrainWave</div>
+                <div className="text-xl font-semibold text-slate-900" data-testid="text-popup-brainwave-count">{popupBrainwaveCount}</div>
+              </Card>
+              <Card className="p-3">
+                <div className="text-xs text-slate-500 mb-1">VitalWave</div>
+                <div className="text-xl font-semibold text-slate-900" data-testid="text-popup-vitalwave-count">{popupVitalwaveCount}</div>
+              </Card>
+              <Card className="p-3">
+                <div className="text-xs text-slate-500 mb-1">Ultrasound</div>
+                <div className="text-xl font-semibold text-slate-900" data-testid="text-popup-ultrasound-count">{popupUltrasoundCount}</div>
+              </Card>
+            </div>
+
+            <div className="flex justify-end">
+              <Button variant="outline" size="sm" onClick={() => setCalendarDetailDate(calendarPopupDate)} data-testid="button-calendar-popup-more-info">
+                More Info
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!calendarDetailDate} onOpenChange={(open) => !open && setCalendarDetailDate(null)}>
+        <DialogContent className="max-w-2xl" data-testid="dialog-calendar-day-detail">
+          <DialogHeader>
+            <DialogTitle>
+              {calendarDetailDate
+                ? new Date(calendarDetailDate + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })
+                : "Day Detail"}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-5">
+            <div>
+              <div className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">Team Members On</div>
+              {popupTeamMembers.length > 0 ? (
+                <div className="space-y-1">
+                  {popupTeamMembers.map((name) => (
+                    <div key={name} className="text-sm text-slate-800">{name}</div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-slate-500">No team members listed yet.</div>
+              )}
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">Day Totals</div>
+              <div className="grid grid-cols-3 gap-3">
+                <Card className="p-3">
+                  <div className="text-xs text-slate-500 mb-1">BrainWave</div>
+                  <div className="text-xl font-semibold text-slate-900">{popupBrainwaveCount}</div>
+                </Card>
+                <Card className="p-3">
+                  <div className="text-xs text-slate-500 mb-1">VitalWave</div>
+                  <div className="text-xl font-semibold text-slate-900">{popupVitalwaveCount}</div>
+                </Card>
+                <Card className="p-3">
+                  <div className="text-xs text-slate-500 mb-1">Ultrasound</div>
+                  <div className="text-xl font-semibold text-slate-900">{popupUltrasoundCount}</div>
+                </Card>
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">
+                Patients Scheduled ({selectedMonthCell?.patients?.length ?? 0})
+              </div>
+              {(selectedMonthCell?.patients?.length ?? 0) > 0 ? (
+                <div className="space-y-2">
+                  {(selectedMonthCell?.patients ?? []).map((patient) => (
+                    <Card key={patient.id} className="p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">{patient.name}</div>
+                          <div className="text-xs text-slate-500">{formatTime12(patient.time)}</div>
+                        </div>
+                        <div className="flex flex-wrap gap-1 justify-end">
+                          {(patient.ancillaries ?? []).length > 0 ? (
+                            patient.ancillaries.map((ancillary, idx) => (
+                              <span
+                                key={`${patient.id}-${ancillary}-${idx}`}
+                                className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-700"
+                              >
+                                {ancillary}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-slate-400">No ancillaries</span>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-slate-500">No patients scheduled for this day.</div>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
