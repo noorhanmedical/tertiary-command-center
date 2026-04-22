@@ -91,21 +91,6 @@ export default function Home() {
   const wasAutoPollingRef = useRef(false);
   const trackedBatchIdRef = useRef<number | null>(null);
 
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("qualification") === "visit") {
-      setNewScheduleDialogOpen(true);
-      params.delete("qualification");
-      const next =
-        window.location.pathname +
-        (params.toString() ? `?${params.toString()}` : "") +
-        window.location.hash;
-      window.history.replaceState({}, "", next);
-    }
-  }, []);
-
-
   const activeTab = tabs[activeTabIndex] || tabs[0] || { type: "home" };
   const selectedBatchId = activeTab.type === "schedule" ? activeTab.batchId : null;
   const scheduleViewMode = activeTab.type === "schedule" ? (activeTab.viewMode || "build") : null;
