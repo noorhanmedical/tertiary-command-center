@@ -1,6 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import QualificationIntakePane from "./QualificationIntakePane";
+import QualificationPatientCardsPane from "./QualificationPatientCardsPane";
 import { Loader2, Upload, FileText, Plus, Lock, AlertTriangle, User, Trash2 } from "lucide-react";
 import { BatchHeader } from "@/components/BatchHeader";
 import { PatientCard } from "@/components/PatientCard";
@@ -160,31 +161,18 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
             importTextTestId="button-import-text"
             addPatientTestId="button-add-patient"
           />
-          {patients.length > 0 && (
-            <section>
-              <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-                <h2 className="text-base font-semibold text-muted-foreground uppercase tracking-wider">
-                  Schedule Generator ({patients.length})
-                </h2>
-                {completedCount > 0 && <span className="text-xs text-muted-foreground">{completedCount}/{patients.length} analyzed</span>}
-              </div>
-              <div className="space-y-4">
-                {patients.map((patient) => (
-                  <PatientCard
-                    key={patient.id}
-                    patient={patient}
-                    isAnalyzing={analyzingPatients.has(patient.id)}
-                    onUpdate={(field, value) => onUpdatePatient(patient.id, { [field]: value })}
-                    onDelete={() => onDeletePatient(patient.id)}
-                    onAnalyze={() => onAnalyzeOnePatient(patient.id)}
-                    onOpenScheduleModal={(p) => onOpenScheduleModal(p)}
-                    schedulerName={selectedBatch?.assignedScheduler?.name ?? null}
-                    batchScheduleDate={selectedBatch?.scheduleDate ?? null}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
+          <QualificationPatientCardsPane
+            title="Schedule Generator"
+            patients={patients}
+            analyzingPatients={analyzingPatients}
+            completedCount={completedCount}
+            onUpdatePatient={onUpdatePatient}
+            onDeletePatient={onDeletePatient}
+            onAnalyzeOnePatient={onAnalyzeOnePatient}
+            onOpenScheduleModal={onOpenScheduleModal}
+            schedulerName={selectedBatch?.assignedScheduler?.name ?? null}
+            batchScheduleDate={selectedBatch?.scheduleDate ?? null}
+          />
         </div>
       </main>
     </div>
