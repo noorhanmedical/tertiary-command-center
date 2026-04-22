@@ -28,7 +28,6 @@ import { registerPortalRoutes } from "./routes/portal";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
-import clinicWorkflowRouter from "./routes/clinicWorkflow";
   backgroundSyncPatients,
   backgroundSyncBilling,
 } from "./services/syncService";
