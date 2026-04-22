@@ -1,5 +1,11 @@
 import { PortalShell } from "@/components/portal/PortalShell";
+import WorkflowInlinePanel from "../components/workflow/WorkflowInlinePanel";
 
 export default function LiaisonPortalPage() {
-  return <PortalShell role="liaison" />;
+  return (
+    <>
+      <WorkflowInlinePanel />
+      <PortalShell role="liaison" />
+    </>
+  );
 }
