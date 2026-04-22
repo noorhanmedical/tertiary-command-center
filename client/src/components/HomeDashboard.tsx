@@ -154,6 +154,17 @@ export function HomeDashboard({
 
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
               <Card
+                className="glass-tile glass-tile-interactive group cursor-pointer"
+                onClick={onOpenDir}
+                data-testid="tile-patient-directory"
+              >
+                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                  <Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
+                </div>
+              </Card>
+
+              <Card
                 className={`glass-tile glass-tile-interactive group cursor-pointer ${isCreatingBatch ? "pointer-events-none opacity-60" : ""}`}
                 onClick={onNewSchedule}
                 data-testid="tile-visit-patients"
@@ -175,16 +186,7 @@ export function HomeDashboard({
                 </Card>
               </Link>
 
-              <Link href="/schedule-dashboard">
-                <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-dashboard">
-                  <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                    <CalendarDays className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-dashboard">Dashboard</span>
-                  </div>
-                </Card>
-              </Link>
-
-              <Link href="/liaison-portal">
+              <Link href="/liaison-technician-portal">
                 <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-liaison-technician-portal">
                   <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
                     <Stethoscope className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
@@ -193,7 +195,7 @@ export function HomeDashboard({
                 </Card>
               </Link>
 
-              <Link href="/outreach">
+              <Link href="/scheduler-portal">
                 <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-scheduler-portal">
                   <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
                     <Phone className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
@@ -219,17 +221,6 @@ export function HomeDashboard({
                 <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
                   <FileText className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
                   <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
-                </div>
-              </Card>
-
-              <Card
-                className="glass-tile glass-tile-interactive group cursor-pointer"
-                onClick={onOpenDir}
-                data-testid="tile-patient-directory"
-              >
-                <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                  <Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                  <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
                 </div>
               </Card>
             </div>
