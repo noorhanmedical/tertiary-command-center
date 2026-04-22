@@ -527,7 +527,7 @@ export function PatientCard({
                     {isGenerating && <Loader2 className="w-2.5 h-2.5 animate-spin shrink-0" />}
                     {test}
                     <button
-                      className="rounded hover:bg-black/10 transition-colors p-0.5 -mr-0.5 shrink-0"
+                      className="rounded transition-colors p-0.5 -mr-0.5 shrink-0"
                       title={`Remove ${test}`}
                       onClick={() => handleRemoveTest(test)}
                       data-testid={`button-remove-test-${patient.id}-${test.replace(/\s+/g, "-")}`}
