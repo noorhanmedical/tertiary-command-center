@@ -11,7 +11,7 @@ export default function QualificationPage() {
         <div className="max-w-5xl mx-auto">
           <div className="mb-10">
             <div className="text-xs font-semibold tracking-[0.18em] text-slate-500 uppercase mb-3">
-              PLEXUS ANCILLARY · QUALIFICATION
+              PLEXUS ANCILLARY · PATIENT INTAKE
             </div>
             <h1 className="text-3xl font-semibold text-slate-900 tracking-tight" data-testid="text-qualification-heading">
               Patient Intake

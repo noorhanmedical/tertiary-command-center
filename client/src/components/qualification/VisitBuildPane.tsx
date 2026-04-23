@@ -92,8 +92,8 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
     importTextPending,
     addPatientPending,
     simpleHeaderMode = false,
-    simpleTitle = "Visit Qualification",
-    simpleSubtitle = "Build patients and generate qualifications.",
+    simpleTitle = "Visit Patients",
+    simpleSubtitle = "Build patients and generate visit workflow outputs.",
   } = props;
 
   return (

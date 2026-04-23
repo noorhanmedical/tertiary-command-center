@@ -275,8 +275,8 @@ export default function OutreachQualificationPage() {
       importTextPending={importTextMut.isPending}
       addPatientPending={addPatientMut.isPending}
       simpleHeaderMode={true}
-      simpleTitle="Outreach Qualification"
-      simpleSubtitle="Same parser, patient bars, and generation path as visit patients, without requiring a committed visit schedule."
+      simpleTitle="Outreach Patients"
+      simpleSubtitle="Same parser, patient bars, and generation path as Visit Patients, without requiring a committed visit schedule."
     />
   );
 }
