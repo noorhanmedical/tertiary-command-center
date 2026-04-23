@@ -87,6 +87,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/schedule" component={SchedulePage} />
                 <Route path="/patient-database" component={PatientDatabasePage} />
+                <Route path="/ancillary-documents">
+                  <Redirect to="/documents" />
+                </Route>
                 <Route path="/documents" component={DocumentsPage} />
                 <Route path="/billing" component={BillingPage} />
                 <Route path="/invoices">
@@ -143,6 +146,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/admin-ops">
                   <AdminGuard user={user}><AdminOpsPage /></AdminGuard>
+                </Route>
+                <Route path="/dashboard">
+                  <Redirect to="/schedule-dashboard" />
                 </Route>
                 <Route path="/schedule-dashboard" component={ScheduleDashboardPage} />
                 <Route path="/settings">

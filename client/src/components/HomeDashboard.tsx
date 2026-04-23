@@ -233,7 +233,7 @@ export function HomeDashboard({
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
-                  <Link href="/schedule-dashboard">
+                  <Link href="/dashboard">
                     <span className="text-xs text-indigo-700 dark:text-indigo-300 font-medium hover:underline cursor-pointer shrink-0 px-2" data-testid="link-view-full-schedule">Full Dashboard →</span>
                   </Link>
                 </div>
@@ -480,7 +480,7 @@ export function HomeDashboard({
 
               <Card
                 className="glass-tile glass-tile-interactive group cursor-pointer"
-                onClick={() => setLocation("/documents")}
+                onClick={() => setLocation("/ancillary-documents")}
                 data-testid="tile-documents"
               >
                 <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
