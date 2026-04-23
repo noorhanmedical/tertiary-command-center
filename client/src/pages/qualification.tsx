@@ -32,7 +32,7 @@ export default function QualificationPage() {
                 <div className="text-center">
                   <div className="text-[18px] font-semibold text-slate-900">Visit Patients</div>
                   <div className="text-[13px] text-slate-500 mt-1">
-                    Use the existing visit schedule builder and qualification flow for committed clinic-day patients.
+                    Use the existing visit workflow for committed clinic-day patients.
                   </div>
                 </div>
               </div>
@@ -48,7 +48,7 @@ export default function QualificationPage() {
                 <div className="text-center">
                   <div className="text-[18px] font-semibold text-slate-900">Outreach Patients</div>
                   <div className="text-[13px] text-slate-500 mt-1">
-                    Launch standalone outreach qualification without requiring a committed visit schedule.
+                    Launch standalone outreach workflow without requiring a committed visit schedule.
                   </div>
                 </div>
               </div>

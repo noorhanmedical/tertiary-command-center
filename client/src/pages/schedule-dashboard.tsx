@@ -132,7 +132,7 @@ export default function ScheduleDashboardPage() {
           variant="light"
           eyebrow="PLEXUS ANCILLARY"
           title="Dashboard"
-          subtitle="Canonical schedule view with clinic tabs, week navigation, month grid, and scheduler coverage."
+          subtitle="Canonical dashboard view with clinic tabs, week navigation, month grid, and scheduler coverage."
           icon={CalendarHeaderIcon}
           titleTestId="text-calendar-header-title"
           actions={

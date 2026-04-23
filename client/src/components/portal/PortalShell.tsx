@@ -612,7 +612,7 @@ export function PortalShell({ role }: { role: Role }) {
   const title = role === "technician" ? "Technician Portal" : "Liaison Technician Portal";
   const subtitle = role === "technician"
     ? "Run today's tests · sign consents · upload chart docs"
-    : "Consent patients post-clinician · upload to chart · outreach";
+    : "Consent patients post-clinician · upload to chart · scheduler workflow";
 
   function openCenterMode(mode: CenterMode, url: string | null, label: string) {
     if (!url) return;
