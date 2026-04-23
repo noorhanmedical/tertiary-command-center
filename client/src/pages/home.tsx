@@ -93,7 +93,7 @@ export default function Home() {
   const trackedBatchIdRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (window.location.pathname === "/visit-qualification") {
+    if (window.location.pathname === "/visit-patients") {
       setNewScheduleDate(new Date());
       setNewScheduleDialogOpen(true);
     }

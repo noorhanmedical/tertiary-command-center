@@ -31,17 +31,17 @@ type NavItemDef = {
 const NAV_ITEMS: NavItemDef[] = [
   { href: "/home",             label: "Home",             Icon: HomeIcon,     roles: ["admin", "clinician", "scheduler"] },
   { href: "/schedule",         label: "Schedule",         Icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
-  { href: "/outreach",         label: "Outreach Center",  Icon: Phone,        roles: ["admin", "clinician", "scheduler"] },
-  { href: "/documents",        label: "Ancillary Docs",   Icon: FileText,     roles: ["admin", "clinician"] },
+  { href: "/scheduler-portal",         label: "Outreach Center",  Icon: Phone,        roles: ["admin", "clinician", "scheduler"] },
+  { href: "/ancillary-documents",        label: "Ancillary Docs",   Icon: FileText,     roles: ["admin", "clinician"] },
   { href: "/billing",          label: "Billing",          Icon: CreditCard,   roles: ["admin", "biller"] },
   { href: "/invoices",         label: "Invoices",         Icon: Receipt,      roles: ["admin", "biller"] },
   { href: "/team-ops",         label: "Team Ops",         Icon: Users2,       roles: ["admin"] },
-  { href: "/patient-database", label: "Patient Database", Icon: Database,     roles: ["admin", "clinician", "biller"] },
+  { href: "/patient-directory", label: "Patient Database", Icon: Database,     roles: ["admin", "clinician", "biller"] },
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/drive",            label: "Plexus Drive",     Icon: FolderOpen,   roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },
   { href: "/technician-portal", label: "Technician Portal", Icon: Stethoscope,    roles: ["admin", "technician", "liaison"] },
-  { href: "/liaison-portal",    label: "Liaison Portal",    Icon: HeartHandshake, roles: ["admin", "technician", "liaison"] },
+  { href: "/liaison-technician-portal",    label: "Liaison Portal",    Icon: HeartHandshake, roles: ["admin", "technician", "liaison"] },
 ];
 
 function TodayBadge({ count }: { count: number }) {
