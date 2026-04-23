@@ -86,14 +86,14 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   </SidebarProvider>
                 </Route>
                 <Route path="/schedule" component={SchedulePage} />
-                <Route path="/patient-directory">
-                  <Redirect to="/patient-database" />
+                <Route path="/patient-directory" component={PatientDatabasePage} />
+                <Route path="/patient-database">
+                  <Redirect to="/patient-directory" />
                 </Route>
-                <Route path="/patient-database" component={PatientDatabasePage} />
-                <Route path="/ancillary-documents">
-                  <Redirect to="/documents" />
+                <Route path="/ancillary-documents" component={DocumentsPage} />
+                <Route path="/documents">
+                  <Redirect to="/ancillary-documents" />
                 </Route>
-                <Route path="/documents" component={DocumentsPage} />
                 <Route path="/billing" component={BillingPage} />
                 <Route path="/invoices">
                   <RoleGuard user={user} roles={["admin", "biller"]}><InvoicesPage /></RoleGuard>
@@ -101,27 +101,27 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/document-upload" component={DocumentUploadPage} />
                 <Route path="/appointments" component={AppointmentsPage} />
                 <Route path="/outreach/scheduler/:id" component={OutreachSchedulerPortalPage} />
-                <Route path="/scheduler-portal">
-                  <Redirect to="/outreach" />
+                <Route path="/scheduler-portal" component={OutreachPage} />
+                <Route path="/outreach">
+                  <Redirect to="/scheduler-portal" />
                 </Route>
-                <Route path="/outreach" component={OutreachPage} />
         <Route path="/clinic-workflow-demo" component={ClinicWorkflowDemoPage} />
                 <Route path="/technician-portal" component={TechnicianPortalPage} />
-                <Route path="/liaison-portal" component={LiaisonPortalPage} />
-                <Route path="/liaison-technician-portal">
-                  <Redirect to="/liaison-portal" />
+                <Route path="/liaison-technician-portal" component={LiaisonPortalPage} />
+                <Route path="/liaison-portal">
+                  <Redirect to="/liaison-technician-portal" />
                 </Route>
+        <Route path="/patient-intake" component={QualificationPage} />
         <Route path="/qualification">
           <Redirect to="/patient-intake" />
         </Route>
-        <Route path="/patient-intake" component={QualificationPage} />
-        <Route path="/visit-patients">
-          <Redirect to="/visit-qualification" />
+        <Route path="/visit-patients" component={Home} />
+        <Route path="/visit-qualification">
+          <Redirect to="/visit-patients" />
         </Route>
-        <Route path="/visit-qualification" component={Home} />
-        <Route path="/outreach-qualification" component={OutreachQualificationPage} />
-        <Route path="/outreach-patients">
-          <Redirect to="/outreach-qualification" />
+        <Route path="/outreach-patients" component={OutreachQualificationPage} />
+        <Route path="/outreach-qualification">
+          <Redirect to="/outreach-patients" />
         </Route>
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">
@@ -150,10 +150,10 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/admin-ops">
                   <AdminGuard user={user}><AdminOpsPage /></AdminGuard>
                 </Route>
-                <Route path="/dashboard">
-                  <Redirect to="/schedule-dashboard" />
+                <Route path="/dashboard" component={ScheduleDashboardPage} />
+                <Route path="/schedule-dashboard">
+                  <Redirect to="/dashboard" />
                 </Route>
-                <Route path="/schedule-dashboard" component={ScheduleDashboardPage} />
                 <Route path="/settings">
                   <AdminGuard user={user}><SettingsPage /></AdminGuard>
                 </Route>
