@@ -636,7 +636,6 @@ export default function Home() {
             setDashboardWeekOverride={setDashboardWeekOverride}
             dashboardClinicKey={dashboardClinicKey}
             setDashboardClinicKey={setDashboardClinicKey}
-            onOpenDir={openReferencesTab}
             onOpenSidebar={() => setSidebarOpen(true)}
             onOpenSchedule={(batchId) => {
               const b = batches.find((x) => x.id === batchId);

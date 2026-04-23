@@ -86,6 +86,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   </SidebarProvider>
                 </Route>
                 <Route path="/schedule" component={SchedulePage} />
+                <Route path="/patient-directory">
+                  <Redirect to="/patient-database" />
+                </Route>
                 <Route path="/patient-database" component={PatientDatabasePage} />
                 <Route path="/ancillary-documents">
                   <Redirect to="/documents" />

@@ -33,7 +33,6 @@ interface HomeDashboardProps {
   setDashboardWeekOverride: (v: string | null) => void;
   dashboardClinicKey: string | null;
   setDashboardClinicKey: (v: string | null) => void;
-  onOpenDir: () => void;
   onOpenSidebar: () => void;
   onOpenSchedule: (batchId: number) => void;
 }
@@ -75,7 +74,6 @@ export function HomeDashboard({
   setDashboardWeekOverride,
   dashboardClinicKey,
   setDashboardClinicKey,
-  onOpenDir,
   onOpenSidebar,
   onOpenSchedule,
 }: HomeDashboardProps) {
@@ -150,16 +148,17 @@ export function HomeDashboard({
 
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card
-                  className="glass-tile glass-tile-interactive group cursor-pointer"
-                  onClick={onOpenDir}
-                  data-testid="tile-patient-directory"
-                >
-                  <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                    <Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                    <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
-                  </div>
-                </Card>
+                <Link href="/patient-directory">
+                  <Card
+                    className="glass-tile glass-tile-interactive group cursor-pointer"
+                    data-testid="tile-patient-directory"
+                  >
+                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+                      <Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
+                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
+                    </div>
+                  </Card>
+                </Link>
 
                 <Link href="/visit-patients">
                   <Card
