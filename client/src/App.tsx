@@ -105,7 +105,10 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/liaison-technician-portal">
                   <Redirect to="/liaison-portal" />
                 </Route>
-        <Route path="/qualification" component={QualificationPage} />
+        <Route path="/qualification">
+          <Redirect to="/patient-intake" />
+        </Route>
+        <Route path="/patient-intake" component={QualificationPage} />
         <Route path="/visit-patients">
           <Redirect to="/visit-qualification" />
         </Route>
