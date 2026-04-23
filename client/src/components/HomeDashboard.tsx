@@ -167,7 +167,7 @@ export function HomeDashboard({
                   >
                     <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
                       <Plus className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-visit-patients">Visit Patientss</span>
+                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-visit-patients">Visit Patients</span>
                     </div>
                   </Card>
                 </Link>
@@ -176,7 +176,7 @@ export function HomeDashboard({
                   <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-outreach-patients">
                     <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
                       <Radio className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach-patients">Outreach Patientss</span>
+                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach-patients">Outreach Patients</span>
                     </div>
                   </Card>
                 </Link>
