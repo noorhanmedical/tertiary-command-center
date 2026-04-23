@@ -78,6 +78,23 @@ function firstName(full: string): string {
   return first || full;
 }
 
+function countAncillaryLike(breakdown: Record<string, number>, patterns: string[]) {
+  return Object.entries(breakdown).reduce((sum, [name, count]) => {
+    const normalized = name.toLowerCase();
+    return patterns.some((pattern) => normalized.includes(pattern)) ? sum + count : sum;
+  }, 0);
+}
+
+function buildBreakdownFromPatients(patients: DayPatient[]) {
+  const map: Record<string, number> = {};
+  for (const patient of patients) {
+    for (const ancillary of patient.ancillaries ?? []) {
+      map[ancillary] = (map[ancillary] || 0) + 1;
+    }
+  }
+  return map;
+}
+
 function PrimaryTile({
   href,
   icon,
@@ -171,6 +188,45 @@ export function HomeDashboard({
     return map;
   }, [selectedDayPatients]);
 
+  const selectedClinicBrainWaveCount = useMemo(
+    () => countAncillaryLike(selectedDayAncillaryBreakdown, ["brainwave", "brain wave", "brain"]),
+    [selectedDayAncillaryBreakdown]
+  );
+
+  const selectedClinicVitalWaveCount = useMemo(
+    () => countAncillaryLike(selectedDayAncillaryBreakdown, ["vitalwave", "vital wave", "vital"]),
+    [selectedDayAncillaryBreakdown]
+  );
+
+  const selectedClinicUltrasoundCount = useMemo(
+    () => countAncillaryLike(selectedDayAncillaryBreakdown, ["ultrasound", "ultra sound", "us"]),
+    [selectedDayAncillaryBreakdown]
+  );
+
+  const selectedClinicAncillaryCount = useMemo(
+    () => Object.values(selectedDayAncillaryBreakdown).reduce((sum, count) => sum + count, 0),
+    [selectedDayAncillaryBreakdown]
+  );
+
+  const clinicDaySummaries = useMemo(() => {
+    return dashboardClinicTabs.map((tab) => {
+      const cell = tab.monthCells.find((c) => c.isoDate === effectiveSelectedDate) || null;
+      const patients = cell?.patients ?? [];
+      const breakdown = buildBreakdownFromPatients(patients);
+      return {
+        clinicKey: tab.clinicKey,
+        clinicLabel: tab.clinicLabel,
+        patientCount: cell?.patientCount ?? 0,
+        ancillaryCount: Object.values(breakdown).reduce((sum, count) => sum + count, 0),
+        brainWaveCount: countAncillaryLike(breakdown, ["brainwave", "brain wave", "brain"]),
+        vitalWaveCount: countAncillaryLike(breakdown, ["vitalwave", "vital wave", "vital"]),
+        ultrasoundCount: countAncillaryLike(breakdown, ["ultrasound", "ultra sound", "us"]),
+      };
+    });
+  }, [dashboardClinicTabs, effectiveSelectedDate]);
+
+  const nextPatientsPreview = useMemo(() => selectedDayPatients.slice(0, 4), [selectedDayPatients]);
+
   const clinicMonthTotals = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
     for (const tab of dashboardClinicTabs) {
@@ -204,7 +260,7 @@ export function HomeDashboard({
 
             <div className="space-y-6">
               <Card className="glass-tile" data-testid="tile-live-dashboard-row">
-                <div className="p-6 lg:p-8">
+                <div className="p-6 lg:p-8 space-y-6">
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 flex items-center justify-center shrink-0">
@@ -223,33 +279,95 @@ export function HomeDashboard({
                         Clinic: {activeDashboardClinic?.clinicLabel || "—"}
                       </span>
                       <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
-                        Patients: {selectedMonthCell?.patientCount ?? 0}
-                      </span>
-                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
-                        Ancillaries: {selectedMonthCell?.ancillaryCount ?? 0}
-                      </span>
-                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
                         Scheduler: {activeDashboardClinic?.scheduler?.name || "—"}
+                      </span>
+                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
+                        Patients: {selectedMonthCell?.patientCount ?? 0}
                       </span>
                     </div>
                   </div>
 
-                  <div className="mt-5 grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Ready Now</div>
-                      <div className="mt-1 text-xl font-semibold text-slate-900">{Math.min(selectedDayPatients.length, 6)}</div>
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">BrainWave</div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicBrainWaveCount}</div>
                     </div>
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Missing Docs</div>
-                      <div className="mt-1 text-xl font-semibold text-slate-900">{Math.min(selectedDayPatients.length, 3)}</div>
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">VitalWave</div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicVitalWaveCount}</div>
                     </div>
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Unsigned Consent</div>
-                      <div className="mt-1 text-xl font-semibold text-slate-900">{Math.min(selectedDayPatients.length, 4)}</div>
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Ultrasound</div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicUltrasoundCount}</div>
                     </div>
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Need Outreach</div>
-                      <div className="mt-1 text-xl font-semibold text-slate-900">{Math.min(selectedDayPatients.length, 2)}</div>
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Total Ancillaries</div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicAncillaryCount}</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_1fr] gap-4">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500 mb-3">By Site</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {clinicDaySummaries.map((site) => (
+                          <div key={site.clinicKey} className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-sm font-semibold text-slate-900">{site.clinicLabel}</div>
+                              <div className="text-[11px] text-slate-500">{site.patientCount} pts</div>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                                BrainWave {site.brainWaveCount}
+                              </span>
+                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                                VitalWave {site.vitalWaveCount}
+                              </span>
+                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                                Ultrasound {site.ultrasoundCount}
+                              </span>
+                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                                Total {site.ancillaryCount}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500 mb-3">Next Patients</div>
+                      {nextPatientsPreview.length === 0 ? (
+                        <div className="text-sm text-slate-500">No patients on this day.</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {nextPatientsPreview.map((patient) => (
+                            <button
+                              type="button"
+                              key={patient.id}
+                              onClick={() => onOpenSchedule(patient.batchId)}
+                              className="w-full text-left rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 hover-elevate active-elevate-2"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-semibold text-slate-900">{patient.name || "(unnamed)"}</div>
+                                  <div className="text-xs text-slate-500 mt-0.5">{formatTime12(patient.time) || "—"}</div>
+                                </div>
+                                <div className="flex flex-wrap gap-1 justify-end">
+                                  {(patient.ancillaries ?? []).slice(0, 2).map((ancillary, idx) => (
+                                    <span
+                                      key={`${patient.id}-${ancillary}-${idx}`}
+                                      className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-700"
+                                    >
+                                      {ancillary}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
