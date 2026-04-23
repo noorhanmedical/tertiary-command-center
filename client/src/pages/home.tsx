@@ -636,14 +636,12 @@ export default function Home() {
             setDashboardWeekOverride={setDashboardWeekOverride}
             dashboardClinicKey={dashboardClinicKey}
             setDashboardClinicKey={setDashboardClinicKey}
-            onNewSchedule={handleNewSchedule}
             onOpenDir={openReferencesTab}
             onOpenSidebar={() => setSidebarOpen(true)}
             onOpenSchedule={(batchId) => {
               const b = batches.find((x) => x.id === batchId);
               openScheduleTab(batchId, b?.name || "Schedule");
             }}
-            isCreatingBatch={createBatchMutation.isPending}
           />
         )}
       </div>

@@ -33,11 +33,9 @@ interface HomeDashboardProps {
   setDashboardWeekOverride: (v: string | null) => void;
   dashboardClinicKey: string | null;
   setDashboardClinicKey: (v: string | null) => void;
-  onNewSchedule: () => void;
   onOpenDir: () => void;
   onOpenSidebar: () => void;
   onOpenSchedule: (batchId: number) => void;
-  isCreatingBatch: boolean;
 }
 
 function formatTime12(time24: string | null): string {
@@ -77,11 +75,9 @@ export function HomeDashboard({
   setDashboardWeekOverride,
   dashboardClinicKey,
   setDashboardClinicKey,
-  onNewSchedule,
   onOpenDir,
   onOpenSidebar,
   onOpenSchedule,
-  isCreatingBatch,
 }: HomeDashboardProps) {
   const [, setLocation] = useLocation();
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
