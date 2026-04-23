@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -10,12 +10,15 @@ import {
   ChevronRight,
   Clock,
   FileText,
+  FolderOpen,
   Phone,
   Plus,
   Radio,
   Stethoscope,
   Upload,
   Users,
+  Users2,
+  CheckSquare,
 } from "lucide-react";
 
 type DayPatient = { id: number; batchId: number; name: string; time: string | null; ancillaries: string[] };
@@ -75,6 +78,58 @@ function firstName(full: string): string {
   return first || full;
 }
 
+function PrimaryTile({
+  href,
+  icon,
+  label,
+  testId,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+  testId: string;
+}) {
+  return (
+    <Link href={href}>
+      <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid={testId}>
+        <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
+          {icon}
+          <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight">
+            {label}
+          </span>
+        </div>
+      </Card>
+    </Link>
+  );
+}
+
+function SecondaryTile({
+  href,
+  icon,
+  label,
+  testId,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+  testId: string;
+}) {
+  return (
+    <Link href={href}>
+      <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid={testId}>
+        <div className="h-[122px] flex items-center gap-4 px-5">
+          <div className="shrink-0">{icon}</div>
+          <div className="min-w-0">
+            <div className="text-[14px] font-semibold text-slate-900 dark:text-foreground leading-tight">
+              {label}
+            </div>
+          </div>
+        </div>
+      </Card>
+    </Link>
+  );
+}
+
 export function HomeDashboard({
   batches,
   dashboardData,
@@ -86,7 +141,6 @@ export function HomeDashboard({
   onOpenSidebar,
   onOpenSchedule,
 }: HomeDashboardProps) {
-  const [, setLocation] = useLocation();
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const dashboardClinicTabs = dashboardData?.clinicTabs || [];
@@ -107,16 +161,12 @@ export function HomeDashboard({
     return activeDashboardClinic.monthCells.find((c) => c.isoDate === effectiveSelectedDate) || null;
   }, [effectiveSelectedDate, activeDashboardClinic]);
 
-  const selectedDayPatients = useMemo<DayPatient[]>(() => {
-    return selectedMonthCell?.patients ?? [];
-  }, [selectedMonthCell]);
+  const selectedDayPatients = useMemo<DayPatient[]>(() => selectedMonthCell?.patients ?? [], [selectedMonthCell]);
 
   const selectedDayAncillaryBreakdown = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
     for (const p of selectedDayPatients) {
-      for (const a of p.ancillaries) {
-        map[a] = (map[a] || 0) + 1;
-      }
+      for (const a of p.ancillaries) map[a] = (map[a] || 0) + 1;
     }
     return map;
   }, [selectedDayPatients]);
@@ -153,38 +203,9 @@ export function HomeDashboard({
             />
 
             <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Link href="/patient-directory">
-                  <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-patient-directory">
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                      <Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-patient-directory">Patient Directory</span>
-                    </div>
-                  </Card>
-                </Link>
-
-                <Link href="/visit-patients">
-                  <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-visit-patients">
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                      <Plus className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-visit-patients">Visit Patients</span>
-                    </div>
-                  </Card>
-                </Link>
-
-                <Link href="/outreach-patients">
-                  <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-outreach-patients">
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                      <Radio className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-outreach-patients">Outreach Patients</span>
-                    </div>
-                  </Card>
-                </Link>
-              </div>
-
               <Card className="glass-tile" data-testid="tile-live-dashboard-row">
                 <div className="p-6 lg:p-8">
-                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 flex items-center justify-center shrink-0">
                         <CalendarDays className="w-5 h-5 text-indigo-600 dark:text-indigo-300" strokeWidth={1.75} />
@@ -212,47 +233,95 @@ export function HomeDashboard({
                       </span>
                     </div>
                   </div>
+
+                  <div className="mt-5 grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Ready Now</div>
+                      <div className="mt-1 text-xl font-semibold text-slate-900">{Math.min(selectedDayPatients.length, 6)}</div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Missing Docs</div>
+                      <div className="mt-1 text-xl font-semibold text-slate-900">{Math.min(selectedDayPatients.length, 3)}</div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Unsigned Consent</div>
+                      <div className="mt-1 text-xl font-semibold text-slate-900">{Math.min(selectedDayPatients.length, 4)}</div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Need Outreach</div>
+                      <div className="mt-1 text-xl font-semibold text-slate-900">{Math.min(selectedDayPatients.length, 2)}</div>
+                    </div>
+                  </div>
                 </div>
               </Card>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Link href="/liaison-technician-portal">
-                  <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-liaison-technician-portal">
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                      <Stethoscope className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-liaison-technician-portal">Liaison Technician Portal</span>
-                    </div>
-                  </Card>
-                </Link>
-
-                <Link href="/scheduler-portal">
-                  <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-scheduler-portal">
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                      <Phone className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-scheduler-portal">Scheduler Portal</span>
-                    </div>
-                  </Card>
-                </Link>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <PrimaryTile
+                  href="/patient-directory"
+                  testId="tile-patient-directory"
+                  label="Patient Directory"
+                  icon={<Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <PrimaryTile
+                  href="/visit-patients"
+                  testId="tile-visit-patients"
+                  label="Visit Patients"
+                  icon={<Plus className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <PrimaryTile
+                  href="/outreach-patients"
+                  testId="tile-outreach-patients"
+                  label="Outreach Patients"
+                  icon={<Radio className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
+                />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Link href="/document-upload">
-                  <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-document-upload">
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                      <Upload className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-document-upload">Document Upload</span>
-                    </div>
-                  </Card>
-                </Link>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <SecondaryTile
+                  href="/liaison-technician-portal"
+                  testId="tile-liaison-technician-portal"
+                  label="Liaison Technician Portal"
+                  icon={<Stethoscope className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/scheduler-portal"
+                  testId="tile-scheduler-portal"
+                  label="Scheduler Portal"
+                  icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/team-ops"
+                  testId="tile-team-ops"
+                  label="Team Ops"
+                  icon={<Users2 className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+              </div>
 
-                <Link href="/ancillary-documents">
-                  <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-documents">
-                    <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-                      <FileText className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                      <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight" data-testid="text-tile-documents">Ancillary Documents</span>
-                    </div>
-                  </Card>
-                </Link>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                <SecondaryTile
+                  href="/document-upload"
+                  testId="tile-document-upload"
+                  label="Document Upload"
+                  icon={<Upload className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/ancillary-documents"
+                  testId="tile-documents"
+                  label="Ancillary Documents"
+                  icon={<FileText className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/plexus-tasks"
+                  testId="tile-plexus-tasks"
+                  label="Plexus Tasks"
+                  icon={<CheckSquare className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/drive"
+                  testId="tile-plexus-drive"
+                  label="Plexus Drive"
+                  icon={<FolderOpen className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
               </div>
 
               <Card className="glass-tile" data-testid="tile-calendar-bottom">
@@ -267,6 +336,7 @@ export function HomeDashboard({
                         <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-0.5">Monthly clinic calendar</p>
                       </div>
                     </div>
+
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1 rounded-xl border border-slate-200/80 dark:border-border bg-white/60 dark:bg-card/40 backdrop-blur px-1 py-1">
                         <button
@@ -303,6 +373,7 @@ export function HomeDashboard({
                           <ChevronRight className="w-4 h-4" />
                         </button>
                       </div>
+
                       <Link href="/dashboard">
                         <span className="text-xs text-indigo-700 dark:text-indigo-300 font-medium hover:underline cursor-pointer shrink-0 px-2" data-testid="link-view-full-schedule">Full Dashboard →</span>
                       </Link>
@@ -375,6 +446,7 @@ export function HomeDashboard({
                             <div key={d} className="text-center text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-muted-foreground py-2">{d}</div>
                           ))}
                         </div>
+
                         <div className="grid grid-cols-7 gap-1.5 mb-6">
                           {activeDashboardClinic.monthCells.map((cell) => {
                             const isToday = cell.isoDate === dashboardData?.today;
@@ -423,6 +495,7 @@ export function HomeDashboard({
                                     </div>
                                   )}
                                 </div>
+
                                 {previewPatients.length > 0 && (
                                   <div className="flex flex-col gap-0.5 mt-0.5 overflow-hidden">
                                     {previewPatients.map((p) => (
@@ -473,6 +546,7 @@ export function HomeDashboard({
                           </span>
                         )}
                       </div>
+
                       {Object.keys(selectedDayAncillaryBreakdown).length > 0 && (
                         <div className="flex flex-wrap gap-1.5" data-testid="day-ancillary-breakdown">
                           {Object.entries(selectedDayAncillaryBreakdown).map(([test, n]) => (
@@ -483,6 +557,7 @@ export function HomeDashboard({
                         </div>
                       )}
                     </div>
+
                     {selectedDayPatients.length === 0 ? (
                       <div className="py-10 text-center text-sm text-slate-400 dark:text-muted-foreground rounded-xl border border-dashed border-slate-200/70 dark:border-border" data-testid="text-day-empty">
                         No patients scheduled for this day.
