@@ -225,6 +225,23 @@ export function HomeDashboard({
     });
   }, [dashboardClinicTabs, effectiveSelectedDate]);
 
+  const visibleLiveDashboardSites = useMemo(() => {
+    const rank = (label: string) => {
+      const normalized = label.toLowerCase();
+      if (normalized.includes("spring")) return 0;
+      if (normalized.includes("veteran")) return 1;
+      if (normalized.includes("taylor")) return 2;
+      return 3;
+    };
+
+    return clinicDaySummaries
+      .filter((site) => {
+        const normalized = site.clinicLabel.toLowerCase();
+        return normalized.includes("spring") || normalized.includes("veteran") || normalized.includes("taylor");
+      })
+      .sort((a, b) => rank(a.clinicLabel) - rank(b.clinicLabel) || a.clinicLabel.localeCompare(b.clinicLabel));
+  }, [clinicDaySummaries]);
+
   const nextPatientsPreview = useMemo(() => selectedDayPatients.slice(0, 4), [selectedDayPatients]);
 
   const clinicMonthTotals = useMemo<Record<string, number>>(() => {
@@ -310,7 +327,7 @@ export function HomeDashboard({
                     <div className="rounded-2xl border border-slate-200 bg-white p-4">
                       <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500 mb-3">By Site</div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {clinicDaySummaries.map((site) => (
+                        {visibleLiveDashboardSites.map((site) => (
                           <div key={site.clinicKey} className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3">
                             <div className="flex items-center justify-between gap-2">
                               <div className="text-sm font-semibold text-slate-900">{site.clinicLabel}</div>
