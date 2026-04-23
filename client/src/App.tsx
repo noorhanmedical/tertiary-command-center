@@ -95,13 +95,22 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/document-upload" component={DocumentUploadPage} />
                 <Route path="/appointments" component={AppointmentsPage} />
                 <Route path="/outreach/scheduler/:id" component={OutreachSchedulerPortalPage} />
+                <Route path="/scheduler-portal">
+                  <Redirect to="/outreach" />
+                </Route>
                 <Route path="/outreach" component={OutreachPage} />
         <Route path="/clinic-workflow-demo" component={ClinicWorkflowDemoPage} />
                 <Route path="/technician-portal" component={TechnicianPortalPage} />
                 <Route path="/liaison-portal" component={LiaisonPortalPage} />
+                <Route path="/liaison-technician-portal">
+                  <Redirect to="/liaison-portal" />
+                </Route>
         <Route path="/qualification" component={QualificationPage} />
         <Route path="/visit-qualification" component={Home} />
         <Route path="/outreach-qualification" component={OutreachQualificationPage} />
+        <Route path="/outreach-patients">
+          <Redirect to="/outreach-qualification" />
+        </Route>
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">
                   <Redirect to="/plexus-tasks" />

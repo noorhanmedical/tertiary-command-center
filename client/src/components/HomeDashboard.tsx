@@ -178,7 +178,7 @@ export function HomeDashboard({
                   </div>
                 </Card>
 
-                <Link href="/outreach-qualification">
+                <Link href="/outreach-patients">
                   <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid="tile-outreach-patients">
                     <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
                       <Radio className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
