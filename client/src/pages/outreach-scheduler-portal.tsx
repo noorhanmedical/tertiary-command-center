@@ -315,7 +315,7 @@ export default function OutreachSchedulerPortalPage() {
       <div className="flex flex-1 flex-col items-center justify-center gap-4 text-slate-500 text-sm">
         <p>Scheduler not found.</p>
         <Button asChild variant="outline" className="rounded-2xl">
-          <Link href="/outreach"><ArrowLeft className="mr-2 h-4 w-4" />Back to Outreach</Link>
+          <Link href="/scheduler-portal"><ArrowLeft className="mr-2 h-4 w-4" />Back to Scheduler Portal</Link>
         </Button>
       </div>
     );
@@ -358,7 +358,7 @@ export default function OutreachSchedulerPortalPage() {
               <Keyboard className="h-3.5 w-3.5" /> Shortcuts
             </button>
             <Link
-              href="/outreach"
+              href="/scheduler-portal"
               className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
               data-testid="link-back-outreach"
             >
