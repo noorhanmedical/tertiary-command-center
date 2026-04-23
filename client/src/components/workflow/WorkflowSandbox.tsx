@@ -51,7 +51,7 @@ export default function WorkflowSandbox() {
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 text-lg font-semibold text-slate-900">Liaison Technician Workflow Sandbox</div>
+        <div className="mb-3 text-lg font-semibold text-slate-900">Liaison Technician Portal Sandbox</div>
         <div className="mb-4 text-sm text-slate-600">
           This is a safe local demo of the canonical clinic workflow state model.
         </div>
