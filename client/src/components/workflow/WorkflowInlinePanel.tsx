@@ -43,7 +43,7 @@ export default function WorkflowInlinePanel() {
   return (
     <div className="mb-6 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div>
-        <h2 className="text-lg font-semibold text-slate-900">Shared Clinic Workflow</h2>
+        <h2 className="text-lg font-semibold text-slate-900">Shared Liaison Technician Workflow</h2>
         <p className="text-sm text-slate-600">Liaison, technician, and remote scheduler indicator flow.</p>
       </div>
 
