@@ -43,8 +43,8 @@ export default function WorkflowInlinePanel() {
   return (
     <div className="mb-6 space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div>
-        <h2 className="text-lg font-semibold text-slate-900">Shared Liaison Technician Workflow</h2>
-        <p className="text-sm text-slate-600">Liaison, technician, and scheduler shared portal flow.</p>
+        <h2 className="text-lg font-semibold text-slate-900">Shared Liaison Technician Portal Workflow</h2>
+        <p className="text-sm text-slate-600">Liaison, technician, and shared portal flow.</p>
       </div>
 
       <div className="flex flex-wrap gap-2">

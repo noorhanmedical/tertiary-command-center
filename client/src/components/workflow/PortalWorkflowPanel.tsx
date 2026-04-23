@@ -91,9 +91,9 @@ export default function PortalWorkflowPanel({
   return (
     <div className="mb-4 space-y-3" data-testid={`portal-workflow-panel-${role}`}>
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-        <div className="text-sm font-semibold text-slate-900">Shared Liaison Technician Workflow</div>
+        <div className="text-sm font-semibold text-slate-900">Shared Liaison Technician Portal Workflow</div>
         <div className="text-xs text-slate-500">
-          Live shared state for liaison and technician on the selected patient.
+          Live shared portal state for liaison and technician on the selected patient.
         </div>
       </div>
       <WorkflowIndicators card={card} />

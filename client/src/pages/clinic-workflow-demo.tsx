@@ -8,7 +8,7 @@ export default function ClinicWorkflowDemoPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Liaison Technician Portal Demo</h1>
           <p className="text-sm text-slate-600">
-            Safe local demo for liaison, technician, and remote scheduler workflow indicators.
+            Safe local demo for liaison, technician, and shared portal indicators.
           </p>
         </div>
         <WorkflowSandbox />
