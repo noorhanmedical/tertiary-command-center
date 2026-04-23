@@ -75,10 +75,10 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <Redirect to="/home" />
                 </Route>
                 <Route path="/archive">
-                  <Redirect to="/patient-database" />
+                  <Redirect to="/patient-directory" />
                 </Route>
                 <Route path="/plexus">
-                  <Redirect to="/documents" />
+                  <Redirect to="/ancillary-documents" />
                 </Route>
                 <Route path="/home">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
