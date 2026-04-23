@@ -99,6 +99,12 @@ export default function Home() {
     }
   }, []);
 
+  const normalizeVisitPatientsRoute = useCallback(() => {
+    if (window.location.pathname === "/visit-patients") {
+      window.history.replaceState({}, "", "/home");
+    }
+  }, []);
+
 
 
 
@@ -379,8 +385,17 @@ export default function Home() {
   const handleNewScheduleConfirm = useCallback(() => {
     const date = newScheduleDate ?? new Date();
     const sd = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    createBatchMutation.mutate({ name: `Schedule - ${date.toLocaleDateString()}`, facility: newScheduleFacility, scheduleDate: sd }, { onSuccess: () => { setNewScheduleDialogOpen(false); setNewScheduleFacility(""); } });
-  }, [createBatchMutation, newScheduleDate, newScheduleFacility]);
+    createBatchMutation.mutate(
+      { name: `Schedule - ${date.toLocaleDateString()}`, facility: newScheduleFacility, scheduleDate: sd },
+      {
+        onSuccess: () => {
+          setNewScheduleDialogOpen(false);
+          setNewScheduleFacility("");
+          normalizeVisitPatientsRoute();
+        },
+      }
+    );
+  }, [createBatchMutation, newScheduleDate, newScheduleFacility, normalizeVisitPatientsRoute]);
   const openHistoryTab = useCallback(() => {
     const i = tabs.findIndex((t) => t.type === "history"); if (i >= 0) setActiveTabIndex(i); else { setTabs((prev) => [...prev, { type: "history" }]); setActiveTabIndex(tabs.length); }
   }, [tabs]);
@@ -645,7 +660,15 @@ export default function Home() {
         )}
       </div>
 
-      <Dialog open={newScheduleDialogOpen} onOpenChange={(v) => { if (!v) setNewScheduleDialogOpen(false); }}>
+      <Dialog
+        open={newScheduleDialogOpen}
+        onOpenChange={(v) => {
+          if (!v) {
+            setNewScheduleDialogOpen(false);
+            normalizeVisitPatientsRoute();
+          }
+        }}
+      >
         <DialogContent className="max-w-sm" data-testid="dialog-new-schedule">
           <DialogHeader><DialogTitle>New Schedule</DialogTitle></DialogHeader>
           <div className="flex justify-center py-2">
@@ -659,7 +682,16 @@ export default function Home() {
             </Select>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setNewScheduleDialogOpen(false)} data-testid="button-cancel-new-schedule">Cancel</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setNewScheduleDialogOpen(false);
+                normalizeVisitPatientsRoute();
+              }}
+              data-testid="button-cancel-new-schedule"
+            >
+              Cancel
+            </Button>
             <Button onClick={handleNewScheduleConfirm} disabled={createBatchMutation.isPending || !newScheduleFacility} data-testid="button-create-new-schedule">
               {createBatchMutation.isPending ? "Creating..." : "Create"}
             </Button>
