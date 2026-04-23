@@ -609,7 +609,7 @@ export function PortalShell({ role }: { role: Role }) {
   }, [patients, selectedPatientId]);
 
   const RoleIcon = role === "technician" ? Stethoscope : HeartHandshake;
-  const title = role === "technician" ? "Technician Portal" : "Liaison Portal";
+  const title = role === "technician" ? "Technician Portal" : "Liaison Technician Portal";
   const subtitle = role === "technician"
     ? "Run today's tests · sign consents · upload chart docs"
     : "Consent patients post-clinician · upload to chart · outreach";

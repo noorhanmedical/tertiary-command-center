@@ -273,7 +273,7 @@ export default function PatientDatabasePage() {
             eyebrow="PLEXUS ANCILLARY · PATIENTS"
             icon={Database}
             iconAccent="bg-slate-900/8 text-slate-700"
-            title="Patient Database"
+            title="Patient Directory"
             subtitle={`${totalPatients} patient${totalPatients !== 1 ? "s" : ""} · ${totalClinics} clinic${totalClinics !== 1 ? "s" : ""}${hasMore || loadedCount < totalPatients ? ` (showing ${loadedCount})` : ""}`}
             actions={
               <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-1.5" data-testid="button-import-test-history">
