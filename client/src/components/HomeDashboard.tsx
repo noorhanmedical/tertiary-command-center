@@ -193,8 +193,8 @@ export function HomeDashboard({
                     <CalendarDays className="w-5 h-5 text-indigo-600 dark:text-indigo-300" strokeWidth={1.75} />
                   </div>
                   <div>
-                    <span className="text-[20px] font-semibold text-slate-900 dark:text-foreground tracking-tight">Schedule Dashboard</span>
-                    <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-0.5">Live monthly view across clinics</p>
+                    <span className="text-[20px] font-semibold text-slate-900 dark:text-foreground tracking-tight">Dashboard</span>
+                    <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-0.5">Live monthly dashboard across clinics</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

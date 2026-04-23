@@ -14,10 +14,10 @@ export default function QualificationPage() {
               PLEXUS ANCILLARY · QUALIFICATION
             </div>
             <h1 className="text-3xl font-semibold text-slate-900 tracking-tight" data-testid="text-qualification-heading">
-              Qualification Hub
+              Patient Intake
             </h1>
             <p className="text-sm text-slate-500 mt-2">
-              Qualify patients into the correct lifecycle from one place.
+              Send patients into the correct visit or outreach workflow from one place.
             </p>
           </div>
 
@@ -30,7 +30,7 @@ export default function QualificationPage() {
               <div className="aspect-[1.2/1] flex flex-col items-center justify-center gap-4 p-8">
                 <CalendarDays className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
                 <div className="text-center">
-                  <div className="text-[18px] font-semibold text-slate-900">Visit Patient</div>
+                  <div className="text-[18px] font-semibold text-slate-900">Visit Patients</div>
                   <div className="text-[13px] text-slate-500 mt-1">
                     Use the existing visit schedule builder and qualification flow for committed clinic-day patients.
                   </div>
@@ -46,7 +46,7 @@ export default function QualificationPage() {
               <div className="aspect-[1.2/1] flex flex-col items-center justify-center gap-4 p-8">
                 <Phone className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
                 <div className="text-center">
-                  <div className="text-[18px] font-semibold text-slate-900">Outreach Patient</div>
+                  <div className="text-[18px] font-semibold text-slate-900">Outreach Patients</div>
                   <div className="text-[13px] text-slate-500 mt-1">
                     Launch standalone outreach qualification without requiring a committed visit schedule.
                   </div>
