@@ -30,7 +30,7 @@ export default function QualificationPage() {
               <div className="aspect-[1.2/1] flex flex-col items-center justify-center gap-4 p-8">
                 <CalendarDays className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
                 <div className="text-center">
-                  <div className="text-[18px] font-semibold text-slate-900">Visit Patients</div>
+                  <div className="text-[18px] font-semibold text-slate-900">Visit Patientss</div>
                   <div className="text-[13px] text-slate-500 mt-1">
                     Use the existing visit workflow for committed clinic-day patients.
                   </div>
@@ -46,7 +46,7 @@ export default function QualificationPage() {
               <div className="aspect-[1.2/1] flex flex-col items-center justify-center gap-4 p-8">
                 <Phone className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
                 <div className="text-center">
-                  <div className="text-[18px] font-semibold text-slate-900">Outreach Patients</div>
+                  <div className="text-[18px] font-semibold text-slate-900">Outreach Patientss</div>
                   <div className="text-[13px] text-slate-500 mt-1">
                     Launch standalone outreach workflow without requiring a committed visit schedule.
                   </div>

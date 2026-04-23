@@ -362,7 +362,7 @@ export default function OutreachSchedulerPortalPage() {
               className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
               data-testid="link-back-outreach"
             >
-              <ArrowLeft className="h-3.5 w-3.5" /> Back to Outreach
+              <ArrowLeft className="h-3.5 w-3.5" /> Back to Scheduler Portal
             </Link>
           </div>
         </header>
