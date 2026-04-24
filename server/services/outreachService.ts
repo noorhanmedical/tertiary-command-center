@@ -262,13 +262,26 @@ export async function buildOutreachDashboard(
       if (derivedType !== "visit") continue;
 
       let owner: { name: string; facility: string; capacityPercent: number };
-      const assignedSchedId = assignedSchedulerByPatient.get(patient.id);
-      const assignedSched = assignedSchedId ? schedulerById.get(assignedSchedId) : undefined;
-      if (assignedSched) {
+
+      const batchAssignedSched =
+        batch.assignedSchedulerId != null
+          ? schedulerById.get(batch.assignedSchedulerId) ?? null
+          : null;
+
+      const activeAssignedSchedId = assignedSchedulerByPatient.get(patient.id);
+      const activeAssignedSched = activeAssignedSchedId ? schedulerById.get(activeAssignedSchedId) : undefined;
+
+      if (batchAssignedSched) {
         owner = {
-          name: assignedSched.name,
-          facility: assignedSched.facility,
-          capacityPercent: assignedSched.capacityPercent ?? 100,
+          name: batchAssignedSched.name,
+          facility: batchAssignedSched.facility,
+          capacityPercent: batchAssignedSched.capacityPercent ?? 100,
+        };
+      } else if (activeAssignedSched) {
+        owner = {
+          name: activeAssignedSched.name,
+          facility: activeAssignedSched.facility,
+          capacityPercent: activeAssignedSched.capacityPercent ?? 100,
         };
       } else if (pool.length === 0) {
         owner = { name: "Unassigned", facility, capacityPercent: 0 };
