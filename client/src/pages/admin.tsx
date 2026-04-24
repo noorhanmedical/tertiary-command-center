@@ -30,6 +30,8 @@ import { PageHeader } from "@/components/PageHeader";
 const ADMIN_SECTIONS = [
   { href: "/settings", icon: Settings, iconBg: "bg-blue-100 text-blue-700",
     title: "Settings", desc: "Team members, clinic spreadsheet connections, and scheduler team configuration.", available: true },
+  { href: "/admin/stovetop-heat-settings", icon: Flame, iconBg: "bg-orange-100 text-orange-700",
+    title: "Stovetop Heat Settings", desc: "Facility presets, knobs, RVU payout controls, KPI thresholds, permissive qualification behavior, and Plex Factor.", available: true },
   { href: "/admin-ops", icon: Wrench, iconBg: "bg-emerald-100 text-emerald-700",
     title: "System Architecture", desc: "Billing configuration, qualification mode, and system-level administrative controls.", available: true },
   { href: "/admin/users", icon: Users, iconBg: "bg-purple-100 text-purple-700",
