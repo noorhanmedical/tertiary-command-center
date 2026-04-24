@@ -759,6 +759,169 @@ export default function SettingsPage() {
           </p>
         </Card>
       </div>
+
+          <div className="mt-8 grid gap-6">
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-staff-capacity">
+              <h2 className="text-lg font-semibold text-slate-900">Scheduler, Liaison, and Technician Capacity Settings</h2>
+              <p className="mt-1 text-sm text-slate-500">Configure scheduler, liaison, and technician participation percentages by staff member.</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Scheduler % by staff member</div>
+                  <div className="mt-1 text-xs text-slate-500">Examples: 25 percent, 50 percent, 75 percent, 100 percent.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Liaison % by staff member</div>
+                  <div className="mt-1 text-xs text-slate-500">Controls liaison call participation and assignment weighting.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Technician % by staff member</div>
+                  <div className="mt-1 text-xs text-slate-500">Controls technician call participation when thresholds are triggered.</div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-patient-mix">
+              <h2 className="text-lg font-semibold text-slate-900">Visit Patients vs Outreach Patients Mix Settings</h2>
+              <p className="mt-1 text-sm text-slate-500">Define visit vs outreach mix targets for scheduler, liaison, and technician roles.</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Scheduler visit vs outreach mix</div>
+                  <div className="mt-1 text-xs text-slate-500">Example: 50 percent visit / 50 percent outreach.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Liaison visit vs outreach mix</div>
+                  <div className="mt-1 text-xs text-slate-500">Example: 50 percent visit / 50 percent outreach.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Technician visit vs outreach mix</div>
+                  <div className="mt-1 text-xs text-slate-500">Example: 50 percent visit / 50 percent outreach.</div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-insurance-priority">
+              <h2 className="text-lg font-semibold text-slate-900">Outreach Patients Insurance Priority Settings</h2>
+              <p className="mt-1 text-sm text-slate-500">Set Outreach Patients insurance weighting for straight Medicare, PPO, and other insurance handling.</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Straight Medicare weight</div>
+                  <div className="mt-1 text-xs text-slate-500">Primary outreach weighting bucket.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">PPO weight</div>
+                  <div className="mt-1 text-xs text-slate-500">Secondary outreach weighting bucket.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Other insurance handling rule</div>
+                  <div className="mt-1 text-xs text-slate-500">Controls how non-priority insurance types are routed.</div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-insurance-approval">
+              <h2 className="text-lg font-semibold text-slate-900">Visit Patients and Outreach Patients Insurance Approval Settings</h2>
+              <p className="mt-1 text-sm text-slate-500">Control when admin approval is required before tests are generated in Visit Patients and Outreach Patients.</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Auto-hold non-Medicare / non-PPO</div>
+                  <div className="mt-1 text-xs text-slate-500">Held patients do not generate tests on the intake tile UI.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Admin approve / deny required</div>
+                  <div className="mt-1 text-xs text-slate-500">Approval gate before downstream test generation is allowed.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Inbox destination for review</div>
+                  <div className="mt-1 text-xs text-slate-500">Defines where insurance approval items are routed.</div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-technician-threshold">
+              <h2 className="text-lg font-semibold text-slate-900">Technician Call Trigger Settings</h2>
+              <p className="mt-1 text-sm text-slate-500">Define ancillary minutes and workload thresholds that trigger technician call lists.</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">BrainWave minutes per test</div>
+                  <div className="mt-1 text-xs text-slate-500">Default operational duration per BrainWave test.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">VitalWave minutes per test</div>
+                  <div className="mt-1 text-xs text-slate-500">Default operational duration per VitalWave test.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Workload threshold to trigger technician call list</div>
+                  <div className="mt-1 text-xs text-slate-500">Minimum ancillary workload that activates technician outbound calling.</div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-follow-up-sequences">
+              <h2 className="text-lg font-semibold text-slate-900">Follow-Up Sequence Settings</h2>
+              <p className="mt-1 text-sm text-slate-500">Configure reusable follow-up steps with timing, method, and same-person vs new-person caller rules.</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Step number</div>
+                  <div className="mt-1 text-xs text-slate-500">Attempt order within the sequence.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Delay / timing</div>
+                  <div className="mt-1 text-xs text-slate-500">In how many days or how many times per day.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Method</div>
+                  <div className="mt-1 text-xs text-slate-500">Call, text, email, or clinic patient portal.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Same person vs new person</div>
+                  <div className="mt-1 text-xs text-slate-500">Choose whether the caller stays the same or changes.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Unlimited follow-ups</div>
+                  <div className="mt-1 text-xs text-slate-500">Admin can add as many sequence steps as needed.</div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-manager-reassignment">
+              <h2 className="text-lg font-semibold text-slate-900">Reassignment / Manager Review Settings</h2>
+              <p className="mt-1 text-sm text-slate-500">Controls unresolved-call alerts, reassignment thresholds, and role reassignment options.</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Unresolved call manager inbox alert</div>
+                  <div className="mt-1 text-xs text-slate-500">Manager alert when a listed call remains unfinished.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Reassignment threshold</div>
+                  <div className="mt-1 text-xs text-slate-500">How many attempts or how much time before review is required.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Role reassignment options</div>
+                  <div className="mt-1 text-xs text-slate-500">Move work to scheduler, liaison, technician, or keep current owner.</div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-outreach-center">
+              <h2 className="text-lg font-semibold text-slate-900">Outreach Center Settings Section</h2>
+              <p className="mt-1 text-sm text-slate-500">Controls outreach metrics, manager inbox behavior, and marketing / outreach operational controls.</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Outreach metrics toggles</div>
+                  <div className="mt-1 text-xs text-slate-500">Choose which metrics and counters appear in Outreach Center.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Manager inbox behavior</div>
+                  <div className="mt-1 text-xs text-slate-500">Controls unresolved-call review and escalation visibility.</div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900">Marketing / outreach operational controls</div>
+                  <div className="mt-1 text-xs text-slate-500">Controls campaign, outreach, and command-center behavior.</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
     </div>
   );
 }

@@ -84,11 +84,11 @@ export default function OutreachPage() {
         {/* Header */}
         <PageHeader
           backHref="/"
-          eyebrow="PLEXUS ANCILLARY · OUTREACH"
+          eyebrow="PLEXUS ANCILLARY · OUTREACH CENTER"
           icon={Phone}
           iconAccent="bg-blue-600/10 text-blue-700"
-          title="Outreach"
-          subtitle="Pick a scheduler to open their portal."
+          title="Outreach Center"
+          subtitle="Call metrics, manager review, marketing, and outreach operations."
           actions={
             <Badge variant="outline" className="rounded-full border-blue-200 bg-blue-50 px-3 py-1 text-blue-700">
               {formatDisplayDate(data?.today)}

@@ -425,6 +425,12 @@ export function HomeDashboard({
                   icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
+                  href="/outreach-center"
+                  testId="tile-outreach-center"
+                  label="Outreach Center"
+                  icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
                   href="/team-ops"
                   testId="tile-team-ops"
                   label="Team Ops"

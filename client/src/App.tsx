@@ -101,6 +101,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/document-upload" component={DocumentUploadPage} />
                 <Route path="/appointments" component={AppointmentsPage} />
                 <Route path="/outreach/scheduler/:id" component={OutreachSchedulerPortalPage} />
+                <Route path="/outreach-center">
+                  <Redirect to="/scheduler-portal" />
+                </Route>
                 <Route path="/scheduler-portal" component={OutreachPage} />
                 <Route path="/outreach">
                   <Redirect to="/scheduler-portal" />
