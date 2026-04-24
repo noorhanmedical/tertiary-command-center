@@ -1,11 +1,27 @@
-import { Link } from "wouter";
+import {
+  Link } from "wouter";
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest,
+  queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Shield, Settings, Wrench, Lock, ClipboardList, Building2, ChevronRight,
-  Users, ScrollText, History, Inbox, Bot, Loader2, Trash2,
+  Shield,
+  Settings,
+  Wrench,
+  Lock,
+  ClipboardList,
+  Building2,
+  ChevronRight,
+  Users,
+  ScrollText,
+  History,
+  Inbox,
+  Bot,
+  Loader2,
+  Trash2,
+  Flame,
+  FlameKindling
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,6 +49,11 @@ const ADMIN_SECTIONS = [
 ];
 
 export default function AdminPage() {
+
+  const [stoveRegion, setStoveRegion] = useState("Southwest");
+  const [stoveFacility, setStoveFacility] = useState("NWPG - Spring");
+  const [stoveKnob, setStoveKnob] = useState<"low" | "mediumLow" | "medium" | "mediumHigh" | "high">("medium");
+
   const { toast } = useToast();
   const [lastResult, setLastResult] = useState<any>(null);
 
@@ -60,6 +81,17 @@ export default function AdminPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/outbox"] });
     },
   });
+
+  const stoveOptions = [
+    { key: "low", label: "Low / Simmer", description: "Keeping food warm, gentle simmer", flames: 1 },
+    { key: "mediumLow", label: "Medium-Low", description: "Slow cooking, sauces", flames: 2 },
+    { key: "medium", label: "Medium", description: "General cooking", flames: 3 },
+    { key: "mediumHigh", label: "Medium-High", description: "Sauteing, pan frying", flames: 4 },
+    { key: "high", label: "High", description: "Boiling water, searing", flames: 5 },
+  ] as const;
+
+  const activeStoveOption =
+    stoveOptions.find((option) => option.key === stoveKnob) ?? stoveOptions[2];
 
   return (
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
@@ -147,6 +179,7 @@ export default function AdminPage() {
 
       <section
         className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+        id="stovetop-heat-settings"
         data-testid="admin-stovetop-heat-settings"
       >
         <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -161,7 +194,86 @@ export default function AdminPage() {
           </div>
         </div>
 
-        <div className="mt-6 grid gap-5 xl:grid-cols-2">
+        
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5" data-testid="stovetop-top-controls">
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Choose Region</label>
+              <select
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
+                value={stoveRegion}
+                onChange={(e) => setStoveRegion(e.target.value)}
+              >
+                <option>Southwest</option>
+                <option>West</option>
+                <option>Midwest</option>
+                <option>South</option>
+                <option>Northeast</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Choose Facility</label>
+              <select
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
+                value={stoveFacility}
+                onChange={(e) => setStoveFacility(e.target.value)}
+              >
+                <option>NWPG - Spring</option>
+                <option>NWPG - Veterans</option>
+                <option>Taylor Family Practice</option>
+              </select>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+              <div className="text-sm font-medium text-slate-900">Active Preset</div>
+              <div className="mt-1 text-xs text-slate-500">{stoveRegion} · {stoveFacility}</div>
+              <div className="mt-2 text-sm font-semibold text-slate-900">{activeStoveOption.label}</div>
+            </div>
+          </div>
+
+          <div className="mt-5">
+            <div className="mb-2 text-sm font-medium text-slate-700">Stove Knob</div>
+            <div className="grid gap-3 md:grid-cols-5">
+              {stoveOptions.map((option) => {
+                const active = stoveKnob === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => setStoveKnob(option.key)}
+                    className={`rounded-2xl border px-4 py-4 text-left transition ${
+                      active
+                        ? "border-orange-400 bg-orange-50 shadow-sm"
+                        : "border-slate-200 bg-white hover:border-slate-300"
+                    }`}
+                    data-testid={`stove-knob-${option.key}`}
+                  >
+                    <div className="flex items-center gap-1 text-orange-600">
+                      {Array.from({ length: option.flames }).map((_, i) =>
+                        i % 2 === 0 ? (
+                          <Flame key={i} className="h-4 w-4" />
+                        ) : (
+                          <FlameKindling key={i} className="h-4 w-4" />
+                        )
+                      )}
+                    </div>
+                    <div className="mt-3 text-sm font-semibold text-slate-900">{option.label}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-4" data-testid="stove-knob-description">
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Typical Use</div>
+              <div className="mt-1 text-sm font-medium text-slate-900">{activeStoveOption.description}</div>
+              <div className="mt-2 text-xs text-slate-500">
+                This knob is the master preset for this facility and will later drive percentages, Plex Factor, multipliers, and related payout settings all at once.
+              </div>
+            </div>
+          </div>
+        </div>
+<div className="mt-6 grid gap-5 xl:grid-cols-2">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
             <h3 className="text-base font-semibold text-slate-900">1. RVU and Multiplier Settings</h3>
             <p className="mt-1 text-sm text-slate-500">Base RVU values and payout multipliers that can be adjusted.</p>
