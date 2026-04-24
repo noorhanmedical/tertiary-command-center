@@ -146,6 +146,84 @@ export default function OutreachPage() {
           </div>
         )}
 
+        <div className="grid gap-5 xl:grid-cols-[1.35fr_1fr]">
+          <Card className={`${shellClass()} p-5`} data-testid="outreach-center-manager-inbox">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Manager Inbox</h2>
+                <p className="mt-1 text-sm text-slate-500">Unfinished call review, reassignment decisions, and operational escalations.</p>
+              </div>
+              <Badge variant="outline" className="rounded-full">UI Placeholder</Badge>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Unfinished Calls</div>
+                <div className="mt-1 text-xl font-semibold text-slate-900">{metrics.totalPending}</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Reassignment Review</div>
+                <div className="mt-1 text-xl font-semibold text-slate-900">{uncoveredFacilities.length}</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Manual Follow-Up Alerts</div>
+                <div className="mt-1 text-xl font-semibold text-slate-900">{metrics.totalCalls > 0 ? Math.max(1, Math.round(metrics.totalCalls * 0.1)) : 0}</div>
+              </div>
+            </div>
+          </Card>
+
+          <Card className={`${shellClass()} p-5`} data-testid="outreach-center-marketing">
+            <h2 className="text-base font-semibold text-slate-900">Marketing and Outreach Operations</h2>
+            <p className="mt-1 text-sm text-slate-500">Campaign controls, outreach operations, and future marketing workflow entry points.</p>
+            <div className="mt-4 grid gap-3">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-sm font-medium text-slate-900">Campaign Control</div>
+                <div className="mt-1 text-xs text-slate-500">Future area for marketing lists, campaigns, and channel operations.</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-sm font-medium text-slate-900">Follow-Up Sequences</div>
+                <div className="mt-1 text-xs text-slate-500">Future area for sequence timing, methods, and caller rules.</div>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        <div className="grid gap-5 xl:grid-cols-[1.1fr_1fr_1fr]">
+          <Card className={`${shellClass()} p-5`} data-testid="outreach-center-reassignment-queue">
+            <h2 className="text-base font-semibold text-slate-900">Reassignment Queue</h2>
+            <p className="mt-1 text-sm text-slate-500">Patients needing manager review before being reassigned to a different caller or role.</p>
+            <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+              Placeholder for unresolved-call reassignment queue.
+            </div>
+          </Card>
+
+          <Card className={`${shellClass()} p-5`} data-testid="outreach-center-followup-queue">
+            <h2 className="text-base font-semibold text-slate-900">Follow-Up Queue</h2>
+            <p className="mt-1 text-sm text-slate-500">Patients waiting for next-day, next-week, or later follow-up steps.</p>
+            <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+              Placeholder for follow-up cadence and next-step execution.
+            </div>
+          </Card>
+
+          <Card className={`${shellClass()} p-5`} data-testid="outreach-center-role-mix">
+            <h2 className="text-base font-semibold text-slate-900">Role Mix Snapshot</h2>
+            <p className="mt-1 text-sm text-slate-500">Visible UI area for scheduler, liaison, and technician mix targets.</p>
+            <div className="mt-4 grid gap-3">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-sm font-medium text-slate-900">Scheduler</div>
+                <div className="mt-1 text-xs text-slate-500">50% Visit Patients · 50% Outreach Patients</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-sm font-medium text-slate-900">Liaison</div>
+                <div className="mt-1 text-xs text-slate-500">50% Visit Patients · 50% Outreach Patients</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-sm font-medium text-slate-900">Technician</div>
+                <div className="mt-1 text-xs text-slate-500">50% Visit Patients · 50% Outreach Patients</div>
+              </div>
+            </div>
+          </Card>
+        </div>
+
         {/* Compact scheduler card grid */}
         {isLoading ? (
           <div className="grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(200px,240px))]">
