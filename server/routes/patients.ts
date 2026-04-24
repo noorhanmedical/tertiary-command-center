@@ -226,6 +226,22 @@ export function registerPatientRoutes(
 
       void logAudit(req, "commit", "patient", id, { schedulerName: result.data.schedulerName });
       invalidatePatientDatabase();
+
+      // Manual commit should hit the same live call-list path as auto-commit
+      // after AI analysis, so newly committed eligible patients appear in the
+      // proper queue immediately instead of waiting for a later rebuild.
+      try {
+        const committedPatient = result.data.patient;
+        const qualifyingTests = Array.isArray(committedPatient.qualifyingTests) ? committedPatient.qualifyingTests : [];
+        if (qualifyingTests.length > 0 && committedPatient.facility) {
+          const today = new Date().toISOString().slice(0, 10);
+          assignNewlyEligiblePatient(storage, committedPatient, committedPatient.facility, today)
+            .catch((err) => console.warn("[patients] assignNewlyEligiblePatient after manual commit failed:", err?.message));
+        }
+      } catch (assignErr) {
+        console.warn("[patients] manual commit live assignment hook failed:", assignErr);
+      }
+
       res.json({ ...result.data.patient, schedulerName: result.data.schedulerName });
     } catch (error: any) {
       console.error("Patient commit error:", error);
