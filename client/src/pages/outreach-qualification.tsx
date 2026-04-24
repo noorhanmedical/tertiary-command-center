@@ -68,6 +68,16 @@ export default function OutreachQualificationPage() {
   }, [batchId]);
 
   useEffect(() => {
+    if (!batchId) return;
+    if (batchLoading) return;
+    if (selectedBatch) return;
+
+    sessionStorage.removeItem(OUTREACH_BATCH_KEY);
+    setBatchId(null);
+    autoCreateRef.current = false;
+  }, [batchId, batchLoading, selectedBatch]);
+
+  useEffect(() => {
     if (batchId || autoCreateRef.current) return;
     autoCreateRef.current = true;
     const today = new Date();
