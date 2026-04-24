@@ -22,6 +22,23 @@ const STOVE_OPTIONS: Array<{
   { key: "high", label: "High", description: "Boiling water, searing", flames: 5 },
 ];
 
+function heatHeaderTheme(knob: StoveKey) {
+  switch (knob) {
+    case "low":
+      return "bg-yellow-50 border-yellow-200";
+    case "mediumLow":
+      return "bg-amber-50 border-amber-200";
+    case "medium":
+      return "bg-orange-50 border-orange-200";
+    case "mediumHigh":
+      return "bg-orange-100 border-orange-300";
+    case "high":
+      return "bg-red-100 border-red-300";
+    default:
+      return "bg-slate-50 border-slate-200";
+  }
+}
+
 function Field({
   label,
   defaultValue,
@@ -49,6 +66,7 @@ export default function StovetopHeatSettingsPage() {
   const [stoveKnob, setStoveKnob] = useState<StoveKey>("medium");
 
   const active = STOVE_OPTIONS.find((option) => option.key === stoveKnob) ?? STOVE_OPTIONS[2];
+  const heatHeaderClass = heatHeaderTheme(stoveKnob);
 
   return (
     <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
@@ -156,6 +174,7 @@ export default function StovetopHeatSettingsPage() {
 
         <div className="grid gap-5 xl:grid-cols-2">
           <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+            <div className={`-mt-5 -mx-5 mb-4 rounded-t-3xl border-b px-5 py-3 ${heatHeaderClass}`} />
             <h3 className="text-base font-semibold text-slate-900">1. RVU and Multiplier Settings</h3>
             <p className="mt-1 text-sm text-slate-500">Editable base RVU values and payout multipliers.</p>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -169,6 +188,7 @@ export default function StovetopHeatSettingsPage() {
           </Card>
 
           <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+            <div className={`-mt-5 -mx-5 mb-4 rounded-t-3xl border-b px-5 py-3 ${heatHeaderClass}`} />
             <h3 className="text-base font-semibold text-slate-900">2. KPI Threshold Settings</h3>
             <p className="mt-1 text-sm text-slate-500">Thresholds for BrainWave and VitalWave KPI targets.</p>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -178,6 +198,7 @@ export default function StovetopHeatSettingsPage() {
           </Card>
 
           <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+            <div className={`-mt-5 -mx-5 mb-4 rounded-t-3xl border-b px-5 py-3 ${heatHeaderClass}`} />
             <h3 className="text-base font-semibold text-slate-900">3. Permissive Prescreening and Qualification Settings</h3>
             <p className="mt-1 text-sm text-slate-500">Controls how permissive the platform is during prescreening and qualification.</p>
             <div className="mt-4 space-y-3">
@@ -225,6 +246,7 @@ export default function StovetopHeatSettingsPage() {
           </Card>
 
           <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+            <div className={`-mt-5 -mx-5 mb-4 rounded-t-3xl border-b px-5 py-3 ${heatHeaderClass}`} />
             <h3 className="text-base font-semibold text-slate-900">4. Quarterly Team Member Payout Settings</h3>
             <p className="mt-1 text-sm text-slate-500">Defines cadence and payout basis for team-member compensation.</p>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -248,6 +270,7 @@ export default function StovetopHeatSettingsPage() {
           </Card>
 
           <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl xl:col-span-2">
+            <div className={`-mt-5 -mx-5 mb-4 rounded-t-3xl border-b px-5 py-3 ${heatHeaderClass}`} />
             <h3 className="text-base font-semibold text-slate-900">5. Plex Factor Settings</h3>
             <p className="mt-1 text-sm text-slate-500">
               If selected ancillaries are completed within the chosen time window, their payout multiplier increases by the Plex Factor.
