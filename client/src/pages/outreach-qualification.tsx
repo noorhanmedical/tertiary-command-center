@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import VisitBuildPane from "@/components/qualification/VisitBuildPane";
+import { ResultsView } from "@/components/ResultsView";
 import {
   useCreateBatch,
   useScreeningBatch,
@@ -21,7 +23,13 @@ import type { OutreachScheduler } from "@shared/schema";
 
 const OUTREACH_BATCH_KEY = "outreachQualificationBatchId";
 
+function escapeCsv(value: unknown) {
+  const str = String(value ?? "");
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
 export default function OutreachQualificationPage() {
+  const [, setLocation] = useLocation();
   const { toast } = useToast();
   const invalidateBatch = useInvalidateBatch();
 
@@ -35,6 +43,10 @@ export default function OutreachQualificationPage() {
   const [clinicianInput, setClinicianInput] = useState("");
   const [analysisProgress, setAnalysisProgress] = useState<{ completed: number; total: number } | null>(null);
   const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
+  const [viewMode, setViewMode] = useState<"build" | "results">("build");
+  const [expandedPatient, setExpandedPatient] = useState<number | null>(null);
+  const [expandedClinical, setExpandedClinical] = useState<number | null>(null);
+  const [selectedTestDetail, setSelectedTestDetail] = useState<any | null>(null);
 
   const autoCreateRef = useRef(false);
 
@@ -58,6 +70,12 @@ export default function OutreachQualificationPage() {
       setClinicianInput(selectedBatch.clinicianName || "");
     }
   }, [selectedBatch?.id, selectedBatch?.clinicianName]);
+
+  useEffect(() => {
+    if (selectedBatch?.status === "completed") {
+      setViewMode("results");
+    }
+  }, [selectedBatch?.status]);
 
   useEffect(() => {
     const stored = sessionStorage.getItem(OUTREACH_BATCH_KEY);
@@ -149,6 +167,7 @@ export default function OutreachQualificationPage() {
             if (statusData.status === "completed") {
               invalidateBatch(batchId);
               setAnalysisProgress(null);
+              setViewMode("results");
               toast({ title: "Analysis complete", description: "All patients have been screened." });
               return;
             }
@@ -202,6 +221,36 @@ export default function OutreachQualificationPage() {
     [handleFileUpload]
   );
 
+  const handleExport = useCallback(() => {
+    if (!selectedBatch) return;
+    const header = ["Name", "Time", "QualifyingTests", "AppointmentStatus", "PatientType"];
+    const rows = patients.map((patient: any) => [
+      patient.name ?? "",
+      patient.time ?? "",
+      (patient.qualifyingTests ?? []).join("; "),
+      patient.appointmentStatus ?? "",
+      patient.patientType ?? "",
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(escapeCsv).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${selectedBatch.name || "outreach"}-final-list.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [patients, selectedBatch]);
+
+  const handleNavigate = useCallback((step: "home" | "build" | "results") => {
+    if (step === "home") {
+      setLocation("/home");
+      return;
+    }
+    setViewMode(step === "results" ? "results" : "build");
+  }, [setLocation]);
+
   if (!batchId || !selectedBatch) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -209,6 +258,39 @@ export default function OutreachQualificationPage() {
           {createBatchMut.isPending || batchLoading ? "Preparing outreach qualification..." : "Loading outreach qualification..."}
         </div>
       </div>
+    );
+  }
+
+  if (viewMode === "results" || selectedBatch.status === "completed") {
+    return (
+      <ResultsView
+        batch={selectedBatch as any}
+        patients={patients as any}
+        loading={batchLoading}
+        onExport={handleExport}
+        onNavigate={handleNavigate}
+        expandedPatient={expandedPatient}
+        setExpandedPatient={setExpandedPatient}
+        expandedClinical={expandedClinical}
+        setExpandedClinical={setExpandedClinical}
+        selectedTestDetail={selectedTestDetail}
+        setSelectedTestDetail={setSelectedTestDetail}
+        onUpdatePatient={(id, updates) =>
+          updatePatientMut.mutate(
+            { id, updates },
+            {
+              onError: (err: unknown) => {
+                toast({
+                  title: "Update failed",
+                  description: err instanceof Error ? err.message : "Something went wrong",
+                  variant: "destructive",
+                });
+                invalidateBatch(batchId);
+              },
+            }
+          )
+        }
+      />
     );
   }
 
@@ -235,7 +317,7 @@ export default function OutreachQualificationPage() {
       importCodeError={importCodeError}
       setImportCodeError={setImportCodeError}
       analyzingPatients={analyzingPatients}
-      onNavigate={() => {}}
+      onNavigate={handleNavigate}
       onDeleteAll={() => {
         if (confirm("Delete all patients from this outreach list?")) {
           patients.forEach((p: any) => deletePatientMut.mutate(p.id));
