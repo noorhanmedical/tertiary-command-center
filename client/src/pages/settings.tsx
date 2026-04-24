@@ -764,6 +764,38 @@ export default function SettingsPage() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-staff-capacity">
               <h2 className="text-lg font-semibold text-slate-900">Scheduler, Liaison, and Technician Capacity Settings</h2>
               <p className="mt-1 text-sm text-slate-500">Configure scheduler, liaison, and technician participation percentages by staff member.</p>
+              <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900 mb-3">Scheduler Capacity</div>
+                  <label className="block text-xs text-slate-500 mb-1">Default role capacity</label>
+                  <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="50">
+                    <option value="25">25 percent</option>
+                    <option value="50">50 percent</option>
+                    <option value="75">75 percent</option>
+                    <option value="100">100 percent</option>
+                  </select>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900 mb-3">Liaison Capacity</div>
+                  <label className="block text-xs text-slate-500 mb-1">Default role capacity</label>
+                  <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="50">
+                    <option value="25">25 percent</option>
+                    <option value="50">50 percent</option>
+                    <option value="75">75 percent</option>
+                    <option value="100">100 percent</option>
+                  </select>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900 mb-3">Technician Capacity</div>
+                  <label className="block text-xs text-slate-500 mb-1">Default role capacity</label>
+                  <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="50">
+                    <option value="25">25 percent</option>
+                    <option value="50">50 percent</option>
+                    <option value="75">75 percent</option>
+                    <option value="100">100 percent</option>
+                  </select>
+                </div>
+              </div>
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-sm font-medium text-slate-900">Scheduler % by staff member</div>
@@ -783,6 +815,47 @@ export default function SettingsPage() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-patient-mix">
               <h2 className="text-lg font-semibold text-slate-900">Visit Patients vs Outreach Patients Mix Settings</h2>
               <p className="mt-1 text-sm text-slate-500">Define visit vs outreach mix targets for scheduler, liaison, and technician roles.</p>
+              <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900 mb-3">Scheduler Mix</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">Visit Patients %</label>
+                      <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="50" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">Outreach Patients %</label>
+                      <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="50" />
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900 mb-3">Liaison Mix</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">Visit Patients %</label>
+                      <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="50" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">Outreach Patients %</label>
+                      <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="50" />
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-sm font-medium text-slate-900 mb-3">Technician Mix</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">Visit Patients %</label>
+                      <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="50" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">Outreach Patients %</label>
+                      <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="50" />
+                    </div>
+                  </div>
+                </div>
+              </div>
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-sm font-medium text-slate-900">Scheduler visit vs outreach mix</div>
@@ -802,6 +875,24 @@ export default function SettingsPage() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-insurance-priority">
               <h2 className="text-lg font-semibold text-slate-900">Outreach Patients Insurance Priority Settings</h2>
               <p className="mt-1 text-sm text-slate-500">Set Outreach Patients insurance weighting for straight Medicare, PPO, and other insurance handling.</p>
+              <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-sm font-medium text-slate-900 mb-1">Straight Medicare Weight</label>
+                  <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="80" />
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-sm font-medium text-slate-900 mb-1">PPO Weight</label>
+                  <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="20" />
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-sm font-medium text-slate-900 mb-1">Other Insurance Handling</label>
+                  <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="admin_review">
+                    <option value="admin_review">Send to admin review</option>
+                    <option value="deny">Auto deny</option>
+                    <option value="manual_only">Manual hold only</option>
+                  </select>
+                </div>
+              </div>
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-sm font-medium text-slate-900">Straight Medicare weight</div>
@@ -821,6 +912,31 @@ export default function SettingsPage() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-insurance-approval">
               <h2 className="text-lg font-semibold text-slate-900">Visit Patients and Outreach Patients Insurance Approval Settings</h2>
               <p className="mt-1 text-sm text-slate-500">Control when admin approval is required before tests are generated in Visit Patients and Outreach Patients.</p>
+              <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                <label className="rounded-xl border border-slate-200 bg-slate-50 p-4 flex items-start gap-3">
+                  <input type="checkbox" className="mt-1" defaultChecked />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-900">Auto-hold non-Medicare / non-PPO</span>
+                    <span className="block mt-1 text-xs text-slate-500">Do not generate tests on intake tiles until admin decision.</span>
+                  </span>
+                </label>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-sm font-medium text-slate-900 mb-1">Approval Routing Inbox</label>
+                  <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="admin">
+                    <option value="admin">Admin Inbox</option>
+                    <option value="manager">Manager Inbox</option>
+                    <option value="both">Admin + Manager</option>
+                  </select>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-sm font-medium text-slate-900 mb-1">Decision Mode</label>
+                  <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="approve_deny">
+                    <option value="approve_deny">Approve / Deny</option>
+                    <option value="approve_only">Approve Only</option>
+                    <option value="manual_release">Manual Release</option>
+                  </select>
+                </div>
+              </div>
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-sm font-medium text-slate-900">Auto-hold non-Medicare / non-PPO</div>
@@ -840,6 +956,20 @@ export default function SettingsPage() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-technician-threshold">
               <h2 className="text-lg font-semibold text-slate-900">Technician Call Trigger Settings</h2>
               <p className="mt-1 text-sm text-slate-500">Define ancillary minutes and workload thresholds that trigger technician call lists.</p>
+              <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-sm font-medium text-slate-900 mb-1">BrainWave Minutes per Test</label>
+                  <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="60" />
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-sm font-medium text-slate-900 mb-1">VitalWave Minutes per Test</label>
+                  <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="30" />
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-sm font-medium text-slate-900 mb-1">Call Trigger Threshold</label>
+                  <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="240" />
+                </div>
+              </div>
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-sm font-medium text-slate-900">BrainWave minutes per test</div>
@@ -859,6 +989,26 @@ export default function SettingsPage() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-follow-up-sequences">
               <h2 className="text-lg font-semibold text-slate-900">Follow-Up Sequence Settings</h2>
               <p className="mt-1 text-sm text-slate-500">Configure reusable follow-up steps with timing, method, and same-person vs new-person caller rules.</p>
+              <div className="mt-4 space-y-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 grid gap-3 lg:grid-cols-5">
+                  <input className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="1" placeholder="Step #" />
+                  <input className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="1 day" placeholder="Timing" />
+                  <select className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="call">
+                    <option value="call">Call</option>
+                    <option value="text">Text</option>
+                    <option value="email">Email</option>
+                    <option value="portal">Clinic portal</option>
+                  </select>
+                  <select className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="same">
+                    <option value="same">Same person</option>
+                    <option value="new">New person</option>
+                  </select>
+                  <input className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="1x/day" placeholder="Attempts" />
+                </div>
+                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+                  Placeholder area for unlimited admin-defined follow-up rows.
+                </div>
+              </div>
               <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-sm font-medium text-slate-900">Step number</div>
@@ -886,6 +1036,27 @@ export default function SettingsPage() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-manager-reassignment">
               <h2 className="text-lg font-semibold text-slate-900">Reassignment / Manager Review Settings</h2>
               <p className="mt-1 text-sm text-slate-500">Controls unresolved-call alerts, reassignment thresholds, and role reassignment options.</p>
+              <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                <label className="rounded-xl border border-slate-200 bg-slate-50 p-4 flex items-start gap-3">
+                  <input type="checkbox" className="mt-1" defaultChecked />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-900">Manager Inbox Alert</span>
+                    <span className="block mt-1 text-xs text-slate-500">Send alert when a patient remains on a call list without completed call work.</span>
+                  </span>
+                </label>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-sm font-medium text-slate-900 mb-1">Reassignment Threshold</label>
+                  <input className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="2 attempts" />
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-sm font-medium text-slate-900 mb-1">Role Reassignment Options</label>
+                  <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="scheduler_liaison_technician">
+                    <option value="scheduler_only">Scheduler only</option>
+                    <option value="scheduler_liaison">Scheduler + Liaison</option>
+                    <option value="scheduler_liaison_technician">Scheduler + Liaison + Technician</option>
+                  </select>
+                </div>
+              </div>
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-sm font-medium text-slate-900">Unresolved call manager inbox alert</div>
@@ -905,6 +1076,30 @@ export default function SettingsPage() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-outreach-center">
               <h2 className="text-lg font-semibold text-slate-900">Outreach Center Settings Section</h2>
               <p className="mt-1 text-sm text-slate-500">Controls outreach metrics, manager inbox behavior, and marketing / outreach operational controls.</p>
+              <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                <label className="rounded-xl border border-slate-200 bg-slate-50 p-4 flex items-start gap-3">
+                  <input type="checkbox" className="mt-1" defaultChecked />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-900">Show Manager Inbox in Outreach Center</span>
+                    <span className="block mt-1 text-xs text-slate-500">Controls manager-review visibility in the Outreach Center tile.</span>
+                  </span>
+                </label>
+                <label className="rounded-xl border border-slate-200 bg-slate-50 p-4 flex items-start gap-3">
+                  <input type="checkbox" className="mt-1" defaultChecked />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-900">Show Metrics + Role Mix</span>
+                    <span className="block mt-1 text-xs text-slate-500">Controls role-mix snapshot and operational summary cards.</span>
+                  </span>
+                </label>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-sm font-medium text-slate-900 mb-1">Marketing Control Mode</label>
+                  <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" defaultValue="enabled">
+                    <option value="enabled">Enabled</option>
+                    <option value="metrics_only">Metrics only</option>
+                    <option value="hidden">Hidden</option>
+                  </select>
+                </div>
+              </div>
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-sm font-medium text-slate-900">Outreach metrics toggles</div>
