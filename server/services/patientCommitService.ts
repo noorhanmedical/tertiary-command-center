@@ -31,11 +31,15 @@ function missingRequiredFields(p: PatientScreening): string[] {
 }
 
 async function resolveSchedulerName(p: PatientScreening): Promise<string | null> {
-  const facility = p.facility;
-  if (!facility) {
-    const batch = await storage.getScreeningBatch(p.batchId);
-    return resolveSchedulerForClinic(batch?.facility ?? null)?.name ?? null;
+  const batch = await storage.getScreeningBatch(p.batchId);
+
+  if (batch?.assignedSchedulerId != null) {
+    const schedulers = await storage.getOutreachSchedulers();
+    const assigned = schedulers.find((s) => s.id === batch.assignedSchedulerId) ?? null;
+    if (assigned?.name) return assigned.name;
   }
+
+  const facility = p.facility ?? batch?.facility ?? null;
   return resolveSchedulerForClinic(facility)?.name ?? null;
 }
 
