@@ -53,7 +53,10 @@ interface VisitBuildPaneProps {
   simpleSubtitle?: string;
   intakeTitle?: string;
   cardsTitle?: string;
+  simpleBuildStepLabel?: string;
+  simpleResultsStepLabel?: string;
 }
+
 
 
 export default function VisitBuildPane(props: VisitBuildPaneProps) {
@@ -99,6 +102,8 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
     simpleSubtitle = "Build patients and generate visit workflow outputs.",
     intakeTitle = "Add Patients",
     cardsTitle = "Schedule Generator",
+    simpleBuildStepLabel = "Build Schedule",
+    simpleResultsStepLabel = "Final Schedule",
   } = props;
 
   return (
@@ -113,6 +118,7 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
                 </div>
                 <div className="text-xl font-semibold text-slate-900">{simpleTitle}</div>
                 <div className="text-sm text-slate-500 mt-1">{simpleSubtitle}</div>
+                <div className="text-xs text-slate-400 mt-1">{simpleBuildStepLabel} · {simpleResultsStepLabel}</div>
               </div>
               <div className="text-xs text-slate-500">
                 {completedCount}/{patients.length} qualified

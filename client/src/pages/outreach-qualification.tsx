@@ -370,7 +370,9 @@ export default function OutreachQualificationPage() {
       simpleTitle="Outreach Patients"
       simpleSubtitle="Same parser, patient bars, and generation path as Visit Patients, without requiring a committed visit schedule."
       intakeTitle="Add Outreach Patients"
-      cardsTitle="Final Outreach List"
+      cardsTitle="Final List"
+      simpleBuildStepLabel="Build List"
+      simpleResultsStepLabel="Final List"
     />
   );
 }
