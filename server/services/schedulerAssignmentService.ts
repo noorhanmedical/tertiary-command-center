@@ -22,7 +22,6 @@ export async function findSchedulerForBatch(
   const facilitySchedulers = facility
     ? allSchedulers.filter((s) => s.facility === facility)
     : [];
-  const matched = facilitySchedulers.length > 0 ? facilitySchedulers[0] : null;
 
   if (isSameDay) {
     return {
@@ -32,9 +31,17 @@ export async function findSchedulerForBatch(
     };
   }
 
+  if (facilitySchedulers.length === 1) {
+    return {
+      scheduler: facilitySchedulers[0],
+      requiresManualAssignment: false,
+      availableSchedulers: facilitySchedulers,
+    };
+  }
+
   return {
-    scheduler: matched,
-    requiresManualAssignment: false,
+    scheduler: null,
+    requiresManualAssignment: true,
     availableSchedulers: facilitySchedulers,
   };
 }
