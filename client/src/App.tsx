@@ -21,6 +21,7 @@ import TechnicianPortalPage from "@/pages/technician-portal";
 import LiaisonPortalPage from "@/pages/liaison-portal";
 import AdminOpsPage from "@/pages/admin-ops";
 import AdminPage from "@/pages/admin";
+import StovetopHeatSettingsPage from "@/pages/stovetop-heat-settings";
 import AdminUsersPage from "@/pages/admin-users";
 import AuditLogPage from "@/pages/audit-log";
 import AdminAnalysisJobsPage from "@/pages/admin-analysis-jobs";
@@ -145,6 +146,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/admin">
                   <AdminGuard user={user}><AdminPage /></AdminGuard>
+                </Route>
+                <Route path="/admin/stovetop-heat-settings">
+                  <AdminGuard user={user}><StovetopHeatSettingsPage /></AdminGuard>
                 </Route>
                 <Route path="/admin/users">
                   <AdminGuard user={user}><AdminUsersPage /></AdminGuard>
