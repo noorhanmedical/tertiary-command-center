@@ -714,7 +714,7 @@ export default function Home() {
           <DialogHeader>
             <DialogTitle>Assign Scheduler</DialogTitle>
             <DialogDescription>
-              Same-day schedules require manual scheduler assignment. Please select a scheduler for this batch before continuing.
+              This batch requires manual scheduler assignment. Please select a scheduler before continuing.
             </DialogDescription>
           </DialogHeader>
           {assignSchedulerModal && (
@@ -722,8 +722,8 @@ export default function Home() {
               {assignSchedulerModal.availableSchedulers.length === 0 ? (
                 <div className="flex flex-col items-center gap-3 py-4 text-center">
                   <AlertTriangle className="w-8 h-8 text-amber-500" />
-                  <p className="text-sm text-muted-foreground">No schedulers are assigned to <strong>{selectedBatch?.facility || "this clinic"}</strong>.</p>
-                  <p className="text-xs text-muted-foreground">The schedule will be saved without a scheduler. An urgent task will be created.</p>
+                  <p className="text-sm text-muted-foreground">No schedulers are currently available for <strong>{selectedBatch?.facility || "this clinic"}</strong>.</p>
+                  <p className="text-xs text-muted-foreground">The batch will be saved without a scheduler. An assignment task will be created.</p>
                 </div>
               ) : (
                 assignSchedulerModal.availableSchedulers.map((scheduler) => (
