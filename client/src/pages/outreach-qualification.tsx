@@ -277,6 +277,8 @@ export default function OutreachQualificationPage() {
       simpleHeaderMode={true}
       simpleTitle="Outreach Patients"
       simpleSubtitle="Same parser, patient bars, and generation path as Visit Patients, without requiring a committed visit schedule."
+      intakeTitle="Add Outreach Patients"
+      cardsTitle="Final Outreach List"
     />
   );
 }

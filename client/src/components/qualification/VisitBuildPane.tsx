@@ -51,7 +51,10 @@ interface VisitBuildPaneProps {
   simpleHeaderMode?: boolean;
   simpleTitle?: string;
   simpleSubtitle?: string;
+  intakeTitle?: string;
+  cardsTitle?: string;
 }
+
 
 export default function VisitBuildPane(props: VisitBuildPaneProps) {
   const {
@@ -94,6 +97,8 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
     simpleHeaderMode = false,
     simpleTitle = "Visit Patients",
     simpleSubtitle = "Build patients and generate visit workflow outputs.",
+    intakeTitle = "Add Patients",
+    cardsTitle = "Schedule Generator",
   } = props;
 
   return (
@@ -211,7 +216,7 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
             onHandleFileUpload={onHandleFileUpload}
             onImportText={onImportText}
             onAddPatient={onAddPatient}
-            title="Add Patients"
+            title={intakeTitle}
             pastePlaceholder={"Paste patient list here — it will import automatically\n\n9:00 AM - John Smith\n9:30 AM - Jane Doe\nBob Johnson"}
             uploadTestId="dropzone-upload"
             pasteTestId="input-paste-list"
@@ -219,7 +224,7 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
             addPatientTestId="button-add-patient"
           />
           <QualificationPatientCardsPane
-            title="Schedule Generator"
+            title={cardsTitle}
             patients={patients}
             analyzingPatients={analyzingPatients}
             completedCount={completedCount}
