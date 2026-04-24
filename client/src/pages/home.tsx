@@ -1,3 +1,4 @@
+import { useLocation } from "wouter";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -92,18 +93,20 @@ export default function Home() {
   const wasAutoPollingRef = useRef(false);
   const trackedBatchIdRef = useRef<number | null>(null);
 
+  const [location, setLocation] = useLocation();
+
   useEffect(() => {
-    if (window.location.pathname === "/visit-patients") {
+    if (location === "/visit-patients") {
       setNewScheduleDate(new Date());
       setNewScheduleDialogOpen(true);
     }
-  }, []);
+  }, [location]);
 
   const normalizeVisitPatientsRoute = useCallback(() => {
-    if (window.location.pathname === "/visit-patients") {
-      window.history.replaceState({}, "", "/home");
+    if (location === "/visit-patients") {
+      setLocation("/home");
     }
-  }, []);
+  }, [location, setLocation]);
 
 
 
@@ -112,7 +115,6 @@ export default function Home() {
   const selectedBatchId = activeTab.type === "schedule" ? activeTab.batchId : null;
   const scheduleViewMode = activeTab.type === "schedule" ? (activeTab.viewMode || "build") : null;
   const view = activeTab.type === "history" ? "history" : activeTab.type === "references" ? "references" : activeTab.type === "schedule" ? "schedule" : "home";
-
   const { toast } = useToast();
   const { setOpen: setSidebarOpen } = useSidebar();
   const invalidateBatch = useInvalidateBatch();
