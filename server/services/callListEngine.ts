@@ -21,6 +21,7 @@ export type EligibleCandidate = {
   patient: PatientScreening;
   facility: string;
   scheduleDate: string | null;
+  batchAssignedSchedulerId: number | null;
   // Derived patient type computed at gather time. The engine pool only
   // ever contains derived "visit" patients today, but we still pass it
   // through ranking so prioritization never reads the (potentially stale)
@@ -104,6 +105,7 @@ export function rankCandidates(
     patient: PatientScreening;
     scheduleDate: string | null;
     facility: string;
+    batchAssignedSchedulerId: number | null;
     derivedPatientType: "visit" | "outreach";
   }[],
   asOfDate: string,
@@ -136,7 +138,10 @@ export function rankCandidates(
       return { ...row, _key: sort };
     })
     .sort((a, b) => comparePriority(a._key, b._key))
-    .map(({ _key, ...rest }) => rest);
+    .map((row) => {
+      const { _key, ...rest } = row;
+      return rest;
+    });
 }
 
 // ── Today's schedulers (PTO-aware) ────────────────────────────────────────
@@ -209,6 +214,7 @@ async function gatherEligibleForFacility(
         patient: p,
         facility,
         scheduleDate: batch.scheduleDate ?? null,
+        batchAssignedSchedulerId: batch.assignedSchedulerId ?? null,
         derivedPatientType: derivedType,
       });
     }
@@ -280,11 +286,21 @@ export async function buildDailyAssignments(
   const remainingPool = eligibleAll.filter(
     (c) => !keptPatients.has(c.patient.id) && !patientsAssignedElsewhere.has(c.patient.id),
   );
-  // Pull last-contact timestamps for the remaining-pool patients so the
-  // Tier-2 ranker can prefer oldest-untouched first.
+
+  const directlyAssignedPool = remainingPool.filter(
+    (c) =>
+      c.batchAssignedSchedulerId != null &&
+      facilitySchedulerIds.has(c.batchAssignedSchedulerId) &&
+      activeSchedulerIds.has(c.batchAssignedSchedulerId),
+  );
+
+  const genericPool = remainingPool.filter((c) => c.batchAssignedSchedulerId == null);
+
+  // Pull last-contact timestamps for the generic pool so the Tier-2 ranker
+  // can prefer oldest-untouched first.
   const lastContact = new Map<number, number>();
   await Promise.all(
-    remainingPool.map(async (c) => {
+    genericPool.map(async (c) => {
       const last = await storage.latestOutreachCallForPatient(c.patient.id);
       if (last) {
         const t = new Date(last.startedAt as unknown as string).getTime();
@@ -292,17 +308,32 @@ export async function buildDailyAssignments(
       }
     }),
   );
-  const ranked = rankCandidates(remainingPool, asOfDate, lastContact);
+  const ranked = rankCandidates(genericPool, asOfDate, lastContact);
 
-  // Subtract kept-load from each scheduler's capacity before greedy fill.
+  const directCounts = new Map<number, number>();
+  for (const c of directlyAssignedPool) {
+    const schedulerId = c.batchAssignedSchedulerId!;
+    directCounts.set(schedulerId, (directCounts.get(schedulerId) ?? 0) + 1);
+  }
+
+  // Subtract kept-load and direct-assignment load from each scheduler's capacity before greedy fill.
   const adjusted = schedulers.map((sc) => {
-    const used = keep.filter((k) => k.schedulerId === sc.id).length;
+    const keptUsed = keep.filter((k) => k.schedulerId === sc.id).length;
+    const directUsed = directCounts.get(sc.id) ?? 0;
     const cap = dailyCapacity(sc, baseDailyTarget);
-    const remaining = Math.max(0, cap - used);
+    const remaining = Math.max(0, cap - keptUsed - directUsed);
     return { ...sc, capacityPercent: Math.round((remaining / Math.max(1, baseDailyTarget)) * 100) };
   });
 
-  const drafts = buildAssignmentsForPool(ranked, adjusted, asOfDate, baseDailyTarget);
+  const directDrafts: AssignmentDraft[] = directlyAssignedPool.map((c) => ({
+    patientScreeningId: c.patient.id,
+    schedulerId: c.batchAssignedSchedulerId!,
+    asOfDate,
+    source: "manual",
+  }));
+
+  const balancedDrafts = buildAssignmentsForPool(ranked, adjusted, asOfDate, baseDailyTarget);
+  const drafts = [...directDrafts, ...balancedDrafts];
 
   // Single transaction — release+create either both apply or neither does.
   await storage.applySchedulerAssignmentDiff(
@@ -350,8 +381,21 @@ export async function assignNewlyEligiblePatient(
     asOfDate,
   });
   if (derivedType !== "visit") return null;
+
   const schedulers = await activeSchedulersForToday(storage, facility, asOfDate);
   if (schedulers.length === 0) return null;
+
+  if (batch?.assignedSchedulerId != null) {
+    const assigned = schedulers.find((s) => s.id === batch.assignedSchedulerId);
+    if (!assigned) return null;
+    return storage.createSchedulerAssignment({
+      patientScreeningId: patient.id,
+      schedulerId: assigned.id,
+      asOfDate,
+      source: "manual",
+    });
+  }
+
   const existingDay = await storage.listActiveSchedulerAssignments({ asOfDate });
   const load = new Map<number, number>();
   for (const a of existingDay) load.set(a.schedulerId, (load.get(a.schedulerId) ?? 0) + 1);
