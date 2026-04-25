@@ -641,7 +641,7 @@ export function PortalShell({ role }: { role: Role }) {
 
   return (
     <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`}>
-      <header className="relative z-20 px-6 py-4 border-b border-slate-200 bg-white">
+      <header className="relative z-20 px-6 py-4 border-b border-white/10 bg-[rgba(71,85,105,0.80)] backdrop-blur-xl">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <div className={`p-2 rounded-xl ${role === "technician" ? "bg-blue-100/90 text-blue-700" : "bg-rose-100/90 text-rose-700"}`}>
@@ -739,7 +739,7 @@ export function PortalShell({ role }: { role: Role }) {
         </div>
 
         <div
-          className={`absolute left-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/25 bg-[rgba(72,99,160,0.92)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
+          className={`absolute left-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/20 bg-[rgba(72,99,160,0.80)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
             leftRailCollapsed ? "w-14" : "w-[320px]"
           }`}
           data-testid="portal-left-rail"
@@ -848,7 +848,7 @@ export function PortalShell({ role }: { role: Role }) {
         </div>
 
         <div
-          className={`absolute right-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/25 bg-[rgba(72,99,160,0.92)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
+          className={`absolute right-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/20 bg-[rgba(72,99,160,0.80)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
             rightRailCollapsed ? "w-14" : "w-[340px]"
           }`}
           data-testid="portal-right-rail"
