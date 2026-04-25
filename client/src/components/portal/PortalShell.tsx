@@ -965,7 +965,7 @@ export function PortalShell({ role }: { role: Role }) {
         <div
           className={`absolute left-4 top-4 bottom-4 z-20 rounded-[28px] border border-[rgba(72,99,160,0.35)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.34)] backdrop-blur-2xl transition-all duration-300 ${
             leftRailCollapsed
-              ? "w-10 bg-[rgba(72,99,160,0.10)]"
+              ? "w-10 bg-[rgba(71,85,105,0.22)]"
               : "w-[320px] bg-[rgba(72,99,160,0.80)]"
           }`}
           data-testid="portal-left-rail"
@@ -1076,7 +1076,7 @@ export function PortalShell({ role }: { role: Role }) {
         <div
           className={`absolute right-4 top-4 bottom-4 z-20 rounded-[28px] border border-[rgba(72,99,160,0.35)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.34)] backdrop-blur-2xl transition-all duration-300 ${
             rightRailCollapsed
-              ? "w-10 bg-[rgba(72,99,160,0.10)]"
+              ? "w-10 bg-[rgba(71,85,105,0.22)]"
               : "w-[340px] bg-[rgba(72,99,160,0.80)]"
           }`}
           data-testid="portal-right-rail"
