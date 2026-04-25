@@ -644,11 +644,8 @@ export function PortalShell({ role }: { role: Role }) {
       <header className="relative z-20 overflow-hidden px-6 py-4 border-b border-white/10 bg-[radial-gradient(circle_at_14%_28%,rgba(255,255,255,0.18)_0,rgba(255,255,255,0.18)_1px,transparent_2px),radial-gradient(circle_at_33%_62%,rgba(255,255,255,0.12)_0,rgba(255,255,255,0.12)_1px,transparent_2px),radial-gradient(circle_at_57%_24%,rgba(255,255,255,0.14)_0,rgba(255,255,255,0.14)_1px,transparent_2px),radial-gradient(circle_at_74%_54%,rgba(255,255,255,0.10)_0,rgba(255,255,255,0.10)_1px,transparent_2px),radial-gradient(circle_at_88%_22%,rgba(255,255,255,0.16)_0,rgba(255,255,255,0.16)_1px,transparent_2px),linear-gradient(180deg,rgba(0,0,0,0.88),rgba(10,10,18,0.84))] backdrop-blur-xl">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-xl ${role === "technician" ? "bg-blue-100/90 text-blue-700" : "bg-rose-100/90 text-rose-700"}`}>
-              <RoleIcon className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-lg font-semibold text-white" data-testid="text-portal-title">{title}</h1>
+                        <div>
+              <h1 className="text-lg font-semibold text-sky-400" data-testid="text-portal-title">{title}</h1>
               <p className="text-sm text-white/70">{subtitle}</p>
             </div>
           </div>
