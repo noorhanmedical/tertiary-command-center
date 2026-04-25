@@ -615,8 +615,8 @@ function DemoPatientProfile({
 
 function ExpandedSectionView({ mode, src, title, onClose }: { mode: CenterMode; src: string; title: string; onClose: () => void }) {
   return (
-    <div className="rounded-2xl border bg-white shadow-sm h-full flex flex-col" data-testid={`expanded-${mode}`}>
-      <div className="flex items-center gap-2 border-b px-4 py-2">
+    <div className="rounded-2xl bg-white shadow-sm h-full flex flex-col" data-testid={`expanded-${mode}`}>
+      <div className="flex items-center gap-2 px-4 py-2">
         <FileBarChart className="h-4 w-4 text-indigo-600" />
         <h2 className="text-sm font-semibold">{title}</h2>
         <button
@@ -933,7 +933,7 @@ export function PortalShell({ role }: { role: Role }) {
         <div className="absolute inset-0">
           <div className="absolute inset-0 bg-white" />
           <div className="absolute inset-0 px-6 py-5">
-            <div className="h-full w-full rounded-[32px] border border-slate-200 bg-white" />
+            <div className="h-full w-full rounded-[32px] bg-white" />
           </div>
         </div>
 
@@ -959,7 +959,7 @@ export function PortalShell({ role }: { role: Role }) {
 
             <div className="flex-1 min-h-0 overflow-y-auto">
               {centerMode === "consent" && selected ? (
-                <div className="h-full rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.12)] overflow-y-auto" data-testid="expanded-consent">
+                <div className="h-full rounded-[28px] bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.12)] overflow-y-auto" data-testid="expanded-consent">
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="text-lg font-semibold">Consent — {selected.name}</div>
@@ -991,7 +991,7 @@ export function PortalShell({ role }: { role: Role }) {
                   <ExpandedSectionView mode={centerMode} src={centerSrc} title={centerTitle} onClose={() => setCenterMode("playground")} />
                 </div>
               ) : centerMode === "patient" && selected ? (
-                <div className="h-full rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto">
+                <div className="h-full rounded-[28px] bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto">
                   {selected.patientScreeningId === aliBoomayePatient.patientScreeningId ? (
                     <DemoPatientProfile
                       patient={selected}
@@ -1009,7 +1009,7 @@ export function PortalShell({ role }: { role: Role }) {
                   )}
                 </div>
               ) : (
-                <div className="h-full rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto" data-testid="playground-home">
+                <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto" data-testid="playground-home">
                   {dockActiveApp === "tasks" ? (
                     <div className="p-6">
                       <div className="mb-4 text-xl font-semibold text-slate-900">Tasks</div>
