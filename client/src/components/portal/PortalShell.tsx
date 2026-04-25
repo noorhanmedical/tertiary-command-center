@@ -858,6 +858,30 @@ export function PortalShell({ role }: { role: Role }) {
     markDockOpen("schedule");
   }
 
+  function openCalendarInPlayground() {
+    setCenterMode("playground");
+    setDockOpenApps((prev) => (prev.includes("schedule") ? prev : [...prev, "schedule"]));
+    setDockActiveApp("schedule");
+    setCenterSrc("");
+    setCenterTitle(`Calendar — ${facility ? `${facility} · ${selectedDate}` : selectedDate}`);
+  }
+
+  function openTasksInPlayground() {
+    setCenterMode("playground");
+    setDockOpenApps((prev) => (prev.includes("tasks") ? prev : [...prev, "tasks"]));
+    setDockActiveApp("tasks");
+    setCenterSrc("");
+    setCenterTitle("Tasks");
+  }
+
+  function openDocumentsInPlayground() {
+    setCenterMode("playground");
+    setDockOpenApps((prev) => (prev.includes("documents") ? prev : [...prev, "documents"]));
+    setDockActiveApp("documents");
+    setCenterSrc("");
+    setCenterTitle("Documents");
+  }
+
   function markDockOpen(app: "tasks" | "schedule" | "consent" | "chart" | "documents") {
     setDockOpenApps((prev) => (prev.includes(app) ? prev : [...prev, app]));
     setDockActiveApp(app);
@@ -1010,7 +1034,21 @@ export function PortalShell({ role }: { role: Role }) {
                 </div>
               ) : (
                 <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto" data-testid="playground-home">
-                  {dockActiveApp === "tasks" ? (
+                  {dockActiveApp === "schedule" ? (
+                    <div className="p-6">
+                      <div className="mb-4 text-xl font-semibold text-slate-900">Calendar</div>
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        <Card className="p-4 bg-white">
+                          <div className="text-sm font-semibold text-slate-900 mb-2">Clinic Day</div>
+                          <div className="text-sm text-slate-600">{facility ? `${facility} · ${selectedDate}` : selectedDate}</div>
+                        </Card>
+                        <Card className="p-4 bg-white">
+                          <div className="text-sm font-semibold text-slate-900 mb-2">Ancillary Count</div>
+                          <div className="text-sm text-slate-600">{patients.length} patient(s) on the right rail for this day.</div>
+                        </Card>
+                      </div>
+                    </div>
+                  ) : dockActiveApp === "tasks" ? (
                     <div className="p-6">
                       <div className="mb-4 text-xl font-semibold text-slate-900">Tasks</div>
                       <div className="grid gap-4 xl:grid-cols-2">
@@ -1094,13 +1132,41 @@ export function PortalShell({ role }: { role: Role }) {
 
             {!leftRailCollapsed && (
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                <MonthlyMiniCalendar facility={facility} selectedDate={selectedDate} onSelect={(d) => { setSelectedDate(d); setCenterMode("patient"); }} />
+                <Card className="p-3 bg-white text-slate-900">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="text-sm font-semibold text-slate-900">Calendar</div>
+                    <button
+                      type="button"
+                      onClick={openCalendarInPlayground}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                      data-testid="button-left-calendar-expand"
+                      title="Expand to Playground"
+                    >
+                      <ChevronLeft className="h-4 w-4 rotate-180 text-[#4863A0]" />
+                    </button>
+                  </div>
+                  <MonthlyMiniCalendar facility={facility} selectedDate={selectedDate} onSelect={(d) => { setSelectedDate(d); setCenterMode("patient"); }} />
+                </Card>
 
                 {selected && selected.patientScreeningId != null && (
-                  <LeftRailUpload
-                    patientScreeningId={selected.patientScreeningId}
-                    patientName={selected.name}
-                  />
+                  <Card className="p-3 bg-white text-slate-900">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-sm font-semibold text-slate-900">Documents / Upload</div>
+                      <button
+                        type="button"
+                        onClick={openDocumentsInPlayground}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                        data-testid="button-left-documents-expand"
+                        title="Expand to Playground"
+                      >
+                        <ChevronLeft className="h-4 w-4 rotate-180 text-[#4863A0]" />
+                      </button>
+                    </div>
+                    <LeftRailUpload
+                      patientScreeningId={selected.patientScreeningId}
+                      patientName={selected.name}
+                    />
+                  </Card>
                 )}
 
                 <Card className="p-3 bg-white text-slate-900">
@@ -1129,9 +1195,20 @@ export function PortalShell({ role }: { role: Role }) {
                     <div className="text-sm font-semibold flex items-center gap-2">
                       <Bell className="h-4 w-4 text-rose-600" /> My tasks
                     </div>
-                    <Badge variant="outline" data-testid="badge-task-count">
-                      {(tasksData?.urgent.length ?? 0) + (tasksData?.open.length ?? 0)}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" data-testid="badge-task-count">
+                        {(tasksData?.urgent.length ?? 0) + (tasksData?.open.length ?? 0)}
+                      </Badge>
+                      <button
+                        type="button"
+                        onClick={openTasksInPlayground}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                        data-testid="button-left-tasks-expand"
+                        title="Expand to Playground"
+                      >
+                        <ChevronLeft className="h-4 w-4 rotate-180 text-[#4863A0]" />
+                      </button>
+                    </div>
                   </div>
                   {(tasksData?.urgent ?? []).length > 0 && (
                     <div className="mb-2 space-y-1">
