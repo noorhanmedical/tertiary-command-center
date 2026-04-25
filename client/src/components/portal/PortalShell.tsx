@@ -956,57 +956,7 @@ export function PortalShell({ role }: { role: Role }) {
                   )}
                 </div>
               ) : (
-                <div className="h-full rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto" data-testid="playground-home">
-                  <div className="mb-4 flex items-center justify-between">
-                    <div>
-                      <div className="text-xl font-semibold text-slate-900">Playground</div>
-                      <div className="text-sm text-slate-500">Open a patient, schedule, consent, or screening workflow here.</div>
-                    </div>
-                  </div>
-
-                  <Tabs value={playgroundTab} onValueChange={(v) => setPlaygroundTab(v as "overview" | "tasks" | "documents")} className="w-full">
-                    <TabsList>
-                      <TabsTrigger value="overview" data-testid="playground-tab-overview">Overview</TabsTrigger>
-                      <TabsTrigger value="tasks" data-testid="playground-tab-tasks">Tasks</TabsTrigger>
-                      <TabsTrigger value="documents" data-testid="playground-tab-documents">Documents</TabsTrigger>
-                    </TabsList>
-
-                    <TabsContent value="overview" className="mt-4">
-                      <div className="grid gap-4 xl:grid-cols-3">
-                        <Card className="p-4 bg-white">
-                          <div className="text-sm font-semibold text-slate-900 mb-1">Selected Clinic Day</div>
-                          <div className="text-sm text-slate-600">{facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}</div>
-                        </Card>
-                        <Card className="p-4 bg-white">
-                          <div className="text-sm font-semibold text-slate-900 mb-1">Ancillary Schedule</div>
-                          <div className="text-sm text-slate-600">{patients.length} patient(s) in the right rail for this day.</div>
-                        </Card>
-                        <Card className="p-4 bg-white">
-                          <div className="text-sm font-semibold text-slate-900 mb-1">Playground Behavior</div>
-                          <div className="text-sm text-slate-600">Click a patient row to open them here. Click the same row again to return to Playground.</div>
-                        </Card>
-                      </div>
-                    </TabsContent>
-
-                    <TabsContent value="tasks" className="mt-4">
-                      <Card className="p-4 bg-white">
-                        <div className="text-sm font-semibold text-slate-900 mb-2">Task Snapshot</div>
-                        <div className="text-sm text-slate-600">
-                          Urgent tasks: {(tasksData?.urgent ?? []).length} · Open tasks: {(tasksData?.open ?? []).length}
-                        </div>
-                      </Card>
-                    </TabsContent>
-
-                    <TabsContent value="documents" className="mt-4">
-                      <Card className="p-4 bg-white">
-                        <div className="text-sm font-semibold text-slate-900 mb-2">Documents and PDFs</div>
-                        <div className="text-sm text-slate-600">
-                          Open Plexus PDFs, Clinician PDFs, schedule views, and chart-linked documents from patient actions.
-                        </div>
-                      </Card>
-                    </TabsContent>
-                  </Tabs>
-                </div>
+                <div className="h-full rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto" data-testid="playground-home" />
               )}
             </div>
           </div>
@@ -1014,7 +964,7 @@ export function PortalShell({ role }: { role: Role }) {
 
         <div
           className={`absolute left-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/20 bg-[rgba(72,99,160,0.80)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
-            leftRailCollapsed ? "w-14" : "w-[320px]"
+            leftRailCollapsed ? "w-10" : "w-[320px]"
           }`}
           data-testid="portal-left-rail"
         >
@@ -1123,7 +1073,7 @@ export function PortalShell({ role }: { role: Role }) {
 
         <div
           className={`absolute right-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/20 bg-[rgba(72,99,160,0.80)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
-            rightRailCollapsed ? "w-14" : "w-[340px]"
+            rightRailCollapsed ? "w-10" : "w-[340px]"
           }`}
           data-testid="portal-right-rail"
         >
