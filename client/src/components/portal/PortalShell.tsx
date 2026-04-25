@@ -641,21 +641,21 @@ export function PortalShell({ role }: { role: Role }) {
 
   return (
     <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`}>
-      <header className="relative z-20 px-6 py-4 border-b border-white/10 bg-[rgba(71,85,105,0.80)] backdrop-blur-xl">
+      <header className="relative z-20 overflow-hidden px-6 py-4 border-b border-white/10 bg-[radial-gradient(circle_at_14%_28%,rgba(255,255,255,0.18)_0,rgba(255,255,255,0.18)_1px,transparent_2px),radial-gradient(circle_at_33%_62%,rgba(255,255,255,0.12)_0,rgba(255,255,255,0.12)_1px,transparent_2px),radial-gradient(circle_at_57%_24%,rgba(255,255,255,0.14)_0,rgba(255,255,255,0.14)_1px,transparent_2px),radial-gradient(circle_at_74%_54%,rgba(255,255,255,0.10)_0,rgba(255,255,255,0.10)_1px,transparent_2px),radial-gradient(circle_at_88%_22%,rgba(255,255,255,0.16)_0,rgba(255,255,255,0.16)_1px,transparent_2px),linear-gradient(180deg,rgba(0,0,0,0.88),rgba(10,10,18,0.84))] backdrop-blur-xl">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <div className={`p-2 rounded-xl ${role === "technician" ? "bg-blue-100/90 text-blue-700" : "bg-rose-100/90 text-rose-700"}`}>
               <RoleIcon className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold" data-testid="text-portal-title">{title}</h1>
-              <p className="text-sm text-slate-500">{subtitle}</p>
+              <h1 className="text-lg font-semibold text-white" data-testid="text-portal-title">{title}</h1>
+              <p className="text-sm text-white/70">{subtitle}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Label htmlFor="facility-select" className="text-sm">Clinic</Label>
+            <Label htmlFor="facility-select" className="text-sm text-white/80">Clinic</Label>
             <Select value={facility} onValueChange={setFacility}>
-              <SelectTrigger id="facility-select" className="w-[220px] bg-white/80" data-testid="select-facility">
+              <SelectTrigger id="facility-select" className="w-[220px] border-white/20 bg-white/90 text-slate-900" data-testid="select-facility">
                 <SelectValue placeholder={facilities.length === 0 ? "No clinic assignments" : "Choose clinic"} />
               </SelectTrigger>
               <SelectContent>
