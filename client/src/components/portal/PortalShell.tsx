@@ -20,7 +20,7 @@ import { SignaturePad } from "./SignaturePad";
 import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 
 type Role = "technician" | "liaison";
-type CenterMode = "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart";
+type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart";
 
 type PortalTask = {
   id: number;
@@ -679,10 +679,12 @@ export function PortalShell({ role }: { role: Role }) {
 
   const [selectedDate, setSelectedDate] = useState<string>(todayIso());
   const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
-  const [centerMode, setCenterMode] = useState<CenterMode>("patient");
+  const [centerMode, setCenterMode] = useState<CenterMode>("playground");
   const [centerSrc, setCenterSrc] = useState<string>("");
   const [centerTitle, setCenterTitle] = useState<string>("");
   const [consentDialog, setConsentDialog] = useState<{ patient: TodayPatient; testType: string | null } | null>(null);
+  const [playgroundTab, setPlaygroundTab] = useState<"overview" | "tasks" | "documents">("overview");
+  const [scheduleDialogPatient, setScheduleDialogPatient] = useState<TodayPatient | null>(null);
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
   const [aiMinimized, setAiMinimized] = useState(false);
@@ -818,6 +820,25 @@ export function PortalShell({ role }: { role: Role }) {
     setCenterMode("consent");
   }
 
+  function togglePatientInPlayground(p: TodayPatient) {
+    const samePatient = p.patientScreeningId === selectedPatientId;
+    if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
+    setCenterMode(samePatient && centerMode === "patient" ? "playground" : "patient");
+  }
+
+  function openScheduleDialog(p: TodayPatient) {
+    if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
+    setScheduleDialogPatient(p);
+  }
+
+  function expandScheduleToPlayground(p: TodayPatient) {
+    if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
+    setCenterMode("scheduleDay");
+    setCenterSrc(p.scheduleUrl || "about:blank");
+    setCenterTitle(`Schedule — ${p.name}`);
+    setScheduleDialogPatient(null);
+  }
+
   return (
     <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`}>
       <header className="relative z-20 overflow-hidden px-6 py-4 border-b border-white/10 bg-[radial-gradient(circle_at_14%_28%,rgba(255,255,255,0.18)_0,rgba(255,255,255,0.18)_1px,transparent_2px),radial-gradient(circle_at_33%_62%,rgba(255,255,255,0.12)_0,rgba(255,255,255,0.12)_1px,transparent_2px),radial-gradient(circle_at_57%_24%,rgba(255,255,255,0.14)_0,rgba(255,255,255,0.14)_1px,transparent_2px),radial-gradient(circle_at_74%_54%,rgba(255,255,255,0.10)_0,rgba(255,255,255,0.10)_1px,transparent_2px),radial-gradient(circle_at_88%_22%,rgba(255,255,255,0.16)_0,rgba(255,255,255,0.16)_1px,transparent_2px),linear-gradient(180deg,rgba(0,0,0,0.88),rgba(10,10,18,0.84))] backdrop-blur-xl">
@@ -852,18 +873,27 @@ export function PortalShell({ role }: { role: Role }) {
 
         <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
           <div className="relative mx-auto flex h-full max-w-[1600px] flex-col pt-14">
-            <div className="pointer-events-none absolute left-1/2 top-0 z-30 -translate-x-1/2 text-center">
+            <button
+              type="button"
+              onClick={() => {
+                const collapse = !(leftRailCollapsed && rightRailCollapsed);
+                setLeftRailCollapsed(collapse);
+                setRightRailCollapsed(collapse);
+              }}
+              className="absolute left-1/2 top-0 z-30 -translate-x-1/2 text-center"
+              data-testid="button-toggle-both-rails"
+            >
               <div className="rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] px-5 py-2 text-base font-semibold tracking-tight text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl">
                 Playground
               </div>
               <div className="mt-2 text-xs text-slate-600">
                 {facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}
               </div>
-            </div>
+            </button>
 
-            <div className="flex-1 min-h-0">
+            <div className="flex-1 min-h-0 overflow-y-auto">
               {centerMode === "consent" && selected ? (
-                <div className="h-full rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.12)]" data-testid="expanded-consent">
+                <div className="h-full rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.12)] overflow-y-auto" data-testid="expanded-consent">
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="text-lg font-semibold">Consent — {selected.name}</div>
@@ -890,12 +920,12 @@ export function PortalShell({ role }: { role: Role }) {
                     ))}
                   </div>
                 </div>
-              ) : centerMode !== "patient" && centerSrc ? (
+              ) : centerMode !== "patient" && centerMode !== "playground" && centerSrc ? (
                 <div className="h-full min-h-[70vh]">
-                  <ExpandedSectionView mode={centerMode} src={centerSrc} title={centerTitle} onClose={() => setCenterMode("patient")} />
+                  <ExpandedSectionView mode={centerMode} src={centerSrc} title={centerTitle} onClose={() => setCenterMode("playground")} />
                 </div>
-              ) : selected ? (
-                <div className="h-full rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.10)]">
+              ) : centerMode === "patient" && selected ? (
+                <div className="h-full rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto">
                   {selected.patientScreeningId === aliBoomayePatient.patientScreeningId ? (
                     <DemoPatientProfile
                       patient={selected}
@@ -913,11 +943,56 @@ export function PortalShell({ role }: { role: Role }) {
                   )}
                 </div>
               ) : (
-                <div className="h-full flex items-center justify-center text-slate-400" data-testid="empty-state">
-                  <div className="text-center">
-                    <ClipboardList className="h-10 w-10 mx-auto mb-2 opacity-50" />
-                    <div>{facility ? "Select a patient to begin." : "Choose your clinic to get started."}</div>
+                <div className="h-full rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto" data-testid="playground-home">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div>
+                      <div className="text-xl font-semibold text-slate-900">Playground</div>
+                      <div className="text-sm text-slate-500">Open a patient, schedule, consent, or screening workflow here.</div>
+                    </div>
                   </div>
+
+                  <Tabs value={playgroundTab} onValueChange={(v) => setPlaygroundTab(v as "overview" | "tasks" | "documents")} className="w-full">
+                    <TabsList>
+                      <TabsTrigger value="overview" data-testid="playground-tab-overview">Overview</TabsTrigger>
+                      <TabsTrigger value="tasks" data-testid="playground-tab-tasks">Tasks</TabsTrigger>
+                      <TabsTrigger value="documents" data-testid="playground-tab-documents">Documents</TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value="overview" className="mt-4">
+                      <div className="grid gap-4 xl:grid-cols-3">
+                        <Card className="p-4 bg-white">
+                          <div className="text-sm font-semibold text-slate-900 mb-1">Selected Clinic Day</div>
+                          <div className="text-sm text-slate-600">{facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}</div>
+                        </Card>
+                        <Card className="p-4 bg-white">
+                          <div className="text-sm font-semibold text-slate-900 mb-1">Ancillary Schedule</div>
+                          <div className="text-sm text-slate-600">{patients.length} patient(s) in the right rail for this day.</div>
+                        </Card>
+                        <Card className="p-4 bg-white">
+                          <div className="text-sm font-semibold text-slate-900 mb-1">Playground Behavior</div>
+                          <div className="text-sm text-slate-600">Click a patient row to open them here. Click the same row again to return to Playground.</div>
+                        </Card>
+                      </div>
+                    </TabsContent>
+
+                    <TabsContent value="tasks" className="mt-4">
+                      <Card className="p-4 bg-white">
+                        <div className="text-sm font-semibold text-slate-900 mb-2">Task Snapshot</div>
+                        <div className="text-sm text-slate-600">
+                          Urgent tasks: {(tasksData?.urgent ?? []).length} · Open tasks: {(tasksData?.open ?? []).length}
+                        </div>
+                      </Card>
+                    </TabsContent>
+
+                    <TabsContent value="documents" className="mt-4">
+                      <Card className="p-4 bg-white">
+                        <div className="text-sm font-semibold text-slate-900 mb-2">Documents and PDFs</div>
+                        <div className="text-sm text-slate-600">
+                          Open Plexus PDFs, Clinician PDFs, schedule views, and chart-linked documents from patient actions.
+                        </div>
+                      </Card>
+                    </TabsContent>
+                  </Tabs>
                 </div>
               )}
             </div>
@@ -1063,23 +1138,26 @@ export function PortalShell({ role }: { role: Role }) {
                   <Badge variant="outline" data-testid="badge-patient-count">{patients.length}</Badge>
                 </div>
                 {patients.length === 0 ? (
-                  <div className="text-xs text-slate-500 py-4 text-center">No patients scheduled.</div>
+                  <div className="text-xs text-slate-200 py-4 text-center">No patients scheduled.</div>
                 ) : (
                   <div className="space-y-2">
                     {patients.map((p) => {
                       const isSelected = p.patientScreeningId === selectedPatientId;
+                      const isAli = p.patientScreeningId === aliBoomayePatient.patientScreeningId;
+                      const consentDone = isAli ? aliConsentComplete : p.consentSigned;
+                      const screeningDone = isAli ? aliScreeningComplete : false;
+
                       return (
                         <div
                           key={(p.patientScreeningId ?? p.name) + ""}
                           className={`rounded-lg border px-2.5 py-2 text-slate-900 transition-colors ${
-                            isSelected ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-slate-50"
+                            isSelected && centerMode === "patient" ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-slate-50"
                           }`}
                           data-testid={`patient-row-${p.patientScreeningId ?? p.name}`}
                         >
                           <button
                             onClick={() => {
-                              if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
-                              setSchedulePeekPatient(p);
+                              togglePatientInPlayground(p);
                             }}
                             className="w-full text-left"
                           >
@@ -1090,7 +1168,7 @@ export function PortalShell({ role }: { role: Role }) {
                                   {formatTime(p.time)} · {p.appointments.length} test{p.appointments.length === 1 ? "" : "s"}
                                 </div>
                               </div>
-                              {p.consentSigned ? (
+                              {consentDone ? (
                                 <Badge className="bg-emerald-100 text-emerald-700 text-[10px] px-1.5 py-0">
                                   <Check className="h-2.5 w-2.5 mr-0.5" /> Consent ✓
                                 </Badge>
@@ -1101,41 +1179,38 @@ export function PortalShell({ role }: { role: Role }) {
                               )}
                             </div>
                           </button>
+
                           <div className="mt-2 flex items-center justify-end gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
-                                if (centerMode === "scheduleDay" && selectedPatientId === p.patientScreeningId) {
-                                  setCenterMode("patient");
-                                } else {
-                                  setCenterMode("scheduleDay");
-                                  setCenterSrc(p.scheduleUrl || "about:blank");
-                                  setCenterTitle(`Schedule — ${p.name}`);
-                                }
-                              }}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
-                              data-testid={`button-patient-calendar-${p.patientScreeningId ?? p.name}`}
-                              title="Schedule"
-                            >
-                              <CalendarIcon className="h-4 w-4 text-slate-700" />
-                            </button>
+                            <div className="inline-flex rounded-full border border-slate-200 bg-white overflow-hidden">
+                              <button
+                                type="button"
+                                onClick={() => openScheduleDialog(p)}
+                                className="inline-flex h-8 w-8 items-center justify-center hover:bg-slate-50"
+                                data-testid={`button-patient-calendar-${p.patientScreeningId ?? p.name}`}
+                                title="Schedule popup"
+                              >
+                                <CalendarIcon className="h-4 w-4 text-slate-700" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => expandScheduleToPlayground(p)}
+                                className="inline-flex h-8 w-8 items-center justify-center border-l border-slate-200 hover:bg-slate-50"
+                                data-testid={`button-patient-calendar-expand-${p.patientScreeningId ?? p.name}`}
+                                title="Expand schedule into Playground"
+                              >
+                                <ChevronLeft className="h-4 w-4 rotate-180 text-slate-700" />
+                              </button>
+                            </div>
 
                             <button
                               type="button"
                               onClick={() => {
                                 if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
-                                if (p.patientScreeningId === aliBoomayePatient.patientScreeningId) {
-                                  setAliConsentComplete((v) => !v);
-                                }
-                                if (centerMode === "consent" && selectedPatientId === p.patientScreeningId) {
-                                  setCenterMode("patient");
-                                } else {
-                                  setCenterMode("consent");
-                                }
+                                if (isAli) setAliConsentComplete((v) => !v);
+                                setCenterMode("consent");
                               }}
                               className={`inline-flex h-8 items-center justify-center rounded-full border px-2 ${
-                                (p.patientScreeningId === aliBoomayePatient.patientScreeningId ? aliConsentComplete : p.consentSigned)
+                                consentDone
                                   ? "border-emerald-200 bg-emerald-100 text-emerald-700"
                                   : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                               }`}
@@ -1149,19 +1224,11 @@ export function PortalShell({ role }: { role: Role }) {
                               type="button"
                               onClick={() => {
                                 if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
-                                if (p.patientScreeningId === aliBoomayePatient.patientScreeningId) {
-                                  setAliScreeningComplete((v) => !v);
-                                }
-                                if (centerMode === "patient" && selectedPatientId === p.patientScreeningId) {
-                                  setCenterMode("scheduleDay");
-                                  setCenterSrc(p.scheduleUrl || "about:blank");
-                                  setCenterTitle(`Screening Form — ${p.name}`);
-                                } else {
-                                  setCenterMode("patient");
-                                }
+                                if (isAli) setAliScreeningComplete((v) => !v);
+                                setCenterMode("patient");
                               }}
                               className={`inline-flex h-8 items-center justify-center rounded-full border px-2 ${
-                                (p.patientScreeningId === aliBoomayePatient.patientScreeningId ? aliScreeningComplete : false)
+                                screeningDone
                                   ? "border-emerald-200 bg-emerald-100 text-emerald-700"
                                   : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                               }`}
@@ -1233,26 +1300,34 @@ export function PortalShell({ role }: { role: Role }) {
         )}
       </div>
 
-      {schedulePeekPatient && (
-        <Dialog open={!!schedulePeekPatient} onOpenChange={(o) => !o && setSchedulePeekPatient(null)}>
+      {scheduleDialogPatient && (
+        <Dialog open={!!scheduleDialogPatient} onOpenChange={(o) => !o && setScheduleDialogPatient(null)}>
           <DialogContent className="max-w-md" data-testid="dialog-schedule-peek">
             <DialogHeader>
-              <DialogTitle>{schedulePeekPatient.name}</DialogTitle>
+              <DialogTitle>{scheduleDialogPatient.name}</DialogTitle>
             </DialogHeader>
             <div className="space-y-2 text-sm text-slate-700">
-              <div><span className="font-medium">DOB:</span> {schedulePeekPatient.dob ?? "—"}</div>
-              <div><span className="font-medium">Facility:</span> {schedulePeekPatient.facility}</div>
-              <div><span className="font-medium">Time:</span> {formatTime(schedulePeekPatient.time)}</div>
-              <div><span className="font-medium">Clinician:</span> {schedulePeekPatient.clinicianName ?? "—"}</div>
-              <div><span className="font-medium">Qualifying Tests:</span> {schedulePeekPatient.qualifyingTests.length ? schedulePeekPatient.qualifyingTests.join(", ") : "None"}</div>
-              <div><span className="font-medium">Appointment Status:</span> {schedulePeekPatient.appointmentStatus || "pending"}</div>
-              {schedulePeekPatient.patientScreeningId === aliBoomayePatient.patientScreeningId && (
+              <div><span className="font-medium">DOB:</span> {scheduleDialogPatient.dob ?? "—"}</div>
+              <div><span className="font-medium">Facility:</span> {scheduleDialogPatient.facility}</div>
+              <div><span className="font-medium">Time:</span> {formatTime(scheduleDialogPatient.time)}</div>
+              <div><span className="font-medium">Clinician:</span> {scheduleDialogPatient.clinicianName ?? "—"}</div>
+              <div><span className="font-medium">Qualifying Tests:</span> {scheduleDialogPatient.qualifyingTests.length ? scheduleDialogPatient.qualifyingTests.join(", ") : "None"}</div>
+              <div><span className="font-medium">Appointment Status:</span> {scheduleDialogPatient.appointmentStatus || "pending"}</div>
+              {scheduleDialogPatient.patientScreeningId === aliBoomayePatient.patientScreeningId && (
                 <>
                   <div><span className="font-medium">Insurance:</span> {aliBoomayeProfile.demographics.insurance}</div>
                   <div><span className="font-medium">Previous Ancillary Tests:</span> {aliBoomayeProfile.previousAncillaries.map((x) => `${x.test} (${x.completedOn})`).join(", ")}</div>
                   <div><span className="font-medium">Cooldown:</span> {aliBoomayeProfile.cooldowns.map((x) => `${x.test} until ${x.cooldownUntil}`).join(", ")}</div>
                 </>
               )}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setScheduleDialogPatient(null)}>
+                Close
+              </Button>
+              <Button onClick={() => expandScheduleToPlayground(scheduleDialogPatient)}>
+                Expand to Playground
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
