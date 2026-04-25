@@ -822,8 +822,21 @@ export function PortalShell({ role }: { role: Role }) {
 
   function togglePatientInPlayground(p: TodayPatient) {
     const samePatient = p.patientScreeningId === selectedPatientId;
-    if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
-    setCenterMode(samePatient && centerMode === "patient" ? "playground" : "patient");
+
+    if (samePatient && centerMode === "patient") {
+      setCenterMode("playground");
+      setCenterSrc("");
+      setCenterTitle("");
+      return;
+    }
+
+    if (p.patientScreeningId != null) {
+      setSelectedPatientId(p.patientScreeningId);
+    }
+
+    setCenterMode("patient");
+    setCenterSrc("");
+    setCenterTitle("");
   }
 
   function openScheduleDialog(p: TodayPatient) {
