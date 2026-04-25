@@ -680,14 +680,14 @@ export function PortalShell({ role }: { role: Role }) {
               <div className="rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] px-5 py-2 text-base font-semibold tracking-tight text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl">
                 Playground
               </div>
-              <div className="mt-2 text-xs text-slate-200">
+              <div className="mt-2 text-xs text-slate-600">
                 {facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}
               </div>
             </div>
 
             <div className="flex-1 min-h-0">
               {centerMode === "consent" && selected ? (
-                <div className="h-full rounded-[28px] border border-white/50 bg-white/55 p-6 shadow-[0_20px_70px_rgba(15,23,42,0.12)] backdrop-blur-xl" data-testid="expanded-consent">
+                <div className="h-full rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.12)]" data-testid="expanded-consent">
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="text-lg font-semibold">Consent — {selected.name}</div>
@@ -719,7 +719,7 @@ export function PortalShell({ role }: { role: Role }) {
                   <ExpandedSectionView mode={centerMode} src={centerSrc} title={centerTitle} onClose={() => setCenterMode("patient")} />
                 </div>
               ) : selected ? (
-                <div className="h-full rounded-[28px] border border-white/50 bg-white/45 p-6 shadow-[0_20px_70px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+                <div className="h-full rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.10)]">
                   <PatientDetail
                     patient={selected}
                     role={role}
@@ -739,18 +739,18 @@ export function PortalShell({ role }: { role: Role }) {
         </div>
 
         <div
-          className={`absolute left-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/20 bg-[rgba(72,99,160,0.34)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
+          className={`absolute left-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/25 bg-[rgba(72,99,160,0.92)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
             leftRailCollapsed ? "w-14" : "w-[320px]"
           }`}
           data-testid="portal-left-rail"
         >
           <div className="flex h-full flex-col">
             <div className="flex items-center justify-between px-3 py-3 border-b border-white/40">
-              {!leftRailCollapsed && <div className="text-sm font-semibold text-slate-900">Tools</div>}
+              {!leftRailCollapsed && <div className="text-sm font-semibold text-white">Tools</div>}
               <button
                 type="button"
                 onClick={() => setLeftRailCollapsed((v) => !v)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/50 bg-white/70 hover:bg-white"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/35 bg-white/90 text-slate-900 hover:bg-white"
                 data-testid="button-toggle-left-rail"
               >
                 {leftRailCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
@@ -768,7 +768,7 @@ export function PortalShell({ role }: { role: Role }) {
                   />
                 )}
 
-                <Card className="p-3 bg-white/80">
+                <Card className="p-3 bg-white text-slate-900">
                   <div className="text-sm font-semibold mb-2 flex items-center gap-2">
                     <Phone className="h-4 w-4" /> Outreach call list
                   </div>
@@ -781,7 +781,7 @@ export function PortalShell({ role }: { role: Role }) {
                       <div className="text-xs text-slate-500 py-2 text-center">No outreach candidates.</div>
                     )}
                     {(outreachData?.patients ?? []).map((p) => (
-                      <div key={p.patientScreeningId} className="rounded-lg border px-2.5 py-2 bg-white" data-testid={`outreach-row-${p.patientScreeningId}`}>
+                      <div key={p.patientScreeningId} className="rounded-lg border border-white/60 px-2.5 py-2 bg-white text-slate-900" data-testid={`outreach-row-${p.patientScreeningId}`}>
                         <div className="text-sm font-medium truncate">{p.name}</div>
                         <div className="text-[11px] text-slate-500">{p.phoneNumber ?? "No phone"} · {p.insurance ?? "—"}</div>
                       </div>
@@ -789,7 +789,7 @@ export function PortalShell({ role }: { role: Role }) {
                   </div>
                 </Card>
 
-                <Card className="p-3 bg-white/80" data-testid="tasks-pane">
+                <Card className="p-3 bg-white text-slate-900" data-testid="tasks-pane">
                   <div className="flex items-center justify-between mb-2">
                     <div className="text-sm font-semibold flex items-center gap-2">
                       <Bell className="h-4 w-4 text-rose-600" /> My tasks
@@ -833,7 +833,7 @@ export function PortalShell({ role }: { role: Role }) {
                             setCenterMode("patient");
                           }
                         }}
-                        className="w-full text-left rounded-lg border bg-white px-2.5 py-2 hover:bg-slate-50"
+                        className="w-full text-left rounded-lg border bg-white px-2.5 py-2 text-slate-900 hover:bg-slate-50"
                         data-testid={`task-open-${t.id}`}
                       >
                         <div className="text-sm font-medium truncate">{t.title}</div>
@@ -848,7 +848,7 @@ export function PortalShell({ role }: { role: Role }) {
         </div>
 
         <div
-          className={`absolute right-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/20 bg-[rgba(72,99,160,0.34)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
+          className={`absolute right-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/25 bg-[rgba(72,99,160,0.92)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
             rightRailCollapsed ? "w-14" : "w-[340px]"
           }`}
           data-testid="portal-right-rail"
@@ -857,14 +857,14 @@ export function PortalShell({ role }: { role: Role }) {
             <div className="flex items-center justify-between px-3 py-3 border-b border-white/40">
               {!rightRailCollapsed && (
                 <div>
-                  <div className="text-sm font-semibold text-slate-900">Ancillary Test Schedule</div>
-                  <div className="text-[11px] text-slate-500">{selectedDate === todayIso() ? "Today" : selectedDate}</div>
+                  <div className="text-sm font-semibold text-white">Ancillary Test Schedule</div>
+                  <div className="text-[11px] text-slate-200">{selectedDate === todayIso() ? "Today" : selectedDate}</div>
                 </div>
               )}
               <button
                 type="button"
                 onClick={() => setRightRailCollapsed((v) => !v)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/50 bg-white/70 hover:bg-white"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/35 bg-white/90 text-slate-900 hover:bg-white"
                 data-testid="button-toggle-right-rail"
               >
                 {rightRailCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -885,7 +885,7 @@ export function PortalShell({ role }: { role: Role }) {
                       return (
                         <div
                           key={(p.patientScreeningId ?? p.name) + ""}
-                          className={`rounded-lg border px-2.5 py-2 transition-colors ${
+                          className={`rounded-lg border px-2.5 py-2 text-slate-900 transition-colors ${
                             isSelected ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-slate-50"
                           }`}
                           data-testid={`patient-row-${p.patientScreeningId ?? p.name}`}
