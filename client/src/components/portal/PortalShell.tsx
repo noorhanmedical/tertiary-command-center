@@ -4,6 +4,7 @@ import {
   Stethoscope, HeartHandshake, Calendar as CalendarIcon, Phone, FileSignature,
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
   Sparkles, Send, Minimize2, FileBarChart, FilePlus, User, Bell,
+  ClipboardPen, Pill, History, ShieldCheck,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,6 +51,15 @@ type TodayPatient = {
   plexusPdfUrl: string | null;
   clinicianPdfUrl: string | null;
   scheduleUrl: string | null;
+};
+
+type DemoProfile = {
+  demographics: { mrn: string; sex: string; phone: string; insurance: string };
+  history: string[];
+  diagnoses: string[];
+  medications: string[];
+  previousAncillaries: Array<{ test: string; completedOn: string }>;
+  cooldowns: Array<{ test: string; cooldownUntil: string }>;
 };
 
 type LibraryDoc = {
@@ -482,6 +492,127 @@ function PatientDetail({ patient, role, onConsent }: { patient: TodayPatient; ro
   );
 }
 
+
+function DemoPatientProfile({
+  patient,
+  profile,
+  consentComplete,
+  screeningComplete,
+  onOpenConsent,
+}: {
+  patient: TodayPatient;
+  profile: DemoProfile;
+  consentComplete: boolean;
+  screeningComplete: boolean;
+  onOpenConsent: () => void;
+}) {
+  return (
+    <div className="space-y-5" data-testid="demo-patient-profile">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-2xl font-semibold text-slate-900">{patient.name}</div>
+          <div className="mt-1 text-sm text-slate-500">
+            DOB {patient.dob ?? "—"} · {profile.demographics.sex} · MRN {profile.demographics.mrn}
+          </div>
+          <div className="mt-1 text-sm text-slate-500">
+            {profile.demographics.phone} · {profile.demographics.insurance}
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <Badge className={consentComplete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}>
+            <ShieldCheck className="h-3 w-3 mr-1" /> {consentComplete ? "Consent Complete" : "Consent Needed"}
+          </Badge>
+          <Badge className={screeningComplete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}>
+            <ClipboardPen className="h-3 w-3 mr-1" /> {screeningComplete ? "Screening Form Complete" : "Screening Form Needed"}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card className="p-4 bg-white">
+          <div className="text-sm font-semibold text-slate-900 mb-2">Demographics</div>
+          <div className="space-y-1 text-sm text-slate-700">
+            <div><span className="font-medium">Facility:</span> {patient.facility}</div>
+            <div><span className="font-medium">Time Today:</span> {formatTime(patient.time)}</div>
+            <div><span className="font-medium">Clinician:</span> {patient.clinicianName ?? "—"}</div>
+            <div><span className="font-medium">Phone:</span> {profile.demographics.phone}</div>
+            <div><span className="font-medium">Insurance:</span> {profile.demographics.insurance}</div>
+          </div>
+        </Card>
+
+        <Card className="p-4 bg-white">
+          <div className="text-sm font-semibold text-slate-900 mb-2">Scheduled Today / Qualified For</div>
+          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Scheduled Today</div>
+          <div className="mb-3 flex flex-wrap gap-2">
+            {patient.appointments.map((appt) => (
+              <Badge key={appt.id} variant="outline">
+                {appt.testType} · {formatTime(appt.scheduledTime)}
+              </Badge>
+            ))}
+          </div>
+          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Qualified For</div>
+          <div className="flex flex-wrap gap-2">
+            {patient.qualifyingTests.map((test) => (
+              <Badge key={test} className="bg-indigo-100 text-indigo-700">{test}</Badge>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="p-4 bg-white">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 mb-2">
+            <History className="h-4 w-4 text-slate-500" /> History / Diagnoses
+          </div>
+          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">HX</div>
+          <ul className="mb-3 list-disc pl-5 text-sm text-slate-700 space-y-1">
+            {profile.history.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">DX</div>
+          <ul className="list-disc pl-5 text-sm text-slate-700 space-y-1">
+            {profile.diagnoses.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </Card>
+
+        <Card className="p-4 bg-white">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 mb-2">
+            <Pill className="h-4 w-4 text-slate-500" /> Medications / Prior Ancillaries
+          </div>
+          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">RX</div>
+          <ul className="mb-3 list-disc pl-5 text-sm text-slate-700 space-y-1">
+            {profile.medications.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Previous Ancillary Tests</div>
+          <ul className="list-disc pl-5 text-sm text-slate-700 space-y-1">
+            {profile.previousAncillaries.map((item) => <li key={item.test}>{item.test} · {item.completedOn}</li>)}
+          </ul>
+        </Card>
+
+        <Card className="p-4 bg-white xl:col-span-2">
+          <div className="text-sm font-semibold text-slate-900 mb-2">Cooldown / Documents</div>
+          <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Cooldown Status</div>
+              <ul className="list-disc pl-5 text-sm text-slate-700 space-y-1">
+                {profile.cooldowns.map((item) => <li key={item.test}>{item.test} cooldown until {item.cooldownUntil}</li>)}
+              </ul>
+            </div>
+            <div className="flex flex-wrap gap-2 self-start">
+              <Button variant="outline" size="sm">
+                <FilePlus className="h-3.5 w-3.5 mr-1" /> Plexus PDF
+              </Button>
+              <Button variant="outline" size="sm">
+                <FileText className="h-3.5 w-3.5 mr-1" /> Clinician PDF
+              </Button>
+              <Button size="sm" onClick={onOpenConsent}>
+                <FileSignature className="h-3.5 w-3.5 mr-1" /> Open Consent
+              </Button>
+            </div>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 function ExpandedSectionView({ mode, src, title, onClose }: { mode: CenterMode; src: string; title: string; onClose: () => void }) {
   return (
     <div className="rounded-2xl border bg-white shadow-sm h-full flex flex-col" data-testid={`expanded-${mode}`}>
@@ -557,6 +688,49 @@ export function PortalShell({ role }: { role: Role }) {
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiDraft, setAiDraft] = useState("");
   const [schedulePeekPatient, setSchedulePeekPatient] = useState<TodayPatient | null>(null);
+  const [aliConsentComplete, setAliConsentComplete] = useState(false);
+  const [aliScreeningComplete, setAliScreeningComplete] = useState(false);
+
+  const aliBoomayePatient = useMemo<TodayPatient>(() => ({
+    patientScreeningId: 900001,
+    name: "Ali Boomaye",
+    dob: "05/14/1968",
+    time: "09:30",
+    facility: facility || "NWPG - Spring",
+    clinicianName: "Dr. Imran",
+    qualifyingTests: ["BrainWave", "VitalWave"],
+    appointmentStatus: "scheduled",
+    consentByTest: [{ testType: "BrainWave", signed: aliConsentComplete, documentId: null }],
+    consentSigned: aliConsentComplete,
+    appointments: [
+      { id: 1, testType: "BrainWave", scheduledTime: "09:30", status: "scheduled" },
+      { id: 2, testType: "VitalWave", scheduledTime: "10:30", status: "scheduled" },
+    ],
+    batchId: 9001,
+    plexusPdfUrl: "about:blank",
+    clinicianPdfUrl: "about:blank",
+    scheduleUrl: "about:blank",
+  }), [facility, aliConsentComplete]);
+
+  const aliBoomayeProfile = useMemo<DemoProfile>(() => ({
+    demographics: {
+      mrn: "ALI-900001",
+      sex: "Male",
+      phone: "(602) 555-0199",
+      insurance: "Straight Medicare",
+    },
+    history: ["Hypertension", "Type 2 diabetes mellitus", "Chronic fatigue symptoms"],
+    diagnoses: ["Neuropathy", "Cognitive concern", "Dizziness"],
+    medications: ["Metformin", "Losartan", "Atorvastatin"],
+    previousAncillaries: [
+      { test: "Urinalysis", completedOn: "2026-03-14" },
+      { test: "VitalWave", completedOn: "2026-02-01" },
+    ],
+    cooldowns: [
+      { test: "VitalWave", cooldownUntil: "2026-05-01" },
+      { test: "BrainWave", cooldownUntil: "2026-04-30" },
+    ],
+  }), []);
 
   const { data: scheduleData } = useQuery<{ patients: TodayPatient[] }>({
     queryKey: ["/api/portal/today-schedule", facility, selectedDate],
@@ -605,7 +779,12 @@ export function PortalShell({ role }: { role: Role }) {
     enabled: !!facility,
   });
 
-  const patients = scheduleData?.patients ?? [];
+  const livePatients = scheduleData?.patients ?? [];
+  const patients = useMemo(() => {
+    const withoutAli = livePatients.filter((p) => p.patientScreeningId !== aliBoomayePatient.patientScreeningId);
+    return [aliBoomayePatient, ...withoutAli];
+  }, [livePatients, aliBoomayePatient]);
+
   const selected = useMemo(() => patients.find((p) => p.patientScreeningId === selectedPatientId) ?? null, [patients, selectedPatientId]);
 
   useEffect(() => {
@@ -618,7 +797,7 @@ export function PortalShell({ role }: { role: Role }) {
   const title = role === "technician" ? "Technician Portal" : "Liaison Technician Portal";
   const subtitle = role === "technician"
     ? "Run today's tests · sign consents · upload chart docs"
-    : "Consent patients post-clinician · upload to chart · shared clinic workflow";
+    : "";
 
   function openCenterMode(mode: CenterMode, url: string | null, label: string) {
     if (!url) return;
@@ -645,8 +824,8 @@ export function PortalShell({ role }: { role: Role }) {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
                         <div>
-              <h1 className="text-lg font-semibold text-[#4863A0] drop-shadow-[0_0_10px_rgba(72,99,160,0.65)]" data-testid="text-portal-title">{title}</h1>
-              <p className="text-sm text-white/70">{subtitle}</p>
+              <h1 className="text-lg font-semibold text-[#6F8FD6] drop-shadow-[0_0_14px_rgba(111,143,214,0.95)]" data-testid="text-portal-title">{title}</h1>
+              {subtitle ? <p className="text-sm text-white/70">{subtitle}</p> : null}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -717,11 +896,21 @@ export function PortalShell({ role }: { role: Role }) {
                 </div>
               ) : selected ? (
                 <div className="h-full rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.10)]">
-                  <PatientDetail
-                    patient={selected}
-                    role={role}
-                    onConsent={(testType) => setConsentDialog({ patient: selected, testType })}
-                  />
+                  {selected.patientScreeningId === aliBoomayePatient.patientScreeningId ? (
+                    <DemoPatientProfile
+                      patient={selected}
+                      profile={aliBoomayeProfile}
+                      consentComplete={aliConsentComplete}
+                      screeningComplete={aliScreeningComplete}
+                      onOpenConsent={() => setCenterMode("consent")}
+                    />
+                  ) : (
+                    <PatientDetail
+                      patient={selected}
+                      role={role}
+                      onConsent={(testType) => setConsentDialog({ patient: selected, testType })}
+                    />
+                  )}
                 </div>
               ) : (
                 <div className="h-full flex items-center justify-center text-slate-400" data-testid="empty-state">
@@ -912,6 +1101,76 @@ export function PortalShell({ role }: { role: Role }) {
                               )}
                             </div>
                           </button>
+                          <div className="mt-2 flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
+                                if (centerMode === "scheduleDay" && selectedPatientId === p.patientScreeningId) {
+                                  setCenterMode("patient");
+                                } else {
+                                  setCenterMode("scheduleDay");
+                                  setCenterSrc(p.scheduleUrl || "about:blank");
+                                  setCenterTitle(`Schedule — ${p.name}`);
+                                }
+                              }}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                              data-testid={`button-patient-calendar-${p.patientScreeningId ?? p.name}`}
+                              title="Schedule"
+                            >
+                              <CalendarIcon className="h-4 w-4 text-slate-700" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
+                                if (p.patientScreeningId === aliBoomayePatient.patientScreeningId) {
+                                  setAliConsentComplete((v) => !v);
+                                }
+                                if (centerMode === "consent" && selectedPatientId === p.patientScreeningId) {
+                                  setCenterMode("patient");
+                                } else {
+                                  setCenterMode("consent");
+                                }
+                              }}
+                              className={`inline-flex h-8 items-center justify-center rounded-full border px-2 ${
+                                (p.patientScreeningId === aliBoomayePatient.patientScreeningId ? aliConsentComplete : p.consentSigned)
+                                  ? "border-emerald-200 bg-emerald-100 text-emerald-700"
+                                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                              }`}
+                              data-testid={`button-patient-consent-${p.patientScreeningId ?? p.name}`}
+                              title="Informed Consent"
+                            >
+                              <FileSignature className="h-4 w-4" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
+                                if (p.patientScreeningId === aliBoomayePatient.patientScreeningId) {
+                                  setAliScreeningComplete((v) => !v);
+                                }
+                                if (centerMode === "patient" && selectedPatientId === p.patientScreeningId) {
+                                  setCenterMode("scheduleDay");
+                                  setCenterSrc(p.scheduleUrl || "about:blank");
+                                  setCenterTitle(`Screening Form — ${p.name}`);
+                                } else {
+                                  setCenterMode("patient");
+                                }
+                              }}
+                              className={`inline-flex h-8 items-center justify-center rounded-full border px-2 ${
+                                (p.patientScreeningId === aliBoomayePatient.patientScreeningId ? aliScreeningComplete : false)
+                                  ? "border-emerald-200 bg-emerald-100 text-emerald-700"
+                                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                              }`}
+                              data-testid={`button-patient-screening-${p.patientScreeningId ?? p.name}`}
+                              title="Screening Form"
+                            >
+                              <ClipboardPen className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
@@ -987,6 +1246,13 @@ export function PortalShell({ role }: { role: Role }) {
               <div><span className="font-medium">Clinician:</span> {schedulePeekPatient.clinicianName ?? "—"}</div>
               <div><span className="font-medium">Qualifying Tests:</span> {schedulePeekPatient.qualifyingTests.length ? schedulePeekPatient.qualifyingTests.join(", ") : "None"}</div>
               <div><span className="font-medium">Appointment Status:</span> {schedulePeekPatient.appointmentStatus || "pending"}</div>
+              {schedulePeekPatient.patientScreeningId === aliBoomayePatient.patientScreeningId && (
+                <>
+                  <div><span className="font-medium">Insurance:</span> {aliBoomayeProfile.demographics.insurance}</div>
+                  <div><span className="font-medium">Previous Ancillary Tests:</span> {aliBoomayeProfile.previousAncillaries.map((x) => `${x.test} (${x.completedOn})`).join(", ")}</div>
+                  <div><span className="font-medium">Cooldown:</span> {aliBoomayeProfile.cooldowns.map((x) => `${x.test} until ${x.cooldownUntil}`).join(", ")}</div>
+                </>
+              )}
             </div>
           </DialogContent>
         </Dialog>
