@@ -1357,7 +1357,7 @@ export function PortalShell({ role }: { role: Role }) {
                     }`}
                     data-testid={`dock-icon-${app.key}`}
                   >
-                    <Icon className="h-5 w-5" />
+                    <Icon className="h-5 w-5 text-white" />
                     {isOpen && <div className="absolute -bottom-1.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-white" />}
                   </button>
                 </div>
