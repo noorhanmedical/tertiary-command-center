@@ -551,6 +551,11 @@ export function PortalShell({ role }: { role: Role }) {
   const [centerSrc, setCenterSrc] = useState<string>("");
   const [centerTitle, setCenterTitle] = useState<string>("");
   const [consentDialog, setConsentDialog] = useState<{ patient: TodayPatient; testType: string | null } | null>(null);
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
+  const [aiMinimized, setAiMinimized] = useState(false);
+  const [aiDraft, setAiDraft] = useState("");
+  const [schedulePeekPatient, setSchedulePeekPatient] = useState<TodayPatient | null>(null);
 
   const { data: scheduleData } = useQuery<{ patients: TodayPatient[] }>({
     queryKey: ["/api/portal/today-schedule", facility, selectedDate],
@@ -634,11 +639,11 @@ export function PortalShell({ role }: { role: Role }) {
   }
 
   return (
-    <div className="min-h-full flex flex-col bg-gradient-to-br from-slate-50 via-white to-indigo-50/30" data-testid={`portal-${role}`}>
-      <header className="px-6 py-4 border-b bg-white/70 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.40),_rgba(248,250,252,1)_42%,_rgba(224,231,255,0.72)_100%)]" data-testid={`portal-${role}`}>
+      <header className="relative z-20 px-6 py-4 border-b border-white/50 bg-white/40 backdrop-blur-xl">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-xl ${role === "technician" ? "bg-blue-100 text-blue-700" : "bg-rose-100 text-rose-700"}`}>
+            <div className={`p-2 rounded-xl ${role === "technician" ? "bg-blue-100/90 text-blue-700" : "bg-rose-100/90 text-rose-700"}`}>
               <RoleIcon className="h-5 w-5" />
             </div>
             <div>
@@ -649,7 +654,7 @@ export function PortalShell({ role }: { role: Role }) {
           <div className="flex items-center gap-2">
             <Label htmlFor="facility-select" className="text-sm">Clinic</Label>
             <Select value={facility} onValueChange={setFacility}>
-              <SelectTrigger id="facility-select" className="w-[220px]" data-testid="select-facility">
+              <SelectTrigger id="facility-select" className="w-[220px] bg-white/80" data-testid="select-facility">
                 <SelectValue placeholder={facilities.length === 0 ? "No clinic assignments" : "Choose clinic"} />
               </SelectTrigger>
               <SelectContent>
@@ -660,267 +665,334 @@ export function PortalShell({ role }: { role: Role }) {
         </div>
       </header>
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[320px_1fr_340px] gap-4 p-4 min-h-0">
-        {/* Left rail: monthly calendar */}
-        <div className="space-y-3 overflow-y-auto">
-          <MonthlyMiniCalendar facility={facility} selectedDate={selectedDate} onSelect={(d) => { setSelectedDate(d); setCenterMode("patient"); }} />
-
-          {selected && selected.patientScreeningId != null && (
-            <LeftRailUpload
-              patientScreeningId={selected.patientScreeningId}
-              patientName={selected.name}
-            />
-          )}
-
-          <Card className="p-3">
-            <div className="text-sm font-semibold mb-2 flex items-center gap-2">
-              <Phone className="h-4 w-4" /> Outreach call list
-            </div>
-            <div className="text-[11px] text-slate-500 mb-2">
-              Your share{outreachData?.heavyDay ? " (heavy day — outreach cap reduced)" : ""}
-              {typeof outreachData?.totalPool === "number" ? ` · ${outreachData.totalPool} in pool` : ""}
-            </div>
-            <div className="space-y-1.5 max-h-[40vh] overflow-y-auto">
-              {(outreachData?.patients ?? []).length === 0 && (
-                <div className="text-xs text-slate-500 py-2 text-center">No outreach candidates.</div>
-              )}
-              {(outreachData?.patients ?? []).map((p) => (
-                <div key={p.patientScreeningId} className="rounded-lg border px-2.5 py-2 bg-white" data-testid={`outreach-row-${p.patientScreeningId}`}>
-                  <div className="text-sm font-medium truncate">{p.name}</div>
-                  <div className="text-[11px] text-slate-500">{p.phoneNumber ?? "No phone"} · {p.insurance ?? "—"}</div>
-                </div>
-              ))}
-            </div>
-          </Card>
+      <div className="relative flex-1 overflow-hidden">
+        <div className="absolute inset-0">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(255,255,255,0.42),_rgba(255,255,255,0.10)_45%,_rgba(79,70,229,0.06)_100%)]" />
+          <div className="absolute inset-0 px-6 py-5">
+            <div className="h-full w-full rounded-[32px] border border-white/40 bg-white/10 backdrop-blur-[2px]" />
+          </div>
         </div>
 
-        {/* Center: patient detail OR expanded mode */}
-        <div className="overflow-y-auto min-h-0">
-          {selected && (
-            <PortalWorkflowPanel
-              patient={selected}
-              role={role}
-              selectedDate={selectedDate}
-            />
-          )}
-          {centerMode === "consent" && selected ? (
-            <Card className="p-6 space-y-4" data-testid="expanded-consent">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="text-lg font-semibold">Consent — {selected.name}</div>
-                  <div className="text-sm text-slate-500">{selected.facility} · {formatTime(selected.time)}</div>
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => setCenterMode("patient")} data-testid="consent-close">
-                  <Minimize2 className="h-3.5 w-3.5 mr-1" /> Back to chart
-                </Button>
+        <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
+          <div className="mx-auto flex h-full max-w-[1600px] flex-col">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="rounded-full border border-white/60 bg-white/60 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Playground
               </div>
-              <div className="space-y-2">
-                {selected.consentByTest.map((c) => (
-                  <Card key={c.testType} className="p-3 flex items-center justify-between" data-testid={`consent-pane-row-${c.testType}`}>
-                    <div className="font-medium">{c.testType}</div>
-                    {c.signed ? (
-                      <Badge className="bg-emerald-100 text-emerald-700">
-                        <Check className="h-3 w-3 mr-1" /> Consent ✓
-                      </Badge>
-                    ) : (
-                      <Button size="sm" onClick={() => setConsentDialog({ patient: selected, testType: c.testType })} data-testid={`consent-pane-sign-${c.testType}`}>
-                        <FileSignature className="h-3.5 w-3.5 mr-1" /> Sign now
-                      </Button>
-                    )}
-                  </Card>
-                ))}
-              </div>
-            </Card>
-          ) : centerMode !== "patient" && centerSrc ? (
-            <div className="h-[70vh]">
-              <ExpandedSectionView mode={centerMode} src={centerSrc} title={centerTitle} onClose={() => setCenterMode("patient")} />
-            </div>
-          ) : selected ? (
-            <PatientDetail
-              patient={selected}
-              role={role}
-              onConsent={(testType) => setConsentDialog({ patient: selected, testType })}
-            />
-          ) : (
-            <div className="h-full flex items-center justify-center text-slate-400" data-testid="empty-state">
-              <div className="text-center">
-                <ClipboardList className="h-10 w-10 mx-auto mb-2 opacity-50" />
-                <div>{facility ? "Select a patient to begin." : "Choose your clinic to get started."}</div>
+              <div className="text-sm text-slate-500">
+                {facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}
               </div>
             </div>
-          )}
-        </div>
 
-        {/* Right rail: today's schedule with row icons */}
-        <div className="space-y-3 overflow-y-auto">
-          <Card className="p-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                <CalendarIcon className="h-4 w-4" />
-                {selectedDate === todayIso() ? "Today" : selectedDate}
-              </div>
-              <Badge variant="outline" data-testid="badge-patient-count">{patients.length}</Badge>
-            </div>
-            {patients.length === 0 && (
-              <div className="text-xs text-slate-500 py-4 text-center">No patients scheduled.</div>
-            )}
-            <div className="space-y-2">
-              {patients.map((p) => {
-                const isSelected = p.patientScreeningId === selectedPatientId;
-                return (
-                  <div
-                    key={(p.patientScreeningId ?? p.name) + ""}
-                    className={`rounded-lg border px-2.5 py-2 transition-colors ${
-                      isSelected ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-slate-50"
-                    }`}
-                    data-testid={`patient-row-${p.patientScreeningId ?? p.name}`}
-                  >
-                    <button
-                      onClick={() => {
-                        if (p.patientScreeningId == null) return;
-                        setSelectedPatientId(p.patientScreeningId);
-                        // Per spec: row click opens the consent panel for this
-                        // patient (the primary in-clinic action).
-                        setCenterMode("consent");
-                      }}
-                      className="w-full text-left"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium truncate">{p.name}</div>
-                          <div className="text-[11px] text-slate-500">
-                            {formatTime(p.time)} · {p.appointments.length} test{p.appointments.length === 1 ? "" : "s"}
-                          </div>
-                        </div>
-                        {p.consentSigned ? (
-                          <Badge className="bg-emerald-100 text-emerald-700 text-[10px] px-1.5 py-0" data-testid={`pill-consent-${p.patientScreeningId}`}>
-                            <Check className="h-2.5 w-2.5 mr-0.5" /> Consent ✓
+            <div className="flex-1 min-h-0">
+              {centerMode === "consent" && selected ? (
+                <div className="h-full rounded-[28px] border border-white/50 bg-white/55 p-6 shadow-[0_20px_70px_rgba(15,23,42,0.12)] backdrop-blur-xl" data-testid="expanded-consent">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="text-lg font-semibold">Consent — {selected.name}</div>
+                      <div className="text-sm text-slate-500">{selected.facility} · {formatTime(selected.time)}</div>
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => setCenterMode("patient")} data-testid="consent-close">
+                      <Minimize2 className="h-3.5 w-3.5 mr-1" /> Back to chart
+                    </Button>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {selected.consentByTest.map((c) => (
+                      <Card key={c.testType} className="p-3 flex items-center justify-between bg-white/90" data-testid={`consent-pane-row-${c.testType}`}>
+                        <div className="font-medium">{c.testType}</div>
+                        {c.signed ? (
+                          <Badge className="bg-emerald-100 text-emerald-700">
+                            <Check className="h-3 w-3 mr-1" /> Consent ✓
                           </Badge>
                         ) : (
-                          <Badge className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0" data-testid={`pill-consent-${p.patientScreeningId}`}>
-                            <AlertCircle className="h-2.5 w-2.5 mr-0.5" /> Needed
-                          </Badge>
+                          <Button size="sm" onClick={() => setConsentDialog({ patient: selected, testType: c.testType })} data-testid={`consent-pane-sign-${c.testType}`}>
+                            <FileSignature className="h-3.5 w-3.5 mr-1" /> Sign now
+                          </Button>
                         )}
-                      </div>
-                    </button>
-                    <div className="mt-1.5 flex gap-1 justify-end">
-                      <button
-                        type="button"
-                        title="Patient chart"
-                        disabled={p.patientScreeningId == null}
-                        onClick={() => openPatientChart(p)}
-                        className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
-                        data-testid={`row-icon-chart-${p.patientScreeningId}`}
-                      >
-                        <User className="h-3.5 w-3.5 text-slate-700" />
-                      </button>
-                      {!p.consentSigned && (
-                        <button
-                          type="button"
-                          title="Consent"
-                          disabled={p.patientScreeningId == null}
-                          onClick={() => openConsentPane(p)}
-                          className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
-                          data-testid={`row-icon-consent-${p.patientScreeningId}`}
-                        >
-                          <FileSignature className="h-3.5 w-3.5 text-rose-600" />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        title="Plexus PDF"
-                        disabled={!p.plexusPdfUrl}
-                        onClick={() => openCenterMode("plexusPdf", p.plexusPdfUrl, `Plexus PDF — ${p.name}`)}
-                        className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
-                        data-testid={`row-icon-plexus-${p.patientScreeningId}`}
-                      >
-                        <FilePlus className="h-3.5 w-3.5 text-violet-600" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Clinician PDF"
-                        disabled={!p.clinicianPdfUrl}
-                        onClick={() => openCenterMode("clinicianPdf", p.clinicianPdfUrl, `Clinician PDF — ${p.name}`)}
-                        className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
-                        data-testid={`row-icon-clinician-${p.patientScreeningId}`}
-                      >
-                        <FileText className="h-3.5 w-3.5 text-emerald-600" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Day schedule"
-                        disabled={!p.scheduleUrl}
-                        onClick={() => openCenterMode("scheduleDay", p.scheduleUrl, `Schedule — ${p.name}`)}
-                        className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
-                        data-testid={`row-icon-schedule-${p.patientScreeningId}`}
-                      >
-                        <CalendarIcon className="h-3.5 w-3.5 text-blue-600" />
-                      </button>
-                    </div>
+                      </Card>
+                    ))}
                   </div>
-                );
-              })}
+                </div>
+              ) : centerMode !== "patient" && centerSrc ? (
+                <div className="h-full min-h-[70vh]">
+                  <ExpandedSectionView mode={centerMode} src={centerSrc} title={centerTitle} onClose={() => setCenterMode("patient")} />
+                </div>
+              ) : selected ? (
+                <div className="h-full rounded-[28px] border border-white/50 bg-white/45 p-6 shadow-[0_20px_70px_rgba(15,23,42,0.10)] backdrop-blur-xl">
+                  <PatientDetail
+                    patient={selected}
+                    role={role}
+                    onConsent={(testType) => setConsentDialog({ patient: selected, testType })}
+                  />
+                </div>
+              ) : (
+                <div className="h-full flex items-center justify-center text-slate-400" data-testid="empty-state">
+                  <div className="text-center">
+                    <ClipboardList className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                    <div>{facility ? "Select a patient to begin." : "Choose your clinic to get started."}</div>
+                  </div>
+                </div>
+              )}
             </div>
-          </Card>
-
-          {/* Tasks pane (urgent inline + open list) */}
-          <Card className="p-3" data-testid="tasks-pane">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                <Bell className="h-4 w-4 text-rose-600" /> My tasks
-              </div>
-              <Badge variant="outline" data-testid="badge-task-count">
-                {(tasksData?.urgent.length ?? 0) + (tasksData?.open.length ?? 0)}
-              </Badge>
-            </div>
-            {(tasksData?.urgent ?? []).length > 0 && (
-              <div className="mb-2 space-y-1">
-                <div className="text-[11px] uppercase tracking-wide text-rose-600 font-semibold">Urgent</div>
-                {tasksData!.urgent.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => {
-                      if (t.patientScreeningId != null) {
-                        setSelectedPatientId(t.patientScreeningId);
-                        if (t.taskType === "tech_assignment") setCenterMode("consent");
-                        else setCenterMode("patient");
-                      }
-                    }}
-                    className="w-full text-left rounded-lg border border-rose-200 bg-rose-50/50 px-2.5 py-2 hover:bg-rose-50"
-                    data-testid={`task-urgent-${t.id}`}
-                  >
-                    <div className="text-sm font-medium truncate">{t.title}</div>
-                    <div className="text-[11px] text-rose-700">{t.taskType} · {t.urgency}</div>
-                  </button>
-                ))}
-              </div>
-            )}
-            {(tasksData?.open ?? []).length === 0 && (tasksData?.urgent ?? []).length === 0 && (
-              <div className="text-xs text-slate-500 py-2 text-center">No open tasks.</div>
-            )}
-            <div className="space-y-1">
-              {(tasksData?.open ?? []).map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => {
-                    if (t.patientScreeningId != null) {
-                      setSelectedPatientId(t.patientScreeningId);
-                      setCenterMode("patient");
-                    }
-                  }}
-                  className="w-full text-left rounded-lg border bg-white px-2.5 py-2 hover:bg-slate-50"
-                  data-testid={`task-open-${t.id}`}
-                >
-                  <div className="text-sm font-medium truncate">{t.title}</div>
-                  <div className="text-[11px] text-slate-500">{t.taskType}</div>
-                </button>
-              ))}
-            </div>
-          </Card>
+          </div>
         </div>
+
+        <div
+          className={`absolute left-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/55 bg-white/45 shadow-[0_20px_70px_rgba(15,23,42,0.14)] backdrop-blur-xl transition-all duration-300 ${
+            leftRailCollapsed ? "w-14" : "w-[320px]"
+          }`}
+          data-testid="portal-left-rail"
+        >
+          <div className="flex h-full flex-col">
+            <div className="flex items-center justify-between px-3 py-3 border-b border-white/40">
+              {!leftRailCollapsed && <div className="text-sm font-semibold text-slate-900">Tools</div>}
+              <button
+                type="button"
+                onClick={() => setLeftRailCollapsed((v) => !v)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/50 bg-white/70 hover:bg-white"
+                data-testid="button-toggle-left-rail"
+              >
+                {leftRailCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+              </button>
+            </div>
+
+            {!leftRailCollapsed && (
+              <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                <MonthlyMiniCalendar facility={facility} selectedDate={selectedDate} onSelect={(d) => { setSelectedDate(d); setCenterMode("patient"); }} />
+
+                {selected && selected.patientScreeningId != null && (
+                  <LeftRailUpload
+                    patientScreeningId={selected.patientScreeningId}
+                    patientName={selected.name}
+                  />
+                )}
+
+                <Card className="p-3 bg-white/80">
+                  <div className="text-sm font-semibold mb-2 flex items-center gap-2">
+                    <Phone className="h-4 w-4" /> Outreach call list
+                  </div>
+                  <div className="text-[11px] text-slate-500 mb-2">
+                    Your share{outreachData?.heavyDay ? " (heavy day — outreach cap reduced)" : ""}
+                    {typeof outreachData?.totalPool === "number" ? ` · ${outreachData.totalPool} in pool` : ""}
+                  </div>
+                  <div className="space-y-1.5 max-h-[28vh] overflow-y-auto">
+                    {(outreachData?.patients ?? []).length === 0 && (
+                      <div className="text-xs text-slate-500 py-2 text-center">No outreach candidates.</div>
+                    )}
+                    {(outreachData?.patients ?? []).map((p) => (
+                      <div key={p.patientScreeningId} className="rounded-lg border px-2.5 py-2 bg-white" data-testid={`outreach-row-${p.patientScreeningId}`}>
+                        <div className="text-sm font-medium truncate">{p.name}</div>
+                        <div className="text-[11px] text-slate-500">{p.phoneNumber ?? "No phone"} · {p.insurance ?? "—"}</div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
+                <Card className="p-3 bg-white/80" data-testid="tasks-pane">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm font-semibold flex items-center gap-2">
+                      <Bell className="h-4 w-4 text-rose-600" /> My tasks
+                    </div>
+                    <Badge variant="outline" data-testid="badge-task-count">
+                      {(tasksData?.urgent.length ?? 0) + (tasksData?.open.length ?? 0)}
+                    </Badge>
+                  </div>
+                  {(tasksData?.urgent ?? []).length > 0 && (
+                    <div className="mb-2 space-y-1">
+                      <div className="text-[11px] uppercase tracking-wide text-rose-600 font-semibold">Urgent</div>
+                      {tasksData!.urgent.map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => {
+                            if (t.patientScreeningId != null) {
+                              setSelectedPatientId(t.patientScreeningId);
+                              if (t.taskType === "tech_assignment") setCenterMode("consent");
+                              else setCenterMode("patient");
+                            }
+                          }}
+                          className="w-full text-left rounded-lg border border-rose-200 bg-rose-50/50 px-2.5 py-2 hover:bg-rose-50"
+                          data-testid={`task-urgent-${t.id}`}
+                        >
+                          <div className="text-sm font-medium truncate">{t.title}</div>
+                          <div className="text-[11px] text-rose-700">{t.taskType} · {t.urgency}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {(tasksData?.open ?? []).length === 0 && (tasksData?.urgent ?? []).length === 0 && (
+                    <div className="text-xs text-slate-500 py-2 text-center">No open tasks.</div>
+                  )}
+                  <div className="space-y-1">
+                    {(tasksData?.open ?? []).map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => {
+                          if (t.patientScreeningId != null) {
+                            setSelectedPatientId(t.patientScreeningId);
+                            setCenterMode("patient");
+                          }
+                        }}
+                        className="w-full text-left rounded-lg border bg-white px-2.5 py-2 hover:bg-slate-50"
+                        data-testid={`task-open-${t.id}`}
+                      >
+                        <div className="text-sm font-medium truncate">{t.title}</div>
+                        <div className="text-[11px] text-slate-500">{t.taskType}</div>
+                      </button>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div
+          className={`absolute right-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/55 bg-white/45 shadow-[0_20px_70px_rgba(15,23,42,0.14)] backdrop-blur-xl transition-all duration-300 ${
+            rightRailCollapsed ? "w-14" : "w-[340px]"
+          }`}
+          data-testid="portal-right-rail"
+        >
+          <div className="flex h-full flex-col">
+            <div className="flex items-center justify-between px-3 py-3 border-b border-white/40">
+              {!rightRailCollapsed && (
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Ancillary Test Schedule</div>
+                  <div className="text-[11px] text-slate-500">{selectedDate === todayIso() ? "Today" : selectedDate}</div>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setRightRailCollapsed((v) => !v)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/50 bg-white/70 hover:bg-white"
+                data-testid="button-toggle-right-rail"
+              >
+                {rightRailCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </button>
+            </div>
+
+            {!rightRailCollapsed && (
+              <div className="flex-1 overflow-y-auto p-3">
+                <div className="mb-3 flex items-center justify-between">
+                  <Badge variant="outline" data-testid="badge-patient-count">{patients.length}</Badge>
+                </div>
+                {patients.length === 0 ? (
+                  <div className="text-xs text-slate-500 py-4 text-center">No patients scheduled.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {patients.map((p) => {
+                      const isSelected = p.patientScreeningId === selectedPatientId;
+                      return (
+                        <div
+                          key={(p.patientScreeningId ?? p.name) + ""}
+                          className={`rounded-lg border px-2.5 py-2 transition-colors ${
+                            isSelected ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-slate-50"
+                          }`}
+                          data-testid={`patient-row-${p.patientScreeningId ?? p.name}`}
+                        >
+                          <button
+                            onClick={() => {
+                              if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
+                              setSchedulePeekPatient(p);
+                            }}
+                            className="w-full text-left"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium truncate">{p.name}</div>
+                                <div className="text-[11px] text-slate-500">
+                                  {formatTime(p.time)} · {p.appointments.length} test{p.appointments.length === 1 ? "" : "s"}
+                                </div>
+                              </div>
+                              {p.consentSigned ? (
+                                <Badge className="bg-emerald-100 text-emerald-700 text-[10px] px-1.5 py-0">
+                                  <Check className="h-2.5 w-2.5 mr-0.5" /> Consent ✓
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0">
+                                  <AlertCircle className="h-2.5 w-2.5 mr-0.5" /> Needed
+                                </Badge>
+                              )}
+                            </div>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {aiMinimized ? (
+          <button
+            type="button"
+            onClick={() => setAiMinimized(false)}
+            className="absolute bottom-5 right-5 z-30 inline-flex h-14 w-14 items-center justify-center rounded-full border border-white/60 bg-white/70 shadow-[0_18px_60px_rgba(15,23,42,0.18)] backdrop-blur-xl hover:bg-white"
+            data-testid="button-ai-fab"
+          >
+            <Sparkles className="h-5 w-5 text-indigo-600" />
+          </button>
+        ) : (
+          <div className="absolute bottom-5 right-5 z-30 w-[340px] rounded-[24px] border border-white/60 bg-white/70 shadow-[0_18px_60px_rgba(15,23,42,0.18)] backdrop-blur-xl" data-testid="floating-ai-panel">
+            <div className="flex items-center gap-2 border-b border-white/50 px-4 py-3">
+              <Sparkles className="h-4 w-4 text-indigo-600" />
+              <div className="text-sm font-semibold text-slate-900">AI Assistant</div>
+              <button
+                type="button"
+                onClick={() => setAiMinimized(true)}
+                className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/50 bg-white/70 hover:bg-white"
+                data-testid="button-ai-minimize"
+              >
+                <Minimize2 className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-4 py-3 space-y-3">
+              <div className="text-xs text-slate-500">
+                Ask about {facility ? `${facility} · ${selectedDate}` : "today's clinic"}.
+              </div>
+              <Input
+                value={aiDraft}
+                onChange={(e) => setAiDraft(e.target.value)}
+                placeholder="Ask about this clinic day…"
+                className="w-full bg-white/90"
+                data-testid="input-ai-question"
+              />
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  disabled={!aiDraft.trim()}
+                  onClick={() => {
+                    toast({ title: "Coming soon", description: "AI assistant will answer questions about this clinic day." });
+                    setAiDraft("");
+                  }}
+                  data-testid="button-ai-send"
+                >
+                  <Send className="h-3.5 w-3.5 mr-1" /> Ask
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      <AiBar context={facility ? `${facility} · ${selectedDate}` : "today's clinic"} />
+      {schedulePeekPatient && (
+        <Dialog open={!!schedulePeekPatient} onOpenChange={(o) => !o && setSchedulePeekPatient(null)}>
+          <DialogContent className="max-w-md" data-testid="dialog-schedule-peek">
+            <DialogHeader>
+              <DialogTitle>{schedulePeekPatient.name}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-2 text-sm text-slate-700">
+              <div><span className="font-medium">DOB:</span> {schedulePeekPatient.dob ?? "—"}</div>
+              <div><span className="font-medium">Facility:</span> {schedulePeekPatient.facility}</div>
+              <div><span className="font-medium">Time:</span> {formatTime(schedulePeekPatient.time)}</div>
+              <div><span className="font-medium">Clinician:</span> {schedulePeekPatient.clinicianName ?? "—"}</div>
+              <div><span className="font-medium">Qualifying Tests:</span> {schedulePeekPatient.qualifyingTests.length ? schedulePeekPatient.qualifyingTests.join(", ") : "None"}</div>
+              <div><span className="font-medium">Appointment Status:</span> {schedulePeekPatient.appointmentStatus || "pending"}</div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {consentDialog && (
         <ConsentDialog
