@@ -531,6 +531,7 @@ function AiBar({ context }: { context: string }) {
 }
 
 export function PortalShell({ role }: { role: Role }) {
+  const { toast } = useToast();
   const { data: facData } = useQuery<{ facilities: string[] }>({
     queryKey: ["/api/portal/my-facilities"],
     queryFn: async () => {
