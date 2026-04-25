@@ -640,8 +640,8 @@ export function PortalShell({ role }: { role: Role }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.40),_rgba(248,250,252,1)_42%,_rgba(224,231,255,0.72)_100%)]" data-testid={`portal-${role}`}>
-      <header className="relative z-20 px-6 py-4 border-b border-white/50 bg-white/40 backdrop-blur-xl">
+    <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`}>
+      <header className="relative z-20 px-6 py-4 border-b border-slate-200 bg-white">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <div className={`p-2 rounded-xl ${role === "technician" ? "bg-blue-100/90 text-blue-700" : "bg-rose-100/90 text-rose-700"}`}>
@@ -668,9 +668,9 @@ export function PortalShell({ role }: { role: Role }) {
 
       <div className="relative flex-1 overflow-hidden">
         <div className="absolute inset-0">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(255,255,255,0.42),_rgba(255,255,255,0.10)_45%,_rgba(79,70,229,0.06)_100%)]" />
+          <div className="absolute inset-0 bg-white" />
           <div className="absolute inset-0 px-6 py-5">
-            <div className="h-full w-full rounded-[32px] border border-white/40 bg-white/10 backdrop-blur-[2px]" />
+            <div className="h-full w-full rounded-[32px] border border-slate-200 bg-white" />
           </div>
         </div>
 
