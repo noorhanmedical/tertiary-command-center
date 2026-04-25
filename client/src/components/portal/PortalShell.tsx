@@ -1036,16 +1036,82 @@ export function PortalShell({ role }: { role: Role }) {
                 <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto" data-testid="playground-home">
                   {dockActiveApp === "schedule" ? (
                     <div className="p-6">
-                      <div className="mb-4 text-xl font-semibold text-slate-900">Calendar</div>
-                      <div className="grid gap-4 xl:grid-cols-2">
+                      <div className="mb-4 flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-xl font-semibold text-slate-900">Calendar</div>
+                          <div className="text-sm text-slate-500">Expanded clinic calendar workspace for {facility ? `${facility}` : "this clinic"}.</div>
+                        </div>
+                        <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
+                          <div className="text-xs uppercase tracking-wide text-slate-500">Selected Date</div>
+                          <div className="text-sm font-semibold text-slate-900">{selectedDate}</div>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
                         <Card className="p-4 bg-white">
-                          <div className="text-sm font-semibold text-slate-900 mb-2">Clinic Day</div>
-                          <div className="text-sm text-slate-600">{facility ? `${facility} · ${selectedDate}` : selectedDate}</div>
+                          <div className="mb-3 text-sm font-semibold text-slate-900">Monthly Calendar</div>
+                          <MonthlyMiniCalendar
+                            facility={facility}
+                            selectedDate={selectedDate}
+                            onSelect={(d) => {
+                              setSelectedDate(d);
+                              setCenterMode("playground");
+                              setDockOpenApps((prev) => (prev.includes("schedule") ? prev : [...prev, "schedule"]));
+                              setDockActiveApp("schedule");
+                            }}
+                          />
                         </Card>
-                        <Card className="p-4 bg-white">
-                          <div className="text-sm font-semibold text-slate-900 mb-2">Ancillary Count</div>
-                          <div className="text-sm text-slate-600">{patients.length} patient(s) on the right rail for this day.</div>
-                        </Card>
+
+                        <div className="space-y-4">
+                          <Card className="p-4 bg-white">
+                            <div className="text-sm font-semibold text-slate-900 mb-2">Clinic Day Summary</div>
+                            <div className="space-y-2 text-sm text-slate-600">
+                              <div><span className="font-medium text-slate-900">Clinic:</span> {facility ? facility : "—"}</div>
+                              <div><span className="font-medium text-slate-900">Date:</span> {selectedDate}</div>
+                              <div><span className="font-medium text-slate-900">Scheduled Patients:</span> {patients.length}</div>
+                              <div><span className="font-medium text-slate-900">Selected Patient:</span> {selected ? selected.name : "None"}</div>
+                            </div>
+                          </Card>
+
+                          <Card className="p-4 bg-white">
+                            <div className="text-sm font-semibold text-slate-900 mb-2">Ancillary Schedule Context</div>
+                            <div className="space-y-2">
+                              {patients.length === 0 ? (
+                                <div className="text-sm text-slate-500">No patients scheduled for this day.</div>
+                              ) : (
+                                patients.slice(0, 6).map((patient) => (
+                                  <div key={(patient.patientScreeningId ?? patient.name) + "-calendar-summary"} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                    <div className="text-sm font-medium text-slate-900">{patient.name}</div>
+                                    <div className="text-xs text-slate-500">
+                                      {formatTime(patient.time)} · {patient.appointments.length} test{patient.appointments.length === 1 ? "" : "s"}
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </Card>
+
+                          <Card className="p-4 bg-white">
+                            <div className="text-sm font-semibold text-slate-900 mb-2">Calendar Actions</div>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setCenterMode("playground")}
+                              >
+                                Stay in Playground
+                              </Button>
+                              {selected ? (
+                                <Button
+                                  size="sm"
+                                  onClick={() => expandScheduleToPlayground(selected)}
+                                >
+                                  Open Selected Patient Schedule
+                                </Button>
+                              ) : null}
+                            </div>
+                          </Card>
+                        </div>
                       </div>
                     </div>
                   ) : dockActiveApp === "tasks" ? (
