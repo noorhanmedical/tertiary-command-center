@@ -645,7 +645,7 @@ export function PortalShell({ role }: { role: Role }) {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
                         <div>
-              <h1 className="text-lg font-semibold text-sky-400" data-testid="text-portal-title">{title}</h1>
+              <h1 className="text-lg font-semibold text-[#4863A0] drop-shadow-[0_0_10px_rgba(72,99,160,0.65)]" data-testid="text-portal-title">{title}</h1>
               <p className="text-sm text-white/70">{subtitle}</p>
             </div>
           </div>
