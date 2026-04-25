@@ -675,12 +675,12 @@ export function PortalShell({ role }: { role: Role }) {
         </div>
 
         <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
-          <div className="mx-auto flex h-full max-w-[1600px] flex-col">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="rounded-full border border-white/60 bg-white/60 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+          <div className="relative mx-auto flex h-full max-w-[1600px] flex-col pt-14">
+            <div className="pointer-events-none absolute left-1/2 top-0 z-30 -translate-x-1/2 text-center">
+              <div className="rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] px-5 py-2 text-base font-semibold tracking-tight text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl">
                 Playground
               </div>
-              <div className="text-sm text-slate-500">
+              <div className="mt-2 text-xs text-slate-200">
                 {facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}
               </div>
             </div>
@@ -739,7 +739,7 @@ export function PortalShell({ role }: { role: Role }) {
         </div>
 
         <div
-          className={`absolute left-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/55 bg-white/45 shadow-[0_20px_70px_rgba(15,23,42,0.14)] backdrop-blur-xl transition-all duration-300 ${
+          className={`absolute left-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/20 bg-[rgba(72,99,160,0.34)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
             leftRailCollapsed ? "w-14" : "w-[320px]"
           }`}
           data-testid="portal-left-rail"
@@ -848,7 +848,7 @@ export function PortalShell({ role }: { role: Role }) {
         </div>
 
         <div
-          className={`absolute right-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/55 bg-white/45 shadow-[0_20px_70px_rgba(15,23,42,0.14)] backdrop-blur-xl transition-all duration-300 ${
+          className={`absolute right-4 top-4 bottom-4 z-20 rounded-[28px] border border-white/20 bg-[rgba(72,99,160,0.34)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.42)] backdrop-blur-2xl transition-all duration-300 ${
             rightRailCollapsed ? "w-14" : "w-[340px]"
           }`}
           data-testid="portal-right-rail"
