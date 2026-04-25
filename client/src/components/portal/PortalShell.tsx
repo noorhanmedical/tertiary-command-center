@@ -692,6 +692,8 @@ export function PortalShell({ role }: { role: Role }) {
   const [schedulePeekPatient, setSchedulePeekPatient] = useState<TodayPatient | null>(null);
   const [aliConsentComplete, setAliConsentComplete] = useState(false);
   const [aliScreeningComplete, setAliScreeningComplete] = useState(false);
+  const [dockOpenApps, setDockOpenApps] = useState<Array<"tasks" | "schedule" | "consent" | "chart" | "documents">>([]);
+  const [dockActiveApp, setDockActiveApp] = useState<null | "tasks" | "schedule" | "consent" | "chart" | "documents">(null);
 
   const aliBoomayePatient = useMemo<TodayPatient>(() => ({
     patientScreeningId: 900001,
@@ -827,6 +829,7 @@ export function PortalShell({ role }: { role: Role }) {
       setCenterMode("playground");
       setCenterSrc("");
       setCenterTitle("");
+      setDockActiveApp(null);
       return;
     }
 
@@ -837,6 +840,7 @@ export function PortalShell({ role }: { role: Role }) {
     setCenterMode("patient");
     setCenterSrc("");
     setCenterTitle("");
+    markDockOpen("chart");
   }
 
   function openScheduleDialog(p: TodayPatient) {
@@ -850,6 +854,54 @@ export function PortalShell({ role }: { role: Role }) {
     setCenterSrc(p.scheduleUrl || "about:blank");
     setCenterTitle(`Schedule — ${p.name}`);
     setScheduleDialogPatient(null);
+    markDockOpen("schedule");
+  }
+
+  function markDockOpen(app: "tasks" | "schedule" | "consent" | "chart" | "documents") {
+    setDockOpenApps((prev) => (prev.includes(app) ? prev : [...prev, app]));
+    setDockActiveApp(app);
+  }
+
+  function toggleDockApp(app: "tasks" | "schedule" | "consent" | "chart" | "documents") {
+    if (dockActiveApp === app) {
+      setDockOpenApps((prev) => prev.filter((x) => x !== app));
+      setDockActiveApp(null);
+      setCenterMode("playground");
+      setCenterSrc("");
+      setCenterTitle("");
+      return;
+    }
+
+    setDockOpenApps((prev) => (prev.includes(app) ? prev : [...prev, app]));
+    setDockActiveApp(app);
+
+    if (app === "tasks" || app === "documents") {
+      setCenterMode("playground");
+      setCenterSrc("");
+      setCenterTitle("");
+      return;
+    }
+
+    if (!selected) {
+      setCenterMode("playground");
+      return;
+    }
+
+    if (app === "chart") {
+      setCenterMode("patient");
+      setCenterSrc("");
+      setCenterTitle("");
+      return;
+    }
+
+    if (app === "consent") {
+      setCenterMode("consent");
+      return;
+    }
+
+    if (app === "schedule") {
+      expandScheduleToPlayground(selected);
+    }
   }
 
   return (
@@ -956,7 +1008,63 @@ export function PortalShell({ role }: { role: Role }) {
                   )}
                 </div>
               ) : (
-                <div className="h-full rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto" data-testid="playground-home" />
+                <div className="h-full rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto" data-testid="playground-home">
+                  {dockActiveApp === "tasks" ? (
+                    <div className="p-6">
+                      <div className="mb-4 text-xl font-semibold text-slate-900">Tasks</div>
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        <Card className="p-4 bg-white">
+                          <div className="text-sm font-semibold text-slate-900 mb-2">Urgent Tasks</div>
+                          {(tasksData?.urgent ?? []).length === 0 ? (
+                            <div className="text-sm text-slate-500">No urgent tasks.</div>
+                          ) : (
+                            <div className="space-y-2">
+                              {(tasksData?.urgent ?? []).map((t) => (
+                                <div key={t.id} className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2">
+                                  <div className="text-sm font-medium text-slate-900">{t.title}</div>
+                                  <div className="text-xs text-rose-700">{t.taskType} · {t.urgency}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </Card>
+                        <Card className="p-4 bg-white">
+                          <div className="text-sm font-semibold text-slate-900 mb-2">Open Tasks</div>
+                          {(tasksData?.open ?? []).length === 0 ? (
+                            <div className="text-sm text-slate-500">No open tasks.</div>
+                          ) : (
+                            <div className="space-y-2">
+                              {(tasksData?.open ?? []).map((t) => (
+                                <div key={t.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                                  <div className="text-sm font-medium text-slate-900">{t.title}</div>
+                                  <div className="text-xs text-slate-500">{t.taskType}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </Card>
+                      </div>
+                    </div>
+                  ) : dockActiveApp === "documents" ? (
+                    <div className="p-6">
+                      <div className="mb-4 text-xl font-semibold text-slate-900">Documents</div>
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        <Card className="p-4 bg-white">
+                          <div className="text-sm font-semibold text-slate-900 mb-2">Selected Patient Documents</div>
+                          {selected ? (
+                            <div className="text-sm text-slate-600">Use Plexus PDF, Clinician PDF, screening, and consent actions from the right rail or patient profile.</div>
+                          ) : (
+                            <div className="text-sm text-slate-500">Select a patient to work with documents.</div>
+                          )}
+                        </Card>
+                        <Card className="p-4 bg-white">
+                          <div className="text-sm font-semibold text-slate-900 mb-2">Clinic Day Context</div>
+                          <div className="text-sm text-slate-600">{facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}</div>
+                        </Card>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               )}
             </div>
           </div>
@@ -976,7 +1084,7 @@ export function PortalShell({ role }: { role: Role }) {
               <button
                 type="button"
                 onClick={() => setLeftRailCollapsed((v) => !v)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/35 bg-white/90 text-slate-900 hover:bg-white"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/35 bg-white/90 text-[#4863A0] hover:bg-white"
                 data-testid="button-toggle-left-rail"
               >
                 {leftRailCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
@@ -1092,7 +1200,7 @@ export function PortalShell({ role }: { role: Role }) {
               <button
                 type="button"
                 onClick={() => setRightRailCollapsed((v) => !v)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/35 bg-white/90 text-slate-900 hover:bg-white"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/35 bg-white/90 text-[#4863A0] hover:bg-white"
                 data-testid="button-toggle-right-rail"
               >
                 {rightRailCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -1156,7 +1264,7 @@ export function PortalShell({ role }: { role: Role }) {
                                 data-testid={`button-patient-calendar-${p.patientScreeningId ?? p.name}`}
                                 title="Schedule popup"
                               >
-                                <CalendarIcon className="h-4 w-4 text-slate-700" />
+                                <CalendarIcon className="h-4 w-4 text-[#4863A0]" />
                               </button>
                               <button
                                 type="button"
@@ -1165,7 +1273,7 @@ export function PortalShell({ role }: { role: Role }) {
                                 data-testid={`button-patient-calendar-expand-${p.patientScreeningId ?? p.name}`}
                                 title="Expand schedule into Playground"
                               >
-                                <ChevronLeft className="h-4 w-4 rotate-180 text-slate-700" />
+                                <ChevronLeft className="h-4 w-4 rotate-180 text-[#4863A0]" />
                               </button>
                             </div>
 
@@ -1175,6 +1283,7 @@ export function PortalShell({ role }: { role: Role }) {
                                 if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
                                 if (isAli) setAliConsentComplete((v) => !v);
                                 setCenterMode("consent");
+                                markDockOpen("consent");
                               }}
                               className={`inline-flex h-8 items-center justify-center rounded-full border px-2 ${
                                 consentDone
@@ -1193,6 +1302,7 @@ export function PortalShell({ role }: { role: Role }) {
                                 if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
                                 if (isAli) setAliScreeningComplete((v) => !v);
                                 setCenterMode("patient");
+                                markDockOpen("chart");
                               }}
                               className={`inline-flex h-8 items-center justify-center rounded-full border px-2 ${
                                 screeningDone
@@ -1212,6 +1322,42 @@ export function PortalShell({ role }: { role: Role }) {
                 )}
               </div>
             )}
+          </div>
+        </div>
+        <div className="absolute bottom-5 left-1/2 z-50 -translate-x-1/2 w-full max-w-[95vw] overflow-x-auto">
+          <div className="group/dock mx-auto flex w-fit items-end gap-1 rounded-2xl border border-white/10 bg-slate-900/40 px-3 py-2 opacity-60 backdrop-blur-xl transition-all duration-300 ease-out hover:gap-3 hover:border-white/20 hover:bg-slate-900/60 hover:px-4 hover:py-3 hover:opacity-100 hover:shadow-2xl">
+            {[
+              { key: "tasks", label: "Tasks", icon: Bell, tint: "hover:text-sky-300" },
+              { key: "schedule", label: "Schedule", icon: CalendarIcon, tint: "hover:text-violet-300" },
+              { key: "consent", label: "Consent", icon: FileSignature, tint: "hover:text-emerald-300" },
+              { key: "chart", label: "Chart", icon: User, tint: "hover:text-blue-300" },
+              { key: "documents", label: "Documents", icon: FileText, tint: "hover:text-amber-300" },
+            ].map((app, index) => {
+              const Icon = app.icon;
+              const isActive = dockActiveApp === app.key;
+              const isOpen = dockOpenApps.includes(app.key as any);
+              return (
+                <div key={app.key} className="flex items-center">
+                  {index > 0 && <div className="mx-2 hidden h-8 w-px bg-white/20 group-hover/dock:block" />}
+                  <button
+                    type="button"
+                    onClick={() => toggleDockApp(app.key as "tasks" | "schedule" | "consent" | "chart" | "documents")}
+                    className={`group/icon relative flex flex-col items-center rounded-xl px-2 py-1 transition-all duration-300 ease-out hover:-translate-y-1 hover:scale-110 ${
+                      isActive ? "ring-2 ring-white bg-slate-600" : "bg-slate-700/80"
+                    }`}
+                    data-testid={`dock-icon-${app.key}`}
+                  >
+                    <div className={`flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-md transition-all duration-300 ease-out group-hover/dock:h-14 group-hover/dock:w-14 max-sm:group-hover/dock:h-10 max-sm:group-hover/dock:w-10 ${app.tint}`}>
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <div className="mt-1 text-[11px] font-medium tracking-wide text-white opacity-0 transition-opacity duration-300 ease-out group-hover/dock:opacity-100">
+                      {app.label}
+                    </div>
+                    {isOpen && <div className="absolute -bottom-1 h-1 w-1 rounded-full bg-white" />}
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </div>
 
