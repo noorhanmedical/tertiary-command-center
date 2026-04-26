@@ -83,6 +83,8 @@ export default function OutreachSchedulerPortalPage() {
   const [taskDrawerPatientId, setTaskDrawerPatientId] = useState<number | null>(null);
   const [taskDrawerTasks, setTaskDrawerTasks] = useState<PlexusTaskSummary[]>([]);
   const [taskDrawerPatientName, setTaskDrawerPatientName] = useState<string>("");
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
+  const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
 
   const { toast } = useToast();
 
@@ -323,43 +325,37 @@ export default function OutreachSchedulerPortalPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-full flex-1 overflow-auto xl:h-full xl:min-h-0 xl:overflow-hidden flex flex-col bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
-      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-6 py-6 xl:flex-1 xl:min-h-0">
+    <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white">
+      <div className="absolute inset-0 bg-white" />
+      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1600px] flex-col gap-5 px-6 py-6 xl:min-h-0">
 
-        <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <header className="relative z-20 flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-white/10 bg-[radial-gradient(circle_at_14%_28%,rgba(255,255,255,0.18)_0,rgba(255,255,255,0.18)_1px,transparent_2px),radial-gradient(circle_at_33%_62%,rgba(255,255,255,0.12)_0,rgba(255,255,255,0.12)_1px,transparent_2px),radial-gradient(circle_at_57%_24%,rgba(255,255,255,0.14)_0,rgba(255,255,255,0.14)_1px,transparent_2px),radial-gradient(circle_at_74%_54%,rgba(255,255,255,0.10)_0,rgba(255,255,255,0.10)_1px,transparent_2px),radial-gradient(circle_at_88%_22%,rgba(255,255,255,0.16)_0,rgba(255,255,255,0.16)_1px,transparent_2px),linear-gradient(180deg,rgba(0,0,0,0.88),rgba(10,10,18,0.84))] px-4 py-3 shadow-[0_18px_60px_rgba(15,23,42,0.28)] backdrop-blur-xl">
           <div className="flex min-w-0 items-center gap-3">
-            <Phone className="h-4 w-4 text-slate-400 shrink-0" />
+            <Phone className="h-4 w-4 text-white/40 shrink-0" />
             <div className="min-w-0">
               <h1
-                className="truncate text-base font-semibold text-slate-900"
+                className="truncate text-lg font-semibold text-[#6F8FD6] drop-shadow-[0_0_14px_rgba(111,143,214,0.95)]"
                 data-testid="text-calendar-header-title"
               >
                 {card.name}
               </h1>
-              <p className="truncate text-xs text-slate-500">
+              <p className="truncate text-xs text-white/70">
                 {card.facility} · {card.totalPatients} patient{card.totalPatients !== 1 ? "s" : ""} today
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-50 animate-ping" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              </span>
-              System active
-            </span>
             <button
               type="button"
               onClick={() => setShortcutsOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+              className="inline-flex items-center gap-1.5 rounded-md border border-white/20 bg-white/90 px-2.5 py-1 text-xs text-slate-700 hover:bg-white"
               data-testid="portal-shortcuts-btn"
             >
               <Keyboard className="h-3.5 w-3.5" /> Shortcuts
             </button>
             <Link
               href="/scheduler-portal"
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+              className="inline-flex items-center gap-1.5 rounded-md border border-white/20 bg-white/90 px-2.5 py-1 text-xs text-slate-700 hover:bg-white"
               data-testid="link-back-outreach"
             >
               <ArrowLeft className="h-3.5 w-3.5" /> Back to Scheduler Portal
@@ -367,11 +363,29 @@ export default function OutreachSchedulerPortalPage() {
           </div>
         </header>
 
-        {/* ── Cockpit grid: icon rail · playfield · call list ── */}
-        <div className="grid gap-5 xl:grid-cols-[64px_1fr_360px] xl:flex-1 xl:min-h-0">
+        <div className="relative grid gap-5 pt-14 xl:grid-cols-[72px_1fr_360px] xl:flex-1 xl:min-h-0">
+          <button
+            type="button"
+            className="absolute left-1/2 top-0 z-30 -translate-x-1/2 text-center"
+            data-testid="scheduler-playground-pill"
+          >
+            <div className="rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] px-5 py-2 text-base font-semibold tracking-tight text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl">
+              Playground
+            </div>
+            <div className="mt-2 text-xs text-slate-600">
+              {card.facility}
+            </div>
+          </button>
 
           {/* ─── ICON RAIL: Schedule · Tasks · Email · Materials · Messages ─── */}
-          <div className="hidden xl:flex flex-col items-center gap-3 rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl py-4">
+          <div
+            className={`hidden xl:flex flex-col items-center gap-3 rounded-[28px] text-white shadow-[0_24px_70px_rgba(15,23,42,0.34)] backdrop-blur-2xl py-4 transition-all duration-300 ${
+              leftRailCollapsed
+                ? "w-10 bg-[rgba(71,85,105,0.22)]"
+                : "w-[72px] bg-[rgba(72,99,160,0.80)]"
+            }`}
+            data-testid="scheduler-left-rail"
+          >
             {/* Schedule */}
             <RailIcon
               title="Schedule"
@@ -633,7 +647,7 @@ export default function OutreachSchedulerPortalPage() {
                   />
                 </div>
               ) : (
-                <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden divide-y divide-slate-100/80 xl:flex-1 xl:min-h-0 xl:overflow-y-auto">
+                <div className="rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden divide-y divide-slate-100/80 xl:flex-1 xl:min-h-0 xl:overflow-y-auto">
                   <CurrentCallCard
                     item={selectedItem}
                     latestCall={selectedItem ? latestCallByPatient.get(selectedItem.patientId) : undefined}
@@ -697,18 +711,25 @@ export default function OutreachSchedulerPortalPage() {
             </div>
           </div>
 
-          {/* ─── RIGHT PANEL: Call list (full height) ────── */}
-            <CallListPanel
-              sortedCallList={sortedCallList}
-              selectedId={selectedId}
-              callsByPatient={callsByPatient}
-              expandedTimeline={expandedTimeline}
-              setExpandedTimeline={setExpandedTimeline}
-              assignmentByPatient={assignmentByPatient}
-              schedulerNameById={schedulerNameById}
-              selectPatient={selectPatient}
-              setCallListBookPatient={setCallListBookPatient}
-            />
+          <div className="rounded-[28px] bg-[rgba(72,99,160,0.80)] text-white shadow-[0_24px_70px_rgba(15,23,42,0.34)] backdrop-blur-2xl overflow-hidden">
+            <div className="px-3 py-3 border-b border-white/40">
+              <div className="text-sm font-semibold text-white">Call List</div>
+              <div className="text-[11px] text-slate-200">{card.facility}</div>
+            </div>
+            <div className="p-3">
+              <CallListPanel
+                sortedCallList={sortedCallList}
+                selectedId={selectedId}
+                callsByPatient={callsByPatient}
+                expandedTimeline={expandedTimeline}
+                setExpandedTimeline={setExpandedTimeline}
+                assignmentByPatient={assignmentByPatient}
+                schedulerNameById={schedulerNameById}
+                selectPatient={selectPatient}
+                setCallListBookPatient={setCallListBookPatient}
+              />
+            </div>
+          </div>
       </div>
 
       {/* Disposition slide-over */}
