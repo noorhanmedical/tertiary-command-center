@@ -53,7 +53,7 @@ type TodayPatient = {
   scheduleUrl: string | null;
 };
 
-type PortalTabKind = "patient" | "schedule";
+type PortalTabKind = "patient" | "schedule" | "tasks" | "documents";
 type PortalTab = {
   id: string;
   kind: PortalTabKind;
@@ -875,10 +875,16 @@ export function PortalShell({ role }: { role: Role }) {
       setCenterMode("playground");
       setCenterSrc("");
       setCenterTitle("");
+      setDockActiveApp(null);
       return;
     }
+
     setActivePortalTabId(tab.id);
-    if (tab.patientId != null) setSelectedPatientId(tab.patientId);
+
+    if (tab.patientId != null) {
+      setSelectedPatientId(tab.patientId);
+    }
+
     if (tab.kind === "patient") {
       setCenterMode("patient");
       setCenterSrc("");
@@ -886,32 +892,66 @@ export function PortalShell({ role }: { role: Role }) {
       markDockOpen("chart");
       return;
     }
+
     if (tab.kind === "schedule") {
       const patient = patients.find((x) => x.patientScreeningId === tab.patientId) ?? null;
-      if (patient) {
-        setCenterMode("scheduleDay");
-        setCenterSrc(patient.scheduleUrl || "about:blank");
-        setCenterTitle(`Schedule — ${patient.name}`);
-        markDockOpen("schedule");
-      }
+      if (!patient) return;
+      setCenterMode("scheduleDay");
+      setCenterSrc(patient.scheduleUrl || "about:blank");
+      setCenterTitle(`Schedule — ${patient.name}`);
+      markDockOpen("schedule");
+      return;
+    }
+
+    if (tab.kind === "tasks") {
+      setCenterMode("playground");
+      setCenterSrc("");
+      setCenterTitle("Tasks");
+      markDockOpen("tasks");
+      return;
+    }
+
+    if (tab.kind === "documents") {
+      setCenterMode("playground");
+      setCenterSrc("");
+      setCenterTitle("Documents");
+      markDockOpen("documents");
     }
   }
 
-  function openPortalTab(kind: PortalTabKind, patient: TodayPatient) {
-    const id = `${kind}:${patient.patientScreeningId ?? patient.name}`;
-    const label = kind === "patient" ? patient.name : `Schedule · ${patient.name}`;
+  function openPortalTab(kind: PortalTabKind, patient?: TodayPatient | null) {
+    const id =
+      kind === "patient" || kind === "schedule"
+        ? `${kind}:${patient?.patientScreeningId ?? patient?.name ?? "unknown"}`
+        : kind;
+
+    const label =
+      kind === "patient"
+        ? patient?.name ?? "Patient"
+        : kind === "schedule"
+          ? `Schedule · ${patient?.name ?? "Patient"}`
+          : kind === "tasks"
+            ? "Tasks"
+            : "Documents";
+
     const existing = portalTabs.find((t) => t.id === id);
     if (existing) {
-      focusPortalTab(existing);
+      if (activePortalTabId === existing.id) {
+        closePortalTab(existing.id);
+      } else {
+        focusPortalTab(existing);
+      }
       return;
     }
+
     const tab: PortalTab = {
       id,
       kind,
-      patientId: patient.patientScreeningId,
-      patientName: patient.name,
+      patientId: patient?.patientScreeningId ?? null,
+      patientName: patient?.name,
       label,
     };
+
     setPortalTabs((prev) => [...prev, tab]);
     focusPortalTab(tab);
   }
@@ -919,10 +959,24 @@ export function PortalShell({ role }: { role: Role }) {
   function closePortalTab(id: string) {
     setPortalTabs((prev) => {
       const next = prev.filter((t) => t.id !== id);
-      if (activePortalTabId === id) {
-        const fallback = next[next.length - 1] ?? null;
-        setTimeout(() => focusPortalTab(fallback), 0);
+      const closingActive = activePortalTabId === id;
+
+      if (!closingActive) {
+        return next;
       }
+
+      const fallback = next[next.length - 1] ?? null;
+
+      if (!fallback) {
+        setActivePortalTabId(null);
+        setCenterMode("playground");
+        setCenterSrc("");
+        setCenterTitle("");
+        setDockActiveApp(null);
+        return next;
+      }
+
+      setTimeout(() => focusPortalTab(fallback), 0);
       return next;
     });
   }
@@ -1303,13 +1357,13 @@ export function PortalShell({ role }: { role: Role }) {
 
             {!leftRailCollapsed && (
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                <Card className="p-3 bg-white text-slate-900">
+                <Card className="relative p-3 bg-white text-slate-900">
                   <div className="mb-2 flex items-center justify-between">
                     <div className="text-sm font-semibold text-slate-900">Calendar</div>
                     <button
                       type="button"
-                      onClick={openCalendarInPlayground}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                      onClick={() => openPortalTab("schedule", selected ?? aliBoomayePatient)}
+                      className="absolute -right-3 top-1/2 z-10 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50"
                       data-testid="button-left-calendar-expand"
                       title="Expand to Playground"
                     >
@@ -1320,13 +1374,13 @@ export function PortalShell({ role }: { role: Role }) {
                 </Card>
 
                 {selected && selected.patientScreeningId != null && (
-                  <Card className="p-3 bg-white text-slate-900">
+                  <Card className="relative p-3 bg-white text-slate-900">
                     <div className="mb-2 flex items-center justify-between">
                       <div className="text-sm font-semibold text-slate-900">Documents / Upload</div>
                       <button
                         type="button"
-                        onClick={openDocumentsInPlayground}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                        onClick={() => openPortalTab("documents")}
+                        className="absolute -right-3 top-1/2 z-10 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50"
                         data-testid="button-left-documents-expand"
                         title="Expand to Playground"
                       >
@@ -1340,7 +1394,7 @@ export function PortalShell({ role }: { role: Role }) {
                   </Card>
                 )}
 
-                <Card className="p-3 bg-white text-slate-900">
+                <Card className="relative p-3 bg-white text-slate-900">
                   <div className="text-sm font-semibold mb-2 flex items-center gap-2">
                     <Phone className="h-4 w-4" /> Outreach call list
                   </div>
@@ -1361,7 +1415,7 @@ export function PortalShell({ role }: { role: Role }) {
                   </div>
                 </Card>
 
-                <Card className="p-3 bg-white text-slate-900" data-testid="tasks-pane">
+                <Card className="relative p-3 bg-white text-slate-900" data-testid="tasks-pane">
                   <div className="flex items-center justify-between mb-2">
                     <div className="text-sm font-semibold flex items-center gap-2">
                       <Bell className="h-4 w-4 text-rose-600" /> My tasks
@@ -1372,8 +1426,8 @@ export function PortalShell({ role }: { role: Role }) {
                       </Badge>
                       <button
                         type="button"
-                        onClick={openTasksInPlayground}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                        onClick={() => openPortalTab("tasks")}
+                        className="absolute -right-3 top-1/2 z-10 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50"
                         data-testid="button-left-tasks-expand"
                         title="Expand to Playground"
                       >
@@ -1508,7 +1562,7 @@ export function PortalShell({ role }: { role: Role }) {
                             <button
                               type="button"
                               onClick={() => openPortalTab("patient", p)}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                              className="absolute -right-3 top-1/2 z-10 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50"
                               data-testid={`button-patient-profile-expand-${p.patientScreeningId ?? p.name}`}
                               title="Open patient profile in Playground"
                             >
