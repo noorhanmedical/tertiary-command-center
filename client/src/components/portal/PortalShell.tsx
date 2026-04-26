@@ -895,10 +895,12 @@ export function PortalShell({ role }: { role: Role }) {
 
     if (tab.kind === "schedule") {
       const patient = patients.find((x) => x.patientScreeningId === tab.patientId) ?? null;
-      if (!patient) return;
-      setCenterMode("scheduleDay");
-      setCenterSrc(patient.scheduleUrl || "about:blank");
-      setCenterTitle(`Schedule — ${patient.name}`);
+      setCenterMode("playground");
+      setCenterSrc("");
+      setCenterTitle(`Schedule — ${patient?.name ?? "Patient"}`);
+      if (patient?.patientScreeningId != null) {
+        setSelectedPatientId(patient.patientScreeningId);
+      }
       markDockOpen("schedule");
       return;
     }
