@@ -1535,7 +1535,7 @@ export function PortalShell({ role }: { role: Role }) {
                         >
                           <button
                             onClick={() => {
-                              setScheduleDialogPatient(p);
+                              togglePatientInPlayground(p);
                             }}
                             className="w-full text-left"
                           >
