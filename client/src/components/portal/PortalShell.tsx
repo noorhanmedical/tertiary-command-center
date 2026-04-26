@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Stethoscope, HeartHandshake, Calendar as CalendarIcon, Phone, FileSignature,
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
-  Sparkles, Send, Minimize2, FileBarChart, FilePlus, User, Bell, Bot,
+  Sparkles, Send, Minimize2, Maximize2, FileBarChart, FilePlus, User, Bell, Bot,
   ClipboardPen, Pill, History, ShieldCheck,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -51,6 +51,15 @@ type TodayPatient = {
   plexusPdfUrl: string | null;
   clinicianPdfUrl: string | null;
   scheduleUrl: string | null;
+};
+
+type PortalTabKind = "patient" | "schedule";
+type PortalTab = {
+  id: string;
+  kind: PortalTabKind;
+  patientId?: number | null;
+  patientName?: string;
+  label: string;
 };
 
 type DemoProfile = {
@@ -685,6 +694,8 @@ export function PortalShell({ role }: { role: Role }) {
   const [consentDialog, setConsentDialog] = useState<{ patient: TodayPatient; testType: string | null } | null>(null);
   const [playgroundTab, setPlaygroundTab] = useState<"overview" | "tasks" | "documents">("overview");
   const [scheduleDialogPatient, setScheduleDialogPatient] = useState<TodayPatient | null>(null);
+  const [portalTabs, setPortalTabs] = useState<PortalTab[]>([]);
+  const [activePortalTabId, setActivePortalTabId] = useState<string | null>(null);
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
   const [aiMinimized, setAiMinimized] = useState(false);
@@ -858,6 +869,64 @@ export function PortalShell({ role }: { role: Role }) {
     markDockOpen("schedule");
   }
 
+  function focusPortalTab(tab: PortalTab | null) {
+    if (!tab) {
+      setActivePortalTabId(null);
+      setCenterMode("playground");
+      setCenterSrc("");
+      setCenterTitle("");
+      return;
+    }
+    setActivePortalTabId(tab.id);
+    if (tab.patientId != null) setSelectedPatientId(tab.patientId);
+    if (tab.kind === "patient") {
+      setCenterMode("patient");
+      setCenterSrc("");
+      setCenterTitle("");
+      markDockOpen("chart");
+      return;
+    }
+    if (tab.kind === "schedule") {
+      const patient = patients.find((x) => x.patientScreeningId === tab.patientId) ?? null;
+      if (patient) {
+        setCenterMode("scheduleDay");
+        setCenterSrc(patient.scheduleUrl || "about:blank");
+        setCenterTitle(`Schedule — ${patient.name}`);
+        markDockOpen("schedule");
+      }
+    }
+  }
+
+  function openPortalTab(kind: PortalTabKind, patient: TodayPatient) {
+    const id = `${kind}:${patient.patientScreeningId ?? patient.name}`;
+    const label = kind === "patient" ? patient.name : `Schedule · ${patient.name}`;
+    const existing = portalTabs.find((t) => t.id === id);
+    if (existing) {
+      focusPortalTab(existing);
+      return;
+    }
+    const tab: PortalTab = {
+      id,
+      kind,
+      patientId: patient.patientScreeningId,
+      patientName: patient.name,
+      label,
+    };
+    setPortalTabs((prev) => [...prev, tab]);
+    focusPortalTab(tab);
+  }
+
+  function closePortalTab(id: string) {
+    setPortalTabs((prev) => {
+      const next = prev.filter((t) => t.id !== id);
+      if (activePortalTabId === id) {
+        const fallback = next[next.length - 1] ?? null;
+        setTimeout(() => focusPortalTab(fallback), 0);
+      }
+      return next;
+    });
+  }
+
   function openCalendarInPlayground() {
     setCenterMode("playground");
     setDockOpenApps((prev) => (prev.includes("schedule") ? prev : [...prev, "schedule"]));
@@ -980,6 +1049,42 @@ export function PortalShell({ role }: { role: Role }) {
                 {facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}
               </div>
             </button>
+
+            {portalTabs.length > 0 && (
+              <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1" data-testid="portal-playfield-tabs">
+                {portalTabs.map((tab) => {
+                  const isActive = tab.id === activePortalTabId;
+                  return (
+                    <div
+                      key={tab.id}
+                      className={`group inline-flex items-center gap-1 rounded-t-xl border px-3 py-1.5 text-xs transition ${
+                        isActive
+                          ? "border-indigo-300 bg-white text-indigo-700 shadow-sm"
+                          : "border-slate-200 bg-white/60 text-slate-600 hover:bg-white"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => focusPortalTab(tab)}
+                        className="font-medium truncate max-w-[180px]"
+                        data-testid={`portal-tab-${tab.id}`}
+                      >
+                        {tab.label}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); closePortalTab(tab.id); }}
+                        className="rounded-full p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                        data-testid={`portal-tab-close-${tab.id}`}
+                        title="Close tab"
+                      >
+                        <Minimize2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="flex-1 min-h-0 overflow-y-auto">
               {centerMode === "consent" && selected ? (
@@ -1376,7 +1481,7 @@ export function PortalShell({ role }: { role: Role }) {
                         >
                           <button
                             onClick={() => {
-                              togglePatientInPlayground(p);
+                              setScheduleDialogPatient(p);
                             }}
                             className="w-full text-left"
                           >
@@ -1400,6 +1505,16 @@ export function PortalShell({ role }: { role: Role }) {
                           </button>
 
                           <div className="mt-2 flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openPortalTab("patient", p)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                              data-testid={`button-patient-profile-expand-${p.patientScreeningId ?? p.name}`}
+                              title="Open patient profile in Playground"
+                            >
+                              <Maximize2 className="h-4 w-4 text-[#4863A0]" />
+                            </button>
+
                             <div className="inline-flex rounded-full border border-slate-200 bg-white overflow-hidden">
                               <button
                                 type="button"
@@ -1412,10 +1527,10 @@ export function PortalShell({ role }: { role: Role }) {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => expandScheduleToPlayground(p)}
+                                onClick={() => openPortalTab("schedule", p)}
                                 className="inline-flex h-8 w-8 items-center justify-center border-l border-slate-200 hover:bg-slate-50"
                                 data-testid={`button-patient-calendar-expand-${p.patientScreeningId ?? p.name}`}
-                                title="Expand schedule into Playground"
+                                title="Open schedule in Playground"
                               >
                                 <ChevronLeft className="h-4 w-4 rotate-180 text-[#4863A0]" />
                               </button>
