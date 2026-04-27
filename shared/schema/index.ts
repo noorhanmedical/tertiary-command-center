@@ -36,4 +36,5 @@ export * from "./invoices";
 export * from "./documents";
 export * from "./outbox";
 export * from "./pto";
+export * from "./executionCase";
 export * from "../models/chat";

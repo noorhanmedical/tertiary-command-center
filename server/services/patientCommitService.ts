@@ -5,6 +5,10 @@ import {
   type PatientScreening,
 } from "@shared/schema";
 import { resolveSchedulerForClinic } from "../../shared/platformSettings";
+import {
+  createOrUpdateExecutionCaseFromScreening,
+  appendPatientJourneyEvent,
+} from "../repositories/executionCase.repo";
 
 export type CommitOutcome = {
   patient: PatientScreening;
@@ -82,6 +86,39 @@ export async function commitPatient(
   });
 
   if (!updated) return { ok: false, error: { code: "not_found" } };
+
+  // Wire execution case spine — fire-and-forget so a failure never breaks the commit
+  void (async () => {
+    try {
+      const { executionCase, created } = await createOrUpdateExecutionCaseFromScreening(updated, userId);
+      await appendPatientJourneyEvent({
+        patientName: updated.name,
+        patientDob: updated.dob ?? undefined,
+        patientScreeningId: updated.id,
+        executionCaseId: executionCase.id,
+        eventType: "screening_committed",
+        eventSource: options.auto ? "auto_commit" : "manual_commit",
+        actorUserId: userId ?? undefined,
+        summary: `Screening committed (${options.auto ? "auto" : "manual"}); execution case ${created ? "created" : "updated"}`,
+        metadata: { commitStatus: "Ready", auto: options.auto },
+      });
+      await appendPatientJourneyEvent({
+        patientName: updated.name,
+        patientDob: updated.dob ?? undefined,
+        patientScreeningId: updated.id,
+        executionCaseId: executionCase.id,
+        eventType: created ? "execution_case_created" : "execution_case_updated",
+        eventSource: "screening_commit_hook",
+        actorUserId: userId ?? undefined,
+        summary: created
+          ? `Execution case created from screening commit`
+          : `Execution case updated from screening commit`,
+        metadata: { executionCaseId: executionCase.id },
+      });
+    } catch (err) {
+      console.error("[patientCommitService] execution case spine failed:", err);
+    }
+  })();
 
   return {
     ok: true,
