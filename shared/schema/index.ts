@@ -45,4 +45,5 @@ export * from "./adminSettings";
 export * from "./documentReadiness";
 export * from "./procedureEvents";
 export * from "./generatedNotes";
+export * from "./billingReadiness";
 export * from "../models/chat";
