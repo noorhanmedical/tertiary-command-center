@@ -10,6 +10,7 @@ import { SiGoogledrive } from "react-icons/si";
 import { EditableScreeningFormModal } from "@/components/EditableScreeningFormModal";
 import { DocumentSection } from "@/components/DocumentSection";
 import { PageHeader } from "@/components/PageHeader";
+import { DocumentReadinessPanel } from "@/components/patient/DocumentReadinessPanel";
 type NoteSection = { heading: string; body: string };
 
 function noteNeedsDx(sections: NoteSection[], docKind: string): boolean {
@@ -369,6 +370,8 @@ export default function DocumentsPage() {
             </>
           }
         />
+
+        <DocumentReadinessPanel />
 
         {isLoading ? (
           <div className="flex items-center justify-center py-16">
