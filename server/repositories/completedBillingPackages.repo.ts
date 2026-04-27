@@ -5,6 +5,7 @@ import {
   type CompletedBillingPackage,
   type InsertCompletedBillingPackage,
 } from "@shared/schema/completedBillingPackages";
+import { invoices, invoiceLineItems, type InvoiceLineItem } from "@shared/schema/invoices";
 
 export type ListCompletedBillingPackagesFilters = {
   executionCaseId?: number;
@@ -83,7 +84,92 @@ export async function updateCompletedBillingPackagePayment(
     })
     .where(eq(completedBillingPackages.id, id))
     .returning();
+
+  if (result) {
+    void addCompletedPackageToInvoice(result).catch((err) => {
+      console.error("[completedBillingPackages.repo] addCompletedPackageToInvoice failed:", err);
+    });
+  }
+
   return result;
+}
+
+const OUR_PORTION_PERCENTAGE = 50;
+
+/** Add the completed billing package as an invoice line item on the most recent
+ *  Draft invoice for the same facility. Idempotent — tracks the created
+ *  invoiceLineItemId in the package metadata to avoid duplicate rows. */
+export async function addCompletedPackageToInvoice(
+  pkg: CompletedBillingPackage,
+): Promise<{ lineItem: InvoiceLineItem; invoiceId: number } | null> {
+  if (!pkg.facilityId || !pkg.fullAmountPaid) return null;
+
+  const meta = (typeof pkg.metadata === "object" && pkg.metadata !== null
+    ? pkg.metadata as Record<string, unknown>
+    : {});
+
+  const totalAmount = parseFloat(pkg.fullAmountPaid);
+  if (isNaN(totalAmount) || totalAmount <= 0) return null;
+
+  const ourPortion = (totalAmount * OUR_PORTION_PERCENTAGE) / 100;
+  const remaining = totalAmount - ourPortion;
+
+  // If already linked to a line item, update it in place
+  const existingLineItemId = typeof meta.invoiceLineItemId === "number" ? meta.invoiceLineItemId : null;
+  if (existingLineItemId !== null) {
+    const [updated] = await db
+      .update(invoiceLineItems)
+      .set({
+        patientName: pkg.patientInitials ?? pkg.patientName ?? "",
+        dateOfService: pkg.dos ?? undefined,
+        service: pkg.serviceType,
+        totalCharges: totalAmount.toFixed(2),
+        paidAmount: ourPortion.toFixed(2),
+        balanceRemaining: remaining.toFixed(2),
+      })
+      .where(eq(invoiceLineItems.id, existingLineItemId))
+      .returning();
+    if (updated) {
+      const [inv] = await db.select({ id: invoices.id }).from(invoices)
+        .where(eq(invoices.id, updated.invoiceId)).limit(1);
+      return updated ? { lineItem: updated, invoiceId: inv?.id ?? updated.invoiceId } : null;
+    }
+  }
+
+  // Find the most recent Draft invoice for this facility
+  const [draftInvoice] = await db
+    .select({ id: invoices.id })
+    .from(invoices)
+    .where(and(eq(invoices.facility, pkg.facilityId), eq(invoices.status, "Draft")))
+    .orderBy(desc(invoices.createdAt))
+    .limit(1);
+
+  if (!draftInvoice) return null;
+
+  const [lineItem] = await db
+    .insert(invoiceLineItems)
+    .values({
+      invoiceId: draftInvoice.id,
+      patientName: pkg.patientInitials ?? pkg.patientName ?? "",
+      dateOfService: pkg.dos ?? undefined,
+      service: pkg.serviceType,
+      totalCharges: totalAmount.toFixed(2),
+      paidAmount: ourPortion.toFixed(2),
+      balanceRemaining: remaining.toFixed(2),
+    })
+    .returning();
+
+  // Store idempotency key and mark package as added_to_invoice
+  await db
+    .update(completedBillingPackages)
+    .set({
+      packageStatus: "added_to_invoice",
+      metadata: { ...meta, invoiceLineItemId: lineItem.id, invoiceId: draftInvoice.id },
+      updatedAt: new Date(),
+    })
+    .where(eq(completedBillingPackages.id, pkg.id));
+
+  return { lineItem, invoiceId: draftInvoice.id };
 }
 
 export async function listCompletedBillingPackages(
