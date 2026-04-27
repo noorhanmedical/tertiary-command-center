@@ -41,6 +41,7 @@ import { useEffect, useMemo, useState } from "react";
   } from "@/components/outreach/BookingDialogs";
   import { useOutreachData } from "@/components/outreach/useOutreachData";
   import { useSelectedPatient } from "@/components/outreach/useSelectedPatient";
+  import { PatientJourneyDrawer } from "@/components/patient/PatientJourneyDrawer";
   
 export default function OutreachSchedulerPortalPage() {
   const params = useParams<{ id: string }>();
@@ -191,6 +192,11 @@ export default function OutreachSchedulerPortalPage() {
     setTaskDrawerPatientId(task.patientScreeningId ?? 0);
     setTaskDrawerTasks([task]);
     setTaskDrawerPatientName(task.patientName ?? "");
+    openPlayfieldTab({
+      kind: "tasks",
+      patientId: task.patientScreeningId ?? undefined,
+      patientName: task.patientName ?? undefined,
+    });
   }
 
   function openPlayfieldTab(opts: { kind: PlayfieldTabKind; patientId?: number; patientName?: string; threadId?: string }) {
@@ -214,6 +220,28 @@ export default function OutreachSchedulerPortalPage() {
         setExpandedSection(fallback ? tabKindToExpanded(fallback.kind) : null);
       }
       return next;
+    });
+  }
+
+  function selectPatientAndOpenCurrentCallTab(patientId: number | null) {
+    selectPatient(patientId);
+    if (patientId == null) return;
+    const entry = sortedCallList.find((r) => r.item.patientId === patientId);
+    if (!entry) return;
+    openPlayfieldTab({
+      kind: "currentCall",
+      patientId,
+      patientName: entry.item.patientName,
+    });
+  }
+
+  function openBookingTabForItem(item: OutreachCallItem | null) {
+    if (!item) return;
+    setCallListBookPatient(item);
+    openPlayfieldTab({
+      kind: "calendar",
+      patientId: item.patientId,
+      patientName: item.patientName,
     });
   }
 
@@ -662,7 +690,7 @@ export default function OutreachSchedulerPortalPage() {
                     onBook={() => {
                       if (!selectedItem) return;
                       setBookingPanelOpen(true);
-                      setCallListBookPatient(selectedItem);
+                      openBookingTabForItem(selectedItem);
                       setCallListBookTestType(selectedItem.qualifyingTests.some((t) => isBrainWave(t)) ? "BrainWave" : "VitalWave");
                       setCallListBookTime("");
                     }}
@@ -674,6 +702,19 @@ export default function OutreachSchedulerPortalPage() {
                     }}
                   />
 
+                  {selectedItem && (
+                    <div className="flex items-center justify-end px-4 py-2">
+                      <PatientJourneyDrawer
+                        lookup={{
+                          patientScreeningId: selectedItem.patientId,
+                          patientName: selectedItem.patientName,
+                        }}
+                        triggerSize="sm"
+                        triggerVariant="ghost"
+                      />
+                    </div>
+                  )}
+
                   {/* ── Mission Control bar (next/skip/disposition/book) ── */}
                   <MissionControlBar
                     selectedItem={selectedItem}
@@ -681,7 +722,7 @@ export default function OutreachSchedulerPortalPage() {
                     onBook={() => {
                       if (!selectedItem) return;
                       setBookingPanelOpen(true);
-                      setCallListBookPatient(selectedItem);
+                      openBookingTabForItem(selectedItem);
                       setCallListBookTestType(selectedItem.qualifyingTests.some((t) => isBrainWave(t)) ? "BrainWave" : "VitalWave");
                       setCallListBookTime("");
                     }}
@@ -725,8 +766,8 @@ export default function OutreachSchedulerPortalPage() {
                 setExpandedTimeline={setExpandedTimeline}
                 assignmentByPatient={assignmentByPatient}
                 schedulerNameById={schedulerNameById}
-                selectPatient={selectPatient}
-                setCallListBookPatient={setCallListBookPatient}
+                selectPatient={selectPatientAndOpenCurrentCallTab}
+                setCallListBookPatient={openBookingTabForItem}
               />
             </div>
           </div>
