@@ -9,7 +9,8 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
-    "seed:admin-settings": "tsx script/seedAdminSettings.ts"
+    "seed:admin-settings": "tsx script/seedAdminSettings.ts",
+    "check:canonical-tables": "tsx script/checkCanonicalTables.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
