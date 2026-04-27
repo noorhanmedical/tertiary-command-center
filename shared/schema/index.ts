@@ -48,4 +48,6 @@ export * from "./generatedNotes";
 export * from "./billingReadiness";
 export * from "./billingDocuments";
 export * from "./completedBillingPackages";
+export * from "./cashPricing";
+export * from "./projectedInvoices";
 export * from "../models/chat";

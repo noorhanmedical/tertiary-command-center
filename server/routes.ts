@@ -36,6 +36,8 @@ import { registerProcedureEventRoutes } from "./routes/procedureEvents";
 import { registerBillingReadinessRoutes } from "./routes/billingReadiness";
 import { registerBillingDocumentRoutes } from "./routes/billingDocuments";
 import { registerCompletedBillingPackageRoutes } from "./routes/completedBillingPackages";
+import { registerCashPricingRoutes } from "./routes/cashPricing";
+import { registerProjectedInvoiceRoutes } from "./routes/projectedInvoices";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
@@ -238,6 +240,8 @@ export async function registerRoutes(
   registerBillingReadinessRoutes(app);
   registerBillingDocumentRoutes(app);
   registerCompletedBillingPackageRoutes(app);
+  registerCashPricingRoutes(app);
+  registerProjectedInvoiceRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {
