@@ -6,6 +6,7 @@ import {
   type InsertProcedureEvent,
 } from "@shared/schema/procedureEvents";
 import { upsertCaseDocumentReadinessForProcedureComplete } from "./documentReadiness.repo";
+import { createPendingProcedureNotes } from "./generatedNotes.repo";
 
 export type ListProcedureEventsFilters = {
   executionCaseId?: number;
@@ -146,6 +147,15 @@ export async function markProcedureComplete(
     patientDob: input.patientDob ?? null,
     facilityId: input.facilityId ?? null,
     serviceType: input.serviceType,
+  });
+
+  void createPendingProcedureNotes({
+    executionCaseId: input.executionCaseId ?? null,
+    patientScreeningId: input.patientScreeningId ?? null,
+    procedureEventId: procedureEvent.id,
+    serviceType: input.serviceType,
+  }).catch((err) => {
+    console.error("[procedureEvents.repo] createPendingProcedureNotes failed:", err);
   });
 
   return { procedureEvent, documentRows };

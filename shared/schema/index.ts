@@ -44,4 +44,5 @@ export * from "./cooldown";
 export * from "./adminSettings";
 export * from "./documentReadiness";
 export * from "./procedureEvents";
+export * from "./generatedNotes";
 export * from "../models/chat";
