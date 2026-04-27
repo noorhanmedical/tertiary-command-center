@@ -27,6 +27,7 @@ import { registerDocumentLibraryRoutes } from "./routes/documentLibrary";
 import { registerPortalRoutes } from "./routes/portal";
 import { registerExecutionCaseRoutes } from "./routes/executionCases";
 import { registerGlobalScheduleRoutes } from "./routes/globalSchedule";
+import { registerSchedulingTriageRoutes } from "./routes/schedulingTriage";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
@@ -220,6 +221,7 @@ export async function registerRoutes(
   registerPortalRoutes(app);
   registerExecutionCaseRoutes(app);
   registerGlobalScheduleRoutes(app);
+  registerSchedulingTriageRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {

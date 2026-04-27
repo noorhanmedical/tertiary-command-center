@@ -38,4 +38,5 @@ export * from "./outbox";
 export * from "./pto";
 export * from "./executionCase";
 export * from "./globalSchedule";
+export * from "./schedulingTriage";
 export * from "../models/chat";
