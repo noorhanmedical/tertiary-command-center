@@ -4,6 +4,7 @@ import {
   getExecutionCaseById,
   getExecutionCaseByScreeningId,
   listJourneyEvents,
+  listEngagementCenterCases,
 } from "../repositories/executionCase.repo";
 
 export function registerExecutionCaseRoutes(app: Express) {
@@ -24,6 +25,32 @@ export function registerExecutionCaseRoutes(app: Express) {
         if (!isNaN(id)) filters.patientScreeningId = id;
       }
       const rows = await listExecutionCases(filters, limit);
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/engagement-center/cases
+  // Filters: engagementBucket, facilityId, assignedTeamMemberId, assignedRole,
+  //          lifecycleStatus, engagementStatus, qualificationStatus,
+  //          limit (default 100, max 500)
+  app.get("/api/engagement-center/cases", async (req, res) => {
+    try {
+      const q = req.query as Record<string, string | undefined>;
+      const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
+      const filters: Parameters<typeof listEngagementCenterCases>[0] = {};
+      if (q.engagementBucket) filters.engagementBucket = q.engagementBucket;
+      if (q.facilityId) filters.facilityId = q.facilityId;
+      if (q.assignedTeamMemberId) {
+        const id = parseInt(q.assignedTeamMemberId, 10);
+        if (!isNaN(id)) filters.assignedTeamMemberId = id;
+      }
+      if (q.assignedRole) filters.assignedRole = q.assignedRole;
+      if (q.lifecycleStatus) filters.lifecycleStatus = q.lifecycleStatus;
+      if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
+      if (q.qualificationStatus) filters.qualificationStatus = q.qualificationStatus;
+      const rows = await listEngagementCenterCases(filters, limit);
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

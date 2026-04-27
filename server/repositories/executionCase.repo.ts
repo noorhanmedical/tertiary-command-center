@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import {
   patientExecutionCases,
   patientJourneyEvents,
@@ -130,6 +130,45 @@ export async function getExecutionCaseByScreeningId(screeningId: number): Promis
     .where(eq(patientExecutionCases.patientScreeningId, screeningId))
     .limit(1);
   return result;
+}
+
+export type ListEngagementCenterCasesFilters = {
+  engagementBucket?: string;
+  facilityId?: string;
+  assignedTeamMemberId?: number;
+  assignedRole?: string;
+  lifecycleStatus?: string;
+  engagementStatus?: string;
+  qualificationStatus?: string;
+};
+
+/** Engagement Center read: executes against patient_execution_cases ordered by
+ *  priorityScore DESC (NULLS LAST), then nextActionAt ASC (NULLS LAST), then
+ *  createdAt DESC. Returns up to safeLimit rows (default 100, max 500). */
+export async function listEngagementCenterCases(
+  filters: ListEngagementCenterCasesFilters = {},
+  limit = 100,
+): Promise<PatientExecutionCase[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = [];
+  if (filters.engagementBucket) conditions.push(eq(patientExecutionCases.engagementBucket, filters.engagementBucket));
+  if (filters.facilityId) conditions.push(eq(patientExecutionCases.facilityId, filters.facilityId));
+  if (filters.assignedTeamMemberId != null) conditions.push(eq(patientExecutionCases.assignedTeamMemberId, filters.assignedTeamMemberId));
+  if (filters.assignedRole) conditions.push(eq(patientExecutionCases.assignedRole, filters.assignedRole));
+  if (filters.lifecycleStatus) conditions.push(eq(patientExecutionCases.lifecycleStatus, filters.lifecycleStatus));
+  if (filters.engagementStatus) conditions.push(eq(patientExecutionCases.engagementStatus, filters.engagementStatus));
+  if (filters.qualificationStatus) conditions.push(eq(patientExecutionCases.qualificationStatus, filters.qualificationStatus));
+
+  const query = db.select().from(patientExecutionCases).$dynamic();
+  const orderClause = [
+    sql`${patientExecutionCases.priorityScore} DESC NULLS LAST`,
+    sql`${patientExecutionCases.nextActionAt} ASC NULLS LAST`,
+    desc(patientExecutionCases.createdAt),
+  ];
+
+  return conditions.length > 0
+    ? query.where(and(...conditions)).orderBy(...orderClause).limit(safeLimit)
+    : query.orderBy(...orderClause).limit(safeLimit);
 }
 
 export type ListJourneyEventsFilters = {
