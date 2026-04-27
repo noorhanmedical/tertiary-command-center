@@ -9,6 +9,7 @@ import {
   createOrUpdateExecutionCaseFromScreening,
   appendPatientJourneyEvent,
 } from "../repositories/executionCase.repo";
+import { createGlobalScheduleEventFromScreeningCommit } from "../repositories/globalSchedule.repo";
 
 export type CommitOutcome = {
   patient: PatientScreening;
@@ -87,10 +88,23 @@ export async function commitPatient(
 
   if (!updated) return { ok: false, error: { code: "not_found" } };
 
-  // Wire execution case spine — fire-and-forget so a failure never breaks the commit
+  // Wire execution case + global schedule spine — fire-and-forget so a failure never breaks the commit
   void (async () => {
     try {
       const { executionCase, created } = await createOrUpdateExecutionCaseFromScreening(updated, userId);
+
+      // Fetch batch to get scheduleDate for appointment datetime parsing
+      const batch = await storage.getScreeningBatch(updated.batchId);
+      const batchScheduleDate = batch?.scheduleDate ?? null;
+
+      // Global schedule event — only when a usable appointment datetime exists
+      const scheduleResult = await createGlobalScheduleEventFromScreeningCommit(
+        updated,
+        executionCase.id,
+        batchScheduleDate,
+        { auto: options.auto, actorUserId: userId },
+      );
+
       await appendPatientJourneyEvent({
         patientName: updated.name,
         patientDob: updated.dob ?? undefined,
@@ -100,7 +114,13 @@ export async function commitPatient(
         eventSource: options.auto ? "auto_commit" : "manual_commit",
         actorUserId: userId ?? undefined,
         summary: `Screening committed (${options.auto ? "auto" : "manual"}); execution case ${created ? "created" : "updated"}`,
-        metadata: { commitStatus: "Ready", auto: options.auto },
+        metadata: {
+          commitStatus: "Ready",
+          auto: options.auto,
+          globalScheduleEventId: scheduleResult?.event.id ?? null,
+          globalScheduleCreated: scheduleResult?.created ?? null,
+          noScheduleEventReason: scheduleResult === null ? "missing_appointment_datetime" : null,
+        },
       });
       await appendPatientJourneyEvent({
         patientName: updated.name,
