@@ -25,6 +25,7 @@ import { registerTestFixtureRoutes } from "./routes/testFixture";
 import { registerMarketingMaterialRoutes } from "./routes/marketingMaterials";
 import { registerDocumentLibraryRoutes } from "./routes/documentLibrary";
 import { registerPortalRoutes } from "./routes/portal";
+import { registerExecutionCaseRoutes } from "./routes/executionCases";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
@@ -216,6 +217,7 @@ export async function registerRoutes(
   registerMarketingMaterialRoutes(app);
   registerDocumentLibraryRoutes(app);
   registerPortalRoutes(app);
+  registerExecutionCaseRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {

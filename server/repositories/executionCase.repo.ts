@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import {
   patientExecutionCases,
   patientJourneyEvents,
@@ -84,4 +84,78 @@ export async function appendPatientJourneyEvent(
     .values(event)
     .returning();
   return result;
+}
+
+export type ListExecutionCasesFilters = {
+  engagementBucket?: string;
+  lifecycleStatus?: string;
+  engagementStatus?: string;
+  facilityId?: string;
+  patientScreeningId?: number;
+};
+
+export async function listExecutionCases(
+  filters: ListExecutionCasesFilters = {},
+  limit = 100,
+): Promise<PatientExecutionCase[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = [];
+  if (filters.engagementBucket) conditions.push(eq(patientExecutionCases.engagementBucket, filters.engagementBucket));
+  if (filters.lifecycleStatus) conditions.push(eq(patientExecutionCases.lifecycleStatus, filters.lifecycleStatus));
+  if (filters.engagementStatus) conditions.push(eq(patientExecutionCases.engagementStatus, filters.engagementStatus));
+  if (filters.facilityId) conditions.push(eq(patientExecutionCases.facilityId, filters.facilityId));
+  if (filters.patientScreeningId != null) conditions.push(eq(patientExecutionCases.patientScreeningId, filters.patientScreeningId));
+
+  const query = db.select().from(patientExecutionCases)
+    .$dynamic();
+
+  return conditions.length > 0
+    ? query.where(and(...conditions)).orderBy(desc(patientExecutionCases.createdAt)).limit(safeLimit)
+    : query.orderBy(desc(patientExecutionCases.createdAt)).limit(safeLimit);
+}
+
+export async function getExecutionCaseById(id: number): Promise<PatientExecutionCase | undefined> {
+  const [result] = await db
+    .select()
+    .from(patientExecutionCases)
+    .where(eq(patientExecutionCases.id, id))
+    .limit(1);
+  return result;
+}
+
+export async function getExecutionCaseByScreeningId(screeningId: number): Promise<PatientExecutionCase | undefined> {
+  const [result] = await db
+    .select()
+    .from(patientExecutionCases)
+    .where(eq(patientExecutionCases.patientScreeningId, screeningId))
+    .limit(1);
+  return result;
+}
+
+export type ListJourneyEventsFilters = {
+  executionCaseId?: number;
+  patientScreeningId?: number;
+  patientName?: string;
+  patientDob?: string;
+  eventType?: string;
+};
+
+export async function listJourneyEvents(
+  filters: ListJourneyEventsFilters = {},
+  limit = 100,
+): Promise<PatientJourneyEvent[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = [];
+  if (filters.executionCaseId != null) conditions.push(eq(patientJourneyEvents.executionCaseId, filters.executionCaseId));
+  if (filters.patientScreeningId != null) conditions.push(eq(patientJourneyEvents.patientScreeningId, filters.patientScreeningId));
+  if (filters.patientName) conditions.push(eq(patientJourneyEvents.patientName, filters.patientName));
+  if (filters.patientDob) conditions.push(eq(patientJourneyEvents.patientDob, filters.patientDob));
+  if (filters.eventType) conditions.push(eq(patientJourneyEvents.eventType, filters.eventType));
+
+  const query = db.select().from(patientJourneyEvents)
+    .$dynamic();
+
+  return conditions.length > 0
+    ? query.where(and(...conditions)).orderBy(desc(patientJourneyEvents.createdAt)).limit(safeLimit)
+    : query.orderBy(desc(patientJourneyEvents.createdAt)).limit(safeLimit);
 }
