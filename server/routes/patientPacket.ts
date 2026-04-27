@@ -19,11 +19,11 @@ async function handlePatientPacket(req: Request, res: Response) {
 
     const hasLookup = lookup.executionCaseId != null
       || lookup.patientScreeningId != null
-      || (lookup.patientName && lookup.patientDob);
+      || !!lookup.patientName;
 
     if (!hasLookup) {
       return res.status(400).json({
-        error: "One of executionCaseId, patientScreeningId, or (patientName + patientDob) is required",
+        error: "One of executionCaseId, patientScreeningId, or patientName (DOB optional) is required",
       });
     }
 

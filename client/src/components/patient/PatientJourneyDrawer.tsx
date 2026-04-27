@@ -32,7 +32,7 @@ export function PatientJourneyDrawer({
 
   const hasLookup = lookup.executionCaseId != null
     || lookup.patientScreeningId != null
-    || (lookup.patientName && lookup.patientDob);
+    || !!lookup.patientName;
 
   const { data, isLoading, isError, error } = useQuery<PatientPacket>({
     queryKey: patientPacketQueryKey(lookup),

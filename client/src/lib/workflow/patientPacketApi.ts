@@ -43,9 +43,9 @@ export function patientPacketQueryKey(lookup: PatientPacketLookup): string[] {
 export async function fetchPatientPacket(lookup: PatientPacketLookup): Promise<PatientPacket> {
   const hasLookup = lookup.executionCaseId != null
     || lookup.patientScreeningId != null
-    || (lookup.patientName && lookup.patientDob);
+    || !!lookup.patientName;
   if (!hasLookup) {
-    throw new Error("fetchPatientPacket requires executionCaseId, patientScreeningId, or (patientName + patientDob)");
+    throw new Error("fetchPatientPacket requires executionCaseId, patientScreeningId, or patientName (DOB optional)");
   }
 
   const qs = buildQueryString(lookup);

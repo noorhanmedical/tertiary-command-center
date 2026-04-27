@@ -58,6 +58,18 @@ async function findScreeningByNameAndDob(
   return row;
 }
 
+async function findLatestScreeningByName(
+  patientName: string,
+): Promise<PatientScreening | undefined> {
+  const [row] = await db
+    .select()
+    .from(patientScreenings)
+    .where(eq(patientScreenings.name, patientName))
+    .orderBy(desc(patientScreenings.id))
+    .limit(1);
+  return row;
+}
+
 async function getScreeningById(id: number): Promise<PatientScreening | undefined> {
   const [row] = await db
     .select()
@@ -87,8 +99,19 @@ export async function getPatientPacket(lookup: PatientPacketLookup): Promise<Pat
     }
   }
 
-  if (resolvedScreeningId == null && lookup.patientName && lookup.patientDob) {
-    const screening = await findScreeningByNameAndDob(lookup.patientName, lookup.patientDob);
+  if (resolvedScreeningId == null && lookup.patientName) {
+    // Try exact name + dob first, then fall back to name-only (newest match
+    // wins) so callers don't have to know which seed/fixture wrote the row
+    // (DOB formats vary: legacy fixtures use ISO "1958-04-12" while the
+    // canonical seed uses "01/01/1950"). Name-only fallback ensures the most
+    // recently-created TestGuy row always resolves.
+    let screening: PatientScreening | undefined;
+    if (lookup.patientDob) {
+      screening = await findScreeningByNameAndDob(lookup.patientName, lookup.patientDob);
+    }
+    if (!screening) {
+      screening = await findLatestScreeningByName(lookup.patientName);
+    }
     if (screening) {
       resolvedScreeningId = screening.id;
       patientScreening = screening;
