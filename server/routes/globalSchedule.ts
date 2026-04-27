@@ -2,6 +2,8 @@ import type { Express } from "express";
 import {
   listGlobalScheduleEvents,
   getGlobalScheduleEventById,
+  listTechnicianLiaisonClinicVisits,
+  listTechnicianLiaisonAncillarySchedule,
 } from "../repositories/globalSchedule.repo";
 
 export function registerGlobalScheduleRoutes(app: Express) {
@@ -37,6 +39,55 @@ export function registerGlobalScheduleRoutes(app: Express) {
       }
 
       const rows = await listGlobalScheduleEvents(filters, limit);
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/technician-liaison/clinic-visits
+  // Filters: facilityId, assignedUserId, startDate, endDate, limit
+  app.get("/api/technician-liaison/clinic-visits", async (req, res) => {
+    try {
+      const q = req.query as Record<string, string | undefined>;
+      const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
+      const filters: Parameters<typeof listTechnicianLiaisonClinicVisits>[0] = {};
+      if (q.facilityId) filters.facilityId = q.facilityId;
+      if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
+      if (q.startDate) {
+        const d = new Date(q.startDate);
+        if (!isNaN(d.getTime())) filters.startDate = d;
+      }
+      if (q.endDate) {
+        const d = new Date(q.endDate);
+        if (!isNaN(d.getTime())) filters.endDate = d;
+      }
+      const rows = await listTechnicianLiaisonClinicVisits(filters, limit);
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/technician-liaison/ancillary-schedule
+  // Filters: facilityId, assignedUserId, serviceType, startDate, endDate, limit
+  app.get("/api/technician-liaison/ancillary-schedule", async (req, res) => {
+    try {
+      const q = req.query as Record<string, string | undefined>;
+      const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
+      const filters: Parameters<typeof listTechnicianLiaisonAncillarySchedule>[0] = {};
+      if (q.facilityId) filters.facilityId = q.facilityId;
+      if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
+      if (q.serviceType) filters.serviceType = q.serviceType;
+      if (q.startDate) {
+        const d = new Date(q.startDate);
+        if (!isNaN(d.getTime())) filters.startDate = d;
+      }
+      if (q.endDate) {
+        const d = new Date(q.endDate);
+        if (!isNaN(d.getTime())) filters.endDate = d;
+      }
+      const rows = await listTechnicianLiaisonAncillarySchedule(filters, limit);
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

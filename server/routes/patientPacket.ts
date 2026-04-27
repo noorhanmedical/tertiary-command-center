@@ -42,4 +42,8 @@ export function registerPatientPacketRoutes(app: Express) {
   // GET /api/scheduler-portal/patient-packet
   // Convenience alias for scheduler portal callers; identical contract.
   app.get("/api/scheduler-portal/patient-packet", handlePatientPacket);
+
+  // GET /api/technician-liaison/patient-packet
+  // Convenience alias for technician liaison portal callers; identical contract.
+  app.get("/api/technician-liaison/patient-packet", handlePatientPacket);
 }

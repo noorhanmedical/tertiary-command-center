@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc, gte, lte } from "drizzle-orm";
+import { eq, and, asc, desc, gte, lte, inArray } from "drizzle-orm";
 import {
   globalScheduleEvents,
   type GlobalScheduleEvent,
@@ -149,6 +149,64 @@ export async function createGlobalScheduleEventFromScreeningCommit(
     .values({ ...payload, patientScreeningId: screening.id })
     .returning();
   return { event: created, created: true };
+}
+
+export type ListTechnicianLiaisonFilters = {
+  facilityId?: string;
+  assignedUserId?: string;
+  serviceType?: string;
+  startDate?: Date;
+  endDate?: Date;
+};
+
+const CLINIC_VISIT_EVENT_TYPES = ["doctor_visit", "same_day_add"] as const;
+const ANCILLARY_SCHEDULE_EVENT_TYPES = ["ancillary_appointment", "same_day_add"] as const;
+
+/** Technician Liaison clinic visits: doctor_visit + same_day_add events
+ *  ordered by startsAt ASC. */
+export async function listTechnicianLiaisonClinicVisits(
+  filters: ListTechnicianLiaisonFilters = {},
+  limit = 100,
+): Promise<GlobalScheduleEvent[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = [
+    inArray(globalScheduleEvents.eventType, [...CLINIC_VISIT_EVENT_TYPES]),
+  ];
+  if (filters.facilityId) conditions.push(eq(globalScheduleEvents.facilityId, filters.facilityId));
+  if (filters.assignedUserId) conditions.push(eq(globalScheduleEvents.assignedUserId, filters.assignedUserId));
+  if (filters.startDate) conditions.push(gte(globalScheduleEvents.startsAt, filters.startDate));
+  if (filters.endDate) conditions.push(lte(globalScheduleEvents.startsAt, filters.endDate));
+
+  return db
+    .select()
+    .from(globalScheduleEvents)
+    .where(and(...conditions))
+    .orderBy(asc(globalScheduleEvents.startsAt))
+    .limit(safeLimit);
+}
+
+/** Technician Liaison ancillary schedule: ancillary_appointment + same_day_add
+ *  events ordered by startsAt ASC. */
+export async function listTechnicianLiaisonAncillarySchedule(
+  filters: ListTechnicianLiaisonFilters = {},
+  limit = 100,
+): Promise<GlobalScheduleEvent[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = [
+    inArray(globalScheduleEvents.eventType, [...ANCILLARY_SCHEDULE_EVENT_TYPES]),
+  ];
+  if (filters.facilityId) conditions.push(eq(globalScheduleEvents.facilityId, filters.facilityId));
+  if (filters.assignedUserId) conditions.push(eq(globalScheduleEvents.assignedUserId, filters.assignedUserId));
+  if (filters.serviceType) conditions.push(eq(globalScheduleEvents.serviceType, filters.serviceType));
+  if (filters.startDate) conditions.push(gte(globalScheduleEvents.startsAt, filters.startDate));
+  if (filters.endDate) conditions.push(lte(globalScheduleEvents.startsAt, filters.endDate));
+
+  return db
+    .select()
+    .from(globalScheduleEvents)
+    .where(and(...conditions))
+    .orderBy(asc(globalScheduleEvents.startsAt))
+    .limit(safeLimit);
 }
 
 export async function listGlobalScheduleEvents(
