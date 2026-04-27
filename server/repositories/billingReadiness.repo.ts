@@ -6,6 +6,7 @@ import {
   type InsertBillingReadinessCheck,
 } from "@shared/schema/billingReadiness";
 import { listCaseDocumentReadiness } from "./documentReadiness.repo";
+import { createPendingBillingDocumentRequestFromReadiness } from "./billingDocuments.repo";
 
 export type ListBillingReadinessChecksFilters = {
   executionCaseId?: number;
@@ -148,21 +149,31 @@ export async function evaluateBillingReadinessForProcedure(
     existing = row;
   }
 
+  let result: BillingReadinessCheck;
+
   if (existing) {
     const [updated] = await db
       .update(billingReadinessChecks)
       .set({ ...payload, updatedAt: now })
       .where(eq(billingReadinessChecks.id, existing.id))
       .returning();
-    return updated;
+    result = updated;
+  } else {
+    const [created] = await db
+      .insert(billingReadinessChecks)
+      .values({
+        ...payload,
+        patientScreeningId: input.patientScreeningId ?? undefined,
+      })
+      .returning();
+    result = created;
   }
 
-  const [created] = await db
-    .insert(billingReadinessChecks)
-    .values({
-      ...payload,
-      patientScreeningId: input.patientScreeningId ?? undefined,
-    })
-    .returning();
-  return created;
+  if (result.readinessStatus === "ready_to_generate") {
+    void createPendingBillingDocumentRequestFromReadiness(result).catch((err) => {
+      console.error("[billingReadiness.repo] createPendingBillingDocumentRequestFromReadiness failed:", err);
+    });
+  }
+
+  return result;
 }
