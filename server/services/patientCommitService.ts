@@ -10,6 +10,7 @@ import {
   appendPatientJourneyEvent,
 } from "../repositories/executionCase.repo";
 import { createGlobalScheduleEventFromScreeningCommit } from "../repositories/globalSchedule.repo";
+import { createOrUpdateInsuranceEligibilityReviewFromScreening } from "../repositories/insuranceEligibility.repo";
 
 export type CommitOutcome = {
   patient: PatientScreening;
@@ -105,6 +106,12 @@ export async function commitPatient(
         { auto: options.auto, actorUserId: userId },
       );
 
+      // Insurance eligibility review — always created/updated from commit
+      const eligibilityResult = await createOrUpdateInsuranceEligibilityReviewFromScreening(
+        updated,
+        executionCase.id,
+      );
+
       await appendPatientJourneyEvent({
         patientName: updated.name,
         patientDob: updated.dob ?? undefined,
@@ -120,6 +127,11 @@ export async function commitPatient(
           globalScheduleEventId: scheduleResult?.event.id ?? null,
           globalScheduleCreated: scheduleResult?.created ?? null,
           noScheduleEventReason: scheduleResult === null ? "missing_appointment_datetime" : null,
+          insuranceEligibilityReviewId: eligibilityResult.review.id,
+          insuranceEligibilityCreated: eligibilityResult.created,
+          eligibilityStatus: eligibilityResult.review.eligibilityStatus,
+          approvalStatus: eligibilityResult.review.approvalStatus,
+          priorityClass: eligibilityResult.review.priorityClass,
         },
       });
       await appendPatientJourneyEvent({

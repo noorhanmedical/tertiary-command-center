@@ -5,6 +5,76 @@ import {
   type InsuranceEligibilityReview,
   type InsertInsuranceEligibilityReview,
 } from "@shared/schema/insuranceEligibility";
+import type { PatientScreening } from "@shared/schema/screening";
+
+type DerivedEligibility = {
+  priorityClass: string;
+  eligibilityStatus: string;
+  approvalStatus: string;
+};
+
+function deriveEligibility(insurance: string | null | undefined): DerivedEligibility {
+  const raw = (insurance ?? "").toLowerCase();
+
+  if (!raw.trim()) {
+    return { priorityClass: "unknown", eligibilityStatus: "unknown", approvalStatus: "pending" };
+  }
+
+  const hasMedicare = raw.includes("medicare");
+  const isAdvantage = raw.includes("advantage") || raw.includes("replacement") || raw.includes("mapd");
+  const isStraightMedicare = hasMedicare && !isAdvantage;
+  const isPpo = raw.includes("ppo");
+
+  if (isStraightMedicare) {
+    return { priorityClass: "straight_medicare", eligibilityStatus: "preferred", approvalStatus: "not_required" };
+  }
+  if (isPpo) {
+    return { priorityClass: "ppo", eligibilityStatus: "allowed", approvalStatus: "not_required" };
+  }
+  return { priorityClass: "other", eligibilityStatus: "requires_admin_approval", approvalStatus: "pending" };
+}
+
+/** Upsert an insurance eligibility review from a screening commit.
+ *  Deduplicates by patientScreeningId — updates in place if one already exists. */
+export async function createOrUpdateInsuranceEligibilityReviewFromScreening(
+  screening: PatientScreening,
+  executionCaseId: number,
+): Promise<{ review: InsuranceEligibilityReview; created: boolean }> {
+  const { priorityClass, eligibilityStatus, approvalStatus } = deriveEligibility(screening.insurance);
+
+  const [existing] = await db
+    .select()
+    .from(insuranceEligibilityReviews)
+    .where(eq(insuranceEligibilityReviews.patientScreeningId, screening.id))
+    .limit(1);
+
+  const payload = {
+    executionCaseId,
+    patientName: screening.name,
+    patientDob: screening.dob ?? undefined,
+    facilityId: screening.facility ?? undefined,
+    insuranceName: screening.insurance ?? undefined,
+    insuranceType: priorityClass,
+    eligibilityStatus,
+    approvalStatus,
+    priorityClass,
+  };
+
+  if (existing) {
+    const [updated] = await db
+      .update(insuranceEligibilityReviews)
+      .set({ ...payload, updatedAt: new Date() })
+      .where(eq(insuranceEligibilityReviews.id, existing.id))
+      .returning();
+    return { review: updated, created: false };
+  }
+
+  const [created] = await db
+    .insert(insuranceEligibilityReviews)
+    .values({ ...payload, patientScreeningId: screening.id })
+    .returning();
+  return { review: created, created: true };
+}
 
 export type ListInsuranceEligibilityReviewsFilters = {
   executionCaseId?: number;
