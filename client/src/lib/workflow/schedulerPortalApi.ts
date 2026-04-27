@@ -1,4 +1,4 @@
-import { apiRequest } from "@/lib/queryClient";
+import { requestJson } from "@/lib/workflow/safeFetch";
 
 export type SchedulerPortalCase = {
   id: number;
@@ -50,6 +50,8 @@ export async function fetchSchedulerPortalCases(
   filters: SchedulerPortalCasesFilters = {},
 ): Promise<SchedulerPortalCase[]> {
   const qs = buildQuery(filters);
-  const res = await apiRequest("GET", `/api/scheduler-portal/cases${qs ? `?${qs}` : ""}`);
-  return res.json();
+  return requestJson<SchedulerPortalCase[]>(
+    "GET",
+    `/api/scheduler-portal/cases${qs ? `?${qs}` : ""}`,
+  );
 }

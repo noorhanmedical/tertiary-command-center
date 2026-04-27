@@ -1,4 +1,4 @@
-import { apiRequest } from "@/lib/queryClient";
+import { requestJson } from "@/lib/workflow/safeFetch";
 
 export type PatientPacketLookup = {
   executionCaseId?: number;
@@ -49,6 +49,5 @@ export async function fetchPatientPacket(lookup: PatientPacketLookup): Promise<P
   }
 
   const qs = buildQueryString(lookup);
-  const res = await apiRequest("GET", `/api/patient-packet${qs ? `?${qs}` : ""}`);
-  return res.json();
+  return requestJson<PatientPacket>("GET", `/api/patient-packet${qs ? `?${qs}` : ""}`);
 }

@@ -1,4 +1,4 @@
-import { apiRequest } from "@/lib/queryClient";
+import { requestJson } from "@/lib/workflow/safeFetch";
 
 export type CaseDocumentReadiness = {
   id: number;
@@ -53,8 +53,10 @@ export async function fetchCaseDocumentReadiness(
   filters: CaseDocumentReadinessFilters = {},
 ): Promise<CaseDocumentReadiness[]> {
   const qs = buildQuery(filters);
-  const res = await apiRequest("GET", `/api/case-document-readiness${qs ? `?${qs}` : ""}`);
-  return res.json();
+  return requestJson<CaseDocumentReadiness[]>(
+    "GET",
+    `/api/case-document-readiness${qs ? `?${qs}` : ""}`,
+  );
 }
 
 export type ProcedureNote = {
@@ -102,6 +104,8 @@ export async function fetchProcedureNotes(
   filters: ProcedureNotesFilters = {},
 ): Promise<ProcedureNote[]> {
   const qs = buildNoteQuery(filters);
-  const res = await apiRequest("GET", `/api/procedure-notes${qs ? `?${qs}` : ""}`);
-  return res.json();
+  return requestJson<ProcedureNote[]>(
+    "GET",
+    `/api/procedure-notes${qs ? `?${qs}` : ""}`,
+  );
 }

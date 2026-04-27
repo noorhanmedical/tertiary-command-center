@@ -1,4 +1,4 @@
-import { apiRequest } from "@/lib/queryClient";
+import { requestJson } from "@/lib/workflow/safeFetch";
 
 // ─── Completed billing packages ──────────────────────────────────────────────
 
@@ -53,8 +53,10 @@ export async function fetchCompletedBillingPackages(
   filters: CompletedBillingPackagesFilters = {},
 ): Promise<CompletedBillingPackage[]> {
   const qs = buildPackageQuery(filters);
-  const res = await apiRequest("GET", `/api/completed-billing-packages${qs ? `?${qs}` : ""}`);
-  return res.json();
+  return requestJson<CompletedBillingPackage[]>(
+    "GET",
+    `/api/completed-billing-packages${qs ? `?${qs}` : ""}`,
+  );
 }
 
 // ─── Billing readiness checks ────────────────────────────────────────────────
@@ -102,6 +104,8 @@ export async function fetchBillingReadinessChecks(
   filters: BillingReadinessChecksFilters = {},
 ): Promise<BillingReadinessCheck[]> {
   const qs = buildReadinessQuery(filters);
-  const res = await apiRequest("GET", `/api/billing-readiness-checks${qs ? `?${qs}` : ""}`);
-  return res.json();
+  return requestJson<BillingReadinessCheck[]>(
+    "GET",
+    `/api/billing-readiness-checks${qs ? `?${qs}` : ""}`,
+  );
 }

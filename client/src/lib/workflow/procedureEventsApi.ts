@@ -1,4 +1,4 @@
-import { apiRequest } from "@/lib/queryClient";
+import { requestJson } from "@/lib/workflow/safeFetch";
 
 export type ProcedureCompleteInput = {
   serviceType: string;
@@ -25,6 +25,9 @@ export type ProcedureCompleteResponse = {
 export async function markProcedureCompleteApi(
   input: ProcedureCompleteInput,
 ): Promise<ProcedureCompleteResponse> {
-  const res = await apiRequest("POST", "/api/procedure-events/complete", input);
-  return res.json();
+  return requestJson<ProcedureCompleteResponse>(
+    "POST",
+    "/api/procedure-events/complete",
+    input,
+  );
 }
