@@ -143,14 +143,31 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function readField(row: Record<string, unknown> | null | undefined, key: string): string | null {
-  if (!row) return null;
-  const v = row[key];
+function readField(row: unknown, key: string): string | null {
+  if (!row || typeof row !== "object") return null;
+  const v = (row as Record<string, unknown>)[key];
   if (v == null) return null;
   if (typeof v === "string") return v.length > 0 ? v : null;
-  if (typeof v === "number") return String(v);
+  if (typeof v === "number") return Number.isFinite(v) ? String(v) : null;
   if (typeof v === "boolean") return v ? "yes" : "no";
   return null;
+}
+
+/** Defensive array accessor — anything that isn't an array becomes []. */
+function asArray<T = Record<string, unknown>>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : [];
+}
+
+/** Defensive object accessor — anything that isn't a plain object becomes null. */
+function asObject(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null;
+}
+
+/** Defensive number accessor — null/undefined/NaN become null. */
+function asNumber(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
 function formatDate(value: string | null): string | null {
@@ -165,8 +182,22 @@ function formatDate(value: string | null): string | null {
 }
 
 function JourneyBody({ packet }: { packet: PatientPacket }) {
-  const ec = packet.executionCase;
-  const ps = packet.patientScreening;
+  // Defensive shape coercion. Server contract says these are arrays/objects,
+  // but a single bad cell would otherwise crash the entire page render.
+  const ec = asObject(packet?.executionCase);
+  const ps = asObject(packet?.patientScreening);
+
+  const insuranceReviews = asArray(packet?.insuranceEligibilityReviews);
+  const cooldown = asArray(packet?.cooldownRecords);
+  const docs = asArray(packet?.caseDocumentReadiness);
+  const schedule = asArray(packet?.globalScheduleEvents);
+  const billingReadyRows = asArray(packet?.billingReadinessChecks);
+  const billingDocReqRows = asArray(packet?.billingDocumentRequests);
+  const completedPackages = asArray(packet?.completedBillingPackages);
+  const projected = asArray(packet?.projectedInvoiceRows);
+  const procedureNotes = asArray(packet?.procedureNotes);
+  const journeyEvents = asArray(packet?.journeyEvents);
+
   const patientName = readField(ps, "name") ?? readField(ec, "patientName");
   const patientDob = readField(ps, "dob") ?? readField(ec, "patientDob");
   const facility = readField(ps, "facility") ?? readField(ec, "facilityId");
@@ -175,19 +206,18 @@ function JourneyBody({ packet }: { packet: PatientPacket }) {
   const engagementStatus = readField(ec, "engagementStatus");
   const qualificationStatus = readField(ec, "qualificationStatus");
 
-  const latestInsurance = packet.insuranceEligibilityReviews[0];
+  const latestInsurance = asObject(insuranceReviews[0]);
   const eligibilityStatus = readField(latestInsurance, "eligibilityStatus");
   const approvalStatus = readField(latestInsurance, "approvalStatus");
   const priorityClass = readField(latestInsurance, "priorityClass");
 
-  const cooldown = packet.cooldownRecords;
-  const docs = packet.caseDocumentReadiness;
-  const schedule = packet.globalScheduleEvents;
-  const billingReady = packet.billingReadinessChecks[0];
-  const billingDocReq = packet.billingDocumentRequests[0];
-  const completedPackages = packet.completedBillingPackages;
-  const projected = packet.projectedInvoiceRows;
-  const recentJourney = packet.journeyEvents.slice(0, 8);
+  const billingReady = asObject(billingReadyRows[0]);
+  const billingDocReq = asObject(billingDocReqRows[0]);
+  const latestPackage = asObject(completedPackages[0]);
+  const recentJourney = journeyEvents.slice(0, 8);
+
+  const screeningId = asNumber(packet?.resolvedPatientScreeningId);
+  const executionCaseId = asNumber(packet?.resolvedExecutionCaseId);
 
   return (
     <div data-testid="journey-body">
@@ -202,11 +232,11 @@ function JourneyBody({ packet }: { packet: PatientPacket }) {
 
       <Section title="Qualification">
         <KV label="Status" value={qualificationStatus} />
-        <KV label="Screening ID" value={packet.resolvedPatientScreeningId} />
-        <KV label="Execution Case" value={packet.resolvedExecutionCaseId} />
+        <KV label="Screening ID" value={screeningId} />
+        <KV label="Execution Case" value={executionCaseId} />
       </Section>
 
-      <Section title="Insurance" count={packet.insuranceEligibilityReviews.length}>
+      <Section title="Insurance" count={insuranceReviews.length}>
         {latestInsurance ? (
           <>
             <KV label="Eligibility" value={eligibilityStatus} />
@@ -214,13 +244,13 @@ function JourneyBody({ packet }: { packet: PatientPacket }) {
             <KV label="Priority Class" value={priorityClass} />
           </>
         ) : (
-          <div className="text-xs text-slate-400">No eligibility review yet.</div>
+          <div className="text-xs text-slate-400">No data yet.</div>
         )}
       </Section>
 
       <Section title="Cooldown" count={cooldown.length}>
         {cooldown.length === 0 ? (
-          <div className="text-xs text-slate-400">No cooldown records.</div>
+          <div className="text-xs text-slate-400">No data yet.</div>
         ) : (
           <ul className="flex flex-col gap-1">
             {cooldown.slice(0, 5).map((r, i) => (
@@ -237,15 +267,16 @@ function JourneyBody({ packet }: { packet: PatientPacket }) {
 
       <Section title="Schedule" count={schedule.length}>
         {schedule.length === 0 ? (
-          <div className="text-xs text-slate-400">No schedule events.</div>
+          <div className="text-xs text-slate-400">No data yet.</div>
         ) : (
           <ul className="flex flex-col gap-1">
             {schedule.slice(0, 5).map((e, i) => (
               <li key={i} className="flex items-center justify-between gap-2 text-xs">
                 <span className="truncate text-slate-700">
-                  {readField(e, "eventType")} · {readField(e, "status")}
+                  {readField(e, "eventType") ?? "—"}
+                  {readField(e, "status") ? ` · ${readField(e, "status")}` : ""}
                 </span>
-                <span className="text-slate-500">{formatDate(readField(e, "startsAt"))}</span>
+                <span className="text-slate-500">{formatDate(readField(e, "startsAt")) ?? ""}</span>
               </li>
             ))}
           </ul>
@@ -254,12 +285,12 @@ function JourneyBody({ packet }: { packet: PatientPacket }) {
 
       <Section title="Documents" count={docs.length}>
         {docs.length === 0 ? (
-          <div className="text-xs text-slate-400">No document readiness rows.</div>
+          <div className="text-xs text-slate-400">No data yet.</div>
         ) : (
           <ul className="flex flex-col gap-1">
             {docs.slice(0, 6).map((d, i) => (
               <li key={i} className="flex items-center justify-between text-xs">
-                <span className="truncate text-slate-700">{readField(d, "documentType")}</span>
+                <span className="truncate text-slate-700">{readField(d, "documentType") ?? "—"}</span>
                 <Badge variant="outline" className="rounded-full px-2 py-0 text-[10px]">
                   {readField(d, "documentStatus") ?? "—"}
                 </Badge>
@@ -272,30 +303,30 @@ function JourneyBody({ packet }: { packet: PatientPacket }) {
       <Section title="Billing">
         <KV label="Readiness" value={readField(billingReady, "readinessStatus")} />
         <KV label="Doc Request" value={readField(billingDocReq, "requestStatus")} />
-        <KV label="Procedure Notes" value={packet.procedureNotes.length} />
+        <KV label="Procedure Notes" value={procedureNotes.length} />
       </Section>
 
       <Section title="Invoices" count={completedPackages.length + projected.length}>
         <KV label="Completed Packages" value={completedPackages.length} />
         <KV label="Projected Rows" value={projected.length} />
-        {completedPackages[0] && (
+        {latestPackage && (
           <KV
             label="Latest Package"
-            value={`${readField(completedPackages[0], "packageStatus") ?? "—"} · ${readField(completedPackages[0], "paymentStatus") ?? "—"}`}
+            value={`${readField(latestPackage, "packageStatus") ?? "—"} · ${readField(latestPackage, "paymentStatus") ?? "—"}`}
           />
         )}
       </Section>
 
       <Section title="Recent Journey Events" count={recentJourney.length}>
         {recentJourney.length === 0 ? (
-          <div className="text-xs text-slate-400">No journey events yet.</div>
+          <div className="text-xs text-slate-400">No data yet.</div>
         ) : (
           <ul className="flex flex-col gap-1.5">
             {recentJourney.map((e, i) => (
               <li key={i} className="text-xs">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-slate-700">{readField(e, "eventType")}</span>
-                  <span className="text-slate-500">{formatDate(readField(e, "createdAt"))}</span>
+                  <span className="font-medium text-slate-700">{readField(e, "eventType") ?? "—"}</span>
+                  <span className="text-slate-500">{formatDate(readField(e, "createdAt")) ?? ""}</span>
                 </div>
                 {readField(e, "summary") && (
                   <div className="mt-0.5 text-slate-500">{readField(e, "summary")}</div>
