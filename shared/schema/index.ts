@@ -39,4 +39,5 @@ export * from "./pto";
 export * from "./executionCase";
 export * from "./globalSchedule";
 export * from "./schedulingTriage";
+export * from "./insuranceEligibility";
 export * from "../models/chat";
