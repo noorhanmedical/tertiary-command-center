@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import { SiGooglesheets, SiGoogledrive } from "react-icons/si";
 import { PageHeader } from "@/components/PageHeader";
+import { CanonicalBillingPanel } from "@/components/billing/CanonicalBillingPanel";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -1119,6 +1120,8 @@ export default function BillingPage() {
           <span className="text-[10px] text-slate-400 ml-auto font-medium">{filtered.length} record{filtered.length !== 1 ? "s" : ""}</span>
         </div>
       </div>
+
+      <CanonicalBillingPanel />
 
       {/* Spreadsheet */}
       <div className="flex-1 overflow-auto">
