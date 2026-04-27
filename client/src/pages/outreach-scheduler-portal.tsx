@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
   import { Link, useParams } from "wouter";
+  import { useQuery } from "@tanstack/react-query";
   import {
     ArrowLeft, Calendar, Mail, FileText, ListTodo, MessageCircle, Phone, X, Keyboard,
   } from "lucide-react";
@@ -42,6 +43,11 @@ import { useEffect, useMemo, useState } from "react";
   import { useOutreachData } from "@/components/outreach/useOutreachData";
   import { useSelectedPatient } from "@/components/outreach/useSelectedPatient";
   import { PatientJourneyDrawer } from "@/components/patient/PatientJourneyDrawer";
+  import {
+    fetchSchedulerPortalCases,
+    schedulerPortalCasesQueryKey,
+    type SchedulerPortalCase,
+  } from "@/lib/workflow/schedulerPortalApi";
   
 export default function OutreachSchedulerPortalPage() {
   const params = useParams<{ id: string }>();
@@ -109,7 +115,28 @@ export default function OutreachSchedulerPortalPage() {
       callbacksDue,
     } = useOutreachData(schedulerId);
 
-  
+  // ── Canonical execution cases (per-facility) — surfaces patients that
+  //    only exist on the new spine (e.g. seeded TestGuy Robot). The legacy
+  //    call list above keeps its exact prior behavior; we only render the
+  //    canonical-only subset (deduped by patientScreeningId) as a sibling
+  //    section so nothing is hidden or replaced.
+  const { data: canonicalCases = [] } = useQuery<SchedulerPortalCase[]>({
+    queryKey: schedulerPortalCasesQueryKey({ facilityId: facility, limit: 100 }),
+    queryFn: () => fetchSchedulerPortalCases({ facilityId: facility, limit: 100 }),
+    enabled: !!facility,
+    staleTime: 30_000,
+  });
+
+  const canonicalOnlyCases = useMemo<SchedulerPortalCase[]>(() => {
+    if (canonicalCases.length === 0) return [];
+    const legacyScreeningIds = new Set<number>(
+      (card?.callList ?? []).map((p) => p.patientId),
+    );
+    return canonicalCases.filter(
+      (c) => c.patientScreeningId == null || !legacyScreeningIds.has(c.patientScreeningId),
+    );
+  }, [canonicalCases, card]);
+
   // ── Selected patient (Current Call) — URL hash drives selection ────────────
     const { selectedId, selectPatient } = useSelectedPatient();
 
@@ -758,6 +785,52 @@ export default function OutreachSchedulerPortalPage() {
               <div className="text-[11px] text-slate-200">{card.facility}</div>
             </div>
             <div className="p-3">
+              {canonicalOnlyCases.length > 0 && (
+                <div
+                  className="mb-3 rounded-2xl border border-white/30 bg-white/10 p-2"
+                  data-testid="canonical-cases-section"
+                >
+                  <div className="mb-2 flex items-center justify-between gap-2 px-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-white/80">
+                      Canonical Cases
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className="rounded-full border-white/30 bg-white/10 px-2 py-0 text-[10px] text-white"
+                    >
+                      {canonicalOnlyCases.length}
+                    </Badge>
+                  </div>
+                  <ul className="space-y-1.5">
+                    {canonicalOnlyCases.map((c) => (
+                      <li
+                        key={c.id}
+                        className="flex items-center justify-between gap-2 rounded-xl bg-white/85 px-2.5 py-1.5"
+                        data-testid={`canonical-case-${c.id}`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs font-medium text-slate-800">
+                            {c.patientName}
+                          </div>
+                          <div className="truncate text-[10px] text-slate-500">
+                            {c.engagementBucket} · {c.qualificationStatus}
+                          </div>
+                        </div>
+                        <PatientJourneyDrawer
+                          lookup={{
+                            executionCaseId: c.id,
+                            patientScreeningId: c.patientScreeningId ?? undefined,
+                            patientName: c.patientName,
+                            patientDob: c.patientDob ?? undefined,
+                          }}
+                          triggerSize="sm"
+                          triggerVariant="outline"
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <CallListPanel
                 sortedCallList={sortedCallList}
                 selectedId={selectedId}
