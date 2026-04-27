@@ -27,9 +27,14 @@ export type PatientPacketLookup = {
   patientDob?: string;
 };
 
+/** Warning values surfaced when the resolution chain didn't produce a strict
+ *  identifier match. Currently only "name_only_fallback" is emitted. */
+export type PatientPacketLookupWarning = "name_only_fallback";
+
 export type PatientPacket = {
   resolvedPatientScreeningId: number | null;
   resolvedExecutionCaseId: number | null;
+  lookupWarning: PatientPacketLookupWarning | null;
   patientScreening: PatientScreening | null;
   executionCase: Awaited<ReturnType<typeof getExecutionCaseById>> | null;
   journeyEvents: Awaited<ReturnType<typeof listJourneyEvents>>;
@@ -106,9 +111,19 @@ const SAFE_LIMIT = 200;
  *  Resolves patientScreeningId from one of: executionCaseId, patientScreeningId,
  *  or (patientName + patientDob). Empty arrays/null fields when not found. */
 export async function getPatientPacket(lookup: PatientPacketLookup): Promise<PatientPacket> {
+  // Strict resolution priority:
+  //   1. executionCaseId  (wins first — directly addresses a canonical case)
+  //   2. patientScreeningId (wins second)
+  //   3. patientName + patientDob (exact match)
+  //   4. patientName alone — TEST/ADMIN-ONLY fallback. When this branch fires
+  //      we set lookupWarning = "name_only_fallback" so the caller can show
+  //      a "best-effort" indicator rather than treating the row as a strict
+  //      identifier match. Production lookups should always supply at least
+  //      a screening id or (name + dob).
   let resolvedScreeningId: number | null = lookup.patientScreeningId ?? null;
   let resolvedExecutionCaseId: number | null = lookup.executionCaseId ?? null;
   let patientScreening: PatientScreening | null = null;
+  let lookupWarning: PatientPacketLookupWarning | null = null;
 
   if (lookup.executionCaseId != null) {
     const execCase = await getExecutionCaseById(lookup.executionCaseId);
@@ -121,27 +136,20 @@ export async function getPatientPacket(lookup: PatientPacketLookup): Promise<Pat
   }
 
   if (resolvedScreeningId == null && lookup.patientName) {
-    // Resolution order:
-    //   1. Exact name + dob (when dob is supplied)
-    //   2. Newest screening that has a linked patient_execution_case — i.e.
-    //      a row produced by the canonical seed/commit flow with
-    //      insurance/cooldown/document/procedure/billing children attached.
-    //      Without this preference, a legacy fixture row written AFTER the
-    //      canonical seed (higher screening id, no execution case) would
-    //      shadow the seeded TestGuy and the packet would render empty.
-    //   3. Newest screening matching name alone (last-resort fallback for
-    //      patients that were never wired to the canonical spine).
-    // Step 1 still wins when (name, dob) is unique and accurate, so normal
-    // non-TestGuy lookups are unaffected.
+    // Step 3 (exact name + dob) does NOT set the fallback warning — that's a
+    // legitimate strict match. Steps 4a (canonical-linked) and 4b (newest by
+    // name) DO set the warning since the caller didn't pin to a specific row.
     let screening: PatientScreening | undefined;
     if (lookup.patientDob) {
       screening = await findScreeningByNameAndDob(lookup.patientName, lookup.patientDob);
     }
     if (!screening) {
       screening = await findLatestCanonicalScreeningByName(lookup.patientName);
+      if (screening) lookupWarning = "name_only_fallback";
     }
     if (!screening) {
       screening = await findLatestScreeningByName(lookup.patientName);
+      if (screening) lookupWarning = "name_only_fallback";
     }
     if (screening) {
       resolvedScreeningId = screening.id;
@@ -170,6 +178,7 @@ export async function getPatientPacket(lookup: PatientPacketLookup): Promise<Pat
     return {
       resolvedPatientScreeningId: null,
       resolvedExecutionCaseId: null,
+      lookupWarning,
       patientScreening: null,
       executionCase: null,
       journeyEvents: [],
@@ -226,6 +235,7 @@ export async function getPatientPacket(lookup: PatientPacketLookup): Promise<Pat
   return {
     resolvedPatientScreeningId: resolvedScreeningId,
     resolvedExecutionCaseId,
+    lookupWarning,
     patientScreening,
     executionCase,
     journeyEvents,

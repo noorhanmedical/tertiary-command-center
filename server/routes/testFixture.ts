@@ -14,7 +14,15 @@ import { and, eq, ilike, inArray, or } from "drizzle-orm";
 import { saveBlob, deleteTestBlobs } from "../services/blobStore";
 import { enqueueDriveFile, enqueueSheetSync, deleteTestOutboxItems, drainOutbox } from "../services/outbox";
 
+// Canonical TestGuy identity — must match script/seedTestGuyFlow.ts and
+// script/reconcileTestGuy.ts so every generator points at the same patient
+// row. Drift here causes the patient packet lookup to resolve a stale row
+// with no canonical spine attached.
 const TEST_PATIENT_NAME = "TestGuy Robot";
+const TEST_PATIENT_DOB = "01/01/1950";
+const TEST_FACILITY = "Test Facility";
+const TEST_INSURANCE = "Straight Medicare";
+const TEST_PATIENT_AGE = 76;
 const TEST_MRN = "TEST-ROBOT-001";
 const TEST_BATCH_NAME = "TestGuy Robot — End-to-End Verification";
 
@@ -33,7 +41,7 @@ export function registerTestFixtureRoutes(app: Express) {
   app.post("/api/admin/test-fixture/run", requireAdmin, async (req, res) => {
     try {
       const { autoUpload } = (req.body ?? {}) as { autoUpload?: boolean };
-      const facility = "NWPG";
+      const facility = TEST_FACILITY;
 
       // 1) Cleanup prior run so this is idempotent.
       await runCleanup();
@@ -50,16 +58,16 @@ export function registerTestFixtureRoutes(app: Express) {
         isTest: true,
       });
 
-      // 3) Create patient
+      // 3) Create patient — canonical identity (matches seedTestGuyFlow + reconcileTestGuy)
       const patient = await storage.createPatientScreening({
         batchId: batch.id,
         time: "9:00 AM",
         name: TEST_PATIENT_NAME,
-        age: 67,
+        age: TEST_PATIENT_AGE,
         gender: "M",
-        dob: "1958-04-12",
+        dob: TEST_PATIENT_DOB,
         phoneNumber: "555-0100",
-        insurance: "Medicare",
+        insurance: TEST_INSURANCE,
         facility,
         diagnoses: "HTN, T2DM, hyperlipidemia",
         history: "Smoker x40 years, family hx CAD",

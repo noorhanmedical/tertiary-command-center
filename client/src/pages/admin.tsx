@@ -140,11 +140,13 @@ export default function AdminPage() {
                 <Link href="/admin/outbox">
                   <Button variant="ghost" className="text-blue-700">Open Outbox →</Button>
                 </Link>
+                {/* Name-only lookup intentionally — the server's resolution
+                    chain prefers the canonical-spine row, and after running
+                    `npm run reconcile:testguy` every TestGuy row carries the
+                    canonical identity. Avoid hardcoding screening or case
+                    ids here so the admin button stays correct across re-seeds. */}
                 <PatientJourneyDrawer
-                  lookup={{
-                    patientName: "TestGuy Robot",
-                    patientDob: "01/01/1950",
-                  }}
+                  lookup={{ patientName: "TestGuy Robot" }}
                   triggerLabel="Open TestGuy Packet"
                   triggerSize="default"
                   triggerVariant="ghost"
