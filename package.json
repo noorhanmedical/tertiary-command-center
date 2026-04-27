@@ -13,7 +13,10 @@
     "check:canonical-tables": "tsx script/checkCanonicalTables.ts",
     "smoke:canonical-apis": "tsx script/smokeCanonicalApis.ts",
     "seed:testguy-flow": "tsx script/seedTestGuyFlow.ts",
-    "reconcile:testguy": "tsx script/reconcileTestGuy.ts"
+    "reconcile:testguy": "tsx script/reconcileTestGuy.ts",
+    "seed:visit-flow": "tsx script/seedVisitPatientFlow.ts",
+    "seed:outreach-flow": "tsx script/seedOutreachPatientFlow.ts",
+    "seed:canonical-flows": "tsx script/seedCanonicalWorkflowScenarios.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
