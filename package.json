@@ -11,7 +11,8 @@
     "db:push": "drizzle-kit push",
     "seed:admin-settings": "tsx script/seedAdminSettings.ts",
     "check:canonical-tables": "tsx script/checkCanonicalTables.ts",
-    "smoke:canonical-apis": "tsx script/smokeCanonicalApis.ts"
+    "smoke:canonical-apis": "tsx script/smokeCanonicalApis.ts",
+    "seed:testguy-flow": "tsx script/seedTestGuyFlow.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
