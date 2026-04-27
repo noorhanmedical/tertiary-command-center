@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { eq, and, desc } from "drizzle-orm";
 import { patientScreenings, type PatientScreening } from "@shared/schema/screening";
+import { patientExecutionCases } from "@shared/schema/executionCase";
 
 import {
   getExecutionCaseById,
@@ -70,6 +71,26 @@ async function findLatestScreeningByName(
   return row;
 }
 
+/** Prefer screenings that have a linked patient_execution_case row — these
+ *  are the canonical-spine rows produced by the seed/commit flow and have
+ *  insurance/cooldown/document/procedure/billing children attached. Returns
+ *  the screening tied to the most recent execution case for the given name. */
+async function findLatestCanonicalScreeningByName(
+  patientName: string,
+): Promise<PatientScreening | undefined> {
+  const rows = await db
+    .select({ screening: patientScreenings })
+    .from(patientScreenings)
+    .innerJoin(
+      patientExecutionCases,
+      eq(patientExecutionCases.patientScreeningId, patientScreenings.id),
+    )
+    .where(eq(patientScreenings.name, patientName))
+    .orderBy(desc(patientExecutionCases.id))
+    .limit(1);
+  return rows[0]?.screening;
+}
+
 async function getScreeningById(id: number): Promise<PatientScreening | undefined> {
   const [row] = await db
     .select()
@@ -100,14 +121,24 @@ export async function getPatientPacket(lookup: PatientPacketLookup): Promise<Pat
   }
 
   if (resolvedScreeningId == null && lookup.patientName) {
-    // Try exact name + dob first, then fall back to name-only (newest match
-    // wins) so callers don't have to know which seed/fixture wrote the row
-    // (DOB formats vary: legacy fixtures use ISO "1958-04-12" while the
-    // canonical seed uses "01/01/1950"). Name-only fallback ensures the most
-    // recently-created TestGuy row always resolves.
+    // Resolution order:
+    //   1. Exact name + dob (when dob is supplied)
+    //   2. Newest screening that has a linked patient_execution_case — i.e.
+    //      a row produced by the canonical seed/commit flow with
+    //      insurance/cooldown/document/procedure/billing children attached.
+    //      Without this preference, a legacy fixture row written AFTER the
+    //      canonical seed (higher screening id, no execution case) would
+    //      shadow the seeded TestGuy and the packet would render empty.
+    //   3. Newest screening matching name alone (last-resort fallback for
+    //      patients that were never wired to the canonical spine).
+    // Step 1 still wins when (name, dob) is unique and accurate, so normal
+    // non-TestGuy lookups are unaffected.
     let screening: PatientScreening | undefined;
     if (lookup.patientDob) {
       screening = await findScreeningByNameAndDob(lookup.patientName, lookup.patientDob);
+    }
+    if (!screening) {
+      screening = await findLatestCanonicalScreeningByName(lookup.patientName);
     }
     if (!screening) {
       screening = await findLatestScreeningByName(lookup.patientName);
