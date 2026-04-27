@@ -31,6 +31,7 @@ import { registerSchedulingTriageRoutes } from "./routes/schedulingTriage";
 import { registerInsuranceEligibilityRoutes } from "./routes/insuranceEligibility";
 import { registerCooldownRoutes } from "./routes/cooldown";
 import { registerAdminSettingsRoutes } from "./routes/adminSettings";
+import { registerDocumentReadinessRoutes } from "./routes/documentReadiness";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
@@ -228,6 +229,7 @@ export async function registerRoutes(
   registerInsuranceEligibilityRoutes(app);
   registerCooldownRoutes(app);
   registerAdminSettingsRoutes(app);
+  registerDocumentReadinessRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {
