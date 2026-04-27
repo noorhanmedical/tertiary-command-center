@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, notInArray } from "drizzle-orm";
 import {
   patientExecutionCases,
   patientJourneyEvents,
@@ -169,6 +169,55 @@ export async function listEngagementCenterCases(
   return conditions.length > 0
     ? query.where(and(...conditions)).orderBy(...orderClause).limit(safeLimit)
     : query.orderBy(...orderClause).limit(safeLimit);
+}
+
+export type ListSchedulerPortalCasesFilters = {
+  assignedTeamMemberId?: number;
+  facilityId?: string;
+  engagementBucket?: string;
+  lifecycleStatus?: string;
+  engagementStatus?: string;
+  qualificationStatus?: string;
+};
+
+const SCHEDULER_DEFAULT_BUCKETS = ["visit", "outreach", "scheduling_triage"] as const;
+const SCHEDULER_TERMINAL_ENGAGEMENT_STATUSES = ["completed", "closed"] as const;
+
+/** Scheduler Portal read: defaults to scheduler-relevant buckets and excludes
+ *  terminal engagement statuses when caller does not override. Ordered by
+ *  nextActionAt ASC NULLS LAST, priorityScore DESC NULLS LAST, createdAt DESC. */
+export async function listSchedulerPortalCases(
+  filters: ListSchedulerPortalCasesFilters = {},
+  limit = 100,
+): Promise<PatientExecutionCase[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = [];
+
+  if (filters.engagementBucket) {
+    conditions.push(eq(patientExecutionCases.engagementBucket, filters.engagementBucket));
+  } else {
+    conditions.push(inArray(patientExecutionCases.engagementBucket, [...SCHEDULER_DEFAULT_BUCKETS]));
+  }
+
+  if (filters.engagementStatus) {
+    conditions.push(eq(patientExecutionCases.engagementStatus, filters.engagementStatus));
+  } else {
+    conditions.push(notInArray(patientExecutionCases.engagementStatus, [...SCHEDULER_TERMINAL_ENGAGEMENT_STATUSES]));
+  }
+
+  if (filters.assignedTeamMemberId != null) conditions.push(eq(patientExecutionCases.assignedTeamMemberId, filters.assignedTeamMemberId));
+  if (filters.facilityId) conditions.push(eq(patientExecutionCases.facilityId, filters.facilityId));
+  if (filters.lifecycleStatus) conditions.push(eq(patientExecutionCases.lifecycleStatus, filters.lifecycleStatus));
+  if (filters.qualificationStatus) conditions.push(eq(patientExecutionCases.qualificationStatus, filters.qualificationStatus));
+
+  const query = db.select().from(patientExecutionCases).$dynamic();
+  const orderClause = [
+    sql`${patientExecutionCases.nextActionAt} ASC NULLS LAST`,
+    sql`${patientExecutionCases.priorityScore} DESC NULLS LAST`,
+    desc(patientExecutionCases.createdAt),
+  ];
+
+  return query.where(and(...conditions)).orderBy(...orderClause).limit(safeLimit);
 }
 
 export type ListJourneyEventsFilters = {
