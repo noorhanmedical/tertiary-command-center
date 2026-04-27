@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, asc, desc, gte, lte, inArray } from "drizzle-orm";
+import { eq, and, asc, desc, gte, lte, inArray, sql } from "drizzle-orm";
 import {
   globalScheduleEvents,
   type GlobalScheduleEvent,
@@ -198,6 +198,116 @@ export async function listTechnicianLiaisonAncillarySchedule(
   if (filters.facilityId) conditions.push(eq(globalScheduleEvents.facilityId, filters.facilityId));
   if (filters.assignedUserId) conditions.push(eq(globalScheduleEvents.assignedUserId, filters.assignedUserId));
   if (filters.serviceType) conditions.push(eq(globalScheduleEvents.serviceType, filters.serviceType));
+  if (filters.startDate) conditions.push(gte(globalScheduleEvents.startsAt, filters.startDate));
+  if (filters.endDate) conditions.push(lte(globalScheduleEvents.startsAt, filters.endDate));
+
+  return db
+    .select()
+    .from(globalScheduleEvents)
+    .where(and(...conditions))
+    .orderBy(asc(globalScheduleEvents.startsAt))
+    .limit(safeLimit);
+}
+
+// ─── Team availability blocks (PTO / sick / unavailable) ─────────────────────
+
+const TEAM_BLOCK_EVENT_TYPES = ["pto_block", "sick_day", "unavailable_block"] as const;
+export type TeamBlockEventType = typeof TEAM_BLOCK_EVENT_TYPES[number];
+
+export type CreateScheduleBlockFromPtoInput = {
+  ptoId: number;
+  userId: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+  eventType?: TeamBlockEventType;
+  note?: string | null;
+  facilityId?: string | null;
+};
+
+function parseDateBoundary(dateStr: string, boundary: "start" | "end"): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = boundary === "start"
+    ? new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0)
+    : new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
+  return isNaN(dt.getTime()) ? null : dt;
+}
+
+/** Create or update a team-availability block in global_schedule_events for a
+ *  PTO/sick/unavailable record. Deduplicates by metadata.ptoId so re-approving
+ *  or re-running the hook keeps a single block per PTO request. Returns null
+ *  when the dates can't be parsed. */
+export async function createGlobalScheduleBlockFromPto(
+  input: CreateScheduleBlockFromPtoInput,
+): Promise<{ event: GlobalScheduleEvent; created: boolean } | null> {
+  const startsAt = parseDateBoundary(input.startDate, "start");
+  const endsAt = parseDateBoundary(input.endDate, "end");
+  if (!startsAt || !endsAt) return null;
+
+  const eventType: TeamBlockEventType = input.eventType ?? "pto_block";
+
+  // Dedupe by jsonb metadata.ptoId
+  const [existing] = await db
+    .select()
+    .from(globalScheduleEvents)
+    .where(sql`(${globalScheduleEvents.metadata}->>'ptoId')::int = ${input.ptoId}`)
+    .limit(1);
+
+  const payload = {
+    eventType,
+    source: "team_ops" as const,
+    status: "blocked" as const,
+    assignedUserId: input.userId,
+    facilityId: input.facilityId ?? undefined,
+    startsAt,
+    endsAt,
+    metadata: {
+      ptoId: input.ptoId,
+      type: eventType,
+      reason: input.note ?? null,
+    },
+  };
+
+  if (existing) {
+    const [updated] = await db
+      .update(globalScheduleEvents)
+      .set({ ...payload, updatedAt: new Date() })
+      .where(eq(globalScheduleEvents.id, existing.id))
+      .returning();
+    return { event: updated, created: false };
+  }
+
+  const [created] = await db
+    .insert(globalScheduleEvents)
+    .values(payload)
+    .returning();
+  return { event: created, created: true };
+}
+
+export type ListTeamAvailabilityBlocksFilters = {
+  assignedUserId?: string;
+  facilityId?: string;
+  eventType?: TeamBlockEventType;
+  startDate?: Date;
+  endDate?: Date;
+};
+
+/** List team availability blocks (pto_block / sick_day / unavailable_block)
+ *  ordered by startsAt ASC. */
+export async function listTeamAvailabilityBlocks(
+  filters: ListTeamAvailabilityBlocksFilters = {},
+  limit = 100,
+): Promise<GlobalScheduleEvent[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = [];
+
+  if (filters.eventType) {
+    conditions.push(eq(globalScheduleEvents.eventType, filters.eventType));
+  } else {
+    conditions.push(inArray(globalScheduleEvents.eventType, [...TEAM_BLOCK_EVENT_TYPES]));
+  }
+  if (filters.assignedUserId) conditions.push(eq(globalScheduleEvents.assignedUserId, filters.assignedUserId));
+  if (filters.facilityId) conditions.push(eq(globalScheduleEvents.facilityId, filters.facilityId));
   if (filters.startDate) conditions.push(gte(globalScheduleEvents.startsAt, filters.startDate));
   if (filters.endDate) conditions.push(lte(globalScheduleEvents.startsAt, filters.endDate));
 

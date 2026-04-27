@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { insertPtoRequestSchema, PTO_STATUSES } from "../../shared/schema";
 import { z } from "zod";
+import { createGlobalScheduleBlockFromPto } from "../repositories/globalSchedule.repo";
 
 export function registerPtoRoutes(app: Express) {
   // List PTO requests
@@ -74,6 +75,21 @@ export function registerPtoRoutes(app: Express) {
 
       const updated = await storage.reviewPtoRequest(id, parsed.data.status, req.session.userId!);
       if (!updated) return res.status(404).json({ error: "Request not found" });
+
+      // On approval: mirror the PTO span into global_schedule_events as a
+      // team availability block (pto_block) so the calendar/Team Ops surfaces
+      // can show the user as unavailable. Idempotent — dedupes by metadata.ptoId.
+      if (parsed.data.status === "approved") {
+        void createGlobalScheduleBlockFromPto({
+          ptoId: updated.id,
+          userId: updated.userId,
+          startDate: updated.startDate,
+          endDate: updated.endDate,
+          note: updated.note,
+        }).catch((err) => {
+          console.error("[pto] createGlobalScheduleBlockFromPto failed:", err);
+        });
+      }
 
       // PTO-driven release + redistribute: when an approval covers today,
       // immediately reshuffle that scheduler's call list to the rest of

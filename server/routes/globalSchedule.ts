@@ -4,6 +4,7 @@ import {
   getGlobalScheduleEventById,
   listTechnicianLiaisonClinicVisits,
   listTechnicianLiaisonAncillarySchedule,
+  listTeamAvailabilityBlocks,
 } from "../repositories/globalSchedule.repo";
 
 export function registerGlobalScheduleRoutes(app: Express) {
@@ -88,6 +89,34 @@ export function registerGlobalScheduleRoutes(app: Express) {
         if (!isNaN(d.getTime())) filters.endDate = d;
       }
       const rows = await listTechnicianLiaisonAncillarySchedule(filters, limit);
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/global-schedule/team-availability-blocks
+  // Filters: assignedUserId, facilityId, eventType, startDate, endDate, limit
+  // Returns pto_block / sick_day / unavailable_block events ordered by startsAt ASC.
+  app.get("/api/global-schedule/team-availability-blocks", async (req, res) => {
+    try {
+      const q = req.query as Record<string, string | undefined>;
+      const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
+      const filters: Parameters<typeof listTeamAvailabilityBlocks>[0] = {};
+      if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
+      if (q.facilityId) filters.facilityId = q.facilityId;
+      if (q.eventType === "pto_block" || q.eventType === "sick_day" || q.eventType === "unavailable_block") {
+        filters.eventType = q.eventType;
+      }
+      if (q.startDate) {
+        const d = new Date(q.startDate);
+        if (!isNaN(d.getTime())) filters.startDate = d;
+      }
+      if (q.endDate) {
+        const d = new Date(q.endDate);
+        if (!isNaN(d.getTime())) filters.endDate = d;
+      }
+      const rows = await listTeamAvailabilityBlocks(filters, limit);
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
