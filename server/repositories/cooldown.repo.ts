@@ -5,6 +5,7 @@ import {
   type CooldownRecord,
   type InsertCooldownRecord,
 } from "@shared/schema/cooldown";
+import type { PatientScreening } from "@shared/schema/screening";
 
 export type ListCooldownRecordsFilters = {
   executionCaseId?: number;
@@ -44,6 +45,61 @@ export async function getCooldownRecordById(id: number): Promise<CooldownRecord 
     .where(eq(cooldownRecords.id, id))
     .limit(1);
   return result;
+}
+
+/** Upsert one cooldown_record per qualifying service on the screening.
+ *  Deduplicates by (patientScreeningId, serviceType). Returns all upserted records. */
+export async function createOrUpdateCooldownRecordsFromScreening(
+  screening: PatientScreening,
+  executionCaseId: number,
+): Promise<CooldownRecord[]> {
+  const services = Array.isArray(screening.qualifyingTests)
+    ? (screening.qualifyingTests as string[]).filter(Boolean)
+    : [];
+
+  if (services.length === 0) return [];
+
+  const results: CooldownRecord[] = [];
+
+  for (const serviceType of services) {
+    const [existing] = await db
+      .select()
+      .from(cooldownRecords)
+      .where(
+        and(
+          eq(cooldownRecords.patientScreeningId, screening.id),
+          eq(cooldownRecords.serviceType, serviceType),
+        ),
+      )
+      .limit(1);
+
+    const payload = {
+      executionCaseId,
+      patientName: screening.name,
+      patientDob: screening.dob ?? undefined,
+      facilityId: screening.facility ?? undefined,
+      serviceType,
+      cooldownStatus: "unknown" as const,
+      overrideStatus: "none" as const,
+    };
+
+    if (existing) {
+      const [updated] = await db
+        .update(cooldownRecords)
+        .set({ ...payload, updatedAt: new Date() })
+        .where(eq(cooldownRecords.id, existing.id))
+        .returning();
+      results.push(updated);
+    } else {
+      const [created] = await db
+        .insert(cooldownRecords)
+        .values({ ...payload, patientScreeningId: screening.id })
+        .returning();
+      results.push(created);
+    }
+  }
+
+  return results;
 }
 
 export async function listCooldownRecords(

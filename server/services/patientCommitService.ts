@@ -11,6 +11,7 @@ import {
 } from "../repositories/executionCase.repo";
 import { createGlobalScheduleEventFromScreeningCommit } from "../repositories/globalSchedule.repo";
 import { createOrUpdateInsuranceEligibilityReviewFromScreening } from "../repositories/insuranceEligibility.repo";
+import { createOrUpdateCooldownRecordsFromScreening } from "../repositories/cooldown.repo";
 
 export type CommitOutcome = {
   patient: PatientScreening;
@@ -112,6 +113,12 @@ export async function commitPatient(
         executionCase.id,
       );
 
+      // Cooldown records — one per qualifying service
+      const cooldownResults = await createOrUpdateCooldownRecordsFromScreening(
+        updated,
+        executionCase.id,
+      );
+
       await appendPatientJourneyEvent({
         patientName: updated.name,
         patientDob: updated.dob ?? undefined,
@@ -132,6 +139,8 @@ export async function commitPatient(
           eligibilityStatus: eligibilityResult.review.eligibilityStatus,
           approvalStatus: eligibilityResult.review.approvalStatus,
           priorityClass: eligibilityResult.review.priorityClass,
+          cooldownRecordIds: cooldownResults.map((r) => r.id),
+          cooldownRecordCount: cooldownResults.length,
         },
       });
       await appendPatientJourneyEvent({
