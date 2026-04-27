@@ -5,6 +5,87 @@ import {
   type SchedulingTriageCase,
   type InsertSchedulingTriageCase,
 } from "@shared/schema/schedulingTriage";
+import type { GlobalScheduleEvent } from "@shared/schema/globalSchedule";
+
+const TRIAGE_TRIGGER_STATUSES = new Set([
+  "no_show",
+  "cancelled",
+  "cancellation",
+  "reschedule_needed",
+]);
+
+type TriageMapping = {
+  mainType: string;
+  subtype: string;
+  nextOwnerRole: string;
+};
+
+function triageMappingForStatus(status: string): TriageMapping | null {
+  if (status === "no_show") {
+    return { mainType: "no_show_recovery", subtype: "patient_no_showed", nextOwnerRole: "scheduler" };
+  }
+  if (status === "cancelled" || status === "cancellation") {
+    return { mainType: "cancellation_recovery", subtype: "needs_rebooking_after_cancellation", nextOwnerRole: "scheduler" };
+  }
+  if (status === "reschedule_needed") {
+    return { mainType: "reschedule", subtype: "needs_new_date", nextOwnerRole: "scheduler" };
+  }
+  return null;
+}
+
+/** Create a scheduling triage case from a global schedule event that has
+ *  transitioned to a triggering status (no_show, cancelled, cancellation,
+ *  reschedule_needed). Idempotent: if a case already exists for the same
+ *  globalScheduleEventId + mainType it is returned unchanged. */
+export async function createSchedulingTriageCaseFromScheduleEvent(
+  event: GlobalScheduleEvent,
+): Promise<SchedulingTriageCase | null> {
+  if (!TRIAGE_TRIGGER_STATUSES.has(event.status)) return null;
+
+  const mapping = triageMappingForStatus(event.status);
+  if (!mapping) return null;
+
+  // Deduplicate: one triage case per (globalScheduleEventId, mainType)
+  const [existing] = await db
+    .select()
+    .from(schedulingTriageCases)
+    .where(
+      and(
+        eq(schedulingTriageCases.globalScheduleEventId, event.id),
+        eq(schedulingTriageCases.mainType, mapping.mainType),
+      ),
+    )
+    .limit(1);
+
+  if (existing) return existing;
+
+  const [created] = await db
+    .insert(schedulingTriageCases)
+    .values({
+      globalScheduleEventId: event.id,
+      executionCaseId: event.executionCaseId ?? undefined,
+      patientScreeningId: event.patientScreeningId ?? undefined,
+      patientName: event.patientName ?? undefined,
+      patientDob: event.patientDob ?? undefined,
+      facilityId: event.facilityId ?? undefined,
+      mainType: mapping.mainType,
+      subtype: mapping.subtype,
+      status: "open",
+      priority: "normal",
+      nextOwnerRole: mapping.nextOwnerRole,
+      metadata: {
+        globalScheduleEventId: event.id,
+        executionCaseId: event.executionCaseId ?? null,
+        patientScreeningId: event.patientScreeningId ?? null,
+        facilityId: event.facilityId ?? null,
+        eventStatus: event.status,
+        createdSource: "global_schedule_status_change",
+      },
+    })
+    .returning();
+
+  return created;
+}
 
 export type ListSchedulingTriageCasesFilters = {
   executionCaseId?: number;

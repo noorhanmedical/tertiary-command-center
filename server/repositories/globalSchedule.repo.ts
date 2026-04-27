@@ -6,6 +6,7 @@ import {
   type InsertGlobalScheduleEvent,
 } from "@shared/schema/globalSchedule";
 import type { PatientScreening } from "@shared/schema/screening";
+import { createSchedulingTriageCaseFromScheduleEvent } from "./schedulingTriage.repo";
 
 export type ListGlobalScheduleEventsFilters = {
   facilityId?: string;
@@ -38,6 +39,13 @@ export async function updateGlobalScheduleEvent(
     .set({ ...updates, updatedAt: new Date() })
     .where(eq(globalScheduleEvents.id, id))
     .returning();
+
+  if (result && updates.status !== undefined) {
+    void createSchedulingTriageCaseFromScheduleEvent(result).catch((err) => {
+      console.error("[globalSchedule.repo] scheduling triage hook failed:", err);
+    });
+  }
+
   return result;
 }
 
