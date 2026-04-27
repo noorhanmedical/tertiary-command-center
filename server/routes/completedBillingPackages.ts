@@ -1,8 +1,18 @@
 import type { Express } from "express";
+import { z } from "zod";
 import {
   listCompletedBillingPackages,
   getCompletedBillingPackageById,
+  updateCompletedBillingPackagePayment,
 } from "../repositories/completedBillingPackages.repo";
+
+const paymentUpdateSchema = z.object({
+  fullAmountPaid: z.string().min(1, "fullAmountPaid is required"),
+  paymentDate: z.string().optional().nullable(),
+  paymentStatus: z.string().optional(),
+  note: z.string().optional().nullable(),
+  metadata: z.record(z.unknown()).optional(),
+});
 
 export function registerCompletedBillingPackageRoutes(app: Express) {
   // GET /api/completed-billing-packages
@@ -44,6 +54,29 @@ export function registerCompletedBillingPackageRoutes(app: Express) {
       res.json(packages);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/completed-billing-packages/:id/payment
+  app.post("/api/completed-billing-packages/:id/payment", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+
+      const parsed = paymentUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+
+      const updated = await updateCompletedBillingPackagePayment(id, {
+        ...parsed.data,
+        paymentUpdatedByUserId: req.session?.userId ?? undefined,
+      });
+
+      if (!updated) return res.status(404).json({ error: "Completed billing package not found" });
+      return res.json(updated);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
     }
   });
 

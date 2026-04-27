@@ -46,6 +46,46 @@ export async function getCompletedBillingPackageById(id: number): Promise<Comple
   return result;
 }
 
+export type UpdatePaymentInput = {
+  fullAmountPaid: string;
+  paymentDate?: string | null;
+  paymentStatus?: string;
+  note?: string | null;
+  metadata?: Record<string, unknown>;
+  paymentUpdatedByUserId?: string | null;
+};
+
+export async function updateCompletedBillingPackagePayment(
+  id: number,
+  input: UpdatePaymentInput,
+): Promise<CompletedBillingPackage | undefined> {
+  const existing = await getCompletedBillingPackageById(id);
+  if (!existing) return undefined;
+
+  const now = new Date();
+  const mergedMetadata: Record<string, unknown> = {
+    ...(typeof existing.metadata === "object" && existing.metadata !== null ? existing.metadata as Record<string, unknown> : {}),
+    ...(input.metadata ?? {}),
+    ...(input.note != null ? { paymentNote: input.note } : {}),
+  };
+
+  const [result] = await db
+    .update(completedBillingPackages)
+    .set({
+      fullAmountPaid: input.fullAmountPaid,
+      paymentDate: input.paymentDate ?? undefined,
+      paymentStatus: input.paymentStatus ?? "updated",
+      packageStatus: "completed_package",
+      paymentUpdatedAt: now,
+      paymentUpdatedByUserId: input.paymentUpdatedByUserId ?? undefined,
+      metadata: mergedMetadata,
+      updatedAt: now,
+    })
+    .where(eq(completedBillingPackages.id, id))
+    .returning();
+  return result;
+}
+
 export async function listCompletedBillingPackages(
   filters: ListCompletedBillingPackagesFilters = {},
   limit = 100,
