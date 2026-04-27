@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, asc, desc, gte, lte, inArray, sql } from "drizzle-orm";
+import { eq, and, or, asc, desc, gte, lte, inArray, ilike, sql } from "drizzle-orm";
 import {
   globalScheduleEvents,
   type GlobalScheduleEvent,
@@ -198,6 +198,56 @@ export async function listTechnicianLiaisonAncillarySchedule(
   if (filters.facilityId) conditions.push(eq(globalScheduleEvents.facilityId, filters.facilityId));
   if (filters.assignedUserId) conditions.push(eq(globalScheduleEvents.assignedUserId, filters.assignedUserId));
   if (filters.serviceType) conditions.push(eq(globalScheduleEvents.serviceType, filters.serviceType));
+  if (filters.startDate) conditions.push(gte(globalScheduleEvents.startsAt, filters.startDate));
+  if (filters.endDate) conditions.push(lte(globalScheduleEvents.startsAt, filters.endDate));
+
+  return db
+    .select()
+    .from(globalScheduleEvents)
+    .where(and(...conditions))
+    .orderBy(asc(globalScheduleEvents.startsAt))
+    .limit(safeLimit);
+}
+
+// ─── Ultrasound Tech reads ────────────────────────────────────────────────────
+
+const ULTRASOUND_EVENT_TYPES = ["ancillary_appointment", "same_day_add"] as const;
+const ULTRASOUND_SPECIFIC_SERVICE_NAMES = ["Ultrasound", "VitalWave", "BrainWave"] as const;
+
+export type ListUltrasoundTechScheduleFilters = {
+  assignedUserId?: string;
+  facilityId?: string;
+  serviceType?: string;
+  status?: string;
+  startDate?: Date;
+  endDate?: Date;
+};
+
+/** Ultrasound Tech schedule: ancillary_appointment + same_day_add events
+ *  filtered to ultrasound-relevant service types when no explicit serviceType
+ *  is provided. Ordered by startsAt ASC. */
+export async function listUltrasoundTechSchedule(
+  filters: ListUltrasoundTechScheduleFilters = {},
+  limit = 100,
+): Promise<GlobalScheduleEvent[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = [
+    inArray(globalScheduleEvents.eventType, [...ULTRASOUND_EVENT_TYPES]),
+  ];
+
+  if (filters.serviceType) {
+    conditions.push(eq(globalScheduleEvents.serviceType, filters.serviceType));
+  } else {
+    const ultrasoundFilter = or(
+      ilike(globalScheduleEvents.serviceType, "%ultrasound%"),
+      inArray(globalScheduleEvents.serviceType, [...ULTRASOUND_SPECIFIC_SERVICE_NAMES]),
+    );
+    if (ultrasoundFilter) conditions.push(ultrasoundFilter);
+  }
+
+  if (filters.assignedUserId) conditions.push(eq(globalScheduleEvents.assignedUserId, filters.assignedUserId));
+  if (filters.facilityId) conditions.push(eq(globalScheduleEvents.facilityId, filters.facilityId));
+  if (filters.status) conditions.push(eq(globalScheduleEvents.status, filters.status));
   if (filters.startDate) conditions.push(gte(globalScheduleEvents.startsAt, filters.startDate));
   if (filters.endDate) conditions.push(lte(globalScheduleEvents.startsAt, filters.endDate));
 

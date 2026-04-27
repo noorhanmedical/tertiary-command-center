@@ -5,6 +5,7 @@ import {
   listTechnicianLiaisonClinicVisits,
   listTechnicianLiaisonAncillarySchedule,
   listTeamAvailabilityBlocks,
+  listUltrasoundTechSchedule,
 } from "../repositories/globalSchedule.repo";
 
 export function registerGlobalScheduleRoutes(app: Express) {
@@ -117,6 +118,34 @@ export function registerGlobalScheduleRoutes(app: Express) {
         if (!isNaN(d.getTime())) filters.endDate = d;
       }
       const rows = await listTeamAvailabilityBlocks(filters, limit);
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/ultrasound-tech/schedule
+  // Filters: assignedUserId, facilityId, serviceType, status, startDate, endDate, limit
+  // Returns ancillary_appointment + same_day_add events filtered to
+  // ultrasound-relevant service types (default) ordered by startsAt ASC.
+  app.get("/api/ultrasound-tech/schedule", async (req, res) => {
+    try {
+      const q = req.query as Record<string, string | undefined>;
+      const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
+      const filters: Parameters<typeof listUltrasoundTechSchedule>[0] = {};
+      if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
+      if (q.facilityId) filters.facilityId = q.facilityId;
+      if (q.serviceType) filters.serviceType = q.serviceType;
+      if (q.status) filters.status = q.status;
+      if (q.startDate) {
+        const d = new Date(q.startDate);
+        if (!isNaN(d.getTime())) filters.startDate = d;
+      }
+      if (q.endDate) {
+        const d = new Date(q.endDate);
+        if (!isNaN(d.getTime())) filters.endDate = d;
+      }
+      const rows = await listUltrasoundTechSchedule(filters, limit);
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

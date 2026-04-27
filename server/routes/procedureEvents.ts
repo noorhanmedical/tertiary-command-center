@@ -4,6 +4,7 @@ import {
   listProcedureEvents,
   getProcedureEventById,
   markProcedureComplete,
+  listUltrasoundTechCompletedProcedures,
 } from "../repositories/procedureEvents.repo";
 import { updateGlobalScheduleEvent } from "../repositories/globalSchedule.repo";
 
@@ -77,6 +78,35 @@ export function registerProcedureEventRoutes(app: Express) {
       return res.status(201).json({ procedureEvent, documentReadinessRows: documentRows });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/ultrasound-tech/completed-procedures
+  // Filters: completedByUserId, facilityId, serviceType, procedureStatus,
+  //          startDate, endDate, limit
+  // Defaults to procedureStatus="complete" and ultrasound-relevant service
+  // types when no explicit overrides are provided. Ordered by completedAt DESC.
+  app.get("/api/ultrasound-tech/completed-procedures", async (req, res) => {
+    try {
+      const q = req.query as Record<string, string | undefined>;
+      const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
+      const filters: Parameters<typeof listUltrasoundTechCompletedProcedures>[0] = {};
+      if (q.completedByUserId) filters.completedByUserId = q.completedByUserId;
+      if (q.facilityId) filters.facilityId = q.facilityId;
+      if (q.serviceType) filters.serviceType = q.serviceType;
+      if (q.procedureStatus) filters.procedureStatus = q.procedureStatus;
+      if (q.startDate) {
+        const d = new Date(q.startDate);
+        if (!isNaN(d.getTime())) filters.startDate = d;
+      }
+      if (q.endDate) {
+        const d = new Date(q.endDate);
+        if (!isNaN(d.getTime())) filters.endDate = d;
+      }
+      const rows = await listUltrasoundTechCompletedProcedures(filters, limit);
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
   });
 

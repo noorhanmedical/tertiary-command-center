@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, or, desc, gte, lte, ilike, inArray } from "drizzle-orm";
 import {
   procedureEvents,
   type ProcedureEvent,
@@ -68,6 +68,58 @@ export async function listProcedureEvents(
   return conditions.length > 0
     ? query.where(and(...conditions)).orderBy(desc(procedureEvents.createdAt)).limit(safeLimit)
     : query.orderBy(desc(procedureEvents.createdAt)).limit(safeLimit);
+}
+
+// ─── Ultrasound Tech completed procedures ────────────────────────────────────
+
+const ULTRASOUND_TECH_SPECIFIC_SERVICE_NAMES = ["Ultrasound", "VitalWave", "BrainWave"] as const;
+
+export type ListUltrasoundTechCompletedProceduresFilters = {
+  completedByUserId?: string;
+  facilityId?: string;
+  serviceType?: string;
+  procedureStatus?: string;
+  startDate?: Date;
+  endDate?: Date;
+};
+
+/** Ultrasound Tech completed procedures view: defaults to procedureStatus
+ *  "complete" when none specified, and to ultrasound-relevant service types
+ *  when no explicit serviceType is provided. Ordered by completedAt DESC. */
+export async function listUltrasoundTechCompletedProcedures(
+  filters: ListUltrasoundTechCompletedProceduresFilters = {},
+  limit = 100,
+): Promise<ProcedureEvent[]> {
+  const safeLimit = Math.min(Math.max(1, limit), 500);
+  const conditions = [];
+
+  if (filters.serviceType) {
+    conditions.push(eq(procedureEvents.serviceType, filters.serviceType));
+  } else {
+    const ultrasoundFilter = or(
+      ilike(procedureEvents.serviceType, "%ultrasound%"),
+      inArray(procedureEvents.serviceType, [...ULTRASOUND_TECH_SPECIFIC_SERVICE_NAMES]),
+    );
+    if (ultrasoundFilter) conditions.push(ultrasoundFilter);
+  }
+
+  if (filters.procedureStatus) {
+    conditions.push(eq(procedureEvents.procedureStatus, filters.procedureStatus));
+  } else {
+    conditions.push(eq(procedureEvents.procedureStatus, "complete"));
+  }
+
+  if (filters.completedByUserId) conditions.push(eq(procedureEvents.completedByUserId, filters.completedByUserId));
+  if (filters.facilityId) conditions.push(eq(procedureEvents.facilityId, filters.facilityId));
+  if (filters.startDate) conditions.push(gte(procedureEvents.completedAt, filters.startDate));
+  if (filters.endDate) conditions.push(lte(procedureEvents.completedAt, filters.endDate));
+
+  return db
+    .select()
+    .from(procedureEvents)
+    .where(and(...conditions))
+    .orderBy(desc(procedureEvents.completedAt))
+    .limit(safeLimit);
 }
 
 export type MarkProcedureCompleteInput = {
