@@ -7,6 +7,11 @@ import { db } from "../db";
 import { uploadedDocuments, documents as documentsTable, documentSurfaceAssignments, patientScreenings } from "@shared/schema";
 import { desc, eq, like, sql } from "drizzle-orm";
 import {
+  appendPatientJourneyEvent,
+  getExecutionCaseById,
+  getExecutionCaseByScreeningId,
+} from "../repositories/executionCase.repo";
+import {
   type Document,
   DOCUMENT_KINDS,
   DOCUMENT_SIGNATURE_REQUIREMENTS,
@@ -551,6 +556,125 @@ function mountRoutes(app: Express, basePath: string) {
       res.json(await shapeDocument(doc, basePath));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Send-to-patient (logging only — no actual transport in this batch) ────
+  // Records the intent to send a library document/material to a patient and
+  // appends a `document_sent` journey event when patient context is available.
+  // Does NOT integrate with email/SMS providers — actual transport is wired
+  // separately when those providers exist. Allowed sendMethods: email, sms,
+  // manual. Returns sendStatus: "logged" (always), since this batch only logs.
+  app.post(`${basePath}/send-to-patient`, requireAuth, async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const documentIdRaw = body.documentId;
+      const documentId = typeof documentIdRaw === "number"
+        ? documentIdRaw
+        : parseInt(String(documentIdRaw ?? ""), 10);
+      if (!Number.isFinite(documentId) || Number.isNaN(documentId)) {
+        return res.status(400).json({ error: "documentId is required" });
+      }
+
+      const sendMethod = String(body.sendMethod ?? "").trim();
+      if (!["email", "sms", "manual"].includes(sendMethod)) {
+        return res.status(400).json({ error: "sendMethod must be one of: email, sms, manual" });
+      }
+
+      const recipientEmail = body.recipientEmail ? String(body.recipientEmail).trim() : null;
+      const recipientPhone = body.recipientPhone ? String(body.recipientPhone).trim() : null;
+      const note = body.note ? String(body.note).slice(0, 1000) : null;
+
+      let patientScreeningId: number | null = body.patientScreeningId != null
+        ? parseInt(String(body.patientScreeningId), 10)
+        : null;
+      if (patientScreeningId !== null && Number.isNaN(patientScreeningId)) patientScreeningId = null;
+
+      let executionCaseId: number | null = body.executionCaseId != null
+        ? parseInt(String(body.executionCaseId), 10)
+        : null;
+      if (executionCaseId !== null && Number.isNaN(executionCaseId)) executionCaseId = null;
+
+      let patientName: string | null = body.patientName ? String(body.patientName).trim() : null;
+      let patientDob: string | null = body.patientDob ? String(body.patientDob).trim() : null;
+
+      // Verify the document exists (and is not soft-deleted)
+      const doc = await storage.getDocument(documentId);
+      if (!doc || doc.deletedAt !== null) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      // Resolve patient context — prefer caller-supplied IDs, then fall back to
+      // execution case → screening, then to screening row name/dob lookup.
+      if (executionCaseId !== null) {
+        const execCase = await getExecutionCaseById(executionCaseId);
+        if (execCase) {
+          if (patientScreeningId === null && execCase.patientScreeningId != null) {
+            patientScreeningId = execCase.patientScreeningId;
+          }
+          if (!patientName && execCase.patientName) patientName = execCase.patientName;
+          if (!patientDob && execCase.patientDob) patientDob = execCase.patientDob;
+        }
+      }
+
+      if (executionCaseId === null && patientScreeningId !== null) {
+        const execCase = await getExecutionCaseByScreeningId(patientScreeningId);
+        if (execCase) executionCaseId = execCase.id;
+      }
+
+      if (patientScreeningId !== null && (!patientName || !patientDob)) {
+        const [screening] = await db
+          .select({ name: patientScreenings.name, dob: patientScreenings.dob })
+          .from(patientScreenings)
+          .where(eq(patientScreenings.id, patientScreeningId))
+          .limit(1);
+        if (screening) {
+          if (!patientName) patientName = screening.name;
+          if (!patientDob && screening.dob) patientDob = screening.dob;
+        }
+      }
+
+      const sendStatus = "logged";
+      let journeyEvent = null;
+
+      if (patientName) {
+        try {
+          journeyEvent = await appendPatientJourneyEvent({
+            patientName,
+            patientDob: patientDob ?? undefined,
+            patientScreeningId: patientScreeningId ?? undefined,
+            executionCaseId: executionCaseId ?? undefined,
+            eventType: "document_sent",
+            eventSource: "document_library",
+            actorUserId: req.session.userId ?? null,
+            summary: `${doc.title} prepared for patient via ${sendMethod}`,
+            metadata: {
+              documentId,
+              documentTitle: doc.title,
+              documentKind: doc.kind,
+              sendMethod,
+              recipientEmail,
+              recipientPhone,
+              note,
+              sendStatus,
+            },
+          });
+        } catch (journeyErr: any) {
+          console.error(`[${basePath}] journey event append failed (non-fatal):`, journeyErr.message);
+        }
+      }
+
+      console.log(`[${basePath}] send-to-patient documentId=${documentId} method=${sendMethod} screeningId=${patientScreeningId} status=${sendStatus}`);
+
+      return res.json({
+        ok: true,
+        sendStatus,
+        documentId,
+        journeyEvent,
+      });
+    } catch (e: any) {
+      console.error(`[${basePath}] send-to-patient failed:`, e);
+      return res.status(500).json({ error: e.message });
     }
   });
 
