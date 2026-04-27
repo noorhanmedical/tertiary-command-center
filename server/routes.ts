@@ -39,6 +39,7 @@ import { registerCompletedBillingPackageRoutes } from "./routes/completedBilling
 import { registerCashPricingRoutes } from "./routes/cashPricing";
 import { registerProjectedInvoiceRoutes } from "./routes/projectedInvoices";
 import { registerPatientPacketRoutes } from "./routes/patientPacket";
+import { registerAncillaryDocumentTemplateRoutes } from "./routes/ancillaryDocumentTemplates";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
@@ -244,6 +245,7 @@ export async function registerRoutes(
   registerCashPricingRoutes(app);
   registerProjectedInvoiceRoutes(app);
   registerPatientPacketRoutes(app);
+  registerAncillaryDocumentTemplateRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {

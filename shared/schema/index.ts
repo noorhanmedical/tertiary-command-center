@@ -50,4 +50,5 @@ export * from "./billingDocuments";
 export * from "./completedBillingPackages";
 export * from "./cashPricing";
 export * from "./projectedInvoices";
+export * from "./ancillaryDocumentTemplates";
 export * from "../models/chat";
