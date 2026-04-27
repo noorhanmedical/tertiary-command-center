@@ -47,4 +47,5 @@ export * from "./procedureEvents";
 export * from "./generatedNotes";
 export * from "./billingReadiness";
 export * from "./billingDocuments";
+export * from "./completedBillingPackages";
 export * from "../models/chat";

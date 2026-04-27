@@ -35,6 +35,7 @@ import { registerDocumentReadinessRoutes } from "./routes/documentReadiness";
 import { registerProcedureEventRoutes } from "./routes/procedureEvents";
 import { registerBillingReadinessRoutes } from "./routes/billingReadiness";
 import { registerBillingDocumentRoutes } from "./routes/billingDocuments";
+import { registerCompletedBillingPackageRoutes } from "./routes/completedBillingPackages";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
@@ -236,6 +237,7 @@ export async function registerRoutes(
   registerProcedureEventRoutes(app);
   registerBillingReadinessRoutes(app);
   registerBillingDocumentRoutes(app);
+  registerCompletedBillingPackageRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {
