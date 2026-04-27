@@ -134,3 +134,81 @@ export async function listCaseDocumentReadiness(
     ? query.where(and(...conditions)).orderBy(desc(caseDocumentReadiness.createdAt)).limit(safeLimit)
     : query.orderBy(desc(caseDocumentReadiness.createdAt)).limit(safeLimit);
 }
+
+// documentType → { documentStatus, blocksBilling } defaults on procedure complete
+const PROCEDURE_COMPLETE_DOCUMENT_DEFAULTS: Array<{
+  documentType: string;
+  documentStatus: string;
+  blocksBilling: boolean;
+}> = [
+  { documentType: "order_note",           documentStatus: "pending",  blocksBilling: false },
+  { documentType: "post_procedure_note",  documentStatus: "pending",  blocksBilling: false },
+  { documentType: "report",               documentStatus: "missing",  blocksBilling: false },
+  { documentType: "informed_consent",     documentStatus: "missing",  blocksBilling: false },
+  { documentType: "screening_form",       documentStatus: "missing",  blocksBilling: false },
+  { documentType: "billing_document",     documentStatus: "blocked",  blocksBilling: true  },
+];
+
+export type UpsertDocumentReadinessForProcedureInput = {
+  executionCaseId: number | null;
+  patientScreeningId: number | null;
+  patientName: string | null;
+  patientDob: string | null;
+  facilityId: string | null;
+  serviceType: string;
+};
+
+/** Create or update the standard document readiness rows triggered by procedure completion.
+ *  Deduplicates by (patientScreeningId, serviceType, documentType). */
+export async function upsertCaseDocumentReadinessForProcedureComplete(
+  input: UpsertDocumentReadinessForProcedureInput,
+): Promise<CaseDocumentReadiness[]> {
+  const results: CaseDocumentReadiness[] = [];
+
+  for (const def of PROCEDURE_COMPLETE_DOCUMENT_DEFAULTS) {
+    const conditions = [
+      eq(caseDocumentReadiness.serviceType, input.serviceType),
+      eq(caseDocumentReadiness.documentType, def.documentType),
+    ];
+    if (input.patientScreeningId != null) {
+      conditions.push(eq(caseDocumentReadiness.patientScreeningId, input.patientScreeningId));
+    }
+
+    const [existing] = await db
+      .select()
+      .from(caseDocumentReadiness)
+      .where(and(...conditions))
+      .limit(1);
+
+    const payload = {
+      executionCaseId: input.executionCaseId ?? undefined,
+      patientName: input.patientName ?? undefined,
+      patientDob: input.patientDob ?? undefined,
+      facilityId: input.facilityId ?? undefined,
+      serviceType: input.serviceType,
+      documentType: def.documentType,
+      documentStatus: def.documentStatus,
+      blocksBilling: def.blocksBilling,
+    };
+
+    if (existing) {
+      const [updated] = await db
+        .update(caseDocumentReadiness)
+        .set({ ...payload, updatedAt: new Date() })
+        .where(eq(caseDocumentReadiness.id, existing.id))
+        .returning();
+      results.push(updated);
+    } else {
+      const [created] = await db
+        .insert(caseDocumentReadiness)
+        .values({
+          ...payload,
+          patientScreeningId: input.patientScreeningId ?? undefined,
+        })
+        .returning();
+      results.push(created);
+    }
+  }
+
+  return results;
+}

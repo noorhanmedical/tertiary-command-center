@@ -43,4 +43,5 @@ export * from "./insuranceEligibility";
 export * from "./cooldown";
 export * from "./adminSettings";
 export * from "./documentReadiness";
+export * from "./procedureEvents";
 export * from "../models/chat";
