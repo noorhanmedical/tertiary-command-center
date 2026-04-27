@@ -26,6 +26,7 @@ import {
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/PageHeader";
+import { PatientJourneyDrawer } from "@/components/patient/PatientJourneyDrawer";
 
 const ADMIN_SECTIONS = [
   { href: "/settings", icon: Settings, iconBg: "bg-blue-100 text-blue-700",
@@ -139,6 +140,16 @@ export default function AdminPage() {
                 <Link href="/admin/outbox">
                   <Button variant="ghost" className="text-blue-700">Open Outbox →</Button>
                 </Link>
+                <PatientJourneyDrawer
+                  lookup={{
+                    patientName: "TestGuy Robot",
+                    patientDob: "01/01/1950",
+                  }}
+                  triggerLabel="Open TestGuy Packet"
+                  triggerSize="default"
+                  triggerVariant="ghost"
+                  triggerClassName="text-fuchsia-700 hover:bg-fuchsia-50"
+                />
               </div>
               {lastResult && (
                 <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
