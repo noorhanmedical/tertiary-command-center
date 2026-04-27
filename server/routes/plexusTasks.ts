@@ -1,6 +1,14 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
+import { db } from "../db";
+import { eq } from "drizzle-orm";
+import { patientScreenings } from "@shared/schema";
+import {
+  appendPatientJourneyEvent,
+  getExecutionCaseById,
+  getExecutionCaseByScreeningId,
+} from "../repositories/executionCase.repo";
 
 // ── Typed event payloads ───────────────────────────────────────────────────
 type EventPayload =
@@ -69,6 +77,23 @@ const createMessageSchema = z.object({
 const addCollaboratorSchema = z.object({
   role: z.enum(["owner", "assignee", "collaborator", "watcher"]).default("collaborator"),
   userId: z.string().optional(),
+});
+
+const createPatientTaskSchema = z.object({
+  title: z.string().min(1),
+  taskType: z.enum(TASK_TYPE),
+  priority: z.enum(TASK_PRIORITY).default("normal"),
+  urgency: z.enum(TASK_URGENCY).optional(),
+  assignedUserId: z.string().optional().nullable(),
+  assignedRole: z.string().optional().nullable(),
+  facilityId: z.string().optional().nullable(),
+  executionCaseId: z.number().int().optional().nullable(),
+  patientScreeningId: z.number().int().optional().nullable(),
+  patientName: z.string().optional().nullable(),
+  patientDob: z.string().optional().nullable(),
+  dueAt: z.string().optional().nullable(),
+  note: z.string().optional().nullable(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -409,6 +434,112 @@ export function registerPlexusTasksRoutes(app: Express) {
       res.json(task);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Patient-linked task creation (cross-role) ───────────────────────────
+  // Resolves patient context from executionCaseId / patientScreeningId / name+dob,
+  // creates a plexus_task with the resolved patientScreeningId, writes the
+  // standard task events, and appends a `task_created` journey event when
+  // patient context is available. Fields the plexus_tasks table cannot store
+  // (assignedRole, facilityId, free metadata) are recorded on the journey
+  // event metadata only.
+  app.post("/api/plexus/tasks/patient-task", async (req: Request, res: Response) => {
+    try {
+      const parsed = createPatientTaskSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message });
+      const userId = uid(req);
+      const data = parsed.data;
+
+      // Resolve patient context — prefer executionCaseId, fall back to screening
+      let patientScreeningId: number | null = data.patientScreeningId ?? null;
+      let executionCaseId: number | null = data.executionCaseId ?? null;
+      let patientName: string | null = data.patientName ?? null;
+      let patientDob: string | null = data.patientDob ?? null;
+
+      if (executionCaseId !== null) {
+        const ec = await getExecutionCaseById(executionCaseId);
+        if (ec) {
+          if (patientScreeningId === null && ec.patientScreeningId != null) patientScreeningId = ec.patientScreeningId;
+          if (!patientName && ec.patientName) patientName = ec.patientName;
+          if (!patientDob && ec.patientDob) patientDob = ec.patientDob;
+        }
+      }
+
+      if (executionCaseId === null && patientScreeningId !== null) {
+        const ec = await getExecutionCaseByScreeningId(patientScreeningId);
+        if (ec) executionCaseId = ec.id;
+      }
+
+      if (patientScreeningId !== null && (!patientName || !patientDob)) {
+        const [screening] = await db
+          .select({ name: patientScreenings.name, dob: patientScreenings.dob })
+          .from(patientScreenings)
+          .where(eq(patientScreenings.id, patientScreeningId))
+          .limit(1);
+        if (screening) {
+          if (!patientName) patientName = screening.name;
+          if (!patientDob && screening.dob) patientDob = screening.dob;
+        }
+      }
+
+      // Create the task
+      const task = await storage.createTask({
+        title: data.title,
+        description: data.note ?? undefined,
+        taskType: data.taskType,
+        urgency: data.urgency ?? "none",
+        priority: data.priority,
+        assignedToUserId: data.assignedUserId ?? null,
+        patientScreeningId: patientScreeningId,
+        dueDate: data.dueAt ?? null,
+        createdByUserId: userId,
+      });
+
+      // Standard task events
+      await writeEvent({ taskId: task.id, userId, eventType: "created", payload: { title: task.title } });
+      if (task.assignedToUserId) {
+        await writeEvent({
+          taskId: task.id,
+          userId,
+          eventType: "assignment_changed",
+          payload: { from: null as unknown as string, to: task.assignedToUserId },
+        });
+      }
+
+      // Patient journey event (best-effort; needs patientName because it's NOT NULL)
+      let journeyEvent = null;
+      if (patientName) {
+        try {
+          journeyEvent = await appendPatientJourneyEvent({
+            patientName,
+            patientDob: patientDob ?? undefined,
+            patientScreeningId: patientScreeningId ?? undefined,
+            executionCaseId: executionCaseId ?? undefined,
+            eventType: "task_created",
+            eventSource: "plexus_tasks",
+            actorUserId: userId,
+            summary: `Task created: ${task.title}`,
+            metadata: {
+              taskId: task.id,
+              taskType: task.taskType,
+              priority: task.priority,
+              urgency: task.urgency,
+              assignedUserId: task.assignedToUserId,
+              assignedRole: data.assignedRole ?? null,
+              facilityId: data.facilityId ?? null,
+              dueAt: task.dueDate,
+              ...(data.metadata ?? {}),
+            },
+          });
+        } catch (jerr: any) {
+          console.error("[plexus-tasks] journey event append failed (non-fatal):", jerr.message);
+        }
+      }
+
+      return res.status(201).json({ ok: true, task, journeyEvent });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
     }
   });
 
