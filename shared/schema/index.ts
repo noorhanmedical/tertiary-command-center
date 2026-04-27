@@ -22,6 +22,7 @@
 // drizzle's relational extractor iterates the schema namespace and would
 // crash on the zod `z` object's null prototype.
 export * from "./appSettings";
+export * from "./session";
 export * from "./users";
 export * from "./screening";
 export * from "./patientHistory";
