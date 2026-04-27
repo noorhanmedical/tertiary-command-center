@@ -78,6 +78,7 @@ export type MarkProcedureCompleteInput = {
   serviceType: string;
   completedByUserId?: string | null;
   note?: string | null;
+  completedAt?: Date | null;
 };
 
 /** Upsert procedure event as complete (deduped by patientScreeningId + serviceType)
@@ -85,7 +86,7 @@ export type MarkProcedureCompleteInput = {
 export async function markProcedureComplete(
   input: MarkProcedureCompleteInput,
 ): Promise<{ procedureEvent: ProcedureEvent; documentRows: Awaited<ReturnType<typeof upsertCaseDocumentReadinessForProcedureComplete>> }> {
-  const now = new Date();
+  const now = input.completedAt instanceof Date && !isNaN(input.completedAt.getTime()) ? input.completedAt : new Date();
 
   // Deduplicate by (patientScreeningId, serviceType) when screening is linked
   let existing: ProcedureEvent | undefined;

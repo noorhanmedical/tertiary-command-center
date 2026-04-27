@@ -1,8 +1,23 @@
 import type { Express } from "express";
+import { z } from "zod";
 import {
   listProcedureEvents,
   getProcedureEventById,
+  markProcedureComplete,
 } from "../repositories/procedureEvents.repo";
+import { updateGlobalScheduleEvent } from "../repositories/globalSchedule.repo";
+
+const procedureCompleteSchema = z.object({
+  serviceType: z.string().min(1, "serviceType is required"),
+  executionCaseId: z.number().int().optional().nullable(),
+  patientScreeningId: z.number().int().optional().nullable(),
+  globalScheduleEventId: z.number().int().optional().nullable(),
+  patientName: z.string().optional().nullable(),
+  patientDob: z.string().optional().nullable(),
+  facilityId: z.string().optional().nullable(),
+  note: z.string().optional().nullable(),
+  completedAt: z.string().datetime({ offset: true }).optional().nullable(),
+});
 
 export function registerProcedureEventRoutes(app: Express) {
   // GET /api/procedure-events
@@ -34,6 +49,34 @@ export function registerProcedureEventRoutes(app: Express) {
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/procedure-events/complete
+  app.post("/api/procedure-events/complete", async (req, res) => {
+    try {
+      const parsed = procedureCompleteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+      const { completedAt, globalScheduleEventId, ...rest } = parsed.data;
+
+      const { procedureEvent, documentRows } = await markProcedureComplete({
+        ...rest,
+        globalScheduleEventId: globalScheduleEventId ?? undefined,
+        completedAt: completedAt ? new Date(completedAt) : undefined,
+        completedByUserId: req.session?.userId ?? undefined,
+      });
+
+      if (globalScheduleEventId != null) {
+        void updateGlobalScheduleEvent(globalScheduleEventId, { status: "completed" }).catch((err) => {
+          console.error("[procedureEvents.route] global schedule update failed:", err);
+        });
+      }
+
+      return res.status(201).json({ procedureEvent, documentReadinessRows: documentRows });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
     }
   });
 
