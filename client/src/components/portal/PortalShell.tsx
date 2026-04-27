@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SignaturePad } from "./SignaturePad";
 import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
+import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
 
 type Role = "technician" | "liaison";
 type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart";
@@ -469,12 +470,30 @@ function PatientDetail({ patient, role, onConsent }: { patient: TodayPatient; ro
         <TabsContent value="tests">
           <Card className="p-4">
             <div className="font-medium mb-2">Qualifying tests</div>
-            <div className="flex flex-wrap gap-2">
-              {patient.qualifyingTests.length === 0 && <span className="text-sm text-slate-500">None</span>}
-              {patient.qualifyingTests.map((t) => (
-                <Badge key={t} variant="outline" data-testid={`badge-test-${t}`}>{t}</Badge>
-              ))}
-            </div>
+            {patient.qualifyingTests.length === 0 ? (
+              <span className="text-sm text-slate-500">None</span>
+            ) : (
+              <div className="space-y-2">
+                {patient.qualifyingTests.map((t) => (
+                  <div
+                    key={t}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2"
+                    data-testid={`test-row-${t}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" data-testid={`badge-test-${t}`}>{t}</Badge>
+                    </div>
+                    <ProcedureCompleteButton
+                      patientScreeningId={patient.patientScreeningId}
+                      patientName={patient.name}
+                      patientDob={patient.dob}
+                      facilityId={patient.facility}
+                      serviceType={t}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
             {patient.appointments.length > 0 && (
               <>
                 <div className="font-medium mt-4 mb-2">Today's appointments</div>
