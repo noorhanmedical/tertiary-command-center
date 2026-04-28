@@ -132,7 +132,9 @@ export async function addCompletedPackageToInvoice(
     if (updated) {
       const [inv] = await db.select({ id: invoices.id }).from(invoices)
         .where(eq(invoices.id, updated.invoiceId)).limit(1);
-      return updated ? { lineItem: updated, invoiceId: inv?.id ?? updated.invoiceId } : null;
+      const resolvedInvoiceId = inv?.id ?? updated.invoiceId;
+      await recomputeInvoiceTotalsFromLineItems(resolvedInvoiceId);
+      return { lineItem: updated, invoiceId: resolvedInvoiceId };
     }
   }
 
@@ -169,7 +171,50 @@ export async function addCompletedPackageToInvoice(
     })
     .where(eq(completedBillingPackages.id, pkg.id));
 
+  // Refresh parent invoice's totalCharges + totalBalance now that a line item
+  // has been added. We deliberately do NOT touch totalPaid — that field is
+  // driven by invoice_payments via the existing recompute helper, and the
+  // canonical package flow doesn't write payments here.
+  await recomputeInvoiceTotalsFromLineItems(draftInvoice.id);
+
   return { lineItem, invoiceId: draftInvoice.id };
+}
+
+/** Recompute invoice.totalCharges = sum(line_items.totalCharges) and
+ *  invoice.totalBalance = totalCharges - current totalPaid. Idempotent —
+ *  safe to call after every line-item insert/update. Leaves totalPaid alone
+ *  (driven separately by invoice_payments + initialPaid via the existing
+ *  recompute path on the invoices repository). */
+async function recomputeInvoiceTotalsFromLineItems(invoiceId: number): Promise<void> {
+  const lines = await db
+    .select({ totalCharges: invoiceLineItems.totalCharges })
+    .from(invoiceLineItems)
+    .where(eq(invoiceLineItems.invoiceId, invoiceId));
+
+  let totalCharges = 0;
+  for (const li of lines) {
+    if (li.totalCharges == null) continue;
+    const v = parseFloat(li.totalCharges);
+    if (Number.isFinite(v)) totalCharges += v;
+  }
+
+  const [inv] = await db
+    .select({ totalPaid: invoices.totalPaid })
+    .from(invoices)
+    .where(eq(invoices.id, invoiceId))
+    .limit(1);
+  if (!inv) return;
+
+  const totalPaid = parseFloat(inv.totalPaid) || 0;
+  const totalBalance = totalCharges - totalPaid;
+
+  await db
+    .update(invoices)
+    .set({
+      totalCharges: totalCharges.toFixed(2),
+      totalBalance: totalBalance.toFixed(2),
+    })
+    .where(eq(invoices.id, invoiceId));
 }
 
 export async function listCompletedBillingPackages(

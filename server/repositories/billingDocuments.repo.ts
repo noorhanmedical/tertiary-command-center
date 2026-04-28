@@ -6,6 +6,7 @@ import {
   type InsertBillingDocumentRequest,
 } from "@shared/schema/billingDocuments";
 import type { BillingReadinessCheck } from "@shared/schema/billingReadiness";
+import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
 
 export type ListBillingDocumentRequestsFilters = {
   executionCaseId?: number;
@@ -110,18 +111,59 @@ export async function createPendingBillingDocumentRequestFromReadiness(
     metadata: { triggeredByReadinessCheckId: check.id },
   };
 
+  let result: BillingDocumentRequest;
   if (existing) {
     const [updated] = await db
       .update(billingDocumentRequests)
       .set({ ...sharedFields, updatedAt: new Date() })
       .where(eq(billingDocumentRequests.id, existing.id))
       .returning();
-    return updated;
+    result = updated;
+  } else {
+    const [created] = await db
+      .insert(billingDocumentRequests)
+      .values(sharedFields)
+      .returning();
+    result = created;
   }
 
-  const [created] = await db
-    .insert(billingDocumentRequests)
-    .values(sharedFields)
-    .returning();
-  return created;
+  // When the billing_document_request exists/is created, advance the matching
+  // case_document_readiness row from "blocked" to "pending" so the workflow
+  // surfaces show the doc is now in flight rather than stalled. Only advance
+  // from "blocked" — never downgrade later states (generated/completed/approved).
+  await advanceBillingDocReadinessToPending(check);
+
+  return result;
+}
+
+async function advanceBillingDocReadinessToPending(
+  check: BillingReadinessCheck,
+): Promise<void> {
+  // Match by patientScreeningId first (most specific). Fall back to
+  // executionCaseId. Without a stable identifier we can't safely target
+  // the right case_document_readiness row.
+  const conditions = [
+    eq(caseDocumentReadiness.documentType, "billing_document"),
+    eq(caseDocumentReadiness.serviceType, check.serviceType),
+  ];
+  if (check.patientScreeningId != null) {
+    conditions.push(eq(caseDocumentReadiness.patientScreeningId, check.patientScreeningId));
+  } else if (check.executionCaseId != null) {
+    conditions.push(eq(caseDocumentReadiness.executionCaseId, check.executionCaseId));
+  } else {
+    return;
+  }
+
+  const [row] = await db
+    .select()
+    .from(caseDocumentReadiness)
+    .where(and(...conditions))
+    .limit(1);
+  if (!row) return;
+  if (row.documentStatus !== "blocked") return; // never downgrade
+
+  await db
+    .update(caseDocumentReadiness)
+    .set({ documentStatus: "pending", updatedAt: new Date() })
+    .where(eq(caseDocumentReadiness.id, row.id));
 }

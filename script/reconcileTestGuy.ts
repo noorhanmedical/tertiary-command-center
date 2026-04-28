@@ -162,6 +162,41 @@ async function main() {
       `[reconcile:testguy] re-attached ${reattached.length} orphan execution case(s) to screening id=${canonicalId}`,
     );
 
+    // ── CLEAN UP DUPLICATE is_test=true TESTGUY SCREENINGS ───────────────
+    // Anything in `beforeScreenings` other than the canonical row is a
+    // duplicate. The earlier reattach step already moved any execution
+    // cases off these rows; remaining FKs (canonical-spine children) all
+    // declare onDelete: "set null", so deletion is safe. We delete one row
+    // at a time inside a try/catch so a single FK quirk doesn't abort the
+    // rest. Non-test (is_test=false) rows are NEVER touched because
+    // `beforeScreenings` was already filtered by is_test=true.
+    const idsToDelete = beforeScreenings
+      .filter((s) => s.id !== canonicalId)
+      .map((s) => s.id);
+    let deletedCount = 0;
+    const deletionErrors: Array<{ id: number; message: string }> = [];
+    for (const dupeId of idsToDelete) {
+      try {
+        await db.delete(patientScreenings).where(eq(patientScreenings.id, dupeId));
+        deletedCount++;
+      } catch (err: any) {
+        deletionErrors.push({ id: dupeId, message: err.message ?? String(err) });
+      }
+    }
+    if (idsToDelete.length === 0) {
+      console.log(`[reconcile:testguy] no duplicate is_test TestGuy screening rows to clean up`);
+    } else {
+      console.log(
+        `[reconcile:testguy] cleaned up ${deletedCount}/${idsToDelete.length} duplicate is_test TestGuy screening row(s)`,
+      );
+      if (deletionErrors.length > 0) {
+        console.log(`[reconcile:testguy] could not delete ${deletionErrors.length} row(s) due to FK constraints:`);
+        for (const e of deletionErrors) {
+          console.log(`  id=${e.id}: ${e.message}`);
+        }
+      }
+    }
+
     // ── AFTER ────────────────────────────────────────────────────────────
     const afterScreenings = await db
       .select()
