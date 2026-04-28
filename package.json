@@ -16,7 +16,8 @@
     "reconcile:testguy": "tsx script/reconcileTestGuy.ts",
     "seed:visit-flow": "tsx script/seedVisitPatientFlow.ts",
     "seed:outreach-flow": "tsx script/seedOutreachPatientFlow.ts",
-    "seed:canonical-flows": "tsx script/seedCanonicalWorkflowScenarios.ts"
+    "seed:canonical-flows": "tsx script/seedCanonicalWorkflowScenarios.ts",
+    "review:canonical-flow-state": "tsx script/reviewCanonicalFlowState.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
