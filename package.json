@@ -18,7 +18,8 @@
     "seed:outreach-flow": "tsx script/seedOutreachPatientFlow.ts",
     "seed:canonical-flows": "tsx script/seedCanonicalWorkflowScenarios.ts",
     "review:canonical-flow-state": "tsx script/reviewCanonicalFlowState.ts",
-    "qa:canonical-visual-state": "tsx script/qaCanonicalVisualState.ts"
+    "qa:canonical-visual-state": "tsx script/qaCanonicalVisualState.ts",
+    "audit:canonical-integrity": "tsx script/auditCanonicalIntegrity.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
