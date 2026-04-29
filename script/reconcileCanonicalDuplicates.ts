@@ -209,10 +209,14 @@ async function main() {
         const totalCharges = parseFloat(total) || 0;
         const totalBalance = totalCharges - totalPaid;
 
+        // total_charges and total_balance are NUMERIC(12,2) columns. Cast to
+        // ::numeric so Postgres doesn't reject the assignment (the previous
+        // ::text cast caused: "column ... is of type numeric but expression
+        // is of type text").
         await pool.query(
           `UPDATE invoices
-              SET total_charges = $1::text,
-                  total_balance = $2::text
+              SET total_charges = $1::numeric,
+                  total_balance = $2::numeric
             WHERE id = $3`,
           [totalCharges.toFixed(2), totalBalance.toFixed(2), invoiceId],
         );
