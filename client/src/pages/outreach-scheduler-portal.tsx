@@ -93,6 +93,13 @@ export default function OutreachSchedulerPortalPage() {
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
 
+  // Canonical-cases selection — parallel to the legacy `selectedId` because
+  // canonical-only patients (e.g. seeded TestGuy/TestVisit/TestOutreach with
+  // is_test=true) are intentionally excluded from `card.callList`. Tracking
+  // them in a separate state lets us highlight the row + key off it for the
+  // Journey lookup without disturbing the legacy selection model.
+  const [selectedCanonicalId, setSelectedCanonicalId] = useState<number | null>(null);
+
   const { toast } = useToast();
 
   // ── Data ────────────────────────────────────────────────────────────────
@@ -802,32 +809,71 @@ export default function OutreachSchedulerPortalPage() {
                     </Badge>
                   </div>
                   <ul className="space-y-1.5">
-                    {canonicalOnlyCases.map((c) => (
-                      <li
-                        key={c.id}
-                        className="flex items-center justify-between gap-2 rounded-xl bg-white/85 px-2.5 py-1.5"
-                        data-testid={`canonical-case-${c.id}`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-xs font-medium text-slate-800">
-                            {c.patientName}
-                          </div>
-                          <div className="truncate text-[10px] text-slate-500">
-                            {c.engagementBucket} · {c.qualificationStatus}
-                          </div>
-                        </div>
-                        <PatientJourneyDrawer
-                          lookup={{
-                            executionCaseId: c.id,
-                            patientScreeningId: c.patientScreeningId ?? undefined,
-                            patientName: c.patientName,
-                            patientDob: c.patientDob ?? undefined,
-                          }}
-                          triggerSize="sm"
-                          triggerVariant="outline"
-                        />
-                      </li>
-                    ))}
+                    {canonicalOnlyCases.map((c) => {
+                      const isSelected = selectedCanonicalId === c.id;
+                      // Schedule-ready badge derived from engagementStatus so the row
+                      // tells the scheduler at-a-glance whether this case still needs
+                      // outreach work or is already booked.
+                      const scheduleReady = (() => {
+                        switch (c.engagementStatus) {
+                          case "scheduled":
+                            return { label: "scheduled", className: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+                          case "in_progress":
+                            return { label: "in progress", className: "border-blue-200 bg-blue-50 text-blue-700" };
+                          case "ready":
+                          case "new":
+                            return { label: "schedule-ready", className: "border-amber-200 bg-amber-50 text-amber-700" };
+                          case "completed":
+                            return { label: "completed", className: "border-slate-200 bg-slate-50 text-slate-600" };
+                          default:
+                            return { label: c.engagementStatus, className: "border-slate-200 bg-slate-50 text-slate-600" };
+                        }
+                      })();
+                      return (
+                        <li
+                          key={c.id}
+                          data-testid={`canonical-case-${c.id}`}
+                          className={`flex items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 transition ${
+                            isSelected
+                              ? "bg-white ring-2 ring-amber-300 ring-offset-1 ring-offset-[rgba(72,99,160,0.80)]"
+                              : "bg-white/85 hover:bg-white"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCanonicalId(isSelected ? null : c.id)}
+                            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                            data-testid={`canonical-case-select-${c.id}`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-xs font-medium text-slate-800">
+                                {c.patientName}
+                              </div>
+                              <div className="truncate text-[10px] text-slate-500">
+                                {c.engagementBucket} · {c.qualificationStatus}
+                                {c.facilityId ? ` · ${c.facilityId}` : ""}
+                              </div>
+                            </div>
+                          </button>
+                          <span
+                            className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] ${scheduleReady.className}`}
+                            data-testid={`canonical-case-schedule-${c.id}`}
+                          >
+                            {scheduleReady.label}
+                          </span>
+                          <PatientJourneyDrawer
+                            lookup={{
+                              executionCaseId: c.id,
+                              patientScreeningId: c.patientScreeningId ?? undefined,
+                              patientName: c.patientName,
+                              patientDob: c.patientDob ?? undefined,
+                            }}
+                            triggerSize="sm"
+                            triggerVariant="outline"
+                          />
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               )}
