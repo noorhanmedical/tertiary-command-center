@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, asc, desc } from "drizzle-orm";
 import {
   billingDocumentRequests,
   type BillingDocumentRequest,
@@ -68,21 +68,29 @@ export async function listBillingDocumentRequests(
 
 /** Create or update a pending billing_document_request when readiness is ready_to_generate.
  *  Primary dedup: billingReadinessCheckId.
- *  Fallback dedup: procedureEventId + serviceType. */
+ *  Fallback dedup: procedureEventId + serviceType.
+ *
+ *  When duplicates already exist (e.g. from historical races between the
+ *  fire-and-forget call inside evaluateBillingReadinessForProcedure and an
+ *  explicit caller), the lowest-id row is chosen consistently by ordering
+ *  the lookup `ASC` before `LIMIT 1`. Re-runs always converge on the same
+ *  canonical row instead of bouncing between duplicates non-deterministically.
+ *  The reconcileCanonicalDuplicates script removes the extras after the fact. */
 export async function createPendingBillingDocumentRequestFromReadiness(
   check: BillingReadinessCheck,
 ): Promise<BillingDocumentRequest> {
-  // Try to find existing by billingReadinessCheckId first
+  // Primary lookup — lowest-id row matching the readiness check
   let existing: BillingDocumentRequest | undefined;
 
   const [byReadiness] = await db
     .select()
     .from(billingDocumentRequests)
     .where(eq(billingDocumentRequests.billingReadinessCheckId, check.id))
+    .orderBy(asc(billingDocumentRequests.id))
     .limit(1);
   existing = byReadiness;
 
-  // Fallback: match by procedureEventId + serviceType
+  // Fallback — lowest-id row matching procedureEventId + serviceType
   if (!existing && check.procedureEventId != null) {
     const [byProcedure] = await db
       .select()
@@ -93,6 +101,7 @@ export async function createPendingBillingDocumentRequestFromReadiness(
           eq(billingDocumentRequests.serviceType, check.serviceType),
         ),
       )
+      .orderBy(asc(billingDocumentRequests.id))
       .limit(1);
     existing = byProcedure;
   }
