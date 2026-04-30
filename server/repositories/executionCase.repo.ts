@@ -388,6 +388,184 @@ export async function listSchedulerPortalCases(
   return sortByEngagementPriority(rows, scores);
 }
 
+// ─── Engagement assignment write-side ──────────────────────────────────────
+
+const SCHEDULER_ASSIGNMENT_BUCKETS = ["visit", "outreach", "scheduling_triage"] as const;
+const LIAISON_ASSIGNMENT_BUCKETS = ["visit", "outreach"] as const;
+
+export type EngagementTargetRole = "scheduler" | "liaison";
+
+export type AssignEngagementCasesInput = {
+  facilityId?: string;
+  targetRole: EngagementTargetRole;
+  limit?: number;
+  assignedTeamMemberId?: number;
+  dryRun?: boolean;
+};
+
+export type AssignEngagementCasePreview = {
+  id: number;
+  patientName: string;
+  patientScreeningId: number | null;
+  facilityId: string | null;
+  engagementBucket: string;
+  qualificationStatus: string;
+  previousAssignedRole: string | null;
+  previousAssignedTeamMemberId: number | null;
+  previousEngagementStatus: string;
+  proposedAssignedRole: EngagementTargetRole;
+  proposedAssignedTeamMemberId: number | null;
+  proposedEngagementStatus: string;
+  applied: boolean;
+};
+
+export type AssignEngagementCasesResult = {
+  dryRun: boolean;
+  targetRole: EngagementTargetRole;
+  count: number;
+  cases: AssignEngagementCasePreview[];
+};
+
+/** Selection-and-assignment for active qualified execution cases.
+ *
+ *  Selection rules:
+ *    lifecycleStatus = "active"
+ *    qualificationStatus = "qualified"
+ *    engagementStatus NOT IN (completed, closed)
+ *    engagementBucket IN (scheduler: visit/outreach/scheduling_triage,
+ *                        liaison: visit/outreach)
+ *    facilityId = input.facilityId (when provided)
+ *
+ *  Ordering: same settings-driven priority refinement as
+ *  listEngagementCenterCases (priorityScore DESC NULLS LAST → calculated
+ *  priority DESC → nextActionAt ASC NULLS LAST → createdAt DESC).
+ *
+ *  Write behavior (dryRun=false):
+ *    - assignedRole = targetRole
+ *    - assignedTeamMemberId = input.assignedTeamMemberId WHEN PROVIDED
+ *      (otherwise the existing value is preserved — owner continuity)
+ *    - engagementStatus = "in_progress" iff current is "new" or "ready"
+ *    - updatedAt = now
+ *    - patient_journey_events row appended:
+ *        eventType="engagement_assigned" eventSource="engagement_center"
+ *        metadata={ targetRole, assignedTeamMemberId, dryRun: false } */
+export async function assignEngagementCases(
+  input: AssignEngagementCasesInput,
+): Promise<AssignEngagementCasesResult> {
+  const limit = Math.min(Math.max(1, input.limit ?? 25), 250);
+  const dryRun = input.dryRun ?? false;
+  const buckets = input.targetRole === "scheduler"
+    ? [...SCHEDULER_ASSIGNMENT_BUCKETS]
+    : [...LIAISON_ASSIGNMENT_BUCKETS];
+
+  const conditions = [
+    eq(patientExecutionCases.lifecycleStatus, "active"),
+    eq(patientExecutionCases.qualificationStatus, "qualified"),
+    notInArray(patientExecutionCases.engagementStatus, [...TERMINAL_ENGAGEMENT_STATUSES]),
+    inArray(patientExecutionCases.engagementBucket, buckets),
+  ];
+  if (input.facilityId) conditions.push(eq(patientExecutionCases.facilityId, input.facilityId));
+
+  const orderClause = [
+    sql`${patientExecutionCases.priorityScore} DESC NULLS LAST`,
+    sql`${patientExecutionCases.nextActionAt} ASC NULLS LAST`,
+    desc(patientExecutionCases.createdAt),
+  ];
+
+  const rows = await db
+    .select()
+    .from(patientExecutionCases)
+    .where(and(...conditions))
+    .orderBy(...orderClause)
+    .limit(limit);
+
+  // JS-side priority refinement (matches the read endpoints' contract)
+  const screeningIds = rows.map((r) => r.patientScreeningId).filter((id): id is number => id != null);
+  const ctx = await buildEngagementPriorityContext(screeningIds);
+  const scores = new Map<number, number>();
+  for (const r of rows) scores.set(r.id, calculateEngagementCasePriority(r, ctx));
+  const sorted = sortByEngagementPriority(rows, scores);
+
+  const explicitTeamMember = input.assignedTeamMemberId !== undefined;
+  const cases: AssignEngagementCasePreview[] = [];
+
+  for (const row of sorted) {
+    const proposedStatus = (row.engagementStatus === "new" || row.engagementStatus === "ready")
+      ? "in_progress"
+      : row.engagementStatus;
+    const proposedAssignedTeamMemberId = explicitTeamMember
+      ? (input.assignedTeamMemberId ?? null)
+      : (row.assignedTeamMemberId ?? null);
+
+    let applied = false;
+    if (!dryRun) {
+      const setFields: Record<string, unknown> = {
+        assignedRole: input.targetRole,
+        engagementStatus: proposedStatus,
+        updatedAt: new Date(),
+      };
+      // Owner continuity — only touch assignedTeamMemberId when the caller
+      // supplied a specific value. Omitting it preserves whatever was there.
+      if (explicitTeamMember) {
+        setFields.assignedTeamMemberId = input.assignedTeamMemberId;
+      }
+
+      const [updated] = await db
+        .update(patientExecutionCases)
+        .set(setFields)
+        .where(eq(patientExecutionCases.id, row.id))
+        .returning();
+
+      if (updated) {
+        applied = true;
+        try {
+          await appendPatientJourneyEvent({
+            patientName: updated.patientName,
+            patientDob: updated.patientDob ?? undefined,
+            patientScreeningId: updated.patientScreeningId ?? undefined,
+            executionCaseId: updated.id,
+            eventType: "engagement_assigned",
+            eventSource: "engagement_center",
+            actorUserId: null,
+            summary: `Assigned to ${input.targetRole}`,
+            metadata: {
+              targetRole: input.targetRole,
+              assignedTeamMemberId: input.assignedTeamMemberId ?? null,
+              previousAssignedRole: row.assignedRole ?? null,
+              previousAssignedTeamMemberId: row.assignedTeamMemberId ?? null,
+              previousEngagementStatus: row.engagementStatus,
+              proposedEngagementStatus: proposedStatus,
+              dryRun: false,
+            },
+          });
+        } catch (err) {
+          // Journey event append is best-effort — never undo the assignment
+          // because of a logging miss.
+          console.error("[assignEngagementCases] journey event append failed:", err);
+        }
+      }
+    }
+
+    cases.push({
+      id: row.id,
+      patientName: row.patientName,
+      patientScreeningId: row.patientScreeningId ?? null,
+      facilityId: row.facilityId ?? null,
+      engagementBucket: row.engagementBucket,
+      qualificationStatus: row.qualificationStatus,
+      previousAssignedRole: row.assignedRole ?? null,
+      previousAssignedTeamMemberId: row.assignedTeamMemberId ?? null,
+      previousEngagementStatus: row.engagementStatus,
+      proposedAssignedRole: input.targetRole,
+      proposedAssignedTeamMemberId,
+      proposedEngagementStatus: proposedStatus,
+      applied,
+    });
+  }
+
+  return { dryRun, targetRole: input.targetRole, count: cases.length, cases };
+}
+
 export type ListJourneyEventsFilters = {
   executionCaseId?: number;
   patientScreeningId?: number;

@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { z } from "zod";
 import {
   listExecutionCases,
   getExecutionCaseById,
@@ -6,7 +7,16 @@ import {
   listJourneyEvents,
   listEngagementCenterCases,
   listSchedulerPortalCases,
+  assignEngagementCases,
 } from "../repositories/executionCase.repo";
+
+const assignBodySchema = z.object({
+  facilityId: z.string().optional(),
+  targetRole: z.enum(["scheduler", "liaison"]),
+  limit: z.number().int().min(1).max(250).optional(),
+  assignedTeamMemberId: z.number().int().optional(),
+  dryRun: z.boolean().optional(),
+});
 
 export function registerExecutionCaseRoutes(app: Express) {
   // GET /api/execution-cases
@@ -55,6 +65,26 @@ export function registerExecutionCaseRoutes(app: Express) {
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/engagement-center/assign
+  // Body: { targetRole: "scheduler"|"liaison" (required), facilityId?, limit?,
+  //          assignedTeamMemberId?, dryRun? }
+  // Selects active qualified execution cases for the role's bucket scope,
+  // applies settings-driven priority sorting, and either previews
+  // (dryRun=true) or applies the assignment + appends an engagement_assigned
+  // journey event per case.
+  app.post("/api/engagement-center/assign", async (req, res) => {
+    try {
+      const parsed = assignBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      const result = await assignEngagementCases(parsed.data);
+      return res.json({ ok: true, ...result });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
     }
   });
 

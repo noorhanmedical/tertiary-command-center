@@ -466,6 +466,65 @@ async function main() {
     results.push(result);
   }
 
+  // ── 9) Engagement assignment dry-run for Test Facility (auth required) ──
+  {
+    let result: CheckResult;
+    if (apiAuthAvailable) {
+      try {
+        const res = await fetch(`${baseUrl}/api/engagement-center/assign`, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            cookie: cookie!,
+          },
+          body: JSON.stringify({
+            facilityId: TEST_FACILITY,
+            targetRole: "scheduler",
+            dryRun: true,
+            limit: 5,
+          }),
+        });
+        const ct = res.headers.get("content-type") ?? "";
+        if (!ct.includes("application/json")) {
+          const text = await res.text().catch(() => "");
+          result = {
+            name: "Assignment dry-run (Test Facility, scheduler)",
+            ok: false,
+            detail: `expected JSON; got ${ct} HTTP ${res.status} body=${text.slice(0, 80)}`,
+            via: "api",
+          };
+        } else {
+          const body = (await res.json()) as Record<string, unknown>;
+          const cases = Array.isArray(body.cases) ? body.cases : [];
+          const allDryRun = cases.every((c: any) => c.applied === false);
+          const ok = res.ok && body.dryRun === true && allDryRun;
+          result = {
+            name: "Assignment dry-run (Test Facility, scheduler)",
+            ok,
+            detail: `dryRun=${body.dryRun} count=${body.count} appliedFalseForAll=${allDryRun}`,
+            via: "api",
+          };
+        }
+      } catch (err: any) {
+        result = {
+          name: "Assignment dry-run (Test Facility, scheduler)",
+          ok: false,
+          detail: `network error: ${err?.message ?? String(err)}`,
+          via: "api",
+        };
+      }
+    } else {
+      result = {
+        name: "Assignment dry-run (Test Facility, scheduler)",
+        ok: true,
+        detail: "skipped — POST /api/engagement-center/assign requires COOKIE; this check is no-op without auth",
+        via: "skipped",
+      };
+    }
+    results.push(result);
+  }
+
   // ── Print results ────────────────────────────────────────────────────
   console.log("");
   console.log("───────── Canonical Visual QA ─────────");
