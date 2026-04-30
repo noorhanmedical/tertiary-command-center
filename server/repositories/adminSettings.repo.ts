@@ -154,6 +154,148 @@ export async function seedDefaultAdminSettings(): Promise<SeedDefaultAdminSettin
   return { created, skipped, createdRows };
 }
 
+// ─── Read helpers (scope-aware) ────────────────────────────────────────────
+
+export type AdminSettingScope = {
+  facilityId?: string | null;
+  userId?: string | null;
+};
+
+async function findOneSetting(
+  domain: string,
+  key: string,
+  facilityId: string | null,
+  userId: string | null,
+): Promise<AdminSetting | undefined> {
+  const conditions = [
+    eq(adminSettings.settingDomain, domain),
+    eq(adminSettings.settingKey, key),
+    eq(adminSettings.active, true),
+    facilityId === null ? isNull(adminSettings.facilityId) : eq(adminSettings.facilityId, facilityId),
+    userId === null ? isNull(adminSettings.userId) : eq(adminSettings.userId, userId),
+  ];
+  const [row] = await db
+    .select()
+    .from(adminSettings)
+    .where(and(...conditions))
+    .orderBy(desc(adminSettings.id))
+    .limit(1);
+  return row;
+}
+
+/** Look up a single admin setting value with scope precedence:
+ *    (facility, user) → (facility, NULL) → (NULL, user) → (NULL, NULL).
+ *  Returns the most-specific matching active row's settingValue, or null. */
+export async function getAdminSettingValue<T = unknown>(
+  settingDomain: string,
+  settingKey: string,
+  scope?: AdminSettingScope,
+): Promise<T | null> {
+  const facilityId = scope?.facilityId ?? null;
+  const userId = scope?.userId ?? null;
+
+  if (facilityId !== null && userId !== null) {
+    const r = await findOneSetting(settingDomain, settingKey, facilityId, userId);
+    if (r) return (r.settingValue as T) ?? null;
+  }
+  if (facilityId !== null) {
+    const r = await findOneSetting(settingDomain, settingKey, facilityId, null);
+    if (r) return (r.settingValue as T) ?? null;
+  }
+  if (userId !== null) {
+    const r = await findOneSetting(settingDomain, settingKey, null, userId);
+    if (r) return (r.settingValue as T) ?? null;
+  }
+  const global = await findOneSetting(settingDomain, settingKey, null, null);
+  return global ? ((global.settingValue as T) ?? null) : null;
+}
+
+/** Convenience: skip scope handling and look up the (NULL, NULL) row only. */
+export async function getGlobalAdminSettingValue<T = unknown>(
+  settingDomain: string,
+  settingKey: string,
+): Promise<T | null> {
+  return getAdminSettingValue<T>(settingDomain, settingKey);
+}
+
+// ─── Domain-specific defaults aggregators ──────────────────────────────────
+
+export type EngagementCenterDefaults = {
+  enabled: boolean;
+  nextActionWindowMinutes: number;
+  bucketWeights: Record<string, number>;
+  ptoBlocksAssignment: boolean;
+  outreachMix: { medicare: number; ppo: number };
+};
+
+const DEFAULT_BUCKET_WEIGHTS: Record<string, number> = {
+  visit: 3,
+  scheduling_triage: 2,
+  outreach: 1,
+};
+
+export async function getEngagementCenterDefaults(): Promise<EngagementCenterDefaults> {
+  const [enabled, windowMinutes, mix, ptoBlocks] = await Promise.all([
+    getGlobalAdminSettingValue<{ enabled?: boolean }>("engagement_center", "enabled"),
+    getGlobalAdminSettingValue<{ minutes?: number }>("engagement_center", "default_priority_window_minutes"),
+    getGlobalAdminSettingValue<{ medicare?: number; ppo?: number }>("insurance", "outreach_mix"),
+    getGlobalAdminSettingValue<{ enabled?: boolean }>("global_schedule", "pto_blocks_assignment"),
+  ]);
+  return {
+    enabled: enabled?.enabled ?? true,
+    nextActionWindowMinutes: typeof windowMinutes?.minutes === "number" ? windowMinutes.minutes : 60,
+    bucketWeights: { ...DEFAULT_BUCKET_WEIGHTS },
+    ptoBlocksAssignment: ptoBlocks?.enabled ?? true,
+    outreachMix: {
+      medicare: typeof mix?.medicare === "number" ? mix.medicare : 75,
+      ppo: typeof mix?.ppo === "number" ? mix.ppo : 25,
+    },
+  };
+}
+
+export type InsurancePriorityWeights = {
+  straight_medicare: number;
+  ppo: number;
+  other: number;
+  unknown: number;
+};
+
+const DEFAULT_INSURANCE_PRIORITY_WEIGHTS: InsurancePriorityWeights = {
+  straight_medicare: 3,
+  ppo: 2,
+  other: 1,
+  unknown: 1,
+};
+
+/** Read insurance/* policy settings and translate them into priority weights.
+ *  Higher = preferred. Falls back to baseline weights when a setting row is
+ *  missing. `requires_admin_approval` halves the weight to 1.5 instead of 2.5. */
+export async function getInsurancePriorityDefaults(): Promise<InsurancePriorityWeights> {
+  const [medicare, ppo, other] = await Promise.all([
+    getGlobalAdminSettingValue<{ allowed?: boolean; preferred?: boolean }>("insurance", "straight_medicare_policy"),
+    getGlobalAdminSettingValue<{ allowed?: boolean }>("insurance", "ppo_policy"),
+    getGlobalAdminSettingValue<{ allowed?: boolean; requires_admin_approval?: boolean }>("insurance", "other_payer_policy"),
+  ]);
+
+  const weights: InsurancePriorityWeights = { ...DEFAULT_INSURANCE_PRIORITY_WEIGHTS };
+
+  if (medicare) {
+    if (medicare.preferred) weights.straight_medicare = 3;
+    else if (medicare.allowed) weights.straight_medicare = 2;
+    else weights.straight_medicare = 0;
+  }
+  if (ppo) {
+    weights.ppo = ppo.allowed ? 2 : 0;
+  }
+  if (other) {
+    if (!other.allowed) weights.other = 0;
+    else weights.other = other.requires_admin_approval ? 1 : 1.5;
+  }
+  // unknown stays at baseline 1 — represents missing/unparseable insurance string
+
+  return weights;
+}
+
 export async function listAdminSettings(
   filters: ListAdminSettingsFilters = {},
   limit = 100,
