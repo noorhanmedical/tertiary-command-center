@@ -120,15 +120,39 @@ export function DispositionSheet({
         notes: notes.trim() || null,
         schedulerUserId: schedulerUserId,
       };
-      if (outcome === "callback" && callbackAt) {
-        body.callbackAt = new Date(callbackAt).toISOString();
+      const nextActionIso = outcome === "callback" && callbackAt
+        ? new Date(callbackAt).toISOString()
+        : null;
+      if (nextActionIso) {
+        body.callbackAt = nextActionIso;
       }
       const res = await apiRequest("POST", "/api/outreach/calls", body);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Failed to log call");
       }
-      return res.json();
+      const created = await res.json();
+
+      // Mirror the disposition into the canonical spine — appends a
+      // patient_journey_events row and (for matching outcomes) opens a
+      // scheduling triage case / plexus task. Best-effort: never blocks
+      // the user-facing call log if it fails.
+      try {
+        const canonicalBody: Record<string, unknown> = {
+          patientScreeningId: patientId,
+          patientName: patientName || undefined,
+          callResult: outcome,
+          callDisposition: outcome,
+          note: notes.trim() || undefined,
+          assignedUserId: schedulerUserId ?? undefined,
+        };
+        if (nextActionIso) canonicalBody.nextActionAt = nextActionIso;
+        await apiRequest("POST", "/api/engagement-center/call-result", canonicalBody);
+      } catch (canonicalErr) {
+        console.warn("[disposition] canonical call-result mirror failed", canonicalErr);
+      }
+
+      return created;
     },
     onSuccess: () => {
       toast({ title: "Call logged" });
