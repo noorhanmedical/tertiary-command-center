@@ -1,4 +1,8 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
+import { z } from "zod";
+import { eq } from "drizzle-orm";
+import { db } from "../db";
+import { patientExecutionCases } from "@shared/schema/executionCase";
 import {
   listGlobalScheduleEvents,
   getGlobalScheduleEventById,
@@ -6,7 +10,30 @@ import {
   listTechnicianLiaisonAncillarySchedule,
   listTeamAvailabilityBlocks,
   listUltrasoundTechSchedule,
+  upsertAncillaryScheduleEvent,
 } from "../repositories/globalSchedule.repo";
+import {
+  appendPatientJourneyEvent,
+  getExecutionCaseById,
+  getExecutionCaseByScreeningId,
+} from "../repositories/executionCase.repo";
+
+const scheduleAncillaryBodySchema = z.object({
+  executionCaseId: z.number().int().optional().nullable(),
+  patientScreeningId: z.number().int().optional().nullable(),
+  serviceType: z.string().min(1),
+  startsAt: z.string().min(1),
+  endsAt: z.string().optional().nullable(),
+  facilityId: z.string().optional().nullable(),
+  assignedUserId: z.string().optional().nullable(),
+  note: z.string().optional().nullable(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+function sessionUserIdFromGlobalSchedule(req: Request): string | null {
+  const sess = (req as Request & { session?: { userId?: string } }).session;
+  return sess?.userId ?? null;
+}
 
 export function registerGlobalScheduleRoutes(app: Express) {
   // GET /api/global-schedule-events
@@ -149,6 +176,134 @@ export function registerGlobalScheduleRoutes(app: Express) {
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/global-schedule-events/schedule-ancillary
+  // Body: serviceType (required), startsAt (required ISO), endsAt?,
+  //       executionCaseId? | patientScreeningId? (one required),
+  //       facilityId?, assignedUserId?, note?, metadata?
+  // Upserts an ancillary_appointment global_schedule_event (deduped by
+  // patientScreeningId + serviceType + startsAt), appends a
+  // scheduled_ancillary patient journey event, and advances the execution
+  // case to engagementStatus=scheduled with nextActionAt=startsAt.
+  app.post("/api/global-schedule-events/schedule-ancillary", async (req, res) => {
+    try {
+      const parsed = scheduleAncillaryBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      const data = parsed.data;
+      const actorUserId = sessionUserIdFromGlobalSchedule(req);
+
+      const startsAt = new Date(data.startsAt);
+      if (isNaN(startsAt.getTime())) {
+        return res.status(400).json({ error: "startsAt is not a valid datetime" });
+      }
+      const endsAt = data.endsAt ? new Date(data.endsAt) : null;
+      if (endsAt && isNaN(endsAt.getTime())) {
+        return res.status(400).json({ error: "endsAt is not a valid datetime" });
+      }
+
+      // Resolve patient context — must be able to identify the case
+      let executionCaseId: number | null = data.executionCaseId ?? null;
+      let patientScreeningId: number | null = data.patientScreeningId ?? null;
+      let executionCase: Awaited<ReturnType<typeof getExecutionCaseById>> | null = null;
+
+      if (executionCaseId !== null) {
+        const ec = await getExecutionCaseById(executionCaseId);
+        if (ec) {
+          executionCase = ec;
+          if (patientScreeningId === null) patientScreeningId = ec.patientScreeningId ?? null;
+        }
+      }
+      if (executionCase === null && patientScreeningId !== null) {
+        const ec = await getExecutionCaseByScreeningId(patientScreeningId);
+        if (ec) {
+          executionCase = ec;
+          executionCaseId = ec.id;
+        }
+      }
+      if (!executionCase) {
+        return res.status(404).json({
+          error: "Could not resolve an execution case from executionCaseId or patientScreeningId",
+        });
+      }
+
+      const facilityId = data.facilityId ?? executionCase.facilityId ?? null;
+
+      // Upsert ancillary appointment (dedup happens inside the repo helper)
+      const { event, created } = await upsertAncillaryScheduleEvent({
+        executionCaseId: executionCase.id,
+        patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+        patientName: executionCase.patientName,
+        patientDob: executionCase.patientDob ?? null,
+        facilityId,
+        serviceType: data.serviceType,
+        startsAt,
+        endsAt,
+        assignedUserId: data.assignedUserId ?? null,
+        source: "scheduler_portal",
+        note: data.note ?? null,
+        metadata: { actorUserId, ...(data.metadata ?? {}) },
+      });
+
+      // Append journey event (best-effort)
+      let journeyEvent: Awaited<ReturnType<typeof appendPatientJourneyEvent>> | null = null;
+      try {
+        journeyEvent = await appendPatientJourneyEvent({
+          patientName: executionCase.patientName,
+          patientDob: executionCase.patientDob ?? undefined,
+          patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? undefined,
+          executionCaseId: executionCase.id,
+          eventType: "scheduled_ancillary",
+          eventSource: "scheduler_portal",
+          actorUserId,
+          summary: `Ancillary ${data.serviceType} ${created ? "scheduled" : "rescheduled"} for ${startsAt.toISOString()}`,
+          metadata: {
+            globalScheduleEventId: event.id,
+            serviceType: data.serviceType,
+            startsAt: startsAt.toISOString(),
+            endsAt: endsAt ? endsAt.toISOString() : null,
+            assignedUserId: data.assignedUserId ?? null,
+            facilityId: facilityId ?? null,
+            note: data.note ?? null,
+            created,
+            ...(data.metadata ?? {}),
+          },
+        });
+      } catch (err: any) {
+        console.error("[schedule-ancillary] journey event append failed:", err.message);
+      }
+
+      // Advance execution case state — engagementStatus=scheduled,
+      // nextActionAt=startsAt. Update unconditionally because scheduling
+      // is the operationally-correct next state regardless of prior state.
+      let updatedExecutionCase = executionCase;
+      try {
+        const [row] = await db
+          .update(patientExecutionCases)
+          .set({
+            engagementStatus: "scheduled",
+            nextActionAt: startsAt,
+            updatedAt: new Date(),
+          })
+          .where(eq(patientExecutionCases.id, executionCase.id))
+          .returning();
+        if (row) updatedExecutionCase = row;
+      } catch (err: any) {
+        console.error("[schedule-ancillary] execution case update failed:", err.message);
+      }
+
+      return res.json({
+        ok: true,
+        event,
+        created,
+        executionCase: updatedExecutionCase,
+        journeyEvent,
+      });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
     }
   });
 
