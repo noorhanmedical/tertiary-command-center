@@ -98,7 +98,10 @@ const OUR_PORTION_PERCENTAGE = 50;
 
 /** Add the completed billing package as an invoice line item on the most recent
  *  Draft invoice for the same facility. Idempotent — tracks the created
- *  invoiceLineItemId in the package metadata to avoid duplicate rows. */
+ *  invoiceLineItemId in the package metadata to avoid duplicate rows.
+ *  Exported so callers that need to await the line-item insert (rather than
+ *  rely on the fire-and-forget call in updateCompletedBillingPackagePayment)
+ *  can do so directly. */
 export async function addCompletedPackageToInvoice(
   pkg: CompletedBillingPackage,
 ): Promise<{ lineItem: InvoiceLineItem; invoiceId: number } | null> {
