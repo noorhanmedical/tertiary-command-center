@@ -20,7 +20,8 @@
     "review:canonical-flow-state": "tsx script/reviewCanonicalFlowState.ts",
     "qa:canonical-visual-state": "tsx script/qaCanonicalVisualState.ts",
     "audit:canonical-integrity": "tsx script/auditCanonicalIntegrity.ts",
-    "reconcile:canonical-duplicates": "tsx script/reconcileCanonicalDuplicates.ts"
+    "reconcile:canonical-duplicates": "tsx script/reconcileCanonicalDuplicates.ts",
+    "test:call-result-canonical-write": "tsx script/testCallResultCanonicalWrite.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
