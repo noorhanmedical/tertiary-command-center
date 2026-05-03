@@ -60,7 +60,7 @@ async function main(): Promise<void> {
     "../server/repositories/globalSchedule.repo"
   );
   const {
-    createSchedulingTriageCase,
+    upsertOpenSchedulingTriageCase,
   } = await import("../server/repositories/schedulingTriage.repo");
   const {
     createCaseDocumentReadiness,
@@ -205,7 +205,7 @@ async function main(): Promise<void> {
       },
     });
     if (callResult === "callback") {
-      await createSchedulingTriageCase({
+      await upsertOpenSchedulingTriageCase({
         executionCaseId: ec.id,
         patientScreeningId: screening.id,
         patientName: ec.patientName,

@@ -1,11 +1,16 @@
 import { db } from "../db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, notInArray } from "drizzle-orm";
 import {
   schedulingTriageCases,
   type SchedulingTriageCase,
   type InsertSchedulingTriageCase,
 } from "@shared/schema/schedulingTriage";
 import type { GlobalScheduleEvent } from "@shared/schema/globalSchedule";
+
+// Statuses that mean "this triage row is settled". When matching open rows
+// for dedup, we ignore rows in these terminal states — a new call result
+// that needs follow-up should NOT reuse a closed row.
+const TERMINAL_TRIAGE_STATUSES = ["resolved", "closed", "cancelled"] as const;
 
 const TRIAGE_TRIGGER_STATUSES = new Set([
   "no_show",
@@ -107,6 +112,84 @@ export async function createSchedulingTriageCase(
     .values(input)
     .returning();
   return result;
+}
+
+/** Idempotent open-triage write. Looks up an open row matching
+ *  (patientScreeningId, mainType, subtype) — where "open" means status is
+ *  NOT IN (resolved, closed, cancelled) — and updates it in place. Falls
+ *  back to executionCaseId when patientScreeningId is null. Inserts a
+ *  fresh row only when no matching open row exists.
+ *
+ *  Mirrors the audit's duplicate-key check
+ *  (auditCanonicalIntegrity.ts: "duplicate open triage per
+ *  (patient_screening_id, main_type, subtype)") so repeated callback /
+ *  manager_review writes can no longer produce duplicate WARN rows.
+ *
+ *  Metadata is merged: existing keys are preserved, new keys overwrite
+ *  matching keys. dueAt / note / priority / nextOwnerRole / assignedUserId
+ *  are overwritten when supplied. */
+export async function upsertOpenSchedulingTriageCase(
+  input: InsertSchedulingTriageCase,
+): Promise<{ row: SchedulingTriageCase; created: boolean }> {
+  const conditions = [
+    eq(schedulingTriageCases.mainType, input.mainType),
+    notInArray(schedulingTriageCases.status, [...TERMINAL_TRIAGE_STATUSES]),
+  ];
+  if (input.subtype !== undefined && input.subtype !== null) {
+    conditions.push(eq(schedulingTriageCases.subtype, input.subtype));
+  }
+  if (input.patientScreeningId != null) {
+    conditions.push(eq(schedulingTriageCases.patientScreeningId, input.patientScreeningId));
+  } else if (input.executionCaseId != null) {
+    conditions.push(eq(schedulingTriageCases.executionCaseId, input.executionCaseId));
+  } else {
+    // No strong identifier — cannot dedupe safely. Fall through to insert.
+    const inserted = await createSchedulingTriageCase(input);
+    return { row: inserted, created: true };
+  }
+
+  const [existing] = await db
+    .select()
+    .from(schedulingTriageCases)
+    .where(and(...conditions))
+    .orderBy(desc(schedulingTriageCases.id))
+    .limit(1);
+
+  if (existing) {
+    const existingMetadata = (typeof existing.metadata === "object" && existing.metadata !== null
+      ? (existing.metadata as Record<string, unknown>)
+      : {});
+    const incomingMetadata = (typeof input.metadata === "object" && input.metadata !== null
+      ? (input.metadata as Record<string, unknown>)
+      : {});
+    const mergedMetadata = { ...existingMetadata, ...incomingMetadata };
+
+    const updates: Partial<InsertSchedulingTriageCase> = {
+      // Always merge metadata
+      metadata: mergedMetadata,
+    };
+    // Only overwrite scalar fields when the caller supplied them — otherwise
+    // preserve whatever the existing row had so prior context isn't dropped.
+    if (input.dueAt !== undefined) updates.dueAt = input.dueAt;
+    if (input.note !== undefined && input.note !== null) updates.note = input.note;
+    if (input.priority !== undefined) updates.priority = input.priority;
+    if (input.nextOwnerRole !== undefined) updates.nextOwnerRole = input.nextOwnerRole;
+    if (input.assignedUserId !== undefined && input.assignedUserId !== null) {
+      updates.assignedUserId = input.assignedUserId;
+    }
+    if (input.facilityId !== undefined && input.facilityId !== null && existing.facilityId == null) {
+      updates.facilityId = input.facilityId;
+    }
+    if (input.executionCaseId !== undefined && input.executionCaseId !== null && existing.executionCaseId == null) {
+      updates.executionCaseId = input.executionCaseId;
+    }
+
+    const updated = await updateSchedulingTriageCase(existing.id, updates);
+    return { row: updated ?? existing, created: false };
+  }
+
+  const inserted = await createSchedulingTriageCase(input);
+  return { row: inserted, created: true };
 }
 
 export async function updateSchedulingTriageCase(
