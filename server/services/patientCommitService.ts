@@ -1,9 +1,12 @@
+import { db } from "../db";
+import { eq } from "drizzle-orm";
 import { storage } from "../storage";
 import {
   COMMIT_RECALL_WINDOW_MS,
   type CommitStatus,
   type PatientScreening,
 } from "@shared/schema";
+import { patientExecutionCases, type PatientExecutionCase } from "@shared/schema/executionCase";
 import { resolveSchedulerForClinic } from "../../shared/platformSettings";
 import {
   createOrUpdateExecutionCaseFromScreening,
@@ -205,4 +208,142 @@ export async function recallPatient(
 
   if (!updated) return { ok: false, error: { code: "not_found" } };
   return { ok: true, data: updated };
+}
+
+// ─── ensureCanonicalSpineForScreening ──────────────────────────────────────
+//
+// Idempotent canonical spine setup keyed by patientScreeningId. Designed for
+// flows that flip a screening to commit_status Ready/Scheduled or
+// appointment_status scheduled WITHOUT going through commitPatient (e.g. the
+// Visit Schedule appointment booking and the outreach call atomic write).
+//
+// Skip rules:
+//   - Screening not found → skipped: "screening_not_found"
+//   - Blank patient name → skipped: "blank_name"
+//   - commitStatus = Draft → skipped: "draft_not_committed"
+//
+// Writes (all idempotent — repo helpers dedup by patientScreeningId):
+//   1. patient_execution_cases   via createOrUpdateExecutionCaseFromScreening
+//   2. engagement_status update  derived from appointment_status (no downgrade
+//                                of completed/closed)
+//   3. global_schedule_events    doctor_visit row when patient_type=visit AND
+//                                batch.scheduleDate is set (defaults time to
+//                                10:00 AM when screening.time is null)
+
+export type EnsureCanonicalSpineResult =
+  | { skipped: "screening_not_found" | "blank_name" | "draft_not_committed" }
+  | {
+      executionCase: PatientExecutionCase;
+      executionCaseCreated: boolean;
+      scheduleEventId: number | null;
+      scheduleEventCreated: boolean;
+      engagementStatusUpdated: boolean;
+    };
+
+const ENGAGEMENT_NEVER_DOWNGRADE = new Set(["completed", "closed"]);
+
+function deriveEngagementStatusFromAppointment(appointmentStatus: string | null | undefined): string {
+  const aps = (appointmentStatus ?? "").toLowerCase().trim();
+  if (aps === "scheduled" || aps === "completed") return "scheduled";
+  if (aps === "callback" || aps === "rescheduled" || aps === "reschedule_needed") return "in_progress";
+  return "new";
+}
+
+export async function ensureCanonicalSpineForScreening(
+  patientScreeningId: number,
+  opts: { actorUserId?: string | null; auto?: boolean } = {},
+): Promise<EnsureCanonicalSpineResult> {
+  const screening = await storage.getPatientScreening(patientScreeningId);
+  if (!screening) return { skipped: "screening_not_found" };
+  if (!screening.name?.trim()) return { skipped: "blank_name" };
+  if (screening.commitStatus === "Draft") return { skipped: "draft_not_committed" };
+
+  const batch = await storage.getScreeningBatch(screening.batchId);
+
+  // 1. Upsert execution case (idempotent by patient_screening_id)
+  const { executionCase, created: ecCreated } =
+    await createOrUpdateExecutionCaseFromScreening(screening, opts.actorUserId ?? null);
+
+  // 2. Update engagement_status to match the screening's appointment_status,
+  //    but never downgrade a case that has already reached a terminal state.
+  const desiredStatus = deriveEngagementStatusFromAppointment(screening.appointmentStatus);
+  let updatedExecutionCase: PatientExecutionCase = executionCase;
+  let engagementStatusUpdated = false;
+  if (
+    !ENGAGEMENT_NEVER_DOWNGRADE.has(executionCase.engagementStatus) &&
+    executionCase.engagementStatus !== desiredStatus
+  ) {
+    const [row] = await db
+      .update(patientExecutionCases)
+      .set({ engagementStatus: desiredStatus, updatedAt: new Date() })
+      .where(eq(patientExecutionCases.id, executionCase.id))
+      .returning();
+    if (row) {
+      updatedExecutionCase = row;
+      engagementStatusUpdated = true;
+    }
+  }
+
+  // 3. Doctor_visit global_schedule_event for visit patients with a
+  //    batch.scheduleDate. Falls back to 10:00 AM when the screening row
+  //    does not carry an explicit time.
+  let scheduleEventId: number | null = null;
+  let scheduleEventCreated = false;
+  const isVisit = (screening.patientType ?? "visit").toLowerCase() === "visit";
+  if (isVisit && batch?.scheduleDate) {
+    const screeningWithDefaultedTime: PatientScreening = {
+      ...screening,
+      time: screening.time ?? "10:00 AM",
+    };
+    const result = await createGlobalScheduleEventFromScreeningCommit(
+      screeningWithDefaultedTime,
+      updatedExecutionCase.id,
+      batch.scheduleDate,
+      { auto: opts.auto ?? true, actorUserId: opts.actorUserId ?? null },
+    );
+    if (result) {
+      scheduleEventId = result.event.id;
+      scheduleEventCreated = result.created;
+    }
+  }
+
+  // 4. Journey event only for newly-created spine rows so re-runs don't
+  //    spam the timeline. Best-effort; never throws.
+  if (ecCreated || scheduleEventCreated) {
+    try {
+      await appendPatientJourneyEvent({
+        patientName: updatedExecutionCase.patientName,
+        patientDob: updatedExecutionCase.patientDob ?? undefined,
+        patientScreeningId: screening.id,
+        executionCaseId: updatedExecutionCase.id,
+        eventType: ecCreated ? "execution_case_created" : "execution_case_updated",
+        eventSource: "ensure_canonical_spine",
+        actorUserId: opts.actorUserId ?? undefined,
+        summary: ecCreated
+          ? "Execution case created from canonical spine ensure hook"
+          : "Doctor visit schedule event created from canonical spine ensure hook",
+        metadata: {
+          executionCaseId: updatedExecutionCase.id,
+          executionCaseCreated: ecCreated,
+          engagementBucket: updatedExecutionCase.engagementBucket,
+          engagementStatus: updatedExecutionCase.engagementStatus,
+          appointmentStatus: screening.appointmentStatus ?? null,
+          scheduleEventId,
+          scheduleEventCreated,
+          source: "ensure_canonical_spine",
+          auto: opts.auto ?? true,
+        },
+      });
+    } catch (err: any) {
+      console.error("[ensureCanonicalSpineForScreening] journey append failed (non-fatal):", err.message);
+    }
+  }
+
+  return {
+    executionCase: updatedExecutionCase,
+    executionCaseCreated: ecCreated,
+    scheduleEventId,
+    scheduleEventCreated,
+    engagementStatusUpdated,
+  };
 }
