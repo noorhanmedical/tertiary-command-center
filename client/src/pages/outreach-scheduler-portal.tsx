@@ -43,6 +43,7 @@ import { useEffect, useMemo, useState } from "react";
   import { useOutreachData } from "@/components/outreach/useOutreachData";
   import { useSelectedPatient } from "@/components/outreach/useSelectedPatient";
   import { PatientJourneyDrawer } from "@/components/patient/PatientJourneyDrawer";
+  import { CanonicalRowActions } from "@/components/outreach/CanonicalRowActions";
   import {
     fetchSchedulerPortalCases,
     schedulerPortalCasesQueryKey,
@@ -861,6 +862,13 @@ export default function OutreachSchedulerPortalPage() {
                           >
                             {scheduleReady.label}
                           </span>
+                          <CanonicalRowActions
+                            executionCaseId={c.id}
+                            patientScreeningId={c.patientScreeningId ?? null}
+                            patientName={c.patientName}
+                            patientDob={c.patientDob ?? null}
+                            facilityId={c.facilityId ?? null}
+                          />
                           <PatientJourneyDrawer
                             lookup={{
                               executionCaseId: c.id,
