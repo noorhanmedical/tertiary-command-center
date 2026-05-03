@@ -12,6 +12,7 @@ import {
 } from "../../shared/schema";
 import { eq } from "drizzle-orm";
 import { buildOutreachDashboard } from "../services/outreachService";
+import { ensureCanonicalSpineForScreening } from "../services/patientCommitService";
 
 // Look up the user_id of the scheduler currently assigned to a given
 // patient screening (via batch.assigned_scheduler_id). Returns null when
@@ -226,6 +227,16 @@ export function registerOutreachRoutes(app: Express) {
           console.warn("[outreach] markSchedulerAssignmentCompleted failed:", (err as Error)?.message);
         }
       }
+
+      // Ensure the canonical spine reflects whatever commit_status /
+      // appointment_status the atomic call write just landed on. Idempotent;
+      // fire-and-forget so the user-facing call log is never blocked.
+      void ensureCanonicalSpineForScreening(parsed.data.patientScreeningId, {
+        actorUserId: userId,
+        auto: false,
+      }).catch((err) => {
+        console.error("[outreach.calls] ensureCanonicalSpineForScreening failed:", err);
+      });
 
       res.status(201).json(call);
     } catch (error: any) {

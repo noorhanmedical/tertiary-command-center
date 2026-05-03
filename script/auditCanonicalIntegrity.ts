@@ -145,13 +145,15 @@ async function main() {
   );
   await runCheck(
     "patient_execution_cases",
-    "multiple active cases for same (patient_name, patient_dob, facility_id)",
+    "multiple active cases for same (patient_name, patient_dob, facility_id, engagement_bucket)",
     "WARN",
-    `SELECT patient_name, patient_dob, facility_id, COUNT(*) AS n,
-            ARRAY_AGG(id ORDER BY id) AS ids
+    `SELECT patient_name, patient_dob, facility_id, engagement_bucket,
+            COUNT(*) AS n,
+            ARRAY_AGG(id ORDER BY id) AS ids,
+            ARRAY_AGG(patient_screening_id ORDER BY id) AS patient_screening_ids
        FROM patient_execution_cases
       WHERE lifecycle_status NOT IN ('closed', 'archived')
-      GROUP BY patient_name, patient_dob, facility_id
+      GROUP BY patient_name, patient_dob, facility_id, engagement_bucket
      HAVING COUNT(*) > 1`,
   );
 

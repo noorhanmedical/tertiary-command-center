@@ -3,6 +3,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { VALID_FACILITIES } from "./helpers";
 import { logAudit } from "../services/auditService";
+import { ensureCanonicalSpineForScreening } from "../services/patientCommitService";
 
 export function registerAppointmentRoutes(app: Express) {
   app.get("/api/appointments", async (req, res) => {
@@ -69,6 +70,15 @@ export function registerAppointmentRoutes(app: Express) {
         await storage.updatePatientScreening(patientScreeningId, {
           commitStatus: "Scheduled",
           appointmentStatus: "scheduled",
+        });
+        // Make sure the canonical spine reflects this booking — execution
+        // case + doctor_visit event. Idempotent; safe to re-run. Fire-and-
+        // forget so a spine failure never breaks the user-facing booking.
+        void ensureCanonicalSpineForScreening(patientScreeningId, {
+          actorUserId: req.session?.userId ?? null,
+          auto: true,
+        }).catch((err) => {
+          console.error("[appointments.book] ensureCanonicalSpineForScreening failed:", err);
         });
       }
       void logAudit(req, "create", "appointment", appt.id, { patientName, facility, scheduledDate, scheduledTime, testType });
