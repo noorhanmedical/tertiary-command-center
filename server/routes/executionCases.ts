@@ -15,7 +15,10 @@ import {
   assignEngagementCases,
   appendPatientJourneyEvent,
 } from "../repositories/executionCase.repo";
-import { createSchedulingTriageCase } from "../repositories/schedulingTriage.repo";
+import {
+  createSchedulingTriageCase,
+  upsertOpenSchedulingTriageCase,
+} from "../repositories/schedulingTriage.repo";
 import { getGlobalAdminSettingValue } from "../repositories/adminSettings.repo";
 
 const assignBodySchema = z.object({
@@ -285,13 +288,17 @@ export function registerExecutionCaseRoutes(app: Express) {
         console.error("[call-result] journey event append failed:", err.message);
       }
 
-      // Scheduling triage case
+      // Scheduling triage case — upsert by (patientScreeningId, mainType,
+      // subtype) on non-terminal status so repeated call-result writes for
+      // the same disposition reuse the existing open row instead of
+      // accumulating duplicates (see audit's "duplicate open triage" check).
       let triageCase: Awaited<ReturnType<typeof createSchedulingTriageCase>> | null = null;
+      let triageCreated: boolean | null = null;
       if (CALL_RESULTS_NEEDING_TRIAGE.has(data.callResult)) {
         const mapping = TRIAGE_MAPPINGS[data.callResult];
         if (mapping) {
           try {
-            triageCase = await createSchedulingTriageCase({
+            const result = await upsertOpenSchedulingTriageCase({
               executionCaseId: executionCaseId ?? undefined,
               patientScreeningId: patientScreeningId ?? undefined,
               patientName: patientName ?? undefined,
@@ -312,8 +319,10 @@ export function registerExecutionCaseRoutes(app: Express) {
                 ...(data.metadata ?? {}),
               },
             });
+            triageCase = result.row;
+            triageCreated = result.created;
           } catch (err: any) {
-            console.error("[call-result] triage case create failed:", err.message);
+            console.error("[call-result] triage case upsert failed:", err.message);
           }
         }
       }
