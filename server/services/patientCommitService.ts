@@ -165,6 +165,17 @@ export async function commitPatient(
           : `Execution case updated from screening commit`,
         metadata: { executionCaseId: executionCase.id },
       });
+
+      // Auto-pick a scheduler for the freshly committed case so it shows up
+      // in the right scheduler's queue without a manual reconcile. Idempotent
+      // — no-op when the case is already assigned. Late import to avoid
+      // circular reference (scheduler service imports from this file).
+      try {
+        const { autoAssignSchedulerForExecutionCase } = await import("./schedulerAutoAssign");
+        await autoAssignSchedulerForExecutionCase(executionCase.id, { actorUserId: userId ?? null });
+      } catch (assignErr) {
+        console.error("[patientCommitService] scheduler auto-assign failed:", assignErr);
+      }
     } catch (err) {
       console.error("[patientCommitService] execution case spine failed:", err);
     }
@@ -337,6 +348,21 @@ export async function ensureCanonicalSpineForScreening(
     } catch (err: any) {
       console.error("[ensureCanonicalSpineForScreening] journey append failed (non-fatal):", err.message);
     }
+  }
+
+  // Auto-assign a scheduler so booking / outreach-call paths that bypass
+  // commitPatient still land in the right queue. Idempotent — no-op when
+  // the case already has assignedTeamMemberId. Late import avoids cycles.
+  try {
+    const { autoAssignSchedulerForExecutionCase } = await import("./schedulerAutoAssign");
+    await autoAssignSchedulerForExecutionCase(updatedExecutionCase.id, {
+      actorUserId: opts.actorUserId ?? null,
+    });
+  } catch (assignErr) {
+    console.error(
+      "[ensureCanonicalSpineForScreening] scheduler auto-assign failed (non-fatal):",
+      assignErr,
+    );
   }
 
   return {
