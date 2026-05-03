@@ -24,10 +24,23 @@ type Props = {
   patientName: string;
   patientDob: string | null;
   facilityId: string | null;
+  /** Engagement status drives whether the post-schedule "Done" action is
+   *  visible. Hidden for cases that haven't been scheduled yet. */
+  engagementStatus?: string | null;
   /** Refetch hook for the parent's canonical case query so the row
    *  status reflects the new state immediately. */
   onSuccess?: () => void;
 };
+
+const DOCUMENT_TYPE_OPTIONS: Array<{ value: string; label: string; defaultStatus: string }> = [
+  { value: "informed_consent",    label: "Informed consent",    defaultStatus: "completed" },
+  { value: "screening_form",      label: "Screening form",      defaultStatus: "completed" },
+  { value: "report",              label: "Report",              defaultStatus: "uploaded" },
+  { value: "order_note",          label: "Order note",          defaultStatus: "generated" },
+  { value: "post_procedure_note", label: "Post-procedure note", defaultStatus: "generated" },
+];
+
+const POST_SCHEDULE_STATUSES = new Set(["scheduled", "in_progress", "completed"]);
 
 const CALL_RESULT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "callback", label: "Callback later" },
@@ -65,10 +78,16 @@ export function CanonicalRowActions({
   patientName,
   patientDob,
   facilityId,
+  engagementStatus,
   onSuccess,
 }: Props) {
   const [logOpen, setLogOpen] = useState(false);
   const [schedOpen, setSchedOpen] = useState(false);
+  const [doneOpen, setDoneOpen] = useState(false);
+
+  const showDone = engagementStatus
+    ? POST_SCHEDULE_STATUSES.has(engagementStatus)
+    : false;
 
   return (
     <>
@@ -88,6 +107,16 @@ export function CanonicalRowActions({
       >
         Sched
       </button>
+      {showDone && (
+        <button
+          type="button"
+          onClick={() => setDoneOpen(true)}
+          className="rounded-md border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-50"
+          data-testid={`canonical-case-done-action-${executionCaseId}`}
+        >
+          Done
+        </button>
+      )}
 
       {logOpen && (
         <CanonicalLogCallDialog
@@ -105,6 +134,18 @@ export function CanonicalRowActions({
         <CanonicalScheduleDialog
           open={schedOpen}
           onOpenChange={setSchedOpen}
+          executionCaseId={executionCaseId}
+          patientScreeningId={patientScreeningId}
+          patientName={patientName}
+          patientDob={patientDob}
+          facilityId={facilityId}
+          onSuccess={onSuccess}
+        />
+      )}
+      {doneOpen && (
+        <CanonicalDoneDialog
+          open={doneOpen}
+          onOpenChange={setDoneOpen}
           executionCaseId={executionCaseId}
           patientScreeningId={patientScreeningId}
           patientName={patientName}
@@ -338,6 +379,173 @@ function CanonicalScheduleDialog({
               data-testid="canonical-schedule-submit"
             >
               {submit.isPending ? "Saving…" : "Schedule"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CanonicalDoneDialog({
+  open,
+  onOpenChange,
+  executionCaseId,
+  patientScreeningId,
+  patientName,
+  patientDob,
+  facilityId,
+  onSuccess,
+}: Props & { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { toast } = useToast();
+  const [serviceType, setServiceType] = useState<string>(DEFAULT_SERVICE_TYPES[0]);
+  const [documentType, setDocumentType] = useState<string>(DOCUMENT_TYPE_OPTIONS[0].value);
+  const [documentStatus, setDocumentStatus] = useState<string>(DOCUMENT_TYPE_OPTIONS[0].defaultStatus);
+
+  const procedureMut = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = {
+        executionCaseId,
+        patientScreeningId: patientScreeningId ?? undefined,
+        patientName,
+        patientDob: patientDob ?? undefined,
+        facilityId: facilityId ?? undefined,
+        serviceType,
+        completedAt: new Date().toISOString(),
+      };
+      const res = await apiRequest("POST", "/api/procedure-events/complete", body);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to mark procedure complete");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Procedure marked complete" });
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-portal/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/engagement-center/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/case-document-readiness"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/billing-readiness-checks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patient-journey-events"] });
+      onSuccess?.();
+    },
+    onError: (e: Error) =>
+      toast({ title: "Could not mark procedure complete", description: e.message, variant: "destructive" }),
+  });
+
+  const docMut = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = {
+        executionCaseId,
+        patientScreeningId: patientScreeningId ?? undefined,
+        serviceType,
+        documentType,
+        documentStatus,
+      };
+      const res = await apiRequest("POST", "/api/case-document-readiness/complete", body);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to complete document");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Document marked complete" });
+      queryClient.invalidateQueries({ queryKey: ["/api/case-document-readiness"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/billing-readiness-checks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/billing-document-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patient-journey-events"] });
+      onSuccess?.();
+    },
+    onError: (e: Error) =>
+      toast({ title: "Could not complete document", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm" data-testid="canonical-done-dialog">
+        <DialogHeader>
+          <DialogTitle className="text-base">Procedure & docs</DialogTitle>
+          <p className="text-xs text-slate-500">{patientName}</p>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <div>
+            <Label className="text-xs font-semibold text-slate-700">Service</Label>
+            <select
+              value={serviceType}
+              onChange={(e) => setServiceType(e.target.value)}
+              className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+              data-testid="canonical-done-service-type"
+            >
+              {DEFAULT_SERVICE_TYPES.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              Procedure
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              disabled={procedureMut.isPending}
+              onClick={() => procedureMut.mutate()}
+              className="mt-2"
+              data-testid="canonical-done-procedure-submit"
+            >
+              {procedureMut.isPending ? "Marking…" : "Mark procedure complete"}
+            </Button>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              Document
+            </p>
+            <Label className="mt-2 block text-xs font-semibold text-slate-700">Document type</Label>
+            <select
+              value={documentType}
+              onChange={(e) => {
+                const next = e.target.value;
+                setDocumentType(next);
+                const def = DOCUMENT_TYPE_OPTIONS.find((o) => o.value === next);
+                if (def) setDocumentStatus(def.defaultStatus);
+              }}
+              className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+              data-testid="canonical-done-document-type"
+            >
+              {DOCUMENT_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <Label className="mt-2 block text-xs font-semibold text-slate-700">Status</Label>
+            <Input
+              value={documentStatus}
+              onChange={(e) => setDocumentStatus(e.target.value)}
+              className="mt-1.5 rounded-xl text-sm"
+              data-testid="canonical-done-document-status"
+            />
+            <Button
+              type="button"
+              size="sm"
+              disabled={docMut.isPending}
+              onClick={() => docMut.mutate()}
+              className="mt-2"
+              data-testid="canonical-done-document-submit"
+            >
+              {docMut.isPending ? "Saving…" : "Mark document complete"}
+            </Button>
+          </div>
+
+          <div className="flex items-center justify-end pt-1">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+              data-testid="canonical-done-close"
+            >
+              Close
             </Button>
           </div>
         </div>
