@@ -395,19 +395,19 @@ export function HomeDashboard({
                   href="/patient-directory"
                   testId="tile-patient-directory"
                   label="Patient Directory"
-                  icon={<Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<Users className="glass-tile-icon w-14 h-14 text-plexus-blue-800" strokeWidth={1.5} />}
                 />
                 <PrimaryTile
                   href="/visit-patients"
                   testId="tile-visit-patients"
                   label="Visit Patients"
-                  icon={<Plus className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<Plus className="glass-tile-icon w-14 h-14 text-plexus-blue-800" strokeWidth={1.5} />}
                 />
                 <PrimaryTile
                   href="/outreach-patients"
                   testId="tile-outreach-patients"
                   label="Outreach Patients"
-                  icon={<Radio className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<Radio className="glass-tile-icon w-14 h-14 text-plexus-blue-800" strokeWidth={1.5} />}
                 />
               </div>
 
@@ -416,25 +416,25 @@ export function HomeDashboard({
                   href="/liaison-technician-portal"
                   testId="tile-liaison-technician-portal"
                   label="Liaison Technician Portal"
-                  icon={<Stethoscope className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<Stethoscope className="w-9 h-9 text-plexus-blue-800" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/scheduler-portal"
                   testId="tile-scheduler-portal"
                   label="Scheduler Portal"
-                  icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<Phone className="w-9 h-9 text-plexus-blue-800" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/outreach-center"
                   testId="tile-outreach-center"
                   label="Outreach Center"
-                  icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<Phone className="w-9 h-9 text-plexus-blue-800" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/team-ops"
                   testId="tile-team-ops"
                   label="Team Ops"
-                  icon={<Users2 className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<Users2 className="w-9 h-9 text-plexus-blue-800" strokeWidth={1.5} />}
                 />
               </div>
 
@@ -443,25 +443,25 @@ export function HomeDashboard({
                   href="/document-upload"
                   testId="tile-document-upload"
                   label="Document Upload"
-                  icon={<Upload className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<Upload className="w-9 h-9 text-plexus-blue-800" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/ancillary-documents"
                   testId="tile-documents"
                   label="Ancillary Documents"
-                  icon={<FileText className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<FileText className="w-9 h-9 text-plexus-blue-800" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/plexus-tasks"
                   testId="tile-plexus-tasks"
                   label="Plexus Tasks"
-                  icon={<CheckSquare className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<CheckSquare className="w-9 h-9 text-plexus-blue-800" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/drive"
                   testId="tile-plexus-drive"
                   label="Plexus Drive"
-                  icon={<FolderOpen className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<FolderOpen className="w-9 h-9 text-plexus-blue-800" strokeWidth={1.5} />}
                 />
               </div>
 

@@ -47,7 +47,7 @@ const NAV_ITEMS: NavItemDef[] = [
 function TodayBadge({ count }: { count: number }) {
   if (count === 0) return null;
   return (
-    <span className="ml-auto shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-indigo-100 text-indigo-900 text-[10px] font-bold flex items-center justify-center leading-none">
+    <span className="ml-auto shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-plexus-ice text-plexus-navy-800 text-[10px] font-bold flex items-center justify-center leading-none">
       {count}
     </span>
   );
@@ -55,7 +55,7 @@ function TodayBadge({ count }: { count: number }) {
 
 function UnreadBadge({ count, overdue }: { count: number; overdue: boolean }) {
   if (count === 0 && !overdue) return null;
-  const color = overdue ? "bg-red-500" : "bg-indigo-500";
+  const color = overdue ? "bg-red-500" : "bg-plexus-blue-500";
   const label = count > 0 ? count : "!";
   return (
     <span
@@ -162,13 +162,13 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
               <div
                 className={`relative flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer transition-colors group ${
                   active
-                    ? "bg-indigo-50 text-indigo-900"
+                    ? "bg-plexus-ice/60 text-plexus-navy-800"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 } ${collapsed ? "justify-center" : ""}`}
                 data-testid={`nav-item-${label.toLowerCase().replace(/\s+/g, "-")}`}
                 title={collapsed ? label : undefined}
               >
-                <Icon className={`w-4 h-4 shrink-0 ${active ? "text-indigo-900" : "text-slate-500 group-hover:text-slate-700"}`} strokeWidth={1.75} />
+                <Icon className={`w-4 h-4 shrink-0 ${active ? "text-plexus-navy-800" : "text-slate-500 group-hover:text-slate-700"}`} strokeWidth={1.75} />
                 {!collapsed && (
                   <>
                     <span className="text-[14px] font-medium truncate flex-1">{label}</span>
@@ -177,10 +177,10 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
                   </>
                 )}
                 {collapsed && isSchedule && todayCount > 0 && (
-                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-500" />
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-plexus-blue-500" />
                 )}
                 {collapsed && isPlexusTasks && (unreadCount > 0 || overdueCount > 0) && (
-                  <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${overdueCount > 0 ? "bg-red-500" : "bg-indigo-500"}`} />
+                  <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${overdueCount > 0 ? "bg-red-500" : "bg-plexus-blue-500"}`} />
                 )}
               </div>
             </Link>
@@ -200,7 +200,7 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
               <div
                 className={`flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer transition-colors group ${
                   isActive("/admin") || isActive("/admin-ops") || isActive("/settings")
-                    ? "bg-indigo-50 text-indigo-900"
+                    ? "bg-plexus-ice/60 text-plexus-navy-800"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 } ${collapsed ? "justify-center" : ""}`}
                 data-testid="nav-item-admin"

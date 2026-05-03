@@ -42,7 +42,7 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
           <span className="text-[15px] font-semibold tracking-tight" data-testid="text-banner-title">
             Plexus Clinical
           </span>
-          <span className="text-[10px] text-indigo-200/80 tracking-wider uppercase" data-testid="text-banner-subtitle">
+          <span className="text-[10px] text-plexus-ice/85 tracking-wider uppercase" data-testid="text-banner-subtitle">
             Post Acute Care Portal
           </span>
         </div>
@@ -72,17 +72,17 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
                 </span>
               )}
               <span
-                className="hidden md:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] text-indigo-100"
+                className="hidden md:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] text-plexus-ice"
                 data-testid="badge-banner-user"
                 title={`Signed in as ${user.username}${roleLabel ? ` (${roleLabel})` : ""}`}
               >
                 <span className="font-medium text-white">{user.username}</span>
-                {roleLabel && !isAdmin && <span className="text-indigo-200/80">· {roleLabel}</span>}
+                {roleLabel && !isAdmin && <span className="text-plexus-ice/85">· {roleLabel}</span>}
               </span>
               {onLogout && (
                 <button
                   onClick={onLogout}
-                  className="p-1.5 rounded-md text-indigo-200 hover:text-white hover:bg-white/10 transition-colors"
+                  className="p-1.5 rounded-md text-plexus-ice hover:text-white hover:bg-white/10 transition-colors"
                   title="Sign out"
                   aria-label="Sign out"
                   data-testid="button-banner-logout"

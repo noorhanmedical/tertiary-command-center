@@ -97,15 +97,10 @@ export function PageHeader({
   const isDark = variant === "dark";
 
   const shellClass = isDark
-    ? "relative overflow-hidden rounded-3xl"
+    ? "relative overflow-hidden rounded-3xl plexus-cockpit-bg"
     : "relative overflow-hidden rounded-3xl border border-white/60 bg-white/75 backdrop-blur-xl shadow-[0_18px_60px_rgba(15,23,42,0.10)]";
 
-  const shellStyle = isDark
-    ? {
-        background:
-          "linear-gradient(120deg, #07101F 0%, #0B1830 45%, #0A1428 100%)",
-      }
-    : undefined;
+  const shellStyle = undefined;
 
   const eyebrowClass = isDark
     ? "text-[11px] font-semibold tracking-[0.2em] text-slate-300/80 uppercase"
@@ -140,7 +135,8 @@ export function PageHeader({
             className="pointer-events-none absolute inset-0"
             style={{
               background:
-                "radial-gradient(80% 120% at 80% -10%, rgba(99,102,241,0.18) 0%, transparent 55%), radial-gradient(60% 100% at 5% 110%, rgba(16,185,129,0.10) 0%, transparent 55%)",
+                "radial-gradient(80% 120% at 80% -10%, hsl(var(--plexus-blue-300) / 0.22) 0%, transparent 55%)," +
+                "radial-gradient(60% 100% at 5% 110%, hsl(var(--plexus-blue-500) / 0.15) 0%, transparent 55%)",
             }}
           />
           <div aria-hidden className="pointer-events-none absolute inset-0">

@@ -30,7 +30,9 @@
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
-  --background: 225 28% 85%;
+  /* Body / app surface — pulls the very-light Plexus ice tint so every
+     page that doesn't paint its own background sits on-brand. */
+  --background: 209 35% 92%;
   --foreground: 222 47% 11%;
   --border: 210 30% 86%;
   --card: 210 30% 98%;
@@ -212,6 +214,32 @@
 }
 
 @layer components {
+  /* Shared "soft Plexus haze" page background. Replaces the previously
+     duplicated `bg-[radial-gradient(circle_at_top,_rgba(191,219,254,...)]`
+     arbitrary class that ~11 pages used. Centralizing it here means a
+     palette tweak only happens in one spot. */
+  .plexus-page-radial {
+    background:
+      radial-gradient(
+        circle at top,
+        hsl(var(--plexus-blue-300) / 0.30) 0%,
+        hsl(var(--plexus-ice) / 0.45) 38%,
+        hsl(var(--plexus-ice) / 0.18) 70%,
+        rgba(248, 250, 252, 1) 100%
+      );
+  }
+
+  /* Dark cockpit background used by PageHeader's "dark" variant. Pulls the
+     deep Plexus navy/blue tokens so the cockpit reads on-brand. */
+  .plexus-cockpit-bg {
+    background: linear-gradient(
+      120deg,
+      hsl(var(--plexus-navy-950)) 0%,
+      hsl(var(--plexus-navy-700)) 45%,
+      hsl(var(--plexus-blue-800)) 100%
+    );
+  }
+
   .glass-tile {
     background: rgba(255, 255, 255, 0.90);
     backdrop-filter: blur(8px);

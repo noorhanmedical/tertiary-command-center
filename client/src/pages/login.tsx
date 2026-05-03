@@ -25,7 +25,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#0f1b35] flex items-center justify-center p-4">
+    <div className="min-h-screen bg-plexus-navy-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-14 h-14 mb-4">
@@ -52,7 +52,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
                 autoFocus
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2.5 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2.5 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-plexus-blue-300 focus:border-transparent"
                 placeholder="Enter username"
                 data-testid="input-login-username"
               />
@@ -66,7 +66,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2.5 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-2.5 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-plexus-blue-300 focus:border-transparent"
                 placeholder="Enter password"
                 data-testid="input-login-password"
               />
@@ -81,7 +81,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
             <button
               type="submit"
               disabled={loading || !username || !password}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-xl py-2.5 text-sm transition-colors mt-2"
+              className="w-full bg-plexus-blue-600 hover:bg-plexus-blue-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-xl py-2.5 text-sm transition-colors mt-2"
               data-testid="button-login-submit"
             >
               {loading ? "Signing in…" : "Sign In"}

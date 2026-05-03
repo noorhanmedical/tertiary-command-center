@@ -802,7 +802,7 @@ export default function PlexusTasksPage() {
   ];
 
   return (
-    <div className="flex h-full min-h-screen bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
+    <div className="flex h-full min-h-screen plexus-page-radial">
 
       {/* Left sidebar */}
       <aside className="flex w-52 shrink-0 flex-col gap-4 border-r border-slate-200/80 bg-white/60 p-5">
