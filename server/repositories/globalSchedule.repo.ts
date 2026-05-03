@@ -151,6 +151,105 @@ export async function createGlobalScheduleEventFromScreeningCommit(
   return { event: created, created: true };
 }
 
+export type UpsertAncillaryScheduleInput = {
+  executionCaseId?: number | null;
+  patientScreeningId?: number | null;
+  patientName?: string | null;
+  patientDob?: string | null;
+  facilityId?: string | null;
+  serviceType: string;
+  startsAt: Date;
+  endsAt?: Date | null;
+  assignedUserId?: string | null;
+  source?: string;
+  note?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+/** Upsert an ancillary_appointment global_schedule_event. Dedup contract:
+ *  one row per (patient_screening_id, service_type, starts_at). Falls back
+ *  to (execution_case_id, service_type, starts_at) when patient_screening_id
+ *  is unavailable. status defaults to "scheduled"; metadata is merged with
+ *  existing JSON when updating an existing row. */
+export async function upsertAncillaryScheduleEvent(
+  input: UpsertAncillaryScheduleInput,
+): Promise<{ event: GlobalScheduleEvent; created: boolean }> {
+  if (!input.serviceType) throw new Error("serviceType is required");
+  if (!(input.startsAt instanceof Date) || isNaN(input.startsAt.getTime())) {
+    throw new Error("startsAt must be a valid Date");
+  }
+
+  const dedupeConditions = [eq(globalScheduleEvents.eventType, "ancillary_appointment")];
+  if (input.patientScreeningId != null) {
+    dedupeConditions.push(eq(globalScheduleEvents.patientScreeningId, input.patientScreeningId));
+  } else if (input.executionCaseId != null) {
+    dedupeConditions.push(eq(globalScheduleEvents.executionCaseId, input.executionCaseId));
+  } else {
+    throw new Error("executionCaseId or patientScreeningId is required");
+  }
+  dedupeConditions.push(eq(globalScheduleEvents.serviceType, input.serviceType));
+  dedupeConditions.push(eq(globalScheduleEvents.startsAt, input.startsAt));
+
+  const [existing] = await db
+    .select()
+    .from(globalScheduleEvents)
+    .where(and(...dedupeConditions))
+    .limit(1);
+
+  const baseMetadata: Record<string, unknown> = {
+    ...(input.metadata ?? {}),
+    note: input.note ?? null,
+    upsertSource: "schedule_ancillary_action",
+  };
+
+  if (existing) {
+    const mergedMetadata = {
+      ...((existing.metadata as Record<string, unknown> | null) ?? {}),
+      ...baseMetadata,
+    };
+    const [updated] = await db
+      .update(globalScheduleEvents)
+      .set({
+        executionCaseId: input.executionCaseId ?? existing.executionCaseId ?? undefined,
+        patientScreeningId: input.patientScreeningId ?? existing.patientScreeningId ?? undefined,
+        patientName: input.patientName ?? existing.patientName ?? undefined,
+        patientDob: input.patientDob ?? existing.patientDob ?? undefined,
+        facilityId: input.facilityId ?? existing.facilityId ?? undefined,
+        serviceType: input.serviceType,
+        source: input.source ?? existing.source,
+        status: "scheduled",
+        startsAt: input.startsAt,
+        endsAt: input.endsAt ?? existing.endsAt ?? undefined,
+        assignedUserId: input.assignedUserId ?? existing.assignedUserId ?? undefined,
+        metadata: mergedMetadata,
+        updatedAt: new Date(),
+      })
+      .where(eq(globalScheduleEvents.id, existing.id))
+      .returning();
+    return { event: updated, created: false };
+  }
+
+  const [created] = await db
+    .insert(globalScheduleEvents)
+    .values({
+      executionCaseId: input.executionCaseId ?? undefined,
+      patientScreeningId: input.patientScreeningId ?? undefined,
+      patientName: input.patientName ?? undefined,
+      patientDob: input.patientDob ?? undefined,
+      facilityId: input.facilityId ?? undefined,
+      eventType: "ancillary_appointment",
+      serviceType: input.serviceType,
+      source: input.source ?? "scheduler_portal",
+      status: "scheduled",
+      startsAt: input.startsAt,
+      endsAt: input.endsAt ?? undefined,
+      assignedUserId: input.assignedUserId ?? undefined,
+      metadata: baseMetadata,
+    })
+    .returning();
+  return { event: created, created: true };
+}
+
 export type ListTechnicianLiaisonFilters = {
   facilityId?: string;
   assignedUserId?: string;

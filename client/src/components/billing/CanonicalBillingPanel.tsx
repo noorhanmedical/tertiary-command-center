@@ -1,6 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Wallet, ClipboardCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import {
   fetchCompletedBillingPackages,
   completedBillingPackagesQueryKey,
@@ -86,6 +98,7 @@ export function CanonicalBillingPanel() {
                     >
                       {p.packageStatus}
                     </span>
+                    <PackagePayAction pkg={p} />
                   </div>
                 </li>
               ))}
@@ -135,5 +148,149 @@ export function CanonicalBillingPanel() {
         </div>
       </div>
     </div>
+  );
+}
+
+function PackagePayAction({ pkg }: { pkg: CompletedBillingPackage }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [fullAmountPaid, setFullAmountPaid] = useState<string>(pkg.fullAmountPaid ?? "");
+  const [paymentDate, setPaymentDate] = useState<string>(
+    pkg.paymentDate ?? new Date().toISOString().slice(0, 10),
+  );
+  const [adminOverride, setAdminOverride] = useState(false);
+  const [resultMessage, setResultMessage] = useState<string | null>(null);
+
+  const submit = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = {
+        executionCaseId: pkg.executionCaseId ?? undefined,
+        patientScreeningId: pkg.patientScreeningId ?? undefined,
+        serviceType: pkg.serviceType,
+        fullAmountPaid: fullAmountPaid.trim(),
+        paymentDate: paymentDate || undefined,
+        facilityId: pkg.facilityId ?? undefined,
+        adminOverride: adminOverride || undefined,
+      };
+      const res = await apiRequest("POST", "/api/billing/complete-package-payment", body);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to complete payment");
+      }
+      return data as {
+        ok: boolean;
+        invoiceLineItem: { id: number; totalCharges: string } | null;
+        invoiceTotals: { invoiceId: number; totalCharges: string } | null;
+      };
+    },
+    onSuccess: (data) => {
+      if (data.invoiceLineItem) {
+        setResultMessage(
+          `Invoice line ${data.invoiceLineItem.id} created · totalCharges $${data.invoiceLineItem.totalCharges} (invoice ${data.invoiceTotals?.invoiceId ?? "?"} totalCharges $${data.invoiceTotals?.totalCharges ?? "?"})`,
+        );
+      } else {
+        setResultMessage(
+          "Payment recorded but no invoice line was added (no Draft invoice exists for this facility).",
+        );
+      }
+      toast({ title: "Payment recorded" });
+      queryClient.invalidateQueries({ queryKey: ["/api/completed-billing-packages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/billing-readiness-checks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/patient-journey-events"] });
+    },
+    onError: (e: Error) => {
+      setResultMessage(`Error: ${e.message}`);
+      toast({ title: "Could not record payment", description: e.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setResultMessage(null);
+          setOpen(true);
+        }}
+        className="rounded-md border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-50"
+        data-testid={`canonical-package-pay-${pkg.id}`}
+      >
+        Pay
+      </button>
+      {open && (
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent className="max-w-sm" data-testid="canonical-package-pay-dialog">
+            <DialogHeader>
+              <DialogTitle className="text-base">Complete package payment</DialogTitle>
+              <p className="text-xs text-slate-500">
+                {(pkg.patientInitials ?? pkg.patientName ?? "—") + " · " + pkg.serviceType}
+              </p>
+            </DialogHeader>
+            <div className="space-y-3 pt-2">
+              <div>
+                <Label className="text-xs font-semibold text-slate-700">
+                  Full amount paid
+                </Label>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={fullAmountPaid}
+                  onChange={(e) => setFullAmountPaid(e.target.value)}
+                  placeholder="e.g. 500.00"
+                  className="mt-1.5 rounded-xl text-sm"
+                  data-testid="canonical-package-pay-amount"
+                />
+              </div>
+              <div>
+                <Label className="text-xs font-semibold text-slate-700">Payment date</Label>
+                <Input
+                  type="date"
+                  value={paymentDate}
+                  onChange={(e) => setPaymentDate(e.target.value)}
+                  className="mt-1.5 rounded-xl text-sm"
+                  data-testid="canonical-package-pay-date"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-xs text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={adminOverride}
+                  onChange={(e) => setAdminOverride(e.target.checked)}
+                  data-testid="canonical-package-pay-override"
+                />
+                Admin override (skip readiness gate)
+              </label>
+              {resultMessage && (
+                <div
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-700"
+                  data-testid="canonical-package-pay-result"
+                >
+                  {resultMessage}
+                </div>
+              )}
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setOpen(false)}
+                  data-testid="canonical-package-pay-close"
+                >
+                  Close
+                </Button>
+                <Button
+                  type="button"
+                  disabled={submit.isPending || !fullAmountPaid.trim()}
+                  onClick={() => submit.mutate()}
+                  data-testid="canonical-package-pay-submit"
+                >
+                  {submit.isPending ? "Saving…" : "Submit payment"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }

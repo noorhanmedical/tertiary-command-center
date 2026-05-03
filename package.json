@@ -21,7 +21,9 @@
     "qa:canonical-visual-state": "tsx script/qaCanonicalVisualState.ts",
     "audit:canonical-integrity": "tsx script/auditCanonicalIntegrity.ts",
     "reconcile:canonical-duplicates": "tsx script/reconcileCanonicalDuplicates.ts",
-    "test:call-result-canonical-write": "tsx script/testCallResultCanonicalWrite.ts"
+    "test:call-result-canonical-write": "tsx script/testCallResultCanonicalWrite.ts",
+    "test:op-flow-sprint-1": "tsx script/testOperationalFlowSprint1.ts",
+    "test:patient-to-invoice-flow": "tsx script/testOperationalPatientToInvoiceFlow.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",

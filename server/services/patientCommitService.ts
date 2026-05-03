@@ -131,6 +131,12 @@ export async function commitPatient(
         metadata: {
           commitStatus: "Ready",
           auto: options.auto,
+          // Bucket routing signals — make engagement bucket assignment
+          // observable in the journey. patientType is the source signal
+          // deriveEngagementBucket reads to choose the bucket.
+          engagementBucket: executionCase.engagementBucket,
+          patientType: updated.patientType ?? null,
+          executionCaseSource: executionCase.source,
           globalScheduleEventId: scheduleResult?.event.id ?? null,
           globalScheduleCreated: scheduleResult?.created ?? null,
           noScheduleEventReason: scheduleResult === null ? "missing_appointment_datetime" : null,
