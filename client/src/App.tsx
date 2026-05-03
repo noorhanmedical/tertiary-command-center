@@ -221,8 +221,8 @@ function AppShell() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[#0f1b35] flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen bg-plexus-navy-950 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-plexus-blue-300 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }

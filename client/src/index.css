@@ -4,6 +4,27 @@
 
 /* WINTER THEME - LIGHT MODE */
 :root {
+  /* ── Plexus brand palette (HSL components — consume via hsl(var(...))) ──
+     Approved palette mapped 1:1 from the design hex values:
+       --plexus-ice        → #bacad9
+       --plexus-blue-300   → #557ac1
+       --plexus-blue-500   → #3358b0
+       --plexus-blue-600   → #22419e
+       --plexus-blue-800   → #142380
+       --plexus-navy-700   → #172663
+       --plexus-navy-800   → #173358
+       --plexus-navy-950   → #061b2d
+     Brand colors are theme-stable (same in light + dark) so the platform
+     reads as one product. Semantic tokens below pick from this palette. */
+  --plexus-ice:        209 29% 79%;
+  --plexus-blue-300:   219 47% 55%;
+  --plexus-blue-500:   222 55% 45%;
+  --plexus-blue-600:   225 65% 38%;
+  --plexus-blue-800:   232 73% 29%;
+  --plexus-navy-700:   228 62% 24%;
+  --plexus-navy-800:   214 58% 22%;
+  --plexus-navy-950:   208 76% 10%;
+
   --button-outline: rgba(0,0,0, .10);
   --badge-outline: rgba(0,0,0, .05);
   --opaque-button-border-intensity: -8;
@@ -18,15 +39,15 @@
   --sidebar: 0 0% 100%;
   --sidebar-foreground: 222 47% 11%;
   --sidebar-border: 220 13% 91%;
-  --sidebar-primary: 212 72% 40%;
+  --sidebar-primary: var(--plexus-blue-600);
   --sidebar-primary-foreground: 210 100% 98%;
   --sidebar-accent: 238 100% 97%;
   --sidebar-accent-foreground: 238 100% 28%;
-  --sidebar-ring: 212 72% 40%;
+  --sidebar-ring: var(--plexus-blue-600);
   --popover: 0 0% 100%;
   --popover-foreground: 212 30% 12%;
   --popover-border: 210 28% 88%;
-  --primary: 212 72% 40%;
+  --primary: var(--plexus-blue-600);
   --primary-foreground: 210 100% 98%;
   --secondary: 210 28% 85%;
   --secondary-foreground: 212 30% 12%;
@@ -37,12 +58,12 @@
   --destructive: 0 72% 38%;
   --destructive-foreground: 0 72% 98%;
   --input: 210 25% 72%;
-  --ring: 212 72% 40%;
-  --chart-1: 212 72% 40%;
-  --chart-2: 200 68% 38%;
-  --chart-3: 225 65% 38%;
-  --chart-4: 190 60% 35%;
-  --chart-5: 240 55% 35%;
+  --ring: var(--plexus-blue-600);
+  --chart-1: var(--plexus-blue-600);
+  --chart-2: var(--plexus-blue-300);
+  --chart-3: var(--plexus-blue-800);
+  --chart-4: var(--plexus-navy-700);
+  --chart-5: var(--plexus-navy-800);
   --font-sans: "Plus Jakarta Sans", -apple-system, "SF Pro Display", "SF Pro Text", Inter, system-ui, sans-serif;
   --font-serif: Georgia, serif;
   --font-mono: Menlo, monospace;
@@ -88,6 +109,18 @@
 }
 
 .dark {
+  /* Brand palette is theme-stable. Semantic tokens below switch surface
+     levels for dark mode; the plexus-* tokens themselves are unchanged
+     so primary/ring/sidebar accents stay on-brand. */
+  --plexus-ice:        209 29% 79%;
+  --plexus-blue-300:   219 47% 55%;
+  --plexus-blue-500:   222 55% 45%;
+  --plexus-blue-600:   225 65% 38%;
+  --plexus-blue-800:   232 73% 29%;
+  --plexus-navy-700:   228 62% 24%;
+  --plexus-navy-800:   214 58% 22%;
+  --plexus-navy-950:   208 76% 10%;
+
   --button-outline: rgba(255,255,255, .10);
   --badge-outline: rgba(255,255,255, .05);
   --opaque-button-border-intensity: 9;
@@ -102,15 +135,15 @@
   --sidebar: 212 28% 11%;
   --sidebar-foreground: 210 25% 92%;
   --sidebar-border: 212 25% 15%;
-  --sidebar-primary: 212 72% 55%;
+  --sidebar-primary: var(--plexus-blue-500);
   --sidebar-primary-foreground: 210 100% 98%;
   --sidebar-accent: 212 25% 16%;
   --sidebar-accent-foreground: 210 25% 92%;
-  --sidebar-ring: 212 72% 55%;
+  --sidebar-ring: var(--plexus-blue-500);
   --popover: 212 28% 13%;
   --popover-foreground: 210 25% 92%;
   --popover-border: 212 25% 17%;
-  --primary: 212 72% 35%;
+  --primary: var(--plexus-blue-500);
   --primary-foreground: 210 100% 98%;
   --secondary: 212 25% 18%;
   --secondary-foreground: 210 25% 92%;
@@ -121,12 +154,12 @@
   --destructive: 0 72% 28%;
   --destructive-foreground: 0 72% 98%;
   --input: 212 25% 35%;
-  --ring: 212 72% 55%;
-  --chart-1: 212 72% 60%;
-  --chart-2: 200 68% 58%;
-  --chart-3: 225 65% 55%;
-  --chart-4: 190 60% 52%;
-  --chart-5: 240 55% 50%;
+  --ring: var(--plexus-blue-500);
+  --chart-1: var(--plexus-blue-500);
+  --chart-2: var(--plexus-blue-300);
+  --chart-3: var(--plexus-blue-800);
+  --chart-4: var(--plexus-navy-700);
+  --chart-5: var(--plexus-navy-800);
   --shadow-2xs: 0px 2px 0px 0px hsl(210 18% 92% / 0.00);
   --shadow-xs: 0px 2px 0px 0px hsl(210 18% 92% / 0.00);
   --shadow-sm: 0px 2px 0px 0px hsl(210 18% 92% / 0.00), 0px 1px 2px -1px hsl(210 18% 92% / 0.00);

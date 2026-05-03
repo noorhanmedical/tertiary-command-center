@@ -81,6 +81,20 @@ export default {
           busy: "rgb(239 68 68)",
           offline: "rgb(156 163 175)",
         },
+        // Plexus brand palette — anchored to the CSS variables defined in
+        // client/src/index.css. Use these in shared shell / header / nav
+        // surfaces; product UI continues to use the semantic tokens
+        // (primary, ring, accent, sidebar-*) which already alias here.
+        plexus: {
+          ice:        "hsl(var(--plexus-ice) / <alpha-value>)",
+          "blue-300": "hsl(var(--plexus-blue-300) / <alpha-value>)",
+          "blue-500": "hsl(var(--plexus-blue-500) / <alpha-value>)",
+          "blue-600": "hsl(var(--plexus-blue-600) / <alpha-value>)",
+          "blue-800": "hsl(var(--plexus-blue-800) / <alpha-value>)",
+          "navy-700": "hsl(var(--plexus-navy-700) / <alpha-value>)",
+          "navy-800": "hsl(var(--plexus-navy-800) / <alpha-value>)",
+          "navy-950": "hsl(var(--plexus-navy-950) / <alpha-value>)",
+        },
       },
       fontFamily: {
         sans: ["var(--font-sans)"],

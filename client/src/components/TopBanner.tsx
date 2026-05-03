@@ -1,4 +1,5 @@
-import { LogOut, Shield } from "lucide-react";
+import { Home, LogOut, Shield } from "lucide-react";
+import { Link, useLocation } from "wouter";
 import type { AuthUser } from "@/App";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -12,10 +13,14 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
   const role = user?.role ?? "";
   const roleLabel = ROLE_LABELS[role] ?? role;
   const isAdmin = role === "admin";
+  const [location] = useLocation();
+  // Suppress the Home link when we're already on home (or the root redirect)
+  // so the header doesn't show a dead-end self-link.
+  const onHome = location === "/home" || location === "/";
 
   return (
     <header
-      className="shrink-0 h-20 bg-[#0f1b35] text-white border-b border-black/40 relative overflow-hidden"
+      className="shrink-0 h-20 bg-plexus-navy-950 text-white border-b border-black/40 relative overflow-hidden"
       data-testid="top-banner"
     >
       <div
@@ -43,6 +48,18 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
         </div>
 
         <div className="flex items-center gap-3">
+          {user && !onHome && (
+            <Link
+              href="/home"
+              className="inline-flex items-center gap-1.5 rounded-md bg-plexus-blue-600/30 hover:bg-plexus-blue-600/55 border border-white/15 hover:border-white/25 px-2.5 py-1 text-[11px] font-medium text-white transition-colors"
+              data-testid="link-banner-home"
+              aria-label="Back to Home"
+              title="Back to Home"
+            >
+              <Home className="w-3.5 h-3.5" />
+              <span>Home</span>
+            </Link>
+          )}
           {user && (
             <>
               {isAdmin && (
