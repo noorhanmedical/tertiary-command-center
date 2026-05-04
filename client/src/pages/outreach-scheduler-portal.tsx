@@ -869,6 +869,7 @@ export default function OutreachSchedulerPortalPage() {
                             patientDob={c.patientDob ?? null}
                             facilityId={c.facilityId ?? null}
                             engagementStatus={c.engagementStatus}
+                            selectedServices={c.selectedServices ?? null}
                           />
                           <PatientJourneyDrawer
                             lookup={{
