@@ -96,36 +96,39 @@ export function PageHeader({
 }: PageHeaderProps) {
   const isDark = variant === "dark";
 
+  // Soft-finance light variant — premium white card with hairline
+  // border + subtle shadow. Dark variant kept restrained: deep finance
+  // navy gradient with periwinkle accent halos (no neon).
   const shellClass = isDark
     ? "relative overflow-hidden rounded-3xl"
-    : "relative overflow-hidden rounded-3xl border border-white/60 bg-white/75 backdrop-blur-xl shadow-[0_18px_60px_rgba(15,23,42,0.10)]";
+    : "relative overflow-hidden rounded-3xl finance-card";
 
   const shellStyle = isDark
     ? {
         background:
-          "linear-gradient(120deg, #07101F 0%, #0B1830 45%, #0A1428 100%)",
+          "linear-gradient(120deg, hsl(var(--finance-dark)) 0%, hsl(var(--finance-dark-2)) 50%, hsl(var(--finance-dark-3)) 100%)",
       }
     : undefined;
 
   const eyebrowClass = isDark
     ? "text-[11px] font-semibold tracking-[0.2em] text-slate-300/80 uppercase"
-    : "text-[11px] font-semibold tracking-[0.2em] text-slate-500 uppercase";
+    : "text-[11px] font-semibold tracking-[0.2em] text-finance-text-muted uppercase";
 
   const titleClass = isDark
     ? "text-[26px] sm:text-[30px] leading-tight font-bold text-white tracking-tight"
-    : "text-[24px] sm:text-[28px] leading-tight font-semibold text-slate-900 tracking-tight";
+    : "text-[24px] sm:text-[28px] leading-tight font-semibold text-finance-text tracking-tight";
 
   const subtitleClass = isDark
     ? "text-sm text-slate-300/85"
-    : "text-sm text-slate-600";
+    : "text-sm text-finance-text-secondary";
 
   const iconBoxClass = isDark
     ? "rounded-2xl bg-white/10 p-3 text-white"
-    : `rounded-2xl p-3 ${iconAccent ?? "bg-slate-900/8 text-slate-700"}`;
+    : `rounded-2xl p-3 ${iconAccent ?? "bg-finance-periwinkle/15 text-finance-periwinkle ring-1 ring-finance-periwinkle/25"}`;
 
   const backBtnClass = isDark
     ? "gap-1.5 text-slate-300 hover:text-white hover:bg-white/10"
-    : "gap-1.5 text-slate-600 hover:text-slate-900";
+    : "gap-1.5 text-finance-text-secondary hover:text-finance-text";
 
   return (
     <div
@@ -140,7 +143,8 @@ export function PageHeader({
             className="pointer-events-none absolute inset-0"
             style={{
               background:
-                "radial-gradient(80% 120% at 80% -10%, rgba(99,102,241,0.18) 0%, transparent 55%), radial-gradient(60% 100% at 5% 110%, rgba(16,185,129,0.10) 0%, transparent 55%)",
+                "radial-gradient(80% 120% at 80% -10%, hsl(var(--finance-periwinkle) / 0.20) 0%, transparent 55%)," +
+                "radial-gradient(60% 100% at 5% 110%, hsl(var(--finance-periwinkle) / 0.12) 0%, transparent 55%)",
             }}
           />
           <div aria-hidden className="pointer-events-none absolute inset-0">

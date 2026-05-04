@@ -298,7 +298,7 @@ export default function DocumentsPage() {
   };
 
   return (
-    <main className="flex-1 overflow-y-auto bg-[hsl(210,35%,96%)]">
+    <main className="flex-1 overflow-y-auto bg-finance-bg">
       <div className="max-w-3xl mx-auto px-5 py-8">
         <PageHeader
           backHref="/"
