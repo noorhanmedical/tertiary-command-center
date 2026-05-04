@@ -26,7 +26,8 @@
     "test:patient-to-invoice-flow": "tsx script/testOperationalPatientToInvoiceFlow.ts",
     "cleanup:test-triage-duplicates": "tsx script/cleanupDuplicateTestTriage.ts",
     "test:visit-schedule-auto-commit": "tsx script/testVisitScheduleAutoCommit.ts",
-    "test:scheduler-assignment-wiring": "tsx script/testSchedulerAssignmentWiring.ts"
+    "test:scheduler-assignment-wiring": "tsx script/testSchedulerAssignmentWiring.ts",
+    "test:operational-flow-assigned-to-billing-ready": "tsx script/testOperationalFlowAssignedToBillingReady.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
