@@ -266,7 +266,7 @@ export default function PatientDatabasePage() {
   }, [hasMore, isFetchingNextPage, fetchNextPage]);
 
   return (
-    <div className="flex flex-col h-full relative z-10">
+    <div className="flex flex-col h-full relative z-10 bg-finance-bg">
       <main className="flex-1 overflow-auto p-4">
         <div className="max-w-6xl mx-auto space-y-4">
           <PageHeader

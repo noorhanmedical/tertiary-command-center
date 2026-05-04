@@ -47,7 +47,7 @@ const NAV_ITEMS: NavItemDef[] = [
 function TodayBadge({ count }: { count: number }) {
   if (count === 0) return null;
   return (
-    <span className="ml-auto shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-indigo-100 text-indigo-900 text-[10px] font-bold flex items-center justify-center leading-none">
+    <span className="ml-auto shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-finance-periwinkle text-white text-[10px] font-bold flex items-center justify-center leading-none">
       {count}
     </span>
   );
@@ -55,7 +55,7 @@ function TodayBadge({ count }: { count: number }) {
 
 function UnreadBadge({ count, overdue }: { count: number; overdue: boolean }) {
   if (count === 0 && !overdue) return null;
-  const color = overdue ? "bg-red-500" : "bg-indigo-500";
+  const color = overdue ? "bg-red-500" : "bg-finance-periwinkle";
   const label = count > 0 ? count : "!";
   return (
     <span
@@ -116,11 +116,11 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
 
   return (
     <nav
-      className={`flex flex-col h-full bg-white border-r border-slate-200 transition-all duration-200 shrink-0 ${collapsed ? "w-14" : "w-52"}`}
+      className={`flex flex-col h-full bg-finance-dark border-r border-finance-dark-3 transition-all duration-200 shrink-0 ${collapsed ? "w-14" : "w-52"}`}
       data-testid="global-nav"
       aria-label="Global navigation"
     >
-      <div className={`flex items-center ${collapsed ? "justify-center px-2 py-3" : "justify-between px-3 py-3"} border-b border-slate-200`}>
+      <div className={`flex items-center ${collapsed ? "justify-center px-2 py-3" : "justify-between px-3 py-3"} border-b border-finance-dark-3`}>
         {collapsed ? (
           <img
             src="/plexus-logo-icon.png"
@@ -138,7 +138,7 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
         )}
         <button
           onClick={() => { setManualOverride(true); setCollapsed((c) => !c); }}
-          className="text-slate-400 hover:text-slate-700 transition-colors rounded-lg p-1 hover:bg-slate-100"
+          className="text-slate-400 hover:text-white transition-colors rounded-lg p-1 hover:bg-finance-dark-3"
           data-testid="button-nav-collapse"
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
         >
@@ -148,7 +148,7 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
 
       {!collapsed && (
         <div className="px-4 pt-3 pb-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Workspace</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Workspace</span>
         </div>
       )}
 
@@ -162,13 +162,13 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
               <div
                 className={`relative flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer transition-colors group ${
                   active
-                    ? "bg-indigo-50 text-indigo-900"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                    ? "bg-white text-finance-text shadow-sm"
+                    : "text-slate-300 hover:bg-finance-dark-3 hover:text-white"
                 } ${collapsed ? "justify-center" : ""}`}
                 data-testid={`nav-item-${label.toLowerCase().replace(/\s+/g, "-")}`}
                 title={collapsed ? label : undefined}
               >
-                <Icon className={`w-4 h-4 shrink-0 ${active ? "text-indigo-900" : "text-slate-500 group-hover:text-slate-700"}`} strokeWidth={1.75} />
+                <Icon className={`w-4 h-4 shrink-0 ${active ? "text-finance-text" : "text-slate-400 group-hover:text-white"}`} strokeWidth={1.75} />
                 {!collapsed && (
                   <>
                     <span className="text-[14px] font-medium truncate flex-1">{label}</span>
@@ -177,10 +177,10 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
                   </>
                 )}
                 {collapsed && isSchedule && todayCount > 0 && (
-                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-500" />
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-finance-periwinkle" />
                 )}
                 {collapsed && isPlexusTasks && (unreadCount > 0 || overdueCount > 0) && (
-                  <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${overdueCount > 0 ? "bg-red-500" : "bg-indigo-500"}`} />
+                  <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${overdueCount > 0 ? "bg-red-500" : "bg-finance-periwinkle"}`} />
                 )}
               </div>
             </Link>
@@ -188,20 +188,20 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
         })}
       </div>
 
-      <div className="border-t border-slate-200 px-2 py-2 space-y-0.5">
+      <div className="border-t border-finance-dark-3 px-2 py-2 space-y-0.5">
         {canSeeAdmin && (
           <>
             {!collapsed && (
               <div className="px-2 pt-1 pb-1">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Settings</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Settings</span>
               </div>
             )}
             <Link href="/admin">
               <div
                 className={`flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer transition-colors group ${
                   isActive("/admin") || isActive("/admin-ops") || isActive("/settings")
-                    ? "bg-indigo-50 text-indigo-900"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                    ? "bg-white text-finance-text shadow-sm"
+                    : "text-slate-300 hover:bg-finance-dark-3 hover:text-white"
                 } ${collapsed ? "justify-center" : ""}`}
                 data-testid="nav-item-admin"
                 title={collapsed ? "Admin" : undefined}

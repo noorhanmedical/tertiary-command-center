@@ -126,7 +126,7 @@ export default function ScheduleDashboardPage() {
   );
 
   return (
-    <div className="min-h-full flex-1 overflow-auto bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
+    <div className="finance-page">
       <div className="mx-auto flex w-full max-w-[1650px] flex-col gap-6 px-6 py-6">
         <PageHeader
           variant="light"

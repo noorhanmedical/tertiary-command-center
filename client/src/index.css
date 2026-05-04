@@ -25,40 +25,79 @@
   --plexus-navy-800:   214 58% 22%;
   --plexus-navy-950:   208 76% 10%;
 
+  /* ── Soft-finance design system tokens (HSL components) ─────────────
+     Approved palette mapped 1:1 from the design hex values for the
+     "Apple-like SaaS dashboard" aesthetic. Brand-stable; same in light
+     and dark blocks so semantic tokens always resolve consistently. */
+  /* surfaces */
+  --finance-bg:             220 37% 95%;  /* #EEF1F7 main page bg     */
+  --finance-bg-soft:        220 32% 96%;  /* #F3F5F9                  */
+  --finance-bg-bright:      218 27% 98%;  /* #F7F8FB                  */
+  --finance-card:             0  0% 100%; /* #FFFFFF white card       */
+  --finance-card-soft:      240 17% 99%;  /* #FAFAFC                  */
+  --finance-card-strong:    220 33% 97%;  /* #F5F7FB                  */
+  /* borders */
+  --finance-border:         222 15% 92%;  /* #E6E8EF hairline border  */
+  --finance-border-strong:  222 13% 88%;  /* #DADDE7                  */
+  /* text */
+  --finance-text:           240  8%  7%;  /* #111114 primary text     */
+  --finance-text-secondary: 220 11% 35%;  /* #4F5563                  */
+  --finance-text-muted:     222 10% 59%;  /* #8A90A0                  */
+  /* dark sidebar / cta surface */
+  --finance-dark:           240 11% 10%;  /* #18181D                  */
+  --finance-dark-2:         240  9% 12%;  /* #1C1C22                  */
+  --finance-dark-3:         230  9% 14%;  /* #202027                  */
+  /* muted periwinkle accent */
+  --finance-periwinkle:     220 28% 59%;  /* #7589B8                  */
+  /* soft pastel metric tiles */
+  --finance-blue-soft:      213 100% 96%; /* #EAF4FF                  */
+  --finance-lavender-soft:  254  50% 95%; /* #EEEAF8                  */
+  --finance-green-soft:     132  33% 95%; /* #EAF7ED                  */
+  --finance-sand-soft:       43  71% 92%; /* #F8F1DD                  */
+  --finance-pink-soft:      320  65% 96%; /* #FAEEF5                  */
+  /* CTA accents — slightly more saturated pastels */
+  --finance-cta-blue:       207 100% 83%; /* #A9D8FF                  */
+  --finance-cta-sand:        41  75% 87%; /* #F5E7C6                  */
+  --finance-cta-green:      132  53% 87%; /* #CDEFD5                  */
+  --finance-cta-lavender:   254  53% 89%; /* #DCD5F2                  */
+
   --button-outline: rgba(0,0,0, .10);
   --badge-outline: rgba(0,0,0, .05);
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
-  --background: 225 28% 85%;
-  --foreground: 222 47% 11%;
-  --border: 210 30% 86%;
-  --card: 210 30% 98%;
-  --card-foreground: 212 30% 12%;
-  --card-border: 210 28% 90%;
-  --sidebar: 0 0% 100%;
-  --sidebar-foreground: 222 47% 11%;
-  --sidebar-border: 220 13% 91%;
-  --sidebar-primary: var(--plexus-blue-600);
-  --sidebar-primary-foreground: 210 100% 98%;
-  --sidebar-accent: 238 100% 97%;
-  --sidebar-accent-foreground: 238 100% 28%;
-  --sidebar-ring: var(--plexus-blue-600);
-  --popover: 0 0% 100%;
-  --popover-foreground: 212 30% 12%;
-  --popover-border: 210 28% 88%;
-  --primary: var(--plexus-blue-600);
-  --primary-foreground: 210 100% 98%;
-  --secondary: 210 28% 85%;
-  --secondary-foreground: 212 30% 12%;
-  --muted: 210 25% 89%;
-  --muted-foreground: 212 20% 38%;
-  --accent: 210 28% 91%;
-  --accent-foreground: 212 25% 18%;
+  /* Semantic tokens remap to the soft-finance palette. Existing
+     bg-background, bg-card, bg-primary, ring-ring etc. consumers
+     automatically pick up the new look — no per-page repaint required. */
+  --background: var(--finance-bg);
+  --foreground: var(--finance-text);
+  --border: var(--finance-border);
+  --card: var(--finance-card);
+  --card-foreground: var(--finance-text);
+  --card-border: var(--finance-border);
+  --sidebar: var(--finance-dark);
+  --sidebar-foreground: 220 14% 86%;
+  --sidebar-border: var(--finance-dark-3);
+  --sidebar-primary: var(--finance-periwinkle);
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: var(--finance-dark-3);
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-ring: var(--finance-periwinkle);
+  --popover: var(--finance-card);
+  --popover-foreground: var(--finance-text);
+  --popover-border: var(--finance-border);
+  --primary: var(--finance-dark);
+  --primary-foreground: 0 0% 100%;
+  --secondary: var(--finance-bg-soft);
+  --secondary-foreground: var(--finance-text);
+  --muted: var(--finance-bg-soft);
+  --muted-foreground: var(--finance-text-muted);
+  --accent: var(--finance-bg-soft);
+  --accent-foreground: var(--finance-text);
   --destructive: 0 72% 38%;
   --destructive-foreground: 0 72% 98%;
-  --input: 210 25% 72%;
-  --ring: var(--plexus-blue-600);
+  --input: var(--finance-border-strong);
+  --ring: var(--finance-periwinkle);
   --chart-1: var(--plexus-blue-600);
   --chart-2: var(--plexus-blue-300);
   --chart-3: var(--plexus-blue-800);
@@ -212,6 +251,215 @@
 }
 
 @layer components {
+  /* ── Soft-finance opt-in utility classes ──────────────────────────
+     Apple-like SaaS dashboard primitives. Pages opt in by adding the
+     class to the existing wrapper div — no layout / structural change
+     required. Operational portals (Scheduler Portal cockpit, Technician
+     / Liaison portals) intentionally do NOT adopt these classes; they
+     keep their existing chrome. */
+
+  /* Page wrappers — soft gray workspace */
+  .finance-page {
+    background: hsl(var(--finance-bg));
+    min-height: 100%;
+    flex: 1 1 0%;
+    overflow: auto;
+  }
+  .finance-page-inner {
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+    max-width: 1280px;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+    padding-top: 1.75rem;
+    padding-bottom: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  /* Cards — premium white with hairline border + soft shadow */
+  .finance-card {
+    background: hsl(var(--finance-card));
+    border: 1px solid hsl(var(--finance-border));
+    border-radius: 24px;
+    box-shadow: 0 18px 45px rgba(20, 24, 36, 0.06);
+  }
+  .finance-card-soft {
+    background: hsl(var(--finance-card-soft));
+    border: 1px solid hsl(var(--finance-border));
+    border-radius: 24px;
+    box-shadow: 0 8px 24px rgba(20, 24, 36, 0.04);
+  }
+  .finance-card-elevated {
+    background: hsl(var(--finance-card));
+    border: 1px solid hsl(var(--finance-border));
+    border-radius: 28px;
+    box-shadow:
+      0 1px 0 rgba(20, 24, 36, 0.04),
+      0 24px 60px rgba(20, 24, 36, 0.08);
+  }
+
+  /* Pastel metric tiles — soft accent surfaces for KPI cards */
+  .finance-metric-blue {
+    background: hsl(var(--finance-blue-soft));
+    border: 1px solid hsl(var(--finance-border));
+    border-radius: 24px;
+    color: hsl(var(--finance-text));
+  }
+  .finance-metric-lavender {
+    background: hsl(var(--finance-lavender-soft));
+    border: 1px solid hsl(var(--finance-border));
+    border-radius: 24px;
+    color: hsl(var(--finance-text));
+  }
+  .finance-metric-green {
+    background: hsl(var(--finance-green-soft));
+    border: 1px solid hsl(var(--finance-border));
+    border-radius: 24px;
+    color: hsl(var(--finance-text));
+  }
+  .finance-metric-sand {
+    background: hsl(var(--finance-sand-soft));
+    border: 1px solid hsl(var(--finance-border));
+    border-radius: 24px;
+    color: hsl(var(--finance-text));
+  }
+  .finance-metric-pink {
+    background: hsl(var(--finance-pink-soft));
+    border: 1px solid hsl(var(--finance-border));
+    border-radius: 24px;
+    color: hsl(var(--finance-text));
+  }
+
+  /* Section labels */
+  .finance-section-title {
+    font-size: 1.25rem;
+    line-height: 1.2;
+    font-weight: 600;
+    color: hsl(var(--finance-text));
+    letter-spacing: -0.01em;
+  }
+  .finance-section-subtitle {
+    font-size: 0.875rem;
+    color: hsl(var(--finance-text-secondary));
+  }
+
+  /* Tables — clean row separators, no heavy grids */
+  .finance-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.875rem;
+  }
+  .finance-table thead th {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: hsl(var(--finance-text-muted));
+    border-bottom: 1px solid hsl(var(--finance-border));
+    background: hsl(var(--finance-card-soft));
+  }
+  .finance-table tbody td {
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid hsl(var(--finance-border));
+    color: hsl(var(--finance-text));
+  }
+  .finance-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .finance-table tbody tr:hover td {
+    background: hsl(var(--finance-bg-soft));
+  }
+
+  /* Action bar — pill row with white/blur surface */
+  .finance-action-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem;
+    border-radius: 9999px;
+    background: hsl(var(--finance-card) / 0.9);
+    border: 1px solid hsl(var(--finance-border));
+    box-shadow: 0 4px 12px rgba(20, 24, 36, 0.05);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  /* CTA buttons — dark primary, white secondary */
+  .finance-primary-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    background: hsl(var(--finance-dark));
+    color: #ffffff;
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    border: 1px solid hsl(var(--finance-dark));
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+    transition: background 200ms ease;
+  }
+  .finance-primary-button:hover {
+    background: hsl(var(--finance-dark-2));
+  }
+  .finance-secondary-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    background: hsl(var(--finance-card));
+    color: hsl(var(--finance-text));
+    font-size: 0.875rem;
+    font-weight: 500;
+    border: 1px solid hsl(var(--finance-border-strong));
+    transition: background 200ms ease, border-color 200ms ease;
+  }
+  .finance-secondary-button:hover {
+    background: hsl(var(--finance-bg-soft));
+    border-color: hsl(var(--finance-text-muted));
+  }
+
+  /* Status pill — small text label on muted bg */
+  .finance-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.125rem 0.625rem;
+    border-radius: 9999px;
+    background: hsl(var(--finance-bg-soft));
+    color: hsl(var(--finance-text-secondary));
+    border: 1px solid hsl(var(--finance-border));
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+
+  /* Inputs — clean white surface, periwinkle focus ring */
+  .finance-input {
+    background: hsl(var(--finance-card));
+    border: 1px solid hsl(var(--finance-border-strong));
+    border-radius: 12px;
+    padding: 0.5rem 0.75rem;
+    color: hsl(var(--finance-text));
+    font-size: 0.875rem;
+    transition: border-color 200ms ease, box-shadow 200ms ease;
+  }
+  .finance-input:focus {
+    outline: none;
+    border-color: hsl(var(--finance-periwinkle));
+    box-shadow: 0 0 0 3px hsl(var(--finance-periwinkle) / 0.18);
+  }
+
   .glass-tile {
     background: rgba(255, 255, 255, 0.90);
     backdrop-filter: blur(8px);

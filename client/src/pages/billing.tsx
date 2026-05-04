@@ -994,7 +994,7 @@ export default function BillingPage() {
   const fmtMoney = (v: number) => v === 0 ? "$0" : `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
-    <main className="flex-1 overflow-hidden flex flex-col bg-slate-50" data-testid="billing-page">
+    <main className="flex-1 overflow-hidden flex flex-col bg-finance-bg" data-testid="billing-page">
       {/* Header */}
       <div className="shrink-0 bg-white border-b border-slate-200">
         <div className="px-5 pt-4 pb-3">

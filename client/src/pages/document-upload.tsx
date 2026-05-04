@@ -259,7 +259,7 @@ function UploadCard({ docType, title, description, color, icon }: UploadCardProp
 
 export default function DocumentUploadPage() {
   return (
-    <div className="flex-1 overflow-y-auto p-6 bg-[hsl(210,35%,96%)]">
+    <div className="flex-1 overflow-y-auto p-6 bg-finance-bg">
       <div className="max-w-5xl mx-auto">
         <PageHeader
           eyebrow="PLEXUS ANCILLARY · UPLOADS"
