@@ -350,18 +350,39 @@ async function main(): Promise<void> {
       afterFirst.patient_execution_cases >= 1,
       `count=${afterFirst.patient_execution_cases}`,
     );
+    // Re-read the case after the first run so we can recognize a
+    // pre-existing assignment (helper short-circuited with
+    // already_assigned). A case that was assigned by an earlier run is a
+    // valid PASS state — the sprint goal is "case has a scheduler", not
+    // "case was assigned by THIS test run".
+    const ecAfterFirst = await getExecutionCaseByScreeningId(psid);
+    const hasAssignment =
+      !!ecAfterFirst &&
+      (ecAfterFirst.assignedTeamMemberId != null ||
+        ecAfterFirst.assignedRole === "scheduler");
+
     const noSchedulerInEnv =
       first.schedulerApplied === false &&
       first.schedulerReason === "no_scheduler_for_facility";
+    const alreadyAssignedAndPersisted =
+      first.schedulerApplied === false &&
+      first.schedulerReason === "already_assigned" &&
+      hasAssignment;
+
     record(
       assertions,
-      "2 · scheduler assignment exists OR no_scheduler_for_facility (deterministic skip)",
-      first.schedulerApplied === true || noSchedulerInEnv,
+      "2 · scheduler assignment exists (newly assigned, already-assigned, OR deterministic skip)",
+      first.schedulerApplied === true || alreadyAssignedAndPersisted || noSchedulerInEnv,
       first.schedulerApplied
-        ? `schedulerId=${first.schedulerId}`
-        : `applied=false reason=${first.schedulerReason}`,
+        ? `applied=true schedulerId=${first.schedulerId} assignedTeamMemberId=${ecAfterFirst?.assignedTeamMemberId ?? "null"} assignedRole=${ecAfterFirst?.assignedRole ?? "null"} eventCount=${afterFirst.scheduler_assigned_events}`
+        : `applied=false reason=${first.schedulerReason} assignedTeamMemberId=${ecAfterFirst?.assignedTeamMemberId ?? "null"} assignedRole=${ecAfterFirst?.assignedRole ?? "null"} eventCount=${afterFirst.scheduler_assigned_events}`,
     );
-    if (first.schedulerApplied) {
+
+    // The scheduler_assigned journey event should exist exactly once for
+    // any case that has an assignment (whether THIS run created it or a
+    // prior run did). The deterministic-skip env (no linked scheduler) has
+    // zero events and that's still a pass.
+    if (first.schedulerApplied || alreadyAssignedAndPersisted) {
       record(
         assertions,
         "2a · scheduler_assigned journey event exists exactly once",
@@ -448,10 +469,23 @@ async function main(): Promise<void> {
     // ── 6. Summary ─────────────────────────────────────────────────────
     const passed = assertions.filter((a) => a.pass).length;
     const failed = assertions.length - passed;
+    // Print the scheduler line based on the actual case state, not the
+    // helper's first-run return value. "no linked scheduler" is only
+    // accurate when reason=no_scheduler_for_facility AND the case truly
+    // has no assignment; an already-assigned case has a real scheduler.
+    const schedulerLine = first.schedulerApplied
+      ? `${first.schedulerId} (applied this run)`
+      : ecAfterFirst?.assignedTeamMemberId != null
+        ? `${ecAfterFirst.assignedTeamMemberId} (already assigned)`
+        : "(no linked scheduler)";
     console.log("\n════════════════════════════════════════════════════════════");
     console.log(`  patientScreeningId    = ${psid}`);
     console.log(`  executionCaseId       = ${executionCaseId}`);
-    console.log(`  schedulerId           = ${first.schedulerId ?? "(no linked scheduler)"}`);
+    console.log(`  schedulerId           = ${schedulerLine}`);
+    console.log(`  assignedTeamMemberId  = ${ecAfterFirst?.assignedTeamMemberId ?? "null"}`);
+    console.log(`  assignedRole          = ${ecAfterFirst?.assignedRole ?? "null"}`);
+    console.log(`  schedulerReason       = ${first.schedulerReason ?? (first.schedulerApplied ? "(applied)" : "(unknown)")}`);
+    console.log(`  scheduler_assigned    = ${afterFirst.scheduler_assigned_events} event(s)`);
     console.log(`  ancillaryEventId      = ${first.ancillaryEventId ?? "null"}`);
     console.log(`  procedureEventId      = ${first.procedureEventId ?? "null"}`);
     console.log(`  billingReadiness      = ${first.billingReadinessStatus}`);
