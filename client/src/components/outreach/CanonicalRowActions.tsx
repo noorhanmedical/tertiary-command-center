@@ -27,6 +27,10 @@ type Props = {
   /** Engagement status drives whether the post-schedule "Done" action is
    *  visible. Hidden for cases that haven't been scheduled yet. */
   engagementStatus?: string | null;
+  /** Services the canonical case has selected/qualified for. Used to drive
+   *  the Schedule + Done dialogs' service-type select. Falls back to the
+   *  default BrainWave / VitalWave list when null/empty. */
+  selectedServices?: string[] | null;
   /** Refetch hook for the parent's canonical case query so the row
    *  status reflects the new state immediately. */
   onSuccess?: () => void;
@@ -80,6 +84,7 @@ export function CanonicalRowActions({
   patientDob,
   facilityId,
   engagementStatus,
+  selectedServices,
   onSuccess,
 }: Props) {
   const [logOpen, setLogOpen] = useState(false);
@@ -89,6 +94,14 @@ export function CanonicalRowActions({
   const showDone = engagementStatus
     ? POST_SCHEDULE_STATUSES.has(engagementStatus)
     : false;
+
+  // Prefer the case's selectedServices when available so the dialog
+  // offers the patient's qualified services (e.g. just BrainWave) rather
+  // than the static BrainWave/VitalWave fallback. Empty arrays fall back.
+  const serviceOptions =
+    selectedServices && selectedServices.length > 0
+      ? selectedServices
+      : DEFAULT_SERVICE_TYPES;
 
   return (
     <>
@@ -140,6 +153,7 @@ export function CanonicalRowActions({
           patientName={patientName}
           patientDob={patientDob}
           facilityId={facilityId}
+          serviceOptions={serviceOptions}
           onSuccess={onSuccess}
         />
       )}
@@ -152,6 +166,7 @@ export function CanonicalRowActions({
           patientName={patientName}
           patientDob={patientDob}
           facilityId={facilityId}
+          serviceOptions={serviceOptions}
           onSuccess={onSuccess}
         />
       )}
@@ -284,10 +299,17 @@ function CanonicalScheduleDialog({
   patientName,
   patientDob: _patientDob,
   facilityId,
+  serviceOptions,
   onSuccess,
-}: Props & { open: boolean; onOpenChange: (v: boolean) => void }) {
+}: Props & {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  serviceOptions: string[];
+}) {
   const { toast } = useToast();
-  const [serviceType, setServiceType] = useState<string>(DEFAULT_SERVICE_TYPES[0]);
+  const [serviceType, setServiceType] = useState<string>(
+    serviceOptions[0] ?? DEFAULT_SERVICE_TYPES[0],
+  );
   const [startsAt, setStartsAt] = useState<string>(defaultStartsAtIso());
   const [note, setNote] = useState<string>("");
 
@@ -337,7 +359,7 @@ function CanonicalScheduleDialog({
               className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
               data-testid="canonical-schedule-service-type"
             >
-              {DEFAULT_SERVICE_TYPES.map((s) => (
+              {serviceOptions.map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
@@ -396,10 +418,17 @@ function CanonicalDoneDialog({
   patientName,
   patientDob,
   facilityId,
+  serviceOptions,
   onSuccess,
-}: Props & { open: boolean; onOpenChange: (v: boolean) => void }) {
+}: Props & {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  serviceOptions: string[];
+}) {
   const { toast } = useToast();
-  const [serviceType, setServiceType] = useState<string>(DEFAULT_SERVICE_TYPES[0]);
+  const [serviceType, setServiceType] = useState<string>(
+    serviceOptions[0] ?? DEFAULT_SERVICE_TYPES[0],
+  );
   const [documentType, setDocumentType] = useState<string>(DOCUMENT_TYPE_OPTIONS[0].value);
   const [documentStatus, setDocumentStatus] = useState<string>(DOCUMENT_TYPE_OPTIONS[0].defaultStatus);
 
@@ -478,7 +507,7 @@ function CanonicalDoneDialog({
               className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
               data-testid="canonical-done-service-type"
             >
-              {DEFAULT_SERVICE_TYPES.map((s) => (
+              {serviceOptions.map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
