@@ -506,6 +506,23 @@ async function main(): Promise<void> {
     console.error("[test:operational-flow-assigned-to-billing-ready] unexpected failure:", err);
     exitCode = 1;
   } finally {
+    // Both markProcedureComplete and evaluateBillingReadinessForProcedure
+    // schedule fire-and-forget DB writes by design (they're called from
+    // route handlers that need to return immediately):
+    //
+    //   markProcedureComplete
+    //     → void createPendingProcedureNotes(...)
+    //     → void evaluateBillingReadinessForProcedure(...)
+    //         → when readinessStatus="ready_to_generate":
+    //             void createPendingBillingDocumentRequestFromReadiness(...)
+    //
+    // If pool.end() runs before the chain settles, the trailing writes
+    // hit a closed pool and emit "Cannot use a pool after calling end".
+    // The tail writes don't affect the assertions (which already
+    // validated the final DB state), so a short grace period is the
+    // canonical fix — same pattern the production server gets via the
+    // long-lived pool.
+    await new Promise<void>((resolve) => setTimeout(resolve, 750));
     try {
       await pool.end();
     } catch {
