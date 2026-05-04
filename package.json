@@ -28,7 +28,8 @@
     "test:visit-schedule-auto-commit": "tsx script/testVisitScheduleAutoCommit.ts",
     "test:scheduler-assignment-wiring": "tsx script/testSchedulerAssignmentWiring.ts",
     "test:operational-flow-assigned-to-billing-ready": "tsx script/testOperationalFlowAssignedToBillingReady.ts",
-    "test:billing-payment-invoice-flow": "tsx script/testBillingPaymentInvoiceFlow.ts"
+    "test:billing-payment-invoice-flow": "tsx script/testBillingPaymentInvoiceFlow.ts",
+    "test:ui-path-api-smoke": "tsx script/uiPathApiSmoke.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
