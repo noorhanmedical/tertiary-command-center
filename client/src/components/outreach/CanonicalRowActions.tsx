@@ -43,6 +43,7 @@ const DOCUMENT_TYPE_OPTIONS: Array<{ value: string; label: string; defaultStatus
 const POST_SCHEDULE_STATUSES = new Set(["scheduled", "in_progress", "completed"]);
 
 const CALL_RESULT_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "scheduled", label: "Scheduled" },
   { value: "callback", label: "Callback later" },
   { value: "no_answer", label: "No answer" },
   { value: "voicemail", label: "Left voicemail" },
