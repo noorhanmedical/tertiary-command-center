@@ -29,6 +29,7 @@
     "test:scheduler-assignment-wiring": "tsx script/testSchedulerAssignmentWiring.ts",
     "test:operational-flow-assigned-to-billing-ready": "tsx script/testOperationalFlowAssignedToBillingReady.ts",
     "test:billing-payment-invoice-flow": "tsx script/testBillingPaymentInvoiceFlow.ts",
+    "test:billing-visibility-read-model": "tsx script/testBillingVisibilityReadModel.ts",
     "test:ui-path-api-smoke": "tsx script/uiPathApiSmoke.ts"
   },
   "dependencies": {
