@@ -15,7 +15,11 @@ import { normalizeInsuranceType } from "../services/ingest";
 import { logAudit } from "../services/auditService";
 import { invalidatePatientDatabase } from "./patientDatabase";
 import { assignNewlyEligiblePatient } from "../services/callListEngine";
-import { commitPatient, recallPatient } from "../services/patientCommitService";
+import {
+  commitPatient,
+  recallPatient,
+  ensureCanonicalSpineForScreening,
+} from "../services/patientCommitService";
 
 type BackgroundSyncPatients = () => void | Promise<void>;
 
@@ -62,6 +66,32 @@ export function registerPatientRoutes(
 
       void logAudit(req, "update", "patient", id, updates);
       invalidatePatientDatabase();
+
+      // Final Schedule edits (appointment status, patient type, time, name,
+      // dob, qualifying tests) can flip a committed patient between visit /
+      // outreach buckets or surface a usable visit datetime for the first
+      // time. Re-run the canonical spine helper so the execution case,
+      // doctor_visit global_schedule_event, and scheduler auto-assignment
+      // stay in sync. The helper is idempotent and self-skips Draft
+      // patients ("draft_not_committed"), so it's safe to fire on every
+      // committed patient PATCH.
+      const SPINE_FIELDS = [
+        "appointmentStatus",
+        "patientType",
+        "time",
+        "name",
+        "dob",
+        "qualifyingTests",
+      ] as const;
+      const spineRelevant = SPINE_FIELDS.some((f) => f in (data as Record<string, unknown>));
+      if (spineRelevant && patient.commitStatus !== "Draft") {
+        void ensureCanonicalSpineForScreening(id, {
+          actorUserId: req.session?.userId ?? null,
+          auto: true,
+        }).catch((err) => {
+          console.error("[patients.patch] ensureCanonicalSpineForScreening failed:", err);
+        });
+      }
 
       const wasAlreadyCompleted = previousPatient?.appointmentStatus?.toLowerCase() === "completed";
       if (data.appointmentStatus && data.appointmentStatus.toLowerCase() === "completed" && !wasAlreadyCompleted) {
