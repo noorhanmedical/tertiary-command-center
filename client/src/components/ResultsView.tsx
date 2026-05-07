@@ -1,7 +1,8 @@
 import { useState, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import {
   generateClinicianPDF,
   generatePlexusPDF,
@@ -13,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
-  Building2, Check, CheckSquare, ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Printer, Scan, Share2, Users2, X,
+  Building2, Calendar, Check, CheckSquare, ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Printer, Scan, Send, Share2, Users2, X,
 } from "lucide-react";
 import type { PatientScreening, ScreeningBatch } from "@shared/schema";
 import { StepTimeline } from "@/components/StepTimeline";
@@ -122,6 +123,8 @@ function ResultsHeaderActions({
   onExport,
   onClinicianPdf,
   onPlexusPdf,
+  onSendAllToScheduler,
+  isSendingAll,
 }: {
   patients: PatientScreening[];
   shareButtonText: string;
@@ -129,9 +132,23 @@ function ResultsHeaderActions({
   onExport: () => void;
   onClinicianPdf: () => void;
   onPlexusPdf: () => void;
+  onSendAllToScheduler: () => void;
+  isSendingAll: boolean;
 }) {
+  const eligibleCount = patients.filter((p) => p.id != null && (p.name ?? "").trim() !== "").length;
   return (
     <div className="flex items-center gap-2 flex-wrap">
+      <Button
+        size="sm"
+        onClick={onSendAllToScheduler}
+        disabled={isSendingAll || eligibleCount === 0}
+        className="gap-1.5 rounded-xl"
+        data-testid="final-schedule-send-all-scheduler"
+        title="Send every visible patient to the scheduler queue"
+      >
+        {isSendingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+        Send All to Scheduler
+      </Button>
       <Button variant="outline" size="sm" onClick={onShare} className="gap-1.5 rounded-xl" data-testid="button-share">
         {shareButtonText === "Copied!" ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />} {shareButtonText}
       </Button>
@@ -190,9 +207,103 @@ export function ResultsView({
   onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
 }) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [shareButtonText, setShareButtonText] = useState("Share");
   const [pdfMode, setPdfMode] = useState<"clinician" | "plexus" | null>(null);
   const [completeModalPatient, setCompleteModalPatient] = useState<PatientScreening | null>(null);
+  const [scheduleEditingPatientId, setScheduleEditingPatientId] = useState<number | null>(null);
+  const [sendingPatientIds, setSendingPatientIds] = useState<Set<number>>(new Set());
+  const [isSendingAll, setIsSendingAll] = useState(false);
+
+  // Send a single patient to the scheduler queue. Reuses the canonical
+  // POST /api/patients/:id/commit endpoint — no parallel commit logic.
+  // Treats already-committed patients as success ("already sent").
+  const sendPatientToScheduler = useCallback(
+    async (
+      patient: PatientScreening,
+    ): Promise<"sent" | "alreadySent" | "failed"> => {
+      try {
+        const res = await apiRequest("POST", `/api/patients/${patient.id}/commit`);
+        if (res.ok) return "sent";
+        let msg = "";
+        try {
+          const body = await res.json();
+          msg = (body?.error ?? "").toString().toLowerCase();
+        } catch {
+          /* noop */
+        }
+        if (res.status === 409 || msg.includes("already committed")) return "alreadySent";
+        return "failed";
+      } catch {
+        return "failed";
+      }
+    },
+    [],
+  );
+
+  const handleSendOneToScheduler = useCallback(
+    async (patient: PatientScreening) => {
+      setSendingPatientIds((prev) => new Set(prev).add(patient.id));
+      try {
+        const outcome = await sendPatientToScheduler(patient);
+        if (outcome === "sent") {
+          toast({ title: "Sent to scheduler queue", description: patient.name });
+        } else if (outcome === "alreadySent") {
+          toast({ title: "Already sent to scheduler", description: patient.name });
+        } else {
+          toast({
+            title: "Could not send patient to scheduler",
+            description: patient.name,
+            variant: "destructive",
+          });
+        }
+        if (batch?.id != null) {
+          queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", batch.id] });
+        }
+        queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/schedule/dashboard"] });
+      } finally {
+        setSendingPatientIds((prev) => {
+          const next = new Set(prev);
+          next.delete(patient.id);
+          return next;
+        });
+      }
+    },
+    [sendPatientToScheduler, toast, queryClient, batch?.id],
+  );
+
+  const handleSendAllToScheduler = useCallback(async () => {
+    const eligible = patients.filter((p) => p.id != null && (p.name ?? "").trim() !== "");
+    if (eligible.length === 0) {
+      toast({ title: "No patients to send" });
+      return;
+    }
+    setIsSendingAll(true);
+    let sent = 0;
+    let alreadySent = 0;
+    let failed = 0;
+    try {
+      for (const p of eligible) {
+        const outcome = await sendPatientToScheduler(p);
+        if (outcome === "sent") sent += 1;
+        else if (outcome === "alreadySent") alreadySent += 1;
+        else failed += 1;
+      }
+      toast({
+        title: failed === 0 ? "Send to scheduler complete" : "Send to scheduler finished with errors",
+        description: `Sent ${sent} patient${sent === 1 ? "" : "s"} to scheduler queue · ${alreadySent} already sent · ${failed} failed`,
+        variant: failed === 0 ? undefined : "destructive",
+      });
+      if (batch?.id != null) {
+        queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", batch.id] });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/schedule/dashboard"] });
+    } finally {
+      setIsSendingAll(false);
+    }
+  }, [patients, sendPatientToScheduler, toast, queryClient, batch?.id]);
 
   const handleStatusChange = useCallback(async (patient: PatientScreening, newStatus: string) => {
     if (newStatus.toLowerCase() === "completed") {
@@ -269,6 +380,8 @@ export function ResultsView({
             onExport={onExport}
             onClinicianPdf={handleOpenClinicianPdf}
             onPlexusPdf={handleOpenPlexusPdf}
+            onSendAllToScheduler={handleSendAllToScheduler}
+            isSendingAll={isSendingAll}
           />
         </div>
       </header>
@@ -390,6 +503,64 @@ export function ResultsView({
                       </div>
                       <div className="flex flex-col items-end gap-2 shrink-0">
                         <div className="flex items-center gap-2">
+                          {scheduleEditingPatientId === patient.id ? (
+                            <input
+                              type="text"
+                              defaultValue={patient.time ?? ""}
+                              autoFocus
+                              placeholder="e.g. 10:00 AM"
+                              onClick={(e) => e.stopPropagation()}
+                              onBlur={(e) => {
+                                e.stopPropagation();
+                                const val = e.currentTarget.value.trim();
+                                setScheduleEditingPatientId(null);
+                                if (val !== (patient.time ?? "")) {
+                                  onUpdatePatient(patient.id, { time: val || null });
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  e.currentTarget.blur();
+                                }
+                                if (e.key === "Escape") {
+                                  setScheduleEditingPatientId(null);
+                                }
+                              }}
+                              className="h-7 w-[110px] text-[11px] px-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-primary"
+                              data-testid={`input-final-schedule-time-${patient.id}`}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setScheduleEditingPatientId(patient.id);
+                              }}
+                              title="Schedule patient"
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors"
+                              data-testid={`final-schedule-patient-schedule-${patient.id}`}
+                            >
+                              <Calendar className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!sendingPatientIds.has(patient.id)) {
+                                handleSendOneToScheduler(patient);
+                              }
+                            }}
+                            disabled={sendingPatientIds.has(patient.id)}
+                            title="Send to scheduler"
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors disabled:opacity-50"
+                            data-testid={`final-schedule-patient-send-scheduler-${patient.id}`}
+                          >
+                            {sendingPatientIds.has(patient.id)
+                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              : <Send className="w-3.5 h-3.5" />}
+                          </button>
                           <select
                             className="text-[10px] border border-slate-200 rounded-lg px-2 py-0.5 bg-white font-medium cursor-pointer capitalize focus:outline-none focus:ring-1 focus:ring-primary"
                             value={patient.appointmentStatus || "pending"}
