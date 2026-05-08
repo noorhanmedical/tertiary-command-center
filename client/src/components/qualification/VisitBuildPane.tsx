@@ -2,11 +2,102 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import QualificationIntakePane from "./QualificationIntakePane";
 import QualificationPatientCardsPane from "./QualificationPatientCardsPane";
-import { Loader2, Upload, FileText, Plus, Lock, AlertTriangle, User, Trash2 } from "lucide-react";
+import { Loader2, Upload, FileText, Plus, Lock, AlertTriangle, User, Trash2, Calendar, Building2, Users, Phone } from "lucide-react";
 import { BatchHeader } from "@/components/BatchHeader";
 import { PatientCard } from "@/components/PatientCard";
 import type { OutreachScheduler } from "@shared/schema";
 import type { ScreeningBatchWithPatients } from "@/pages/home";
+
+type BuildSourceMode = "visit" | "outreach";
+
+function formatSourceDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "—";
+  const parts = dateStr.split("-").map(Number);
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return dateStr;
+  const [yyyy, mm, dd] = parts;
+  return new Date(yyyy, mm - 1, dd).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function SourceSummary({
+  mode,
+  facility,
+  scheduleDate,
+  patientCount,
+}: {
+  mode: BuildSourceMode;
+  facility: string | null | undefined;
+  scheduleDate: string | null | undefined;
+  patientCount: number;
+}) {
+  const isVisit = mode === "visit";
+  const sourceLabel = isVisit ? "Clinic appointment schedule" : "Outreach patient pool";
+  const criteriaLabel = isVisit
+    ? "Appointment date"
+    : "Criteria";
+  const criteriaValue = isVisit ? formatSourceDate(scheduleDate) : "Outreach patient pool";
+
+  return (
+    <section className="finance-card p-4" data-testid={`build-source-summary-${mode}`}>
+      <div className="flex items-center gap-2 mb-3">
+        {isVisit ? (
+          <Calendar className="h-4 w-4 text-finance-cta-blue" />
+        ) : (
+          <Phone className="h-4 w-4 text-finance-cta-lavender" />
+        )}
+        <span className="finance-section-title text-base">Build source</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <SourceField
+          icon={<Building2 className="h-3.5 w-3.5 text-finance-text-muted" />}
+          label="Facility"
+          value={facility ?? "—"}
+        />
+        <SourceField
+          icon={isVisit
+            ? <Calendar className="h-3.5 w-3.5 text-finance-text-muted" />
+            : <FileText className="h-3.5 w-3.5 text-finance-text-muted" />}
+          label={criteriaLabel}
+          value={criteriaValue}
+        />
+        <SourceField
+          icon={<FileText className="h-3.5 w-3.5 text-finance-text-muted" />}
+          label="Source"
+          value={sourceLabel}
+        />
+        <SourceField
+          icon={<Users className="h-3.5 w-3.5 text-finance-text-muted" />}
+          label="Patients"
+          value={String(patientCount)}
+        />
+      </div>
+    </section>
+  );
+}
+
+function SourceField({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-finance-text-muted">
+        {icon}
+        <span>{label}</span>
+      </div>
+      <div className="mt-1 truncate text-sm font-medium text-finance-text">{value}</div>
+    </div>
+  );
+}
 
 const IMPORT_ACCESS_CODE = "1234";
 
@@ -55,6 +146,8 @@ interface VisitBuildPaneProps {
   cardsTitle?: string;
   simpleBuildStepLabel?: string;
   simpleResultsStepLabel?: string;
+  sourceMode?: BuildSourceMode;
+  sourceFacility?: string | null;
 }
 
 
@@ -104,36 +197,41 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
     cardsTitle = "Schedule Generator",
     simpleBuildStepLabel = "Build Schedule",
     simpleResultsStepLabel = "Final Schedule",
+    sourceMode = "visit",
+    sourceFacility,
   } = props;
+
+  const summaryFacility = sourceFacility ?? selectedBatch?.facility ?? null;
+  const summaryScheduleDate = selectedBatch?.scheduleDate ?? null;
 
   return (
     <div className="flex flex-col h-full relative z-10">
       {simpleHeaderMode ? (
-        <div className="border-b bg-white/80 backdrop-blur-sm">
+        <div className="border-b border-finance-border bg-finance-card">
           <div className="max-w-5xl mx-auto px-4 py-5 space-y-4">
             <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
-                <div className="text-xs font-semibold tracking-[0.16em] uppercase text-slate-500 mb-1">
+                <div className="text-xs font-semibold tracking-[0.16em] uppercase text-finance-text-muted mb-1">
                   PLEXUS ANCILLARY
                 </div>
-                <div className="text-xl font-semibold text-slate-900">{simpleTitle}</div>
-                <div className="text-sm text-slate-500 mt-1">{simpleSubtitle}</div>
-                <div className="text-xs text-slate-400 mt-1">{simpleBuildStepLabel} · {simpleResultsStepLabel}</div>
+                <div className="finance-section-title">{simpleTitle}</div>
+                <div className="finance-section-subtitle mt-1">{simpleSubtitle}</div>
+                <div className="text-xs text-finance-text-muted mt-1">{simpleBuildStepLabel} · {simpleResultsStepLabel}</div>
               </div>
-              <div className="text-xs text-slate-500">
+              <div className="text-xs text-finance-text-secondary">
                 {completedCount}/{patients.length} qualified
               </div>
             </div>
 
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="min-w-[240px] flex-1 max-w-md">
-                <div className="text-xs font-medium text-slate-500 mb-1">Clinician</div>
+                <div className="text-xs font-medium text-finance-text-muted mb-1">Clinician</div>
                 <input
                   value={clinicianInput}
                   onChange={(e) => setClinicianInput(e.target.value)}
                   onBlur={() => onUpdateClinician(clinicianInput)}
                   placeholder="Enter clinician name"
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  className="finance-input h-10 w-full text-sm"
                   data-testid="input-simple-clinician"
                 />
               </div>
@@ -176,8 +274,14 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
           onAssignScheduler={onAssignScheduler}
         />
       )}
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 overflow-auto bg-finance-bg">
         <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+          <SourceSummary
+            mode={sourceMode}
+            facility={summaryFacility}
+            scheduleDate={summaryScheduleDate}
+            patientCount={patients.length}
+          />
           {isProcessing && (
             <Card className="p-6">
               <div className="flex flex-col items-center gap-3">

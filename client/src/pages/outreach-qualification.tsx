@@ -373,6 +373,7 @@ export default function OutreachQualificationPage() {
       cardsTitle="Final List"
       simpleBuildStepLabel="Build List"
       simpleResultsStepLabel="Final List"
+      sourceMode="outreach"
     />
   );
 }

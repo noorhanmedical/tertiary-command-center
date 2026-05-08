@@ -59,14 +59,14 @@ export default function QualificationIntakePane({
 }: QualificationIntakePaneProps) {
   return (
     <section>
-      <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">{title}</h2>
+      <h2 className="finance-section-title text-base mb-3">{title}</h2>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {importUnlocked ? (
           <>
-            <Card className="p-4">
+            <Card className="finance-card p-4">
               <div className="flex items-center gap-2 mb-3">
-                <Upload className="w-4 h-4 text-muted-foreground" />
-                <span className="text-base font-semibold">Upload File</span>
+                <Upload className="w-4 h-4 text-finance-text-muted" />
+                <span className="text-base font-semibold text-finance-text">Upload File</span>
               </div>
               <div
                 className={`flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer transition-colors ${dragOver ? "border-primary bg-primary/5" : "border-border"}`}
@@ -102,10 +102,10 @@ export default function QualificationIntakePane({
               </div>
             </Card>
 
-            <Card className="p-4">
+            <Card className="finance-card p-4">
               <div className="flex items-center gap-2 mb-3">
-                <FileText className="w-4 h-4 text-muted-foreground" />
-                <span className="text-base font-semibold">Paste List</span>
+                <FileText className="w-4 h-4 text-finance-text-muted" />
+                <span className="text-base font-semibold text-finance-text">Paste List</span>
               </div>
               <Textarea
                 placeholder={pastePlaceholder}
@@ -135,12 +135,12 @@ export default function QualificationIntakePane({
             </Card>
           </>
         ) : (
-          <Card className="p-4 col-span-1 lg:col-span-2">
+          <Card className="finance-card p-4 col-span-1 lg:col-span-2">
             <div className="flex items-center gap-2 mb-3">
-              <Lock className="w-4 h-4 text-muted-foreground" />
-              <span className="text-base font-semibold">Import Access</span>
+              <Lock className="w-4 h-4 text-finance-text-muted" />
+              <span className="text-base font-semibold text-finance-text">Import Access</span>
             </div>
-            <p className="text-xs text-muted-foreground mb-3">File upload and paste import require an access code. Manual entry is always available.</p>
+            <p className="text-xs text-finance-text-secondary mb-3">File upload and paste import require an access code. Manual entry is always available.</p>
             <div className="flex items-center gap-2">
               <Input
                 type="password"
@@ -176,10 +176,10 @@ export default function QualificationIntakePane({
           </Card>
         )}
 
-        <Card className="p-4">
+        <Card className="finance-card p-4">
           <div className="flex items-center gap-2 mb-3">
-            <Plus className="w-4 h-4 text-muted-foreground" />
-            <span className="text-base font-semibold">Manual Entry</span>
+            <Plus className="w-4 h-4 text-finance-text-muted" />
+            <span className="text-base font-semibold text-finance-text">Manual Entry</span>
           </div>
           <Button
             className="w-full gap-1.5"

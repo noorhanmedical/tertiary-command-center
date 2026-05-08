@@ -30,11 +30,11 @@ export default function QualificationPatientCardsPane({
   return (
     <section>
       <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-        <h2 className="text-base font-semibold text-muted-foreground uppercase tracking-wider">
+        <h2 className="finance-section-title text-base">
           {title} ({patients.length})
         </h2>
         {completedCount > 0 && (
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs text-finance-text-secondary">
             {completedCount}/{patients.length} analyzed
           </span>
         )}
