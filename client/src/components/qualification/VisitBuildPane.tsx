@@ -1,9 +1,11 @@
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import QualificationIntakePane from "./QualificationIntakePane";
 import QualificationPatientCardsPane from "./QualificationPatientCardsPane";
-import { Loader2, Upload, FileText, Plus, Lock, AlertTriangle, User, Trash2, Calendar, Building2, Users, Phone } from "lucide-react";
+import { Loader2, Upload, FileText, Plus, Lock, AlertTriangle, User, Trash2, Calendar, Building2, Users, Phone, Sparkles } from "lucide-react";
 import { BatchHeader } from "@/components/BatchHeader";
+import { StepTimeline } from "@/components/StepTimeline";
 import { PatientCard } from "@/components/PatientCard";
 import type { OutreachScheduler } from "@shared/schema";
 import type { ScreeningBatchWithPatients } from "@/pages/home";
@@ -207,55 +209,86 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
   return (
     <div className="flex flex-col h-full relative z-10">
       {simpleHeaderMode ? (
-        <div className="border-b border-finance-border bg-finance-card">
-          <div className="max-w-5xl mx-auto px-4 py-5 space-y-4">
-            <div className="flex items-center justify-between gap-4 flex-wrap">
+        <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
+          <StepTimeline
+            current="build"
+            onNavigate={onNavigate}
+            canGoToResults={completedCount > 0}
+            buildLabel={simpleBuildStepLabel}
+            resultsLabel={simpleResultsStepLabel}
+          />
+          <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
+            <div className="flex items-center gap-2">
+              <SidebarTrigger data-testid="button-sidebar-toggle-outreach" />
               <div>
-                <div className="text-xs font-semibold tracking-[0.16em] uppercase text-finance-text-muted mb-1">
-                  PLEXUS ANCILLARY
+                <h1
+                  className="text-[28px] leading-tight font-bold tracking-tight"
+                  data-testid="text-simple-title"
+                >
+                  {simpleTitle}
+                </h1>
+                <div className="flex items-center gap-1 mt-0.5">
+                  <input
+                    type="text"
+                    placeholder="Clinician / Provider"
+                    value={clinicianInput}
+                    onChange={(e) => setClinicianInput(e.target.value)}
+                    onBlur={() => onUpdateClinician(clinicianInput)}
+                    className="text-xs text-muted-foreground bg-transparent border-0 border-b border-dashed border-muted-foreground/40 focus:border-primary focus:outline-none px-0 py-0.5 w-44 placeholder:text-muted-foreground/50"
+                    data-testid="input-simple-clinician"
+                  />
                 </div>
-                <div className="finance-section-title">{simpleTitle}</div>
-                <div className="finance-section-subtitle mt-1">{simpleSubtitle}</div>
-                <div className="text-xs text-finance-text-muted mt-1">{simpleBuildStepLabel} · {simpleResultsStepLabel}</div>
-              </div>
-              <div className="text-xs text-finance-text-secondary">
-                {completedCount}/{patients.length} qualified
+                {selectedBatch?.facility && (
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <Building2 className="w-3 h-3 text-muted-foreground" />
+                    <span
+                      className="text-xs text-muted-foreground"
+                      data-testid="text-facility-simple"
+                    >
+                      {selectedBatch.facility}
+                    </span>
+                  </div>
+                )}
+                {simpleSubtitle && (
+                  <div
+                    className="text-xs text-muted-foreground mt-0.5 max-w-[480px]"
+                    data-testid="text-simple-subtitle"
+                  >
+                    {simpleSubtitle}
+                  </div>
+                )}
               </div>
             </div>
-
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="min-w-[240px] flex-1 max-w-md">
-                <div className="text-xs font-medium text-finance-text-muted mb-1">Clinician</div>
-                <input
-                  value={clinicianInput}
-                  onChange={(e) => setClinicianInput(e.target.value)}
-                  onBlur={() => onUpdateClinician(clinicianInput)}
-                  placeholder="Enter clinician name"
-                  className="finance-input h-10 w-full text-sm"
-                  data-testid="input-simple-clinician"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              {patients.length > 0 && (
                 <Button
                   variant="outline"
+                  size="sm"
                   onClick={onDeleteAll}
-                  disabled={patients.length === 0}
+                  disabled={isProcessing}
+                  className="gap-1.5"
                   data-testid="button-simple-delete-all"
                 >
+                  <Trash2 className="w-3.5 h-3.5" />
                   Delete All
                 </Button>
-                <Button
-                  onClick={onGenerateAll}
-                  disabled={patients.length === 0 || isProcessing}
-                  data-testid="button-simple-generate-all"
-                >
-                  {isProcessing ? "Generating..." : "Generate All"}
-                </Button>
-              </div>
+              )}
+              <Button
+                onClick={onGenerateAll}
+                disabled={isProcessing || patients.length === 0}
+                className="gap-1.5"
+                data-testid="button-simple-generate-all"
+              >
+                {isProcessing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Sparkles className="w-4 h-4" />
+                )}
+                Generate All
+              </Button>
             </div>
           </div>
-        </div>
+        </header>
       ) : (
         <BatchHeader
           selectedBatch={selectedBatch}

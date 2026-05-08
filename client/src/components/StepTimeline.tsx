@@ -1,11 +1,23 @@
 import { Button } from "@/components/ui/button";
 import { Check } from "lucide-react";
 
-export function StepTimeline({ current, onNavigate, canGoToResults }: { current: "home" | "build" | "results"; onNavigate: (step: "home" | "build" | "results") => void; canGoToResults: boolean }) {
+export function StepTimeline({
+  current,
+  onNavigate,
+  canGoToResults,
+  buildLabel = "Build Schedule",
+  resultsLabel = "Final Schedule",
+}: {
+  current: "home" | "build" | "results";
+  onNavigate: (step: "home" | "build" | "results") => void;
+  canGoToResults: boolean;
+  buildLabel?: string;
+  resultsLabel?: string;
+}) {
   const steps = [
     { id: "home" as const, label: "Home", num: 1 },
-    { id: "build" as const, label: "Build Schedule", num: 2 },
-    { id: "results" as const, label: "Final Schedule", num: 3 },
+    { id: "build" as const, label: buildLabel, num: 2 },
+    { id: "results" as const, label: resultsLabel, num: 3 },
   ];
   const currentIdx = steps.findIndex((s) => s.id === current);
 
