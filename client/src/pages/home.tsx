@@ -643,6 +643,7 @@ export default function Home() {
             importFilePending={importFileMutation.isPending}
             importTextPending={importTextMutation.isPending}
             addPatientPending={addPatientMutation.isPending}
+            sourceMode="visit"
           />
         ) : (
           <HomeDashboard
