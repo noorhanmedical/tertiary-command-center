@@ -32,6 +32,7 @@
     "test:billing-visibility-read-model": "tsx script/testBillingVisibilityReadModel.ts",
     "test:final-schedule-commit-to-caller": "tsx script/testFinalScheduleCommitToCaller.ts",
     "test:final-schedule-canonical-actions": "tsx script/testFinalScheduleCanonicalActions.ts",
+    "test:build-screen-data-entry-model": "tsx script/testBuildScreenDataEntryModel.ts",
     "test:ui-path-api-smoke": "tsx script/uiPathApiSmoke.ts"
   },
   "dependencies": {
