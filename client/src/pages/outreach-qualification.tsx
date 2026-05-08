@@ -253,8 +253,8 @@ export default function OutreachQualificationPage() {
 
   if (!batchId || !selectedBatch) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-sm text-slate-500">
+      <div className="flex flex-col flex-1 min-w-0 relative bg-finance-bg items-center justify-center min-h-screen">
+        <div className="text-sm text-finance-text-secondary">
           {createBatchMut.isPending || batchLoading ? "Preparing outreach qualification..." : "Loading outreach qualification..."}
         </div>
       </div>
@@ -263,39 +263,42 @@ export default function OutreachQualificationPage() {
 
   if (viewMode === "results" || selectedBatch.status === "completed") {
     return (
-      <ResultsView
-        batch={selectedBatch as any}
-        patients={patients as any}
-        loading={batchLoading}
-        onExport={handleExport}
-        onNavigate={handleNavigate}
-        expandedPatient={expandedPatient}
-        setExpandedPatient={setExpandedPatient}
-        expandedClinical={expandedClinical}
-        setExpandedClinical={setExpandedClinical}
-        selectedTestDetail={selectedTestDetail}
-        setSelectedTestDetail={setSelectedTestDetail}
-        onUpdatePatient={(id, updates) =>
-          updatePatientMut.mutate(
-            { id, updates },
-            {
-              onError: (err: unknown) => {
-                toast({
-                  title: "Update failed",
-                  description: err instanceof Error ? err.message : "Something went wrong",
-                  variant: "destructive",
-                });
-                invalidateBatch(batchId);
-              },
-            }
-          )
-        }
-      />
+      <div className="flex flex-col flex-1 min-w-0 relative bg-background">
+        <ResultsView
+          batch={selectedBatch as any}
+          patients={patients as any}
+          loading={batchLoading}
+          onExport={handleExport}
+          onNavigate={handleNavigate}
+          expandedPatient={expandedPatient}
+          setExpandedPatient={setExpandedPatient}
+          expandedClinical={expandedClinical}
+          setExpandedClinical={setExpandedClinical}
+          selectedTestDetail={selectedTestDetail}
+          setSelectedTestDetail={setSelectedTestDetail}
+          onUpdatePatient={(id, updates) =>
+            updatePatientMut.mutate(
+              { id, updates },
+              {
+                onError: (err: unknown) => {
+                  toast({
+                    title: "Update failed",
+                    description: err instanceof Error ? err.message : "Something went wrong",
+                    variant: "destructive",
+                  });
+                  invalidateBatch(batchId);
+                },
+              }
+            )
+          }
+        />
+      </div>
     );
   }
 
   return (
-    <VisitBuildPane
+    <div className="flex flex-col flex-1 min-w-0 relative bg-background">
+      <VisitBuildPane
       selectedBatch={selectedBatch as any}
       selectedBatchId={batchId}
       patients={patients}
@@ -374,6 +377,8 @@ export default function OutreachQualificationPage() {
       simpleBuildStepLabel="Build List"
       simpleResultsStepLabel="Final List"
       sourceMode="outreach"
+      pageMaxWidth="max-w-7xl"
     />
+    </div>
   );
 }
