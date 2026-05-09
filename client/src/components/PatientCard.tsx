@@ -3,8 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Loader2, Sparkles, Trash2, Pencil } from "lucide-react";
+import { Loader2, Sparkles, Trash2 } from "lucide-react";
 import type { AncillaryAppointment, PatientScreening, ScreeningBatch } from "@shared/schema";
 import {
   categoryIcons,
@@ -21,11 +20,11 @@ type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening
 
 const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound"];
 
-const ANCILLARY_CIRCLE_STYLES: Record<AncillaryCategory, string> = {
-  brainwave: "bg-violet-50 text-violet-600 border-violet-200 hover:bg-violet-100",
-  vitalwave: "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100",
-  ultrasound: "bg-sky-50 text-sky-600 border-sky-200 hover:bg-sky-100",
-  other: "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100",
+const ANCILLARY_STROKE: Record<AncillaryCategory, string> = {
+  brainwave: "text-violet-600",
+  vitalwave: "text-red-600",
+  ultrasound: "text-emerald-600",
+  other: "text-slate-500",
 };
 
 interface PatientCardProps {
@@ -52,10 +51,6 @@ export function PatientCard({
   sourceMode,
 }: PatientCardProps) {
   const isCompleted = patient.status === "completed";
-  const statusLabel = isCompleted ? "Final" : "Pending";
-  const statusStyle = isCompleted
-    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-    : "bg-slate-50 text-slate-600 border border-slate-200";
 
   const serverTests = patient.qualifyingTests || [];
   const [localTests, setLocalTests] = useState<string[]>(serverTests);
@@ -172,78 +167,136 @@ export function PatientCard({
   if (patient.phoneNumber) metaParts.push(patient.phoneNumber);
   const displayName = (patient.name || "").trim() || "Unnamed patient";
 
+  const showTimeInBanner = typeLabel === "Visit" && !!patient.time;
+  const bannerClasses = isCompleted
+    ? "bg-blue-700 text-white"
+    : "bg-sky-100 text-slate-900";
+
+  const openEdit = () => setEditOpen(true);
+
   return (
     <Card
-      className="rounded-2xl border border-slate-200/70 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:shadow-[0_2px_8px_rgba(15,23,42,0.06)] transition-shadow"
+      role="button"
+      tabIndex={0}
+      onClick={openEdit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openEdit();
+        }
+      }}
+      className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_2px_10px_rgba(15,23,42,0.06)] hover:shadow-[0_8px_24px_rgba(15,23,42,0.10)] transition-shadow cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
       data-testid={`card-patient-${patient.id}`}
     >
-      <div className="px-4 py-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 min-w-0">
-              <h3
-                className="text-base font-semibold text-slate-900 truncate"
-                data-testid={`text-patient-name-${patient.id}`}
-              >
-                {displayName}
-              </h3>
-            </div>
-            <div
-              className="mt-0.5 text-xs text-slate-500 truncate"
-              data-testid={`text-patient-meta-${patient.id}`}
-            >
-              {metaParts.length > 0 ? metaParts.join(" · ") : <span className="italic text-slate-400">No basics yet</span>}
-            </div>
-            <div className="mt-1.5 flex items-center gap-2 text-[11px] text-slate-600">
-              <span data-testid={`text-patient-type-${patient.id}`} className="font-medium">
-                {typeLabel}
-              </span>
-              {typeLabel === "Visit" && patient.time && (
-                <>
-                  <span className="text-slate-300">·</span>
-                  <span className="tabular-nums" data-testid={`text-patient-time-${patient.id}`}>
-                    {patient.time}
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <span
-            className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide rounded-full px-2.5 py-0.5 ${statusStyle}`}
-            data-testid={`pill-patient-status-${patient.id}`}
+      <div
+        className={`relative px-5 py-5 ${bannerClasses}`}
+        data-testid={`banner-patient-${patient.id}`}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h3
+            className="min-w-0 text-lg font-semibold tracking-tight truncate"
+            data-testid={`text-patient-name-${patient.id}`}
           >
-            {statusLabel}
+            {showTimeInBanner ? (
+              <>
+                <span
+                  className="tabular-nums"
+                  data-testid={`text-patient-time-${patient.id}`}
+                >
+                  {patient.time}
+                </span>
+                <span className="mx-2 opacity-60">·</span>
+                <span>{displayName}</span>
+              </>
+            ) : (
+              displayName
+            )}
+          </h3>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirm("Remove this patient?")) onDelete();
+            }}
+            aria-label="Remove patient"
+            title="Remove patient"
+            className={`shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-full transition-colors ${
+              isCompleted
+                ? "text-white/70 hover:text-white hover:bg-white/10"
+                : "text-slate-500 hover:text-slate-900 hover:bg-white/50"
+            }`}
+            data-testid={`button-delete-patient-${patient.id}`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      <div className="px-5 pt-4 pb-4">
+        <div
+          className="text-xs text-slate-700 truncate"
+          data-testid={`text-patient-meta-${patient.id}`}
+        >
+          {metaParts.length > 0 ? (
+            metaParts.join(" · ")
+          ) : (
+            <span className="italic text-slate-400">No basics yet</span>
+          )}
+        </div>
+        <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-600">
+          <span
+            data-testid={`text-patient-type-${patient.id}`}
+            className="font-medium text-slate-900"
+          >
+            {typeLabel}
           </span>
+          {typeLabel === "Visit" && patient.time && !showTimeInBanner && (
+            <>
+              <span className="text-slate-300">·</span>
+              <span
+                className="tabular-nums"
+                data-testid={`text-patient-time-meta-${patient.id}`}
+              >
+                {patient.time}
+              </span>
+            </>
+          )}
         </div>
 
-        <div className="mt-3 flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5">
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
             {ANCILLARY_ORDER.map((cat) => {
               const catTests = testsByCategory[cat];
               if (catTests.length === 0) return null;
               const Icon = categoryIcons[cat];
               const label = categoryLabels[cat];
+              const count = catTests.length;
               return (
                 <button
                   key={cat}
                   type="button"
-                  onClick={() =>
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setSelectedTestDetail({
                       patientId: patient.id,
                       category: cat,
                       tests: catTests,
                       reasoning,
-                    })
-                  }
-                  title={`${label}${catTests.length > 1 ? ` (${catTests.length})` : ""}`}
-                  className={`relative inline-flex items-center justify-center h-8 w-8 rounded-full border transition-colors ${ANCILLARY_CIRCLE_STYLES[cat]}`}
+                    });
+                  }}
+                  aria-label={`${label}${count > 1 ? ` (${count})` : ""}`}
+                  title={`${label}${count > 1 ? ` (${count})` : ""}`}
+                  className="relative inline-flex items-center justify-center -mx-0.5 transition-transform hover:scale-110"
                   data-testid={`button-ancillary-${cat}-${patient.id}`}
                 >
-                  <Icon className="w-4 h-4" />
-                  {catTests.length > 1 && (
-                    <span className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-slate-900 text-white text-[9px] font-semibold">
-                      {catTests.length}
+                  <Icon
+                    className={`w-5 h-5 ${ANCILLARY_STROKE[cat]}`}
+                    strokeWidth={2}
+                    fill="none"
+                  />
+                  {count > 1 && (
+                    <span className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center min-w-[14px] h-3.5 px-1 rounded-full bg-slate-900 text-white text-[9px] font-semibold">
+                      {count}
                     </span>
                   )}
                 </button>
@@ -251,45 +304,24 @@ export function PatientCard({
             })}
           </div>
 
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setEditOpen(true)}
-              className="h-8 px-2.5 text-xs gap-1.5 text-slate-600 hover:text-slate-900"
-              data-testid={`button-edit-patient-${patient.id}`}
-            >
-              <Pencil className="w-3.5 h-3.5" />
-              Edit
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onAnalyze}
-              disabled={isAnalyzing}
-              className="h-8 px-2.5 text-xs gap-1.5"
-              data-testid={`button-generate-${patient.id}`}
-            >
-              {isAnalyzing ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Sparkles className="w-3.5 h-3.5" />
-              )}
-              {isCompleted ? "Re-Generate" : "Generate"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                if (confirm("Remove this patient?")) onDelete();
-              }}
-              title="Remove patient"
-              className="h-8 w-8 text-muted-foreground hover:text-destructive"
-              data-testid={`button-delete-patient-${patient.id}`}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </Button>
-          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAnalyze();
+            }}
+            disabled={isAnalyzing}
+            aria-label={isCompleted ? "Re-generate" : "Generate"}
+            title={isCompleted ? "Re-generate" : "Generate"}
+            className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-slate-900 text-white shadow-sm hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            data-testid={`button-generate-${patient.id}`}
+          >
+            {isAnalyzing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Sparkles className="w-4 h-4" />
+            )}
+          </button>
         </div>
       </div>
 
@@ -303,6 +335,9 @@ export function PatientCard({
         generatingTests={generatingTests}
         onAddTest={handleAddTest}
         onRemoveTest={handleRemoveTest}
+        onAnalyze={onAnalyze}
+        isAnalyzing={isAnalyzing}
+        isCompleted={isCompleted}
       />
 
       <QualificationReasoningDialog
