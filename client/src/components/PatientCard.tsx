@@ -212,23 +212,16 @@ export function PatientCard({
               displayName
             )}
           </h3>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (confirm("Remove this patient?")) onDelete();
-            }}
-            aria-label="Remove patient"
-            title="Remove patient"
-            className={`shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-full transition-colors ${
+          <span
+            className={`shrink-0 inline-flex items-center text-[10px] font-semibold uppercase tracking-wide rounded-full px-2.5 py-0.5 ${
               isCompleted
-                ? "text-white/70 hover:text-white hover:bg-white/10"
-                : "text-slate-500 hover:text-slate-900 hover:bg-white/50"
+                ? "bg-white/15 text-white border border-white/30"
+                : "bg-white/80 text-sky-800 border border-sky-200"
             }`}
-            data-testid={`button-delete-patient-${patient.id}`}
+            data-testid={`pill-patient-status-${patient.id}`}
           >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+            {isCompleted ? "Final" : "Pending"}
+          </span>
         </div>
       </div>
 
@@ -304,24 +297,39 @@ export function PatientCard({
             })}
           </div>
 
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAnalyze();
-            }}
-            disabled={isAnalyzing}
-            aria-label={isCompleted ? "Re-generate" : "Generate"}
-            title={isCompleted ? "Re-generate" : "Generate"}
-            className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-slate-900 text-white shadow-sm hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            data-testid={`button-generate-${patient.id}`}
-          >
-            {isAnalyzing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Sparkles className="w-4 h-4" />
-            )}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (confirm("Remove this patient?")) onDelete();
+              }}
+              aria-label="Remove patient"
+              title="Remove patient"
+              className="inline-flex items-center justify-center h-8 w-8 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              data-testid={`button-delete-patient-${patient.id}`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAnalyze();
+              }}
+              disabled={isAnalyzing}
+              aria-label={isCompleted ? "Re-generate" : "Generate"}
+              title={isCompleted ? "Re-generate" : "Generate"}
+              className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-slate-900 text-white shadow-sm hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              data-testid={`button-generate-${patient.id}`}
+            >
+              {isAnalyzing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
