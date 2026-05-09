@@ -14,6 +14,7 @@ import {
   Phone,
   Plus,
   Radio,
+  Sparkles,
   Stethoscope,
   Upload,
   Users,
@@ -412,6 +413,12 @@ export function HomeDashboard({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <SecondaryTile
+                  href="/dashboard"
+                  testId="tile-plexus-iq"
+                  label="Plexus IQ"
+                  icon={<Sparkles className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
                 <SecondaryTile
                   href="/liaison-technician-portal"
                   testId="tile-liaison-technician-portal"
