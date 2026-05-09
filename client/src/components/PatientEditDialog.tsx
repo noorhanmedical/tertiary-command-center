@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Check, Plus, Loader2, X } from "lucide-react";
+import { Check, Plus, Loader2, Sparkles, X } from "lucide-react";
 import type { PatientScreening } from "@shared/schema";
 import { ClinicalDataEditor } from "@/components/ClinicalDataEditor";
 import { ANCILLARY_TESTS } from "@shared/plexus";
@@ -58,6 +58,9 @@ interface PatientEditDialogProps {
   generatingTests: Set<string>;
   onAddTest: (test: string) => void;
   onRemoveTest: (test: string) => void;
+  onAnalyze?: () => void;
+  isAnalyzing?: boolean;
+  isCompleted?: boolean;
 }
 
 export function PatientEditDialog({
@@ -70,6 +73,9 @@ export function PatientEditDialog({
   generatingTests,
   onAddTest,
   onRemoveTest,
+  onAnalyze,
+  isAnalyzing = false,
+  isCompleted = false,
 }: PatientEditDialogProps) {
   const [localName, setLocalName] = useState(patient.name || "");
   const [localTime, setLocalTime] = useState(patient.time || "");
@@ -331,7 +337,25 @@ export function PatientEditDialog({
           </section>
         </div>
 
-        <DialogFooter className="px-5 pb-5 pt-3 border-t">
+        <DialogFooter className="px-5 pb-5 pt-3 border-t sm:justify-between gap-2">
+          {onAnalyze ? (
+            <Button
+              variant="outline"
+              onClick={onAnalyze}
+              disabled={isAnalyzing}
+              className="gap-1.5"
+              data-testid={`dialog-button-generate-${patient.id}`}
+            >
+              {isAnalyzing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              {isCompleted ? "Re-Generate" : "Generate"}
+            </Button>
+          ) : (
+            <span />
+          )}
           <Button onClick={onClose} data-testid={`dialog-button-done-${patient.id}`}>
             Done
           </Button>
