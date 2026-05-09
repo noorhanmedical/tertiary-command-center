@@ -48,7 +48,7 @@ export function BatchHeader({
   return (
     <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
       <StepTimeline current="build" onNavigate={onNavigate} canGoToResults={completedCount > 0} />
-      <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
         <div className="flex items-center gap-2">
           <SidebarTrigger data-testid="button-sidebar-toggle" />
           <div>
