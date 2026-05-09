@@ -366,9 +366,6 @@ export default function OutreachQualificationPage() {
       importFilePending={importFileMut.isPending}
       importTextPending={importTextMut.isPending}
       addPatientPending={addPatientMut.isPending}
-      simpleHeaderMode={true}
-      simpleTitle="Outreach Patients"
-      simpleSubtitle="Same parser, patient bars, and generation path as Visit Patients, without requiring a committed visit schedule."
       intakeTitle="Add Outreach Patients"
       cardsTitle="Final List"
       simpleBuildStepLabel="Build List"

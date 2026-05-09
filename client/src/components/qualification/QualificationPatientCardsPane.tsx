@@ -11,6 +11,7 @@ interface QualificationPatientCardsPaneProps {
   onOpenScheduleModal: (patient: any) => void;
   schedulerName?: string | null;
   batchScheduleDate?: string | null;
+  sourceMode?: "visit" | "outreach";
 }
 
 export default function QualificationPatientCardsPane({
@@ -24,6 +25,7 @@ export default function QualificationPatientCardsPane({
   onOpenScheduleModal,
   schedulerName = null,
   batchScheduleDate = null,
+  sourceMode,
 }: QualificationPatientCardsPaneProps) {
   if (patients.length === 0) return null;
 
@@ -39,7 +41,7 @@ export default function QualificationPatientCardsPane({
           </span>
         )}
       </div>
-      <div className="space-y-4">
+      <div className="space-y-3">
         {patients.map((patient) => (
           <PatientCard
             key={patient.id}
@@ -51,6 +53,7 @@ export default function QualificationPatientCardsPane({
             onOpenScheduleModal={(p) => onOpenScheduleModal(p)}
             schedulerName={schedulerName}
             batchScheduleDate={batchScheduleDate}
+            sourceMode={sourceMode}
           />
         ))}
       </div>
