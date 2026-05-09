@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
-import { Loader2, Sparkles, Trash2 } from "lucide-react";
+import { Loader2, Sparkles, Trash2, User } from "lucide-react";
 import type { AncillaryAppointment, PatientScreening, ScreeningBatch } from "@shared/schema";
 import {
   categoryIcons,
@@ -168,9 +168,13 @@ export function PatientCard({
   const displayName = (patient.name || "").trim() || "Unnamed patient";
 
   const showTimeInBanner = typeLabel === "Visit" && !!patient.time;
-  const bannerClasses = isCompleted
-    ? "bg-blue-700 text-white"
-    : "bg-sky-100 text-slate-900";
+
+  const initials = ((): string => {
+    const parts = displayName.split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "";
+    if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  })();
 
   const openEdit = () => setEditOpen(true);
 
@@ -189,34 +193,79 @@ export function PatientCard({
       data-testid={`card-patient-${patient.id}`}
     >
       <div
-        className={`relative px-5 py-5 ${bannerClasses}`}
+        className="relative px-5 py-5 bg-slate-900 text-white"
         data-testid={`banner-patient-${patient.id}`}
       >
-        <div className="flex items-center justify-between gap-3">
-          <h3
-            className="min-w-0 text-lg font-semibold tracking-tight truncate"
-            data-testid={`text-patient-name-${patient.id}`}
-          >
-            {showTimeInBanner ? (
-              <>
-                <span
-                  className="tabular-nums"
-                  data-testid={`text-patient-time-${patient.id}`}
-                >
-                  {patient.time}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-stretch gap-3 min-w-0 flex-1">
+            <div
+              aria-hidden="true"
+              className="shrink-0 inline-flex items-center justify-center h-12 w-12 rounded-full bg-white/10 ring-1 ring-white/20 text-white"
+            >
+              {initials ? (
+                <span className="text-sm font-semibold tracking-wide">
+                  {initials}
                 </span>
-                <span className="mx-2 opacity-60">·</span>
-                <span>{displayName}</span>
-              </>
-            ) : (
-              displayName
-            )}
-          </h3>
+              ) : (
+                <User className="w-5 h-5" />
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1 flex flex-col justify-center">
+              {typeLabel === "Visit" ? (
+                showTimeInBanner ? (
+                  <div className="grid grid-cols-[auto_1fr] gap-x-4 items-center">
+                    <div className="flex flex-col leading-tight">
+                      <span
+                        className="text-sm font-semibold tabular-nums text-white"
+                        data-testid={`text-patient-time-${patient.id}`}
+                      >
+                        {patient.time}
+                      </span>
+                      <span className="text-[10px] uppercase tracking-[0.14em] text-white/60 font-medium">
+                        Visit Appointment
+                      </span>
+                    </div>
+                    <h3
+                      className="min-w-0 text-lg font-light tracking-tight text-white truncate self-center"
+                      data-testid={`text-patient-name-${patient.id}`}
+                    >
+                      {displayName}
+                    </h3>
+                  </div>
+                ) : (
+                  <div className="leading-tight">
+                    <h3
+                      className="min-w-0 text-lg font-light tracking-tight text-white truncate"
+                      data-testid={`text-patient-name-${patient.id}`}
+                    >
+                      {displayName}
+                    </h3>
+                    <span className="text-[10px] uppercase tracking-[0.14em] text-white/60 font-medium">
+                      Visit Appointment
+                    </span>
+                  </div>
+                )
+              ) : (
+                <div className="leading-tight">
+                  <h3
+                    className="min-w-0 text-lg font-light tracking-tight text-white truncate"
+                    data-testid={`text-patient-name-${patient.id}`}
+                  >
+                    {displayName}
+                  </h3>
+                  <span className="text-[10px] uppercase tracking-[0.14em] text-white/60 font-medium">
+                    Outreach
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
           <span
             className={`shrink-0 inline-flex items-center text-[10px] font-semibold uppercase tracking-wide rounded-full px-2.5 py-0.5 ${
               isCompleted
-                ? "bg-white/15 text-white border border-white/30"
-                : "bg-white/80 text-sky-800 border border-sky-200"
+                ? "bg-emerald-400/15 text-emerald-200 border border-emerald-300/30"
+                : "bg-white/15 text-white border border-white/25"
             }`}
             data-testid={`pill-patient-status-${patient.id}`}
           >
@@ -236,25 +285,12 @@ export function PatientCard({
             <span className="italic text-slate-400">No basics yet</span>
           )}
         </div>
-        <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-600">
-          <span
-            data-testid={`text-patient-type-${patient.id}`}
-            className="font-medium text-slate-900"
-          >
-            {typeLabel}
-          </span>
-          {typeLabel === "Visit" && patient.time && !showTimeInBanner && (
-            <>
-              <span className="text-slate-300">·</span>
-              <span
-                className="tabular-nums"
-                data-testid={`text-patient-time-meta-${patient.id}`}
-              >
-                {patient.time}
-              </span>
-            </>
-          )}
-        </div>
+        <span
+          data-testid={`text-patient-type-${patient.id}`}
+          className="sr-only"
+        >
+          {typeLabel}
+        </span>
 
         <div className="mt-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -283,7 +319,7 @@ export function PatientCard({
                   data-testid={`button-ancillary-${cat}-${patient.id}`}
                 >
                   <Icon
-                    className={`w-5 h-5 ${ANCILLARY_STROKE[cat]}`}
+                    className={`w-6 h-6 ${ANCILLARY_STROKE[cat]}`}
                     strokeWidth={2}
                     fill="none"
                   />
