@@ -41,7 +41,7 @@ export default function QualificationPatientCardsPane({
           </span>
         )}
       </div>
-      <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
         {patients.map((patient) => (
           <PatientCard
             key={patient.id}
