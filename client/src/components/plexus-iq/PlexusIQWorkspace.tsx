@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import {
+  CalendarCheck,
   CalendarDays,
-  ExternalLink,
   Loader2,
   Sparkles,
   Trash2,
@@ -193,13 +193,11 @@ export function PlexusIQWorkspace({
               className="rounded-2xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] overflow-hidden border-0"
               data-testid={`plexus-iq-facility-${facility}`}
             >
-              <div className="flex items-center justify-between gap-3 px-5 py-3 bg-slate-900 text-white">
-                <AccordionTrigger className="flex-1 hover:no-underline py-0 text-white [&>svg]:text-white/70 [&>svg]:hover:text-white">
-                  <div className="flex items-center gap-2 min-w-0 flex-1 text-left">
-                    <span className="text-sm font-semibold tracking-tight text-white truncate">
-                      {facility}
-                    </span>
-                  </div>
+              <div className="relative bg-slate-900 hover:bg-slate-800 transition-colors">
+                <AccordionTrigger className="w-full hover:no-underline px-5 py-3 pr-24 text-white text-left [&>svg]:text-white/70 [&>svg]:hover:text-white">
+                  <span className="text-sm font-semibold tracking-tight text-white truncate">
+                    {facility}
+                  </span>
                 </AccordionTrigger>
                 <button
                   type="button"
@@ -209,7 +207,7 @@ export function PlexusIQWorkspace({
                   }}
                   aria-label={`Delete all patients in ${facility}`}
                   title={`Delete all patients in ${facility}`}
-                  className="inline-flex items-center justify-center h-8 w-8 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+                  className="absolute right-12 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-8 w-8 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors z-10"
                   data-testid={`button-plexus-iq-delete-facility-${facility}`}
                 >
                   <Trash2 className="w-4 h-4" />
@@ -238,9 +236,13 @@ export function PlexusIQWorkspace({
                         className="rounded-xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)] overflow-hidden border-0"
                         data-testid={`plexus-iq-date-${row.id}`}
                       >
-                        <div className="flex items-center justify-between gap-2 px-4 py-2.5 flex-wrap">
-                          <AccordionTrigger className="flex-1 hover:no-underline py-0 min-w-0">
-                            <div className="flex items-center gap-2 min-w-0 flex-1 text-left">
+                        <div className="relative hover:bg-slate-50 transition-colors">
+                          <AccordionTrigger
+                            className={`w-full hover:no-underline px-4 py-2.5 text-left ${
+                              row.scheduleDate ? "pr-36" : "pr-24"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
                               <CalendarDays className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                               <div className="min-w-0">
                                 <div className="text-sm font-medium text-slate-900 truncate">
@@ -263,7 +265,7 @@ export function PlexusIQWorkspace({
                               </div>
                             </div>
                           </AccordionTrigger>
-                          <div className="flex items-center gap-0.5">
+                          <div className="absolute right-12 top-1/2 -translate-y-1/2 flex items-center gap-0.5 z-10">
                             <IconButton
                               label={isAnalyzing ? "Generating…" : "Generate all"}
                               testId={`button-plexus-iq-generate-batch-${row.id}`}
@@ -288,7 +290,7 @@ export function PlexusIQWorkspace({
                                   onOpenFinalSchedule(row.scheduleDate as string)
                                 }
                               >
-                                <ExternalLink className="w-4 h-4" />
+                                <CalendarCheck className="w-4 h-4" />
                               </IconButton>
                             )}
                             <IconButton
