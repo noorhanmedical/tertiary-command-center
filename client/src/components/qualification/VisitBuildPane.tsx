@@ -60,6 +60,11 @@ interface VisitBuildPaneProps {
   simpleResultsStepLabel?: string;
   sourceMode?: BuildSourceMode;
   sourceFacility?: string | null;
+  // When true, suppress the inner header (caller provides its own chrome) and
+  // let the main content area fill the available width instead of capping at
+  // max-w-7xl. Default false preserves the existing /visit-patients and
+  // /outreach-patients shape.
+  embedded?: boolean;
 }
 
 export default function VisitBuildPane(props: VisitBuildPaneProps) {
@@ -103,6 +108,7 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
     simpleResultsStepLabel = "Final Schedule",
     sourceMode = "visit",
     sourceFacility,
+    embedded = false,
   } = props;
 
   const facility = sourceFacility ?? selectedBatch?.facility ?? null;
@@ -111,6 +117,7 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
 
   return (
     <div className="flex flex-col h-full relative z-10">
+      {!embedded && (
       <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50 border-b border-slate-200/60">
         <StepTimeline
           current="build"
@@ -170,8 +177,9 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
           </div>
         </div>
       </header>
+      )}
       <main className="flex-1 overflow-auto bg-finance-bg">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        <div className={embedded ? "w-full px-4 sm:px-6 lg:px-8 py-6 space-y-6" : "max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6"}>
           {isProcessing && (
             <Card className="p-6">
               <div className="flex flex-col items-center gap-3">

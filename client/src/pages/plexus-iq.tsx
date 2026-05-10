@@ -5,6 +5,14 @@ import { ResultsView } from "@/components/ResultsView";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Building2,
   CalendarDays,
   Loader2,
   Plus,
@@ -59,6 +67,12 @@ export default function PlexusIQPage() {
   const invalidateBatch = useInvalidateBatch();
 
   const [batchId, setBatchId] = useState<number | null>(null);
+  // Facility chosen by the user before any batch is created. Persisted with
+  // the batchId in sessionStorage so a refresh keeps the same workspace. We
+  // intentionally do NOT default to VALID_FACILITIES[0] — the server requires
+  // a valid facility on /api/batches, so we prompt the user before creating
+  // the workspace batch instead of silently picking one.
+  const [selectedFacility, setSelectedFacility] = useState<string | null>(null);
   const [pasteText, setPasteText] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [importUnlocked, setImportUnlocked] = useState(false);
@@ -120,31 +134,44 @@ export default function PlexusIQPage() {
     autoCreateRef.current = false;
   }, [batchId, batchLoading, selectedBatch]);
 
+  // Sync selectedFacility from the loaded batch so the header chip reflects
+  // the persisted choice after a refresh.
   useEffect(() => {
-    if (batchId || autoCreateRef.current) return;
-    autoCreateRef.current = true;
-    const today = new Date();
-    createBatchMut.mutate(
-      {
-        name: `Plexus IQ - ${today.toLocaleDateString()}`,
-        facility: VALID_FACILITIES[0],
-      },
-      {
-        onSuccess: (data) => {
-          setBatchId(data.id);
-          sessionStorage.setItem(PLEXUS_IQ_BATCH_KEY, String(data.id));
+    if (selectedBatch?.facility && !selectedFacility) {
+      setSelectedFacility(selectedBatch.facility);
+    }
+  }, [selectedBatch?.facility, selectedFacility]);
+
+  const handleSelectFacility = useCallback(
+    (facility: string) => {
+      if (autoCreateRef.current || batchId) return;
+      autoCreateRef.current = true;
+      setSelectedFacility(facility);
+      const today = new Date();
+      createBatchMut.mutate(
+        {
+          name: `Plexus IQ - ${today.toLocaleDateString()}`,
+          facility,
         },
-        onError: (e: unknown) => {
-          autoCreateRef.current = false;
-          toast({
-            title: "Failed to initialize Plexus IQ workspace",
-            description: e instanceof Error ? e.message : "Could not create workspace batch",
-            variant: "destructive",
-          });
-        },
-      }
-    );
-  }, [batchId, createBatchMut, toast]);
+        {
+          onSuccess: (data) => {
+            setBatchId(data.id);
+            sessionStorage.setItem(PLEXUS_IQ_BATCH_KEY, String(data.id));
+          },
+          onError: (e: unknown) => {
+            autoCreateRef.current = false;
+            setSelectedFacility(null);
+            toast({
+              title: "Failed to initialize Plexus IQ workspace",
+              description: e instanceof Error ? e.message : "Could not create workspace batch",
+              variant: "destructive",
+            });
+          },
+        }
+      );
+    },
+    [batchId, createBatchMut, toast]
+  );
 
   const analyzeOnePatient = useCallback(
     async (patientId: number) => {
@@ -291,13 +318,58 @@ export default function PlexusIQPage() {
     addPatientMut.mutate({ batchId, name: "", time: undefined, patientType: "outreach" });
   }, [batchId, addPatientMut]);
 
+  // Empty state: no batch yet because the user hasn't picked a facility. We
+  // prompt for facility before creating the workspace batch (the server
+  // requires a valid facility on /api/batches), so a Taylor default never
+  // sneaks in.
   if (!batchId || !selectedBatch) {
+    if (createBatchMut.isPending || batchLoading) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+          <div className="text-sm text-slate-500">
+            {createBatchMut.isPending
+              ? "Preparing Plexus IQ workspace..."
+              : "Loading Plexus IQ workspace..."}
+          </div>
+        </div>
+      );
+    }
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-sm text-slate-500">
-          {createBatchMut.isPending || batchLoading
-            ? "Preparing Plexus IQ workspace..."
-            : "Loading Plexus IQ workspace..."}
+      <div className="flex flex-col h-full relative">
+        <div className="bg-white border-b border-slate-200/60">
+          <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-2">
+            <SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />
+            <h1 className="text-xl font-semibold tracking-tight text-slate-900" data-testid="text-plexus-iq-title">
+              Plexus IQ
+            </h1>
+          </div>
+        </div>
+        <div className="flex-1 flex items-center justify-center bg-slate-50 px-4 py-10">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-sm p-6 space-y-4 text-center">
+            <Building2 className="w-8 h-8 text-slate-400 mx-auto" strokeWidth={1.75} />
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Pick a facility to start</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Plexus IQ creates one workspace per facility. Choose where you want to work.
+              </p>
+            </div>
+            <Select
+              value={selectedFacility ?? ""}
+              onValueChange={handleSelectFacility}
+            >
+              <SelectTrigger
+                className="h-10"
+                data-testid="select-plexus-iq-facility-init"
+              >
+                <SelectValue placeholder="Select a facility…" />
+              </SelectTrigger>
+              <SelectContent>
+                {VALID_FACILITIES.map((f) => (
+                  <SelectItem key={f} value={f}>{f}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
     );
@@ -359,10 +431,12 @@ export default function PlexusIQPage() {
   // than forcing all rows to one mode. A small header strip above the pane
   // adds the Plexus IQ-specific actions (Add Visit / Add Outreach / calendar)
   // without reordering the existing build header.
+  const activeFacility = selectedBatch.facility ?? selectedFacility ?? null;
+
   return (
     <div className="flex flex-col h-full relative">
       <div className="bg-white border-b border-slate-200/60 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />
             <div>
@@ -370,9 +444,18 @@ export default function PlexusIQPage() {
                 Plexus IQ
               </h1>
               <p className="text-[11px] text-slate-500">
-                Mixed Visit + Outreach workspace · {VALID_FACILITIES[0]}
+                Mixed Visit + Outreach workspace
               </p>
             </div>
+            {activeFacility && (
+              <span
+                className="ml-2 inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-700"
+                data-testid="badge-plexus-iq-facility"
+              >
+                <Building2 className="w-3 h-3" />
+                {activeFacility}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Button
@@ -499,6 +582,7 @@ export default function PlexusIQPage() {
           simpleResultsStepLabel="Final"
           // Leave sourceMode undefined so PatientCard derives Visit/Outreach
           // per row from existing appointment data.
+          embedded
         />
       </div>
 
