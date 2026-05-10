@@ -16,6 +16,7 @@ import { QualificationReasoningDialog } from "@/features/schedule/QualificationR
 import type { ReasoningValue } from "@/lib/pdfGeneration";
 import { PatientEditDialog } from "@/components/PatientEditDialog";
 import { derivePatientType } from "@shared/patientType";
+import { getPatientCompleteness } from "@/lib/patientCompleteness";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
@@ -170,18 +171,31 @@ export function PatientCard({
 
   const showTimeInBanner = typeLabel === "Visit" && !!patient.time;
 
-  // Pending → light azure with dark text. Final → dark navy with white text.
-  // The status pill, avatar circle treatment and the secondary "Visit
-  // Appointment" / "Outreach" label all flip with the banner so contrast
-  // stays consistent.
-  const banner = isCompleted
+  // Two orthogonal axes:
+  //   - infoComplete : has every required intake field (Hx/Dx/Rx/etc.)
+  //   - generatedFinal : patient.status === "completed" (canonical commit)
+  //
+  // Banner is dark navy ONLY when the intake is complete. If the patient
+  // was previously analyzed but a required field has since been cleared,
+  // the banner reverts to light azure and Generate is gated. Status pill
+  // distinguishes Pending (incomplete) / Ready (complete, not generated)
+  // / Final (complete and generated).
+  const isVisit = typeLabel === "Visit";
+  const { isComplete: infoComplete, missing } = getPatientCompleteness(patient, { isVisit });
+  const generatedFinal = patient.status === "completed";
+  const showAsFinal = infoComplete && generatedFinal;
+  const statusLabel = !infoComplete ? "Pending" : generatedFinal ? "Final" : "Ready";
+
+  const banner = infoComplete
     ? {
         bar: "bg-plexus-navy-800 text-white",
         avatarRing: "bg-white/10 ring-1 ring-white/20 text-white",
         title: "text-white",
         subLabel: "text-white/60",
         time: "text-white",
-        statusPill: "bg-emerald-400/15 text-emerald-200 border border-emerald-300/30",
+        statusPill: showAsFinal
+          ? "bg-emerald-400/15 text-emerald-200 border border-emerald-300/30"
+          : "bg-white/15 text-white border border-white/25",
       }
     : {
         bar: "bg-sky-100 text-slate-900",
@@ -191,6 +205,12 @@ export function PatientCard({
         time: "text-slate-900",
         statusPill: "bg-white text-sky-800 border border-sky-200",
       };
+
+  const generateLabel = generatedFinal ? "Re-generate" : "Generate";
+  const generateDisabled = isAnalyzing || !infoComplete;
+  const generateTitle = !infoComplete
+    ? `Complete required info before generating · Missing: ${missing.join(", ")}`
+    : generateLabel;
 
   const openEdit = () => setEditOpen(true);
 
@@ -280,9 +300,10 @@ export function PatientCard({
           </div>
           <span
             className={`shrink-0 inline-flex items-center text-[10px] font-semibold uppercase tracking-wide rounded-full px-2.5 py-0.5 ${banner.statusPill}`}
+            title={!infoComplete ? `Missing: ${missing.join(", ")}` : statusLabel}
             data-testid={`pill-patient-status-${patient.id}`}
           >
-            {isCompleted ? "Final" : "Pending"}
+            {statusLabel}
           </span>
         </div>
       </div>
@@ -304,6 +325,16 @@ export function PatientCard({
         >
           {typeLabel}
         </span>
+
+        {!infoComplete && (
+          <div
+            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 text-[10px] font-medium"
+            data-testid={`text-patient-missing-${patient.id}`}
+          >
+            <span className="uppercase tracking-wider text-[9px] opacity-70">Missing</span>
+            <span>{missing.join(" · ")}</span>
+          </div>
+        )}
 
         <div className="mt-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -364,12 +395,17 @@ export function PatientCard({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
+                if (!infoComplete) return;
                 onAnalyze();
               }}
-              disabled={isAnalyzing}
-              aria-label={isCompleted ? "Re-generate" : "Generate"}
-              title={isCompleted ? "Re-generate" : "Generate"}
-              className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-slate-900 text-white shadow-sm hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              disabled={generateDisabled}
+              aria-label={generateTitle}
+              title={generateTitle}
+              className={`inline-flex items-center justify-center h-9 w-9 rounded-full shadow-sm transition-colors ${
+                infoComplete
+                  ? "bg-slate-900 text-white hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
+                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
+              }`}
               data-testid={`button-generate-${patient.id}`}
             >
               {isAnalyzing ? (
@@ -389,14 +425,15 @@ export function PatientCard({
       open={editOpen}
       onClose={() => setEditOpen(false)}
       onUpdate={onUpdate}
-      showTime={sourceMode !== "outreach"}
+      showTime={isVisit}
+      isVisit={isVisit}
       qualifyingTests={tests}
       generatingTests={generatingTests}
       onAddTest={handleAddTest}
       onRemoveTest={handleRemoveTest}
       onAnalyze={onAnalyze}
       isAnalyzing={isAnalyzing}
-      isCompleted={isCompleted}
+      isCompleted={generatedFinal}
     />
 
     <QualificationReasoningDialog
