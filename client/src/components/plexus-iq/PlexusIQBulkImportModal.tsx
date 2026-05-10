@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -7,54 +7,73 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, Upload } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ChevronLeft, FileText, Loader2, Upload, User } from "lucide-react";
 import { VALID_FACILITIES } from "@shared/plexus";
+
+// Two-step bulk-import modal for /plexus-iq.
+//
+// Step 1 — Source: facility/date/type defaults + paste textarea + .txt/.csv
+// upload. Binary formats (PDF / DOCX / XLSX) are not parsed in-browser; the
+// user is asked to paste extracted text using Start/End block delimiters.
+//
+// Step 2 — Preview: parses pasted text into patient blocks delimited by
+// case-insensitive "Start" and "End" markers (one block per patient). Also
+// supports legacy CSV input (header `facility,date,name,type,time`) if the
+// pasted text does not contain Start/End markers but does begin with a
+// recognizable header row.
+//
+// Confirm Import → calls onImport(rows). The page-level handler routes each
+// row to the matching screening_batch keyed by (facility, scheduleDate).
+//
+// No standalone Plexus IQ batch is created.
 
 export type ParsedRow = {
   facility: string;
   scheduleDate: string;
-  name: string;
   patientType: "visit" | "outreach";
+  name: string;
   time?: string;
+  dob?: string;
+  phoneNumber?: string;
+  insurance?: string;
+  diagnoses?: string;
+  history?: string;
+  medications?: string;
+  notes?: string;
+  // The raw block text — surfaced in the preview UI; not posted to the
+  // server unless one of the structured fields above absorbs it.
+  raw?: string;
 };
 
-export type ParsedRowError = { line: number; raw: string; reason: string };
+export type ParsedRowError = { line: number; reason: string };
 
-// Split a CSV-like row supporting double-quoted fields. Returns string[]
-// trimmed of surrounding whitespace; empty cells preserve as "".
-function splitCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; continue; }
-      if (ch === '"') { inQuotes = false; continue; }
-      cur += ch;
-    } else {
-      if (ch === '"') { inQuotes = true; continue; }
-      if (ch === ",") { out.push(cur); cur = ""; continue; }
-      cur += ch;
-    }
-  }
-  out.push(cur);
-  return out.map((s) => s.trim());
+type PatientType = "visit" | "outreach";
+
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 const FACILITY_LOOKUP: Record<string, string> = (() => {
-  const map: Record<string, string> = {};
-  for (const f of VALID_FACILITIES) map[f.toLowerCase()] = f;
-  return map;
+  const m: Record<string, string> = {};
+  for (const f of VALID_FACILITIES) m[f.toLowerCase()] = f;
+  return m;
 })();
 
 function normalizeFacility(raw: string): string | null {
   const k = raw.trim().toLowerCase();
   if (!k) return null;
   if (FACILITY_LOOKUP[k]) return FACILITY_LOOKUP[k];
-  // Loose match: pick the first valid facility whose lowercased name contains
-  // the raw token (handles "Taylor" → "Taylor Family Practice").
   for (const v of VALID_FACILITIES) {
     if (v.toLowerCase().includes(k)) return v;
   }
@@ -64,34 +83,163 @@ function normalizeFacility(raw: string): string | null {
 function normalizeDate(raw: string): string | null {
   const t = raw.trim();
   if (!t) return null;
-  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
-  if (ymd) return `${ymd[1]}-${ymd[2]}-${ymd[3]}`;
-  const mdy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t);
-  if (mdy) {
-    const mm = mdy[1].padStart(2, "0");
-    const dd = mdy[2].padStart(2, "0");
-    return `${mdy[3]}-${mm}-${dd}`;
-  }
+  const y = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
+  if (y) return `${y[1]}-${y[2]}-${y[3]}`;
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t);
+  if (m) return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
   return null;
 }
 
-function normalizeType(raw: string): "visit" | "outreach" | null {
+function normalizeType(raw: string): PatientType | null {
   const t = raw.trim().toLowerCase();
   if (t === "visit" || t === "v") return "visit";
   if (t === "outreach" || t === "o") return "outreach";
   return null;
 }
 
-// Parse a CSV string with a header row (case-insensitive). Required headers:
-//   facility, date, name, type
-// Optional: time
-// Rows missing facility, date, name, or type → push to errors.
-export function parseBulkCsv(text: string): { rows: ParsedRow[]; errors: ParsedRowError[] } {
+// ───── Start/End block parser ────────────────────────────────────────────
+
+// Splits the source text into individual blocks delimited by lines that
+// are "Start" / "End" (case-insensitive, leading/trailing whitespace ok).
+// Returns one entry per Start-…-End pair.
+export function splitStartEndBlocks(text: string): string[] {
+  const lines = text.split(/\r?\n/);
+  const blocks: string[] = [];
+  let inBlock = false;
+  let buf: string[] = [];
+  for (const line of lines) {
+    const t = line.trim().toLowerCase();
+    if (!inBlock && t === "start") {
+      inBlock = true;
+      buf = [];
+      continue;
+    }
+    if (inBlock && t === "end") {
+      blocks.push(buf.join("\n").trim());
+      inBlock = false;
+      buf = [];
+      continue;
+    }
+    if (inBlock) buf.push(line);
+  }
+  return blocks.filter((b) => b.length > 0);
+}
+
+// Best-effort label-driven extraction. Lines beginning with a known label
+// (DOB:, Phone:, Insurance:, Hx/History, Dx/Diagnoses, Rx/Medications,
+// Time:, Type:, Facility:, Date:) are pulled into structured fields; any
+// remaining unmatched line is appended to a free-text notes blob unless it
+// can be detected as the patient name (first non-label line).
+export function extractFromBlock(
+  raw: string,
+  defaults: { facility: string; scheduleDate: string; patientType: PatientType },
+): ParsedRow {
+  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const out: ParsedRow = {
+    facility: defaults.facility,
+    scheduleDate: defaults.scheduleDate,
+    patientType: defaults.patientType,
+    name: "",
+    raw,
+  };
+  const leftover: string[] = [];
+  let nameSet = false;
+
+  const matchLabel = (line: string, label: RegExp): string | null => {
+    const m = label.exec(line);
+    return m ? (m[1] ?? "").trim() : null;
+  };
+
+  for (const line of lines) {
+    const dob = matchLabel(line, /^(?:dob|date of birth)[:\s]+(.*)$/i);
+    if (dob) { out.dob = normalizeDate(dob) ?? dob; continue; }
+    const phone = matchLabel(line, /^(?:phone|tel|mobile|cell)[:\s]+(.*)$/i);
+    if (phone) { out.phoneNumber = phone; continue; }
+    if (!out.phoneNumber) {
+      const looksLikePhone = /^\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/.exec(line);
+      if (looksLikePhone) { out.phoneNumber = line; continue; }
+    }
+    const ins = matchLabel(line, /^(?:insurance|payer|plan)[:\s]+(.*)$/i);
+    if (ins) { out.insurance = ins; continue; }
+    const hx = matchLabel(line, /^(?:hx|history|pmh)[:\s]+(.*)$/i);
+    if (hx) { out.history = hx; continue; }
+    const dx = matchLabel(line, /^(?:dx|diagnoses?|problem(?:s)?)[:\s]+(.*)$/i);
+    if (dx) { out.diagnoses = dx; continue; }
+    const rx = matchLabel(line, /^(?:rx|medications?|meds)[:\s]+(.*)$/i);
+    if (rx) { out.medications = rx; continue; }
+    const time = matchLabel(line, /^(?:time|appt|appointment)[:\s]+(.*)$/i);
+    if (time) { out.time = time; continue; }
+    const fac = matchLabel(line, /^(?:facility|clinic)[:\s]+(.*)$/i);
+    if (fac) {
+      const norm = normalizeFacility(fac);
+      if (norm) out.facility = norm;
+      continue;
+    }
+    const dt = matchLabel(line, /^(?:date|sched(?:ule)? date)[:\s]+(.*)$/i);
+    if (dt) {
+      const norm = normalizeDate(dt);
+      if (norm) out.scheduleDate = norm;
+      continue;
+    }
+    const tp = matchLabel(line, /^(?:type|kind)[:\s]+(.*)$/i);
+    if (tp) {
+      const norm = normalizeType(tp);
+      if (norm) out.patientType = norm;
+      continue;
+    }
+    const nameLabel = matchLabel(line, /^(?:name|patient)[:\s]+(.*)$/i);
+    if (nameLabel) { out.name = nameLabel; nameSet = true; continue; }
+
+    if (!nameSet) {
+      // First non-label line is a strong candidate for the patient name.
+      out.name = line;
+      nameSet = true;
+      continue;
+    }
+    leftover.push(line);
+  }
+
+  if (leftover.length > 0) {
+    out.notes = leftover.join("\n");
+  }
+  if (!out.name.trim()) {
+    out.name = "Imported Patient";
+  }
+  return out;
+}
+
+// ───── Legacy CSV parser (kept as a fallback for users who paste CSV) ───
+
+function splitCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; continue; }
+      if (c === '"') { q = false; continue; }
+      cur += c;
+    } else {
+      if (c === '"') { q = true; continue; }
+      if (c === ",") { out.push(cur); cur = ""; continue; }
+      cur += c;
+    }
+  }
+  out.push(cur);
+  return out.map((s) => s.trim());
+}
+
+function looksLikeCsv(text: string): boolean {
+  const first = text.split(/\r?\n/)[0]?.toLowerCase() ?? "";
+  return /facility/.test(first) && /date/.test(first) && /name/.test(first) && /type/.test(first);
+}
+
+function parseCsv(text: string): { rows: ParsedRow[]; errors: ParsedRowError[] } {
   const errors: ParsedRowError[] = [];
   const rows: ParsedRow[] = [];
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
   if (lines.length === 0) return { rows, errors };
-
   const header = splitCsvLine(lines[0]).map((h) => h.toLowerCase());
   const idx = {
     facility: header.indexOf("facility"),
@@ -101,53 +249,35 @@ export function parseBulkCsv(text: string): { rows: ParsedRow[]; errors: ParsedR
     time: header.indexOf("time"),
   };
   if (idx.facility < 0 || idx.date < 0 || idx.name < 0 || idx.type < 0) {
-    errors.push({
-      line: 1,
-      raw: lines[0],
-      reason: "Header must include facility, date, name, type (time is optional).",
-    });
+    errors.push({ line: 1, reason: "Header must include facility, date, name, type (time optional)." });
     return { rows, errors };
   }
-
   for (let i = 1; i < lines.length; i++) {
     const cells = splitCsvLine(lines[i]);
-    const facilityRaw = cells[idx.facility] ?? "";
-    const dateRaw = cells[idx.date] ?? "";
-    const nameRaw = cells[idx.name] ?? "";
-    const typeRaw = cells[idx.type] ?? "";
-    const timeRaw = idx.time >= 0 ? cells[idx.time] ?? "" : "";
-
-    const facility = normalizeFacility(facilityRaw);
-    const scheduleDate = normalizeDate(dateRaw);
-    const patientType = normalizeType(typeRaw);
-    const name = nameRaw.trim();
-
-    if (!facility) {
-      errors.push({ line: i + 1, raw: lines[i], reason: `Unknown facility: "${facilityRaw}"` });
-      continue;
-    }
-    if (!scheduleDate) {
-      errors.push({ line: i + 1, raw: lines[i], reason: `Invalid or missing date: "${dateRaw}"` });
-      continue;
-    }
-    if (!patientType) {
-      errors.push({ line: i + 1, raw: lines[i], reason: `Invalid or missing type: "${typeRaw}" (expected visit or outreach)` });
-      continue;
-    }
-    if (!name) {
-      errors.push({ line: i + 1, raw: lines[i], reason: "Missing patient name" });
-      continue;
-    }
+    const facility = normalizeFacility(cells[idx.facility] ?? "");
+    const scheduleDate = normalizeDate(cells[idx.date] ?? "");
+    const patientType = normalizeType(cells[idx.type] ?? "");
+    const name = (cells[idx.name] ?? "").trim();
+    const time = idx.time >= 0 ? (cells[idx.time] ?? "").trim() : "";
+    if (!facility) { errors.push({ line: i + 1, reason: `Unknown facility "${cells[idx.facility]}"` }); continue; }
+    if (!scheduleDate) { errors.push({ line: i + 1, reason: `Invalid date "${cells[idx.date]}"` }); continue; }
+    if (!patientType) { errors.push({ line: i + 1, reason: `Invalid type "${cells[idx.type]}"` }); continue; }
+    if (!name) { errors.push({ line: i + 1, reason: "Missing name" }); continue; }
     rows.push({
       facility,
       scheduleDate,
-      name,
       patientType,
-      time: timeRaw ? timeRaw.trim() : undefined,
+      name,
+      time: time || undefined,
+      raw: lines[i],
     });
   }
   return { rows, errors };
 }
+
+// ───── Modal ─────────────────────────────────────────────────────────────
+
+const BINARY_EXTS = /\.(pdf|docx?|xlsx?)$/i;
 
 export function PlexusIQBulkImportModal({
   open,
@@ -162,28 +292,102 @@ export function PlexusIQBulkImportModal({
   pending: boolean;
   progress: { current: number; total: number; uniqueBatches: number; uniqueFacilities: number } | null;
 }) {
+  const [step, setStep] = useState<"source" | "preview">("source");
+  const [defFacility, setDefFacility] = useState<string>("");
+  const [defDate, setDefDate] = useState<string>(todayIso());
+  const [defType, setDefType] = useState<PatientType>("visit");
   const [text, setText] = useState("");
+  const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [errors, setErrors] = useState<ParsedRowError[]>([]);
 
   function reset() {
+    setStep("source");
+    setDefFacility("");
+    setDefDate(todayIso());
+    setDefType("visit");
     setText("");
+    setFileNotice(null);
     setErrors([]);
   }
 
-  function handleFile(file: File) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      setText(result);
-    };
-    reader.readAsText(file);
+  async function handleFile(file: File) {
+    setFileNotice(null);
+    if (BINARY_EXTS.test(file.name)) {
+      setFileNotice(
+        `${file.name}: PDF / Word / Excel files can't be parsed in the browser. Open the file, copy the patient text, and paste it below using Start/End block markers.`,
+      );
+      return;
+    }
+    try {
+      const content = await file.text();
+      setText((prev) => (prev ? `${prev}\n${content}` : content));
+    } catch {
+      setFileNotice(`Could not read ${file.name}.`);
+    }
   }
 
-  async function handleImport() {
-    const { rows, errors: parseErrors } = parseBulkCsv(text);
-    setErrors(parseErrors);
-    if (rows.length === 0) return;
-    await onImport(rows);
+  // Parse the current source text into preview rows. If the text contains
+  // Start/End markers, use the block parser; else fall back to CSV when the
+  // header looks right; else surface a single error.
+  const preview = useMemo(() => {
+    if (!text.trim()) return { rows: [] as ParsedRow[], errors: [] as ParsedRowError[] };
+    const blocks = splitStartEndBlocks(text);
+    if (blocks.length > 0) {
+      const defaults = {
+        facility: defFacility,
+        scheduleDate: defDate,
+        patientType: defType,
+      };
+      const errs: ParsedRowError[] = [];
+      const rows = blocks.map((b, i) => {
+        const r = extractFromBlock(b, defaults);
+        if (!r.facility) errs.push({ line: i + 1, reason: `Block ${i + 1}: missing facility (set default above)` });
+        if (!r.scheduleDate) errs.push({ line: i + 1, reason: `Block ${i + 1}: missing date (set default above)` });
+        return r;
+      });
+      return { rows, errors: errs };
+    }
+    if (looksLikeCsv(text)) {
+      return parseCsv(text);
+    }
+    return {
+      rows: [] as ParsedRow[],
+      errors: [
+        {
+          line: 1,
+          reason:
+            'No Start/End markers found. Wrap each patient in lines reading "Start" and "End", or paste a CSV with header "facility,date,name,type,time".',
+        },
+      ],
+    };
+  }, [text, defFacility, defDate, defType]);
+
+  function goToPreview() {
+    setErrors(preview.errors);
+    if (preview.rows.length === 0) {
+      // Stay on Step 1; user has to fix input or set defaults.
+      return;
+    }
+    setStep("preview");
+  }
+
+  async function handleConfirm() {
+    if (preview.rows.length === 0) return;
+    // Re-validate that every row has facility + scheduleDate. Block parser
+    // applied defaults already, but defaults could be empty.
+    const incomplete = preview.rows.filter((r) => !r.facility || !r.scheduleDate);
+    if (incomplete.length > 0) {
+      setErrors([
+        {
+          line: 0,
+          reason:
+            "Some preview patients are missing facility or date. Set defaults in Step 1 or include Facility:/Date: lines in each block.",
+        },
+      ]);
+      setStep("source");
+      return;
+    }
+    await onImport(preview.rows);
   }
 
   return (
@@ -196,70 +400,161 @@ export function PlexusIQBulkImportModal({
         }
       }}
     >
-      <DialogContent className="max-w-2xl rounded-2xl" data-testid="plexus-iq-bulk-import-modal">
+      <DialogContent
+        className="w-[calc(100vw-2rem)] max-w-2xl max-h-[88vh] overflow-y-auto rounded-2xl"
+        data-testid="plexus-iq-bulk-import-modal"
+      >
         <DialogHeader>
           <DialogTitle className="text-base font-semibold tracking-tight">
-            Bulk Import
+            {step === "source" ? "Import — Step 1: Source" : "Import — Step 2: Preview"}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-3">
-          <p className="text-xs text-slate-600">
-            CSV with header row: <code className="text-[11px] bg-slate-100 px-1 py-0.5 rounded">facility, date, name, type, time</code>.
-            Type is <code className="text-[11px] bg-slate-100 px-1 py-0.5 rounded">visit</code> or <code className="text-[11px] bg-slate-100 px-1 py-0.5 rounded">outreach</code>.
-            Date in <code className="text-[11px] bg-slate-100 px-1 py-0.5 rounded">YYYY-MM-DD</code> or <code className="text-[11px] bg-slate-100 px-1 py-0.5 rounded">MM/DD/YYYY</code>. Time is optional.
-          </p>
+        {step === "source" ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Default facility
+                </Label>
+                <Select value={defFacility} onValueChange={setDefFacility}>
+                  <SelectTrigger className="mt-1 h-9" data-testid="plexus-iq-bulk-default-facility">
+                    <SelectValue placeholder="Pick a facility…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VALID_FACILITIES.map((f) => (
+                      <SelectItem key={f} value={f}>{f}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Default date
+                </Label>
+                <Input
+                  type="date"
+                  value={defDate}
+                  onChange={(e) => setDefDate(e.target.value)}
+                  className="mt-1 h-9 text-sm"
+                  data-testid="plexus-iq-bulk-default-date"
+                />
+              </div>
+              <div>
+                <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Default type
+                </Label>
+                <div className="mt-1 inline-flex rounded-lg border border-slate-200 overflow-hidden">
+                  {(["visit", "outreach"] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setDefType(t)}
+                      className={`px-3 h-9 text-xs font-medium ${
+                        defType === t
+                          ? "bg-plexus-navy-800 text-white"
+                          : "bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                      data-testid={`plexus-iq-bulk-default-type-${t}`}
+                    >
+                      {t === "visit" ? "Visit" : "Outreach"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
-          <Textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={"facility,date,name,type,time\nTaylor Family Practice,2026-05-12,Jane Doe,visit,9:00 AM\nNWPG - Spring,2026-05-13,John Smith,outreach,"}
-            className="min-h-[160px] text-xs font-mono"
-            data-testid="textarea-plexus-iq-bulk-import"
-          />
+            <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-3">
+              <p className="text-[11px] text-slate-600 leading-snug">
+                Wrap each patient between <code className="bg-white px-1 py-0.5 rounded text-[10px]">Start</code> and{" "}
+                <code className="bg-white px-1 py-0.5 rounded text-[10px]">End</code> markers (case-insensitive).
+                Inside each block, label what you can — DOB, Phone, Insurance, Hx, Dx, Rx, Time. Anything
+                unrecognized is preserved as notes. CSV with header{" "}
+                <code className="bg-white px-1 py-0.5 rounded text-[10px]">facility,date,name,type,time</code>{" "}
+                also works.
+              </p>
+            </div>
 
-          <div className="flex items-center gap-2">
-            <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
-              <Upload className="w-4 h-4" />
-              <span className="underline">Upload CSV file</span>
-              <input
-                type="file"
-                accept=".csv,.txt"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) handleFile(f);
-                  e.target.value = "";
-                }}
-                data-testid="input-plexus-iq-bulk-file"
-              />
-            </label>
+            <Textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={
+                "Start\nJane Doe\nDOB: 1950-03-14\nInsurance: Medicare\nHx: HTN, DM2\nEnd\n\nStart\nJohn Smith\nDOB: 02/02/1948\nDx: CAD, HLD\nEnd"
+              }
+              className="min-h-[200px] text-xs font-mono"
+              data-testid="textarea-plexus-iq-bulk-import"
+            />
+
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                <Upload className="w-4 h-4" />
+                <span className="underline">Upload .txt or .csv</span>
+                <input
+                  type="file"
+                  accept=".txt,.csv,.pdf,.doc,.docx,.xls,.xlsx,text/plain,text/csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleFile(f);
+                    e.target.value = "";
+                  }}
+                  data-testid="input-plexus-iq-bulk-file"
+                />
+              </label>
+              {fileNotice && (
+                <span className="text-[11px] text-amber-700" data-testid="text-plexus-iq-bulk-file-notice">
+                  {fileNotice}
+                </span>
+              )}
+            </div>
+
+            {errors.length > 0 && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 max-h-32 overflow-auto" data-testid="plexus-iq-bulk-errors">
+                <p className="text-xs font-semibold text-red-700 mb-1">{errors.length} issue{errors.length === 1 ? "" : "s"}</p>
+                <ul className="space-y-0.5 text-[11px] text-red-700">
+                  {errors.slice(0, 12).map((e, i) => (
+                    <li key={i}>{e.line ? `Line ${e.line}: ` : ""}{e.reason}</li>
+                  ))}
+                  {errors.length > 12 && (
+                    <li className="italic opacity-70">…and {errors.length - 12} more</li>
+                  )}
+                </ul>
+              </div>
+            )}
           </div>
-
-          {progress && (
-            <div className="text-xs text-slate-700" data-testid="text-plexus-iq-bulk-progress">
-              Importing {progress.current} of {progress.total} rows into {progress.uniqueBatches} batches across {progress.uniqueFacilities} facilities…
+        ) : (
+          <div className="space-y-3">
+            <p className="text-[11px] text-slate-500">
+              {preview.rows.length} patient{preview.rows.length === 1 ? "" : "s"} ready to import. Review each below
+              and click <span className="font-medium">Confirm Import</span> to create the cards.
+            </p>
+            <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+              {preview.rows.map((row, idx) => (
+                <PreviewCard key={idx} index={idx + 1} row={row} />
+              ))}
             </div>
-          )}
-
-          {errors.length > 0 && (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-3 max-h-40 overflow-auto" data-testid="plexus-iq-bulk-errors">
-              <p className="text-xs font-semibold text-red-700 mb-1">{errors.length} row{errors.length === 1 ? "" : "s"} skipped</p>
-              <ul className="space-y-0.5 text-[11px] text-red-700">
-                {errors.slice(0, 20).map((e, i) => (
-                  <li key={i}>
-                    Line {e.line}: {e.reason}
-                  </li>
-                ))}
-                {errors.length > 20 && (
-                  <li className="italic opacity-70">…and {errors.length - 20} more</li>
-                )}
-              </ul>
-            </div>
-          )}
-        </div>
+            {progress && (
+              <div className="text-xs text-slate-700" data-testid="text-plexus-iq-bulk-progress">
+                Importing {progress.current} of {progress.total} into {progress.uniqueBatches} batch{progress.uniqueBatches === 1 ? "" : "es"} across {progress.uniqueFacilities} facilit{progress.uniqueFacilities === 1 ? "y" : "ies"}…
+              </div>
+            )}
+          </div>
+        )}
 
         <DialogFooter>
+          {step === "preview" && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setStep("source")}
+              disabled={pending}
+              className="gap-1.5 mr-auto"
+              data-testid="button-plexus-iq-bulk-back"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              Back
+            </Button>
+          )}
           <Button
             type="button"
             variant="outline"
@@ -267,20 +562,106 @@ export function PlexusIQBulkImportModal({
             disabled={pending}
             data-testid="button-plexus-iq-bulk-cancel"
           >
-            Close
+            Cancel
           </Button>
-          <Button
-            type="button"
-            onClick={handleImport}
-            disabled={pending || !text.trim()}
-            className="gap-1.5"
-            data-testid="button-plexus-iq-bulk-import"
-          >
-            {pending && <Loader2 className="w-4 h-4 animate-spin" />}
-            Import
-          </Button>
+          {step === "source" ? (
+            <Button
+              type="button"
+              onClick={goToPreview}
+              disabled={!text.trim()}
+              className="gap-1.5"
+              data-testid="button-plexus-iq-bulk-preview"
+            >
+              <FileText className="w-4 h-4" />
+              Preview
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={handleConfirm}
+              disabled={pending || preview.rows.length === 0}
+              className="gap-1.5"
+              data-testid="button-plexus-iq-bulk-confirm"
+            >
+              {pending && <Loader2 className="w-4 h-4 animate-spin" />}
+              Confirm Import ({preview.rows.length})
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PreviewCard({ index, row }: { index: number; row: ParsedRow }) {
+  const meta: { label: string; value: string }[] = [];
+  if (row.dob) meta.push({ label: "DOB", value: row.dob });
+  if (row.phoneNumber) meta.push({ label: "Phone", value: row.phoneNumber });
+  if (row.insurance) meta.push({ label: "Insurance", value: row.insurance });
+  if (row.time) meta.push({ label: "Time", value: row.time });
+  return (
+    <div
+      className="rounded-xl border border-slate-200 bg-white p-3"
+      data-testid={`plexus-iq-preview-patient-${index}`}
+    >
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-slate-900 text-white shrink-0">
+            <User className="w-3.5 h-3.5" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              Patient {index}
+            </div>
+            <div className="text-sm font-semibold text-slate-900 truncate">
+              {row.name}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+          <span className="rounded-full bg-slate-100 px-2 py-0.5">{row.facility || "no facility"}</span>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5">{row.scheduleDate || "no date"}</span>
+          <span className="rounded-full bg-sky-100 text-sky-700 px-2 py-0.5 capitalize">{row.patientType}</span>
+        </div>
+      </div>
+      {meta.length > 0 && (
+        <dl className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[11px]">
+          {meta.map((m) => (
+            <div key={m.label} className="rounded-md bg-slate-50 px-2 py-1">
+              <dt className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">{m.label}</dt>
+              <dd className="text-slate-900 truncate">{m.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {(row.diagnoses || row.history || row.medications) && (
+        <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-1.5 text-[11px]">
+          {row.diagnoses && (
+            <div className="rounded-md bg-slate-50 px-2 py-1">
+              <dt className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">Dx</dt>
+              <dd className="text-slate-900 line-clamp-3">{row.diagnoses}</dd>
+            </div>
+          )}
+          {row.history && (
+            <div className="rounded-md bg-slate-50 px-2 py-1">
+              <dt className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">Hx</dt>
+              <dd className="text-slate-900 line-clamp-3">{row.history}</dd>
+            </div>
+          )}
+          {row.medications && (
+            <div className="rounded-md bg-slate-50 px-2 py-1">
+              <dt className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">Rx</dt>
+              <dd className="text-slate-900 line-clamp-3">{row.medications}</dd>
+            </div>
+          )}
+        </div>
+      )}
+      {row.notes && (
+        <div className="mt-2 rounded-md bg-slate-50 px-2 py-1.5">
+          <dt className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">Notes / raw</dt>
+          <dd className="text-[11px] text-slate-700 whitespace-pre-wrap line-clamp-4">{row.notes}</dd>
+        </div>
+      )}
+    </div>
   );
 }

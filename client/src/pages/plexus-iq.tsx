@@ -253,6 +253,13 @@ export default function PlexusIQPage() {
               name: r.name,
               time: r.time,
               patientType: r.patientType,
+              dob: r.dob,
+              phoneNumber: r.phoneNumber,
+              insurance: r.insurance,
+              diagnoses: r.diagnoses,
+              history: r.history,
+              medications: r.medications,
+              notes: r.notes,
             });
             processed += 1;
             setBulkProgress({

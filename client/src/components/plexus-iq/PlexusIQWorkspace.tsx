@@ -1,13 +1,11 @@
 import { useMemo } from "react";
 import {
-  Building2,
   CalendarDays,
   ExternalLink,
   Loader2,
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   Accordion,
   AccordionContent,
@@ -20,16 +18,15 @@ import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar
 
 // Facility → Date → Patient Cards accordion for /plexus-iq.
 //
-// Top level   : "All Facilities" header (visual; expansion is per-facility).
-// Mid level   : one Accordion item per facility, defaulting to the facility
-//               that owns the most-recent date open.
-// Inner level : nested Accordion of dates within the facility, defaulting
-//               to the most-recent date open.
-// Leaf        : QualificationPatientCardsPane → premium PatientCard grid.
-//
-// Counts (total / pending / final) are computed from batchDetails when
-// available; if a batch's detail hasn't hydrated yet, the summary's
-// patientCount stands in for total and the breakdown shows "—".
+// Visual rules:
+//   - Facility bar is solid near-black with the facility name only and an
+//     icon-only trash control on the right. No counts/metrics on facility
+//     rows — those live on the date pills inside.
+//   - Date pills sit inside an open facility on a soft slate background,
+//     with the date label + counts on the left and three icon-only actions
+//     on the right (generate · final schedule · delete).
+//   - Borders are intentionally minimal: rounded containers, soft inner
+//     padding, no stacking horizontal rules.
 
 type BatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
@@ -57,6 +54,45 @@ function pendingFinal(detail: BatchWithPatients | undefined) {
   return { pending, final };
 }
 
+function IconButton({
+  label,
+  testId,
+  onClick,
+  disabled,
+  variant = "default",
+  children,
+}: {
+  label: string;
+  testId: string;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  disabled?: boolean;
+  variant?: "default" | "danger";
+  children: React.ReactNode;
+}) {
+  const base =
+    "inline-flex items-center justify-center h-8 w-8 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+  const tone =
+    variant === "danger"
+      ? "text-red-500 hover:text-red-600 hover:bg-red-50"
+      : "text-slate-500 hover:text-slate-900 hover:bg-slate-100";
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(e);
+      }}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      className={`${base} ${tone}`}
+      data-testid={testId}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function PlexusIQWorkspace({
   summary,
   batchDetails,
@@ -82,9 +118,6 @@ export function PlexusIQWorkspace({
   onDeletePatient: (id: number) => void;
   onAnalyzeOnePatient: (id: number) => void;
 }) {
-  // Group active batches (patientCount > 0) by facility, then by date desc
-  // within each facility. Undated batches sort to the bottom of their
-  // facility group.
   const grouped = useMemo(() => {
     const active = summary.filter((s) => s.patientCount > 0);
     const byFacility = new Map<string, CalendarSummaryRow[]>();
@@ -107,7 +140,6 @@ export function PlexusIQWorkspace({
       facilities.push({ facility, rows });
     });
     facilities.sort((a, b) => {
-      // Facilities sorted by their most-recent date desc; undated last.
       const aMax = a.rows[0]?.scheduleDate ?? "";
       const bMax = b.rows[0]?.scheduleDate ?? "";
       if (aMax === bMax) return a.facility.localeCompare(b.facility);
@@ -118,12 +150,8 @@ export function PlexusIQWorkspace({
     return facilities;
   }, [summary]);
 
-  // Default-open: the facility with the most-recent date, and that
-  // facility's most-recent date.
   const defaultOpenFacility = grouped[0]?.facility ?? "";
-  const defaultOpenDate = grouped[0]?.rows[0]
-    ? `${grouped[0].rows[0].id}`
-    : "";
+  const defaultOpenDate = grouped[0]?.rows[0] ? `${grouped[0].rows[0].id}` : "";
 
   if (grouped.length === 0) {
     return (
@@ -142,7 +170,7 @@ export function PlexusIQWorkspace({
   }
 
   return (
-    <div className="w-full px-4 sm:px-6 lg:px-8 py-6 space-y-4">
+    <div className="w-full px-4 sm:px-6 lg:px-8 py-6 space-y-3">
       <div className="flex items-center gap-2 px-1">
         <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
           All Facilities
@@ -158,64 +186,37 @@ export function PlexusIQWorkspace({
         className="space-y-3"
       >
         {grouped.map(({ facility, rows }) => {
-          const facilityTotal = rows.reduce((acc, r) => acc + r.patientCount, 0);
-          let facilityPending = 0;
-          let facilityFinal = 0;
-          let facilityHasUnknown = false;
-          for (const r of rows) {
-            const pf = pendingFinal(batchDetails[r.id]);
-            if (pf.pending == null || pf.final == null) facilityHasUnknown = true;
-            else { facilityPending += pf.pending; facilityFinal += pf.final; }
-          }
-          const datesCount = rows.length;
-
           return (
             <AccordionItem
               key={facility}
               value={facility}
-              className="rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] overflow-hidden border-b"
+              className="rounded-2xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] overflow-hidden border-0"
               data-testid={`plexus-iq-facility-${facility}`}
             >
-              <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-slate-50/60 border-b border-slate-100">
-                <AccordionTrigger className="flex-1 hover:no-underline py-0">
+              <div className="flex items-center justify-between gap-3 px-5 py-3 bg-slate-900 text-white">
+                <AccordionTrigger className="flex-1 hover:no-underline py-0 text-white [&>svg]:text-white/70 [&>svg]:hover:text-white">
                   <div className="flex items-center gap-2 min-w-0 flex-1 text-left">
-                    <Building2 className="w-4 h-4 text-slate-500 shrink-0" />
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-900 truncate">
-                        {facility}
-                      </div>
-                      <div className="text-[11px] text-slate-500 flex items-center gap-1.5 flex-wrap">
-                        <span>{facilityTotal} {facilityTotal === 1 ? "patient" : "patients"}</span>
-                        {!facilityHasUnknown && (
-                          <>
-                            <span className="text-slate-300">·</span>
-                            <span>{facilityPending} pending</span>
-                            <span className="text-slate-300">·</span>
-                            <span>{facilityFinal} final</span>
-                          </>
-                        )}
-                        <span className="text-slate-300">·</span>
-                        <span>{datesCount} {datesCount === 1 ? "date" : "dates"}</span>
-                      </div>
-                    </div>
+                    <span className="text-sm font-semibold tracking-tight text-white truncate">
+                      {facility}
+                    </span>
                   </div>
                 </AccordionTrigger>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5 rounded-xl text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+                <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     onDeleteAllForFacility(facility);
                   }}
+                  aria-label={`Delete all patients in ${facility}`}
+                  title={`Delete all patients in ${facility}`}
+                  className="inline-flex items-center justify-center h-8 w-8 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors"
                   data-testid={`button-plexus-iq-delete-facility-${facility}`}
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Delete All
-                </Button>
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
 
-              <AccordionContent className="pb-3 pt-0">
+              <AccordionContent className="pb-3 pt-0 bg-slate-50/40">
                 <Accordion
                   type="multiple"
                   defaultValue={facility === defaultOpenFacility ? [defaultOpenDate] : []}
@@ -234,10 +235,10 @@ export function PlexusIQWorkspace({
                       <AccordionItem
                         key={row.id}
                         value={`${row.id}`}
-                        className="rounded-xl border border-slate-200 bg-white overflow-hidden border-b"
+                        className="rounded-xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)] overflow-hidden border-0"
                         data-testid={`plexus-iq-date-${row.id}`}
                       >
-                        <div className="flex items-center justify-between gap-2 px-3 py-2 flex-wrap">
+                        <div className="flex items-center justify-between gap-2 px-4 py-2.5 flex-wrap">
                           <AccordionTrigger className="flex-1 hover:no-underline py-0 min-w-0">
                             <div className="flex items-center gap-2 min-w-0 flex-1 text-left">
                               <CalendarDays className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -246,7 +247,10 @@ export function PlexusIQWorkspace({
                                   {dateLabel}
                                 </div>
                                 <div className="text-[10px] text-slate-500 flex items-center gap-1 flex-wrap">
-                                  <span>{row.patientCount} {row.patientCount === 1 ? "patient" : "patients"}</span>
+                                  <span>
+                                    {row.patientCount}{" "}
+                                    {row.patientCount === 1 ? "patient" : "patients"}
+                                  </span>
                                   {pf.pending != null && pf.final != null && (
                                     <>
                                       <span className="text-slate-300">·</span>
@@ -259,57 +263,46 @@ export function PlexusIQWorkspace({
                               </div>
                             </div>
                           </AccordionTrigger>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="gap-1.5 rounded-xl h-7 text-xs"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onGenerateBatch(row.id);
-                              }}
-                              disabled={isAnalyzing || analyzingBatchId !== null || row.patientCount === 0}
-                              data-testid={`button-plexus-iq-generate-batch-${row.id}`}
+                          <div className="flex items-center gap-0.5">
+                            <IconButton
+                              label={isAnalyzing ? "Generating…" : "Generate all"}
+                              testId={`button-plexus-iq-generate-batch-${row.id}`}
+                              onClick={() => onGenerateBatch(row.id)}
+                              disabled={
+                                isAnalyzing ||
+                                analyzingBatchId !== null ||
+                                row.patientCount === 0
+                              }
                             >
                               {isAnalyzing ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
+                                <Loader2 className="w-4 h-4 animate-spin" />
                               ) : (
-                                <Sparkles className="w-3 h-3" />
+                                <Sparkles className="w-4 h-4" />
                               )}
-                              Generate All
-                            </Button>
+                            </IconButton>
                             {row.scheduleDate && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="gap-1.5 rounded-xl h-7 text-xs"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onOpenFinalSchedule(row.scheduleDate as string);
-                                }}
-                                data-testid={`button-plexus-iq-open-final-${row.id}`}
+                              <IconButton
+                                label="Open final schedule"
+                                testId={`button-plexus-iq-open-final-${row.id}`}
+                                onClick={() =>
+                                  onOpenFinalSchedule(row.scheduleDate as string)
+                                }
                               >
-                                <ExternalLink className="w-3 h-3" />
-                                Final Schedule
-                              </Button>
+                                <ExternalLink className="w-4 h-4" />
+                              </IconButton>
                             )}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="gap-1.5 rounded-xl h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDeleteAllForBatch(row.id);
-                              }}
-                              data-testid={`button-plexus-iq-delete-batch-${row.id}`}
+                            <IconButton
+                              label="Delete all on this date"
+                              testId={`button-plexus-iq-delete-batch-${row.id}`}
+                              onClick={() => onDeleteAllForBatch(row.id)}
+                              variant="danger"
                             >
-                              <Trash2 className="w-3 h-3" />
-                              Delete All
-                            </Button>
+                              <Trash2 className="w-4 h-4" />
+                            </IconButton>
                           </div>
                         </div>
 
-                        <AccordionContent className="px-3 pb-3 pt-0">
+                        <AccordionContent className="px-4 pb-4 pt-0">
                           {!detailReady ? (
                             <div className="flex items-center gap-2 text-xs text-slate-500 italic py-3">
                               <Loader2 className="w-4 h-4 animate-spin" />
