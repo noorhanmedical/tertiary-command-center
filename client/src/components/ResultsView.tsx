@@ -14,13 +14,30 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
-  Building2, Calendar, Check, CheckSquare, ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Printer, Scan, Send, Share2, Users2, X,
+  Building2, Calendar, Check, CheckSquare, ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Printer, Send, Share2, User, Users2,
 } from "lucide-react";
 import type { PatientScreening, ScreeningBatch } from "@shared/schema";
 import { StepTimeline } from "@/components/StepTimeline";
 import { NotesPanelDrawer } from "@/components/NotesPanelDrawer";
 import { QualificationReasoningDialog } from "@/features/schedule/QualificationReasoningDialog";
-import { categoryIcons, categoryLabels, categoryStyles, getAncillaryCategory, getBadgeColor, isImagingTest, type AncillaryCategory } from "@/features/schedule/ancillaryMeta";
+import { PatientDetailDialog } from "@/components/PatientDetailDialog";
+import { categoryIcons, getAncillaryCategory, type AncillaryCategory } from "@/features/schedule/ancillaryMeta";
+
+const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound"];
+
+const FINAL_ANCILLARY_STROKE: Record<AncillaryCategory, string> = {
+  brainwave: "text-violet-600",
+  vitalwave: "text-red-600",
+  ultrasound: "text-emerald-600",
+  other: "text-slate-500",
+};
+
+function deriveInitials(name: string): string {
+  const parts = (name || "").split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
@@ -391,268 +408,277 @@ export function ResultsView({
           <div className="space-y-3" data-testid="table-final-schedule">
             {patients.map((patient) => {
               const allTests = patient.qualifyingTests || [];
+              const isOutreach = (patient.patientType || "visit") === "outreach";
+              const typeLabel: "Visit" | "Outreach" = isOutreach ? "Outreach" : "Visit";
+              const showTimeBlock = !isOutreach && !!patient.time;
+              const initials = deriveInitials(patient.name || "");
               const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
-              const qualTests = allTests.filter((t) => !isImagingTest(t));
-              const qualImaging = allTests.filter((t) => isImagingTest(t));
-              const isExpanded = expandedPatient === patient.id;
+              const visibleCategories = ANCILLARY_ORDER.filter(
+                (c) => allTests.some((t) => getAncillaryCategory(t) === c),
+              );
+
+              const toggleType = (e: React.MouseEvent) => {
+                e.stopPropagation();
+                const newType = isOutreach ? "visit" : "outreach";
+                onUpdatePatient(patient.id, { patientType: newType });
+              };
 
               return (
                 <Card
                   key={patient.id}
-                  className="rounded-2xl border-0 shadow-sm bg-white/85 backdrop-blur-sm overflow-hidden transition-shadow hover:shadow-md"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setExpandedPatient(patient.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setExpandedPatient(patient.id);
+                    }
+                  }}
+                  className="relative rounded-2xl border-0 shadow-sm overflow-hidden cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                   data-testid={`row-result-${patient.id}`}
                 >
-                  <div
-                    className="p-4 cursor-pointer hover:bg-slate-50/60 transition-colors"
-                    onClick={() => setExpandedPatient(isExpanded ? null : patient.id)}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-start gap-4 min-w-0 flex-1">
-                        {patient.time && (
-                          <span className="text-sm text-slate-900 font-medium shrink-0 mt-0.5 tabular-nums">{patient.time}</span>
+                  <div className="flex items-stretch min-h-[88px]">
+                    <div className="bg-slate-900 text-white flex items-center gap-3 px-5 py-4 shrink-0 w-[44%] max-w-[460px] min-w-[260px]">
+                      <div
+                        aria-hidden="true"
+                        className="shrink-0 inline-flex items-center justify-center h-12 w-12 rounded-full bg-white/10 ring-1 ring-white/20 text-white"
+                      >
+                        {initials ? (
+                          <span className="text-sm font-semibold tracking-wide">{initials}</span>
+                        ) : (
+                          <User className="w-5 h-5" />
                         )}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
-                            <p className="font-semibold text-base text-slate-900 truncate">{patient.name}</p>
-                            <span className="text-xs text-slate-900">
-                              {[patient.age && `${patient.age}yo`, patient.gender].filter(Boolean).join(" · ")}
-                            </span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        {showTimeBlock ? (
+                          <div className="grid grid-cols-[auto_1fr] gap-x-4 items-center">
+                            <div className="flex flex-col leading-tight">
+                              <span
+                                className="text-base font-semibold tabular-nums text-white"
+                                data-testid={`final-schedule-time-${patient.id}`}
+                              >
+                                {patient.time}
+                              </span>
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                onClick={toggleType}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const newType = isOutreach ? "visit" : "outreach";
+                                    onUpdatePatient(patient.id, { patientType: newType });
+                                  }
+                                }}
+                                title="Click to toggle patient type"
+                                className="text-[10px] uppercase tracking-[0.14em] text-white/60 font-medium cursor-pointer hover:text-white/90"
+                                data-testid={`badge-patient-type-${patient.id}`}
+                              >
+                                Visit Appointment
+                              </span>
+                            </div>
+                            <p
+                              className="min-w-0 text-xl font-light tracking-tight text-white truncate self-center"
+                              data-testid={`final-schedule-name-${patient.id}`}
+                            >
+                              {patient.name}
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="leading-tight">
+                            <p
+                              className="min-w-0 text-xl font-light tracking-tight text-white truncate"
+                              data-testid={`final-schedule-name-${patient.id}`}
+                            >
+                              {patient.name}
+                            </p>
                             <span
-                              className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold capitalize cursor-pointer select-none ${
-                                (patient.patientType || "visit") === "outreach"
-                                  ? "bg-orange-100 text-orange-800"
-                                  : "bg-teal-100 text-teal-800"
-                              }`}
-                              title="Click to toggle patient type"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const newType = (patient.patientType || "visit") === "visit" ? "outreach" : "visit";
-                                onUpdatePatient(patient.id, { patientType: newType });
+                              role="button"
+                              tabIndex={0}
+                              onClick={toggleType}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  const newType = isOutreach ? "visit" : "outreach";
+                                  onUpdatePatient(patient.id, { patientType: newType });
+                                }
                               }}
+                              title="Click to toggle patient type"
+                              className="text-[10px] uppercase tracking-[0.14em] text-white/60 font-medium cursor-pointer hover:text-white/90"
                               data-testid={`badge-patient-type-${patient.id}`}
                             >
-                              {patient.patientType || "visit"}
+                              {typeLabel === "Visit" ? "Visit Appointment" : "Outreach"}
                             </span>
                           </div>
-                          {(patient.diagnoses || patient.history || patient.medications || patient.previousTests) && (
-                            <div
-                              className="flex items-center gap-3 text-xs text-slate-900 cursor-pointer hover:text-slate-700 group mt-0.5 rounded-lg px-1 -ml-1 py-0.5 hover:bg-slate-100/70 transition-colors"
-                              onClick={(e) => { e.stopPropagation(); setExpandedClinical(expandedClinical === patient.id ? null : patient.id); }}
-                              data-testid={`button-expand-clinical-${patient.id}`}
-                            >
-                              {patient.diagnoses && (
-                                <span className="truncate max-w-[200px]">
-                                  <span className="font-semibold">Dx:</span> {patient.diagnoses}
-                                </span>
-                              )}
-                              {patient.history && (
-                                <span className="truncate max-w-[160px]">
-                                  <span className="font-semibold">Hx:</span> {patient.history}
-                                </span>
-                              )}
-                              {patient.medications && (
-                                <span className="truncate max-w-[160px]">
-                                  <span className="font-semibold">Rx:</span> {patient.medications}
-                                </span>
-                              )}
-                              {patient.previousTests && (
-                                <span className="truncate max-w-[160px]">
-                                  <span className="font-semibold">Prev:</span> {patient.previousTests}
-                                </span>
-                              )}
-                              {expandedClinical === patient.id
-                                ? <ChevronDown className="w-3 h-3 text-slate-400 shrink-0 ml-auto" />
-                                : <ChevronRight className="w-3 h-3 text-slate-400 shrink-0 ml-auto" />
-                              }
-                            </div>
-                          )}
-                          {expandedClinical === patient.id && (
-                            <div
-                              className="mt-2 rounded-xl bg-slate-50/80 border border-slate-200/70 px-4 py-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3"
-                              onClick={(e) => e.stopPropagation()}
-                              data-testid={`panel-clinical-${patient.id}`}
-                            >
-                              {patient.diagnoses && (
-                                <div>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Diagnoses</p>
-                                  <p className="text-xs text-slate-900 leading-relaxed">{patient.diagnoses}</p>
-                                </div>
-                              )}
-                              {patient.history && (
-                                <div>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">History</p>
-                                  <p className="text-xs text-slate-900 leading-relaxed">{patient.history}</p>
-                                </div>
-                              )}
-                              {patient.medications && (
-                                <div>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Medications</p>
-                                  <p className="text-xs text-slate-900 leading-relaxed">{patient.medications}</p>
-                                </div>
-                              )}
-                              {(patient.previousTests || patient.previousTestsDate) && (
-                                <div>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Previous Tests</p>
-                                  {patient.previousTests && <p className="text-xs text-slate-900 leading-relaxed">{patient.previousTests}</p>}
-                                  {patient.previousTestsDate && <p className="text-xs text-amber-700 font-medium mt-0.5">Date: {patient.previousTestsDate}</p>}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2 shrink-0">
-                        <div className="flex items-center gap-2">
-                          {scheduleEditingPatientId === patient.id ? (
-                            <input
-                              type="text"
-                              defaultValue={patient.time ?? ""}
-                              autoFocus
-                              placeholder="e.g. 10:00 AM"
-                              onClick={(e) => e.stopPropagation()}
-                              onBlur={(e) => {
-                                e.stopPropagation();
-                                const val = e.currentTarget.value.trim();
-                                setScheduleEditingPatientId(null);
-                                if (val !== (patient.time ?? "")) {
-                                  onUpdatePatient(patient.id, { time: val || null });
-                                }
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  e.currentTarget.blur();
-                                }
-                                if (e.key === "Escape") {
-                                  setScheduleEditingPatientId(null);
-                                }
-                              }}
-                              className="h-7 w-[110px] text-[11px] px-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-primary"
-                              data-testid={`input-final-schedule-time-${patient.id}`}
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setScheduleEditingPatientId(patient.id);
-                              }}
-                              title="Schedule patient"
-                              className="inline-flex items-center justify-center h-7 w-7 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors"
-                              data-testid={`final-schedule-patient-schedule-${patient.id}`}
-                            >
-                              <Calendar className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (!sendingPatientIds.has(patient.id)) {
-                                handleSendOneToScheduler(patient);
-                              }
-                            }}
-                            disabled={sendingPatientIds.has(patient.id)}
-                            title="Send to scheduler"
-                            className="inline-flex items-center justify-center h-7 w-7 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors disabled:opacity-50"
-                            data-testid={`final-schedule-patient-send-scheduler-${patient.id}`}
-                          >
-                            {sendingPatientIds.has(patient.id)
-                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              : <Send className="w-3.5 h-3.5" />}
-                          </button>
-                          <select
-                            className="text-[10px] border border-slate-200 rounded-lg px-2 py-0.5 bg-white font-medium cursor-pointer capitalize focus:outline-none focus:ring-1 focus:ring-primary"
-                            value={patient.appointmentStatus || "pending"}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              handleStatusChange(patient, e.target.value);
-                            }}
-                            data-testid={`select-appointment-status-${patient.id}`}
-                          >
-                            {APPOINTMENT_STATUSES.map((s) => (
-                              <option key={s} value={s.toLowerCase()}>{s}</option>
-                            ))}
-                          </select>
-                          {isExpanded
-                            ? <ChevronDown className="w-4 h-4 text-slate-400 transition-transform" />
-                            : <ChevronRight className="w-4 h-4 text-slate-400 transition-transform" />}
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-[340px]">
-                          {qualTests.map((test) => (
-                            <span key={test} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor(getAncillaryCategory(test))}`}>
-                              {test}
-                            </span>
-                          ))}
-                          {qualImaging.length > 0 && (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${getBadgeColor("ultrasound")}`}>
-                              <Scan className="w-3 h-3 mr-1" />
-                              Ultrasound Studies ({qualImaging.length})
-                            </span>
-                          )}
-                          {allTests.length === 0 && (
-                            <span className="text-xs text-slate-900 italic">No qualifying tests</span>
-                          )}
-                        </div>
+                        )}
                       </div>
                     </div>
-                  </div>
 
-                  {isExpanded && (
-                    <div className="border-t border-slate-100 bg-slate-50/60 p-5" data-testid={`row-expanded-${patient.id}`}>
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-semibold text-base text-slate-900">{patient.name} — Ancillary Details</h3>
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setExpandedPatient(null); }} data-testid="button-close-detail">
-                          <X className="w-4 h-4 text-slate-400" />
-                        </Button>
-                      </div>
-
-                      {allTests.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {(() => {
-                          const grouped: Record<string, string[]> = {};
-                          for (const test of allTests) {
-                            const cat = getAncillaryCategory(test);
-                            if (!grouped[cat]) grouped[cat] = [];
-                            grouped[cat].push(test);
-                          }
-                          return ["brainwave", "vitalwave", "ultrasound", "other"].filter((c) => grouped[c]).map((cat) => {
-                            const tests = grouped[cat];
-                            const style = categoryStyles[cat as AncillaryCategory];
-                            const IconComp = categoryIcons[cat as AncillaryCategory];
+                    <div className="flex-1 min-w-0 bg-white px-5 py-4 flex items-center gap-4">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        {visibleCategories.length === 0 ? (
+                          <span className="text-xs text-slate-400 italic">
+                            No qualifying tests
+                          </span>
+                        ) : (
+                          visibleCategories.map((cat) => {
+                            const Icon = categoryIcons[cat];
+                            const catTests = allTests.filter(
+                              (t) => getAncillaryCategory(t) === cat,
+                            );
+                            const count = catTests.length;
+                            const label =
+                              cat === "brainwave"
+                                ? "BrainWave"
+                                : cat === "vitalwave"
+                                ? "VitalWave"
+                                : "Ultrasound Studies";
                             return (
                               <button
                                 key={cat}
+                                type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setSelectedTestDetail({ patientId: patient.id, category: cat, tests, reasoning });
+                                  setSelectedTestDetail({
+                                    patientId: patient.id,
+                                    category: cat,
+                                    tests: catTests,
+                                    reasoning,
+                                  });
                                 }}
-                                className={`flex items-center gap-2 rounded-xl ${style.bg} border ${style.border} px-4 py-3 hover:shadow-md transition-shadow cursor-pointer text-left`}
-                                data-testid={`card-ancillary-${cat}-${patient.id}`}
+                                aria-label={`${label}${count > 1 ? ` (${count})` : ""}`}
+                                title={`${label}${count > 1 ? ` (${count})` : ""}`}
+                                className="relative inline-flex items-center justify-center transition-transform hover:scale-110"
+                                data-testid={`final-schedule-ancillary-${cat}-${patient.id}`}
                               >
-                                <IconComp className={`w-4 h-4 ${style.icon} shrink-0`} />
-                                <span className={`font-semibold text-sm ${style.accent}`}>{categoryLabels[cat as AncillaryCategory]}</span>
-                                {tests.length > 1 && (
-                                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${getBadgeColor(cat)}`}>{tests.length}</span>
+                                <Icon
+                                  className={`w-7 h-7 ${FINAL_ANCILLARY_STROKE[cat]}`}
+                                  strokeWidth={2}
+                                  fill="none"
+                                />
+                                {count > 1 && (
+                                  <span className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-slate-900 text-white text-[10px] font-semibold">
+                                    {count}
+                                  </span>
                                 )}
-                                <ChevronRight className="w-3.5 h-3.5 text-slate-400 ml-1 shrink-0" />
                               </button>
                             );
-                          });
-                        })()}
+                          })
+                        )}
                       </div>
-                      )}
-
-                      <PatientTasksSection patientId={patient.id} />
+                      <select
+                        className="text-[10px] border border-slate-200 rounded-lg px-2 py-1 bg-white font-medium cursor-pointer capitalize focus:outline-none focus:ring-1 focus:ring-primary shrink-0"
+                        value={patient.appointmentStatus || "pending"}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          handleStatusChange(patient, e.target.value);
+                        }}
+                        data-testid={`select-appointment-status-${patient.id}`}
+                      >
+                        {APPOINTMENT_STATUSES.map((s) => (
+                          <option key={s} value={s.toLowerCase()}>{s}</option>
+                        ))}
+                      </select>
                     </div>
-                  )}
+
+                    <div
+                      className="bg-slate-950 text-white flex items-center gap-2 pl-7 pr-5 py-4 shrink-0"
+                      style={{ clipPath: "polygon(20px 0, 100% 0, 100% 100%, 0 100%)" }}
+                    >
+                      {scheduleEditingPatientId === patient.id ? (
+                        <input
+                          type="text"
+                          defaultValue={patient.time ?? ""}
+                          autoFocus
+                          placeholder="e.g. 10:00 AM"
+                          onClick={(e) => e.stopPropagation()}
+                          onBlur={(e) => {
+                            e.stopPropagation();
+                            const val = e.currentTarget.value.trim();
+                            setScheduleEditingPatientId(null);
+                            if (val !== (patient.time ?? "")) {
+                              onUpdatePatient(patient.id, { time: val || null });
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              e.currentTarget.blur();
+                            }
+                            if (e.key === "Escape") {
+                              setScheduleEditingPatientId(null);
+                            }
+                          }}
+                          className="h-9 w-[120px] text-[11px] px-2 rounded-lg border border-white/20 bg-white/10 text-white placeholder:text-white/50 focus:outline-none focus:ring-1 focus:ring-white/40"
+                          data-testid={`input-final-schedule-time-${patient.id}`}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setScheduleEditingPatientId(patient.id);
+                          }}
+                          aria-label="Schedule patient"
+                          title="Schedule patient"
+                          className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+                          data-testid={`final-schedule-patient-schedule-${patient.id}`}
+                        >
+                          <Calendar className="w-4 h-4" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!sendingPatientIds.has(patient.id)) {
+                            handleSendOneToScheduler(patient);
+                          }
+                        }}
+                        disabled={sendingPatientIds.has(patient.id)}
+                        aria-label="Send to scheduler"
+                        title="Send to scheduler"
+                        className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-white text-slate-900 hover:bg-slate-100 disabled:opacity-50 transition-colors"
+                        data-testid={`final-schedule-patient-send-scheduler-${patient.id}`}
+                      >
+                        {sendingPatientIds.has(patient.id) ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 </Card>
               );
             })}
           </div>
         </div>
       </main>
+
+      <PatientDetailDialog
+        patient={patients.find((p) => p.id === expandedPatient) ?? null}
+        open={expandedPatient !== null}
+        onClose={() => {
+          setExpandedPatient(null);
+          setExpandedClinical(null);
+        }}
+        onOpenAncillary={(detail) => setSelectedTestDetail(detail)}
+        patientType={
+          ((patients.find((p) => p.id === expandedPatient)?.patientType) || "visit") === "outreach"
+            ? "Outreach"
+            : "Visit"
+        }
+        tasksSlot={
+          expandedPatient !== null ? (
+            <PatientTasksSection patientId={expandedPatient} />
+          ) : null
+        }
+      />
 
       <QualificationReasoningDialog
         selectedTestDetail={selectedTestDetail}
