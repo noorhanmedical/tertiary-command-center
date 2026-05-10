@@ -17,27 +17,36 @@ import {
   PlexusIQBulkImportModal,
   type ParsedRow,
 } from "@/components/plexus-iq/PlexusIQBulkImportModal";
-import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
 import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
+import { PlexusIQStatsRow } from "@/components/plexus-iq/PlexusIQStatsRow";
+import { PlexusIQDayPanel } from "@/components/plexus-iq/PlexusIQDayPanel";
 
-// Plexus IQ page — calendar-first multi-day, multi-facility workspace.
+// Plexus IQ — calendar-first multi-day, multi-facility workspace.
 //
-// Architecture:
-//   - Plexus IQ owns NO batch of its own.
-//   - The single source of truth is screening_batches keyed by
-//     (facility, scheduleDate). Add Patient and Bulk Import resolve to or
-//     create the matching batch on demand.
-//   - The day-click popup is the canonical <ResultsView/> rendered inside
-//     a Dialog (with chromeless=true), so PDFs / Share / Export / Send to
-//     Scheduler all come for free from the existing wiring.
-//   - The inline calendar reads from a single aggregated endpoint
-//     (/api/screening-batches/calendar-summary) that returns one row per
-//     batch with patientCount + categories. No N+1 fan-out per batch.
-//   - Concurrent "Add Patient" clicks for the same (facility, date) are
-//     deduplicated via pendingCreatesRef so we don't double-create batches
-//     during the gap between create resolution and React Query refetch.
+// Layout:
+//   ┌─────────────────────────────────────────────────────────────┐
+//   │  Header (Plexus IQ + Import + Add Patient)                  │
+//   ├─────────────────────────────────────────────────────────────┤
+//   │  Stats row (BrainWave / VitalWave / Ultrasound / Total)     │
+//   ├─────────────────────────────────────┬───────────────────────┤
+//   │                                     │                       │
+//   │  Selected day's patient cards       │  Calendar (right)     │
+//   │  (canonical ResultsView, chromeless)│  Click a day → middle │
+//   │                                     │  updates inline       │
+//   │                                     │                       │
+//   └─────────────────────────────────────┴───────────────────────┘
+//
+// No batch is owned by Plexus IQ. Adding a patient resolves to or creates
+// the matching screening_batch keyed by (facility, scheduleDate).
+// Concurrent Add Patient clicks for the same key share a single in-flight
+// POST via pendingCreatesRef.
 
 const CALENDAR_SUMMARY_KEY = ["/api/screening-batches/calendar-summary"] as const;
+
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export default function PlexusIQPage() {
   const { toast } = useToast();
@@ -45,12 +54,7 @@ export default function PlexusIQPage() {
   const createBatchMut = useCreateBatch();
   const addPatientMut = useAddPatient();
 
-  // Used by Add Patient + Bulk Import to choose between "use existing batch
-  // by id" vs "POST a new one". Lightweight (no patient payloads).
   const { data: batches = [] } = useScreeningBatches();
-
-  // Aggregated payload for the calendar (counts + ancillary categories).
-  // Single round-trip; replaces the old per-batch detail fan-out.
   const { data: summary = [] } = useQuery<CalendarSummaryRow[]>({
     queryKey: CALENDAR_SUMMARY_KEY,
     queryFn: async () => {
@@ -63,11 +67,11 @@ export default function PlexusIQPage() {
     staleTime: 15_000,
   });
 
-  // Day-click modal state.
-  const [openDate, setOpenDate] = useState<string | null>(null);
-  const batchesForOpenDate = useMemo(
-    () => (openDate ? batches.filter((b) => b.scheduleDate === openDate) : []),
-    [batches, openDate],
+  // Selected day defaults to today. Clicking a calendar cell updates this.
+  const [selectedDate, setSelectedDate] = useState<string>(todayIso());
+  const batchesForSelectedDate = useMemo(
+    () => batches.filter((b) => b.scheduleDate === selectedDate),
+    [batches, selectedDate],
   );
 
   // Add Patient + Bulk Import modal state.
@@ -81,13 +85,11 @@ export default function PlexusIQPage() {
   } | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
 
-  // Assign-date dialog state for the unscheduled-batches panel.
+  // Assign-date dialog state.
   const [assignTarget, setAssignTarget] = useState<{ id: number; label: string } | null>(null);
   const [assignPending, setAssignPending] = useState(false);
 
-  // Dedup concurrent "Add Patient" clicks targeting the same (facility, date).
-  // If a batch creation for a key is already in flight, all callers reuse the
-  // same promise instead of POSTing /api/batches twice.
+  // Dedup concurrent batch creates for the same (facility, date) key.
   const pendingCreatesRef = useRef<Map<string, Promise<number>>>(new Map());
 
   const refreshAll = useCallback(() => {
@@ -95,9 +97,6 @@ export default function PlexusIQPage() {
     queryClient.invalidateQueries({ queryKey: CALENDAR_SUMMARY_KEY });
   }, [queryClient]);
 
-  // Resolve the target batch id for a given (facility, scheduleDate) pair,
-  // creating a new batch if none exists yet. Concurrent calls with the same
-  // key share a single in-flight POST.
   const resolveBatchId = useCallback(
     async (facility: string, scheduleDate: string): Promise<number> => {
       const existing = batches.find(
@@ -126,9 +125,6 @@ export default function PlexusIQPage() {
     [batches, createBatchMut],
   );
 
-  // Returns true on success, false on failure. The Add Patient modal uses
-  // the boolean to decide whether to clear and close itself; on failure we
-  // leave the modal open so the user can correct and retry.
   const handleAddPatient = useCallback(
     async (input: {
       facility: string;
@@ -150,6 +146,9 @@ export default function PlexusIQPage() {
           description: `${input.facility} on ${input.scheduleDate}`,
         });
         refreshAll();
+        // Auto-jump the calendar selection to the day we just added so the
+        // user immediately sees the new patient.
+        setSelectedDate(input.scheduleDate);
         return true;
       } catch (err) {
         toast({
@@ -236,6 +235,7 @@ export default function PlexusIQPage() {
         toast({ title: "Date assigned", description: `Batch scheduled for ${isoDate}` });
         refreshAll();
         setAssignTarget(null);
+        setSelectedDate(isoDate);
       } catch (err) {
         toast({
           title: "Could not assign date",
@@ -250,7 +250,7 @@ export default function PlexusIQPage() {
   );
 
   return (
-    <div className="flex flex-col flex-1 min-w-0 min-h-0 h-full w-full bg-background">
+    <div className="flex flex-col flex-1 min-w-0 min-h-0 h-full w-full bg-slate-50/40">
       <div className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
@@ -288,12 +288,27 @@ export default function PlexusIQPage() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
-        <PlexusIQCalendar
-          summary={summary}
-          onSelectDate={(d) => setOpenDate(d)}
-          onAssignDate={(id, label) => setAssignTarget({ id, label })}
-        />
+      <div className="flex-1 min-h-0 overflow-auto">
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-5 space-y-5">
+          <PlexusIQStatsRow summary={summary} />
+
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4 items-start">
+            <PlexusIQDayPanel
+              isoDate={selectedDate}
+              batchesForDate={batchesForSelectedDate as ScreeningBatch[]}
+            />
+
+            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+              <PlexusIQCalendar
+                summary={summary}
+                onSelectDate={(d) => setSelectedDate(d)}
+                onAssignDate={(id, label) => setAssignTarget({ id, label })}
+                selectedDate={selectedDate}
+                compact
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       <PlexusIQAddPatientModal
@@ -309,13 +324,6 @@ export default function PlexusIQPage() {
         onImport={handleBulkImport}
         pending={bulkPending}
         progress={bulkProgress}
-      />
-
-      <PlexusIQDayModal
-        open={openDate !== null}
-        isoDate={openDate}
-        batchesForDate={batchesForOpenDate as ScreeningBatch[]}
-        onClose={() => setOpenDate(null)}
       />
 
       <PlexusIQAssignDateDialog
