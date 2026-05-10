@@ -170,9 +170,38 @@ export function PatientCard({
 
   const showTimeInBanner = typeLabel === "Visit" && !!patient.time;
 
+  // Pending → light azure with dark text. Final → dark navy with white text.
+  // The status pill, avatar circle treatment and the secondary "Visit
+  // Appointment" / "Outreach" label all flip with the banner so contrast
+  // stays consistent.
+  const banner = isCompleted
+    ? {
+        bar: "bg-plexus-navy-800 text-white",
+        avatarRing: "bg-white/10 ring-1 ring-white/20 text-white",
+        title: "text-white",
+        subLabel: "text-white/60",
+        time: "text-white",
+        statusPill: "bg-emerald-400/15 text-emerald-200 border border-emerald-300/30",
+      }
+    : {
+        bar: "bg-sky-100 text-slate-900",
+        avatarRing: "bg-white ring-1 ring-sky-200 text-plexus-navy-800",
+        title: "text-slate-900",
+        subLabel: "text-slate-500",
+        time: "text-slate-900",
+        statusPill: "bg-white text-sky-800 border border-sky-200",
+      };
+
   const openEdit = () => setEditOpen(true);
 
+  // The two dialogs below are rendered as siblings of <Card>, NOT as
+  // children. React's synthetic event system propagates events along the
+  // React parent tree even across Radix portals, so a click on the dialog
+  // Done/X/overlay would bubble to the clickable <Card onClick={openEdit}>
+  // and reopen the dialog in the same render. Hoisting them out of the Card
+  // subtree breaks that bubble path while preserving card-click-to-open.
   return (
+    <>
     <Card
       role="button"
       tabIndex={0}
@@ -187,14 +216,14 @@ export function PatientCard({
       data-testid={`card-patient-${patient.id}`}
     >
       <div
-        className="relative px-5 py-5 bg-plexus-navy-800 text-white"
+        className={`relative px-5 py-5 ${banner.bar}`}
         data-testid={`banner-patient-${patient.id}`}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-stretch gap-3 min-w-0 flex-1">
             <div
               aria-hidden="true"
-              className="shrink-0 inline-flex items-center justify-center h-12 w-12 rounded-full bg-white/10 ring-1 ring-white/20 text-white"
+              className={`shrink-0 inline-flex items-center justify-center h-12 w-12 rounded-full ${banner.avatarRing}`}
             >
               <PatientSilhouette gender={patient.gender} className="w-6 h-6" />
             </div>
@@ -205,17 +234,17 @@ export function PatientCard({
                   <div className="grid grid-cols-[auto_1fr] gap-x-4 items-center">
                     <div className="flex flex-col leading-tight">
                       <span
-                        className="text-sm font-semibold tabular-nums text-white"
+                        className={`text-sm font-semibold tabular-nums ${banner.time}`}
                         data-testid={`text-patient-time-${patient.id}`}
                       >
                         {patient.time}
                       </span>
-                      <span className="text-[10px] uppercase tracking-[0.14em] text-white/60 font-medium">
+                      <span className={`text-[10px] uppercase tracking-[0.14em] ${banner.subLabel} font-medium`}>
                         Visit Appointment
                       </span>
                     </div>
                     <h3
-                      className="min-w-0 text-lg font-light tracking-tight text-white truncate self-center"
+                      className={`min-w-0 text-lg font-light tracking-tight truncate self-center ${banner.title}`}
                       data-testid={`text-patient-name-${patient.id}`}
                     >
                       {displayName}
@@ -224,12 +253,12 @@ export function PatientCard({
                 ) : (
                   <div className="leading-tight">
                     <h3
-                      className="min-w-0 text-lg font-light tracking-tight text-white truncate"
+                      className={`min-w-0 text-lg font-light tracking-tight truncate ${banner.title}`}
                       data-testid={`text-patient-name-${patient.id}`}
                     >
                       {displayName}
                     </h3>
-                    <span className="text-[10px] uppercase tracking-[0.14em] text-white/60 font-medium">
+                    <span className={`text-[10px] uppercase tracking-[0.14em] ${banner.subLabel} font-medium`}>
                       Visit Appointment
                     </span>
                   </div>
@@ -237,12 +266,12 @@ export function PatientCard({
               ) : (
                 <div className="leading-tight">
                   <h3
-                    className="min-w-0 text-lg font-light tracking-tight text-white truncate"
+                    className={`min-w-0 text-lg font-light tracking-tight truncate ${banner.title}`}
                     data-testid={`text-patient-name-${patient.id}`}
                   >
                     {displayName}
                   </h3>
-                  <span className="text-[10px] uppercase tracking-[0.14em] text-white/60 font-medium">
+                  <span className={`text-[10px] uppercase tracking-[0.14em] ${banner.subLabel} font-medium`}>
                     Outreach
                   </span>
                 </div>
@@ -250,11 +279,7 @@ export function PatientCard({
             </div>
           </div>
           <span
-            className={`shrink-0 inline-flex items-center text-[10px] font-semibold uppercase tracking-wide rounded-full px-2.5 py-0.5 ${
-              isCompleted
-                ? "bg-emerald-400/15 text-emerald-200 border border-emerald-300/30"
-                : "bg-white/15 text-white border border-white/25"
-            }`}
+            className={`shrink-0 inline-flex items-center text-[10px] font-semibold uppercase tracking-wide rounded-full px-2.5 py-0.5 ${banner.statusPill}`}
             data-testid={`pill-patient-status-${patient.id}`}
           >
             {isCompleted ? "Final" : "Pending"}
@@ -357,25 +382,27 @@ export function PatientCard({
         </div>
       </div>
 
-      <PatientEditDialog
-        patient={patient}
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        onUpdate={onUpdate}
-        showTime={sourceMode !== "outreach"}
-        qualifyingTests={tests}
-        generatingTests={generatingTests}
-        onAddTest={handleAddTest}
-        onRemoveTest={handleRemoveTest}
-        onAnalyze={onAnalyze}
-        isAnalyzing={isAnalyzing}
-        isCompleted={isCompleted}
-      />
-
-      <QualificationReasoningDialog
-        selectedTestDetail={selectedTestDetail}
-        setSelectedTestDetail={setSelectedTestDetail}
-      />
     </Card>
+
+    <PatientEditDialog
+      patient={patient}
+      open={editOpen}
+      onClose={() => setEditOpen(false)}
+      onUpdate={onUpdate}
+      showTime={sourceMode !== "outreach"}
+      qualifyingTests={tests}
+      generatingTests={generatingTests}
+      onAddTest={handleAddTest}
+      onRemoveTest={handleRemoveTest}
+      onAnalyze={onAnalyze}
+      isAnalyzing={isAnalyzing}
+      isCompleted={isCompleted}
+    />
+
+    <QualificationReasoningDialog
+      selectedTestDetail={selectedTestDetail}
+      setSelectedTestDetail={setSelectedTestDetail}
+    />
+    </>
   );
 }

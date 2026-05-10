@@ -33,6 +33,7 @@ import {
 import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
 import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
 import { PlexusIQWorkspace } from "@/components/plexus-iq/PlexusIQWorkspace";
+import { PlexusIQDashboardRow } from "@/components/plexus-iq/PlexusIQDashboardRow";
 
 // Plexus IQ page — patient workspace center + calendar drawer.
 //
@@ -416,6 +417,76 @@ export default function PlexusIQPage() {
     setOpenDate(scheduleDate);
   }, []);
 
+  // Delete every patient in a single batch (does NOT delete the batch row).
+  // Sequential to keep React Query / server invalidation predictable.
+  const handleDeleteAllForBatch = useCallback(
+    async (batchId: number) => {
+      const detail = batchDetails[batchId];
+      const patients = detail?.patients ?? [];
+      if (patients.length === 0) return;
+      const confirmed = window.confirm(
+        `Delete all ${patients.length} patient${patients.length === 1 ? "" : "s"} on this date? The batch itself will remain.`,
+      );
+      if (!confirmed) return;
+      try {
+        for (const p of patients) {
+          await deletePatientMut.mutateAsync(p.id);
+        }
+        invalidateBatch(batchId);
+        refreshAll();
+        toast({
+          title: "Patients deleted",
+          description: `Cleared ${patients.length} patient${patients.length === 1 ? "" : "s"}.`,
+        });
+      } catch (err) {
+        toast({
+          title: "Delete failed",
+          description: err instanceof Error ? err.message : "Could not delete patients",
+          variant: "destructive",
+        });
+      }
+    },
+    [batchDetails, deletePatientMut, invalidateBatch, refreshAll, toast],
+  );
+
+  // Delete every patient under a facility, across every active dated/undated
+  // batch. Batch rows themselves are preserved.
+  const handleDeleteAllForFacility = useCallback(
+    async (facility: string) => {
+      const facilityBatches = batches.filter((b) => b.facility === facility);
+      const allPatients: number[] = [];
+      for (const b of facilityBatches) {
+        const detail = batchDetails[b.id];
+        if (detail?.patients) {
+          for (const p of detail.patients) allPatients.push(p.id);
+        }
+      }
+      if (allPatients.length === 0) return;
+      const confirmed = window.confirm(
+        `Delete all ${allPatients.length} patient${allPatients.length === 1 ? "" : "s"} for ${facility}? Batch records will remain.`,
+      );
+      if (!confirmed) return;
+      try {
+        for (const id of allPatients) {
+          await deletePatientMut.mutateAsync(id);
+        }
+        for (const b of facilityBatches) invalidateBatch(b.id);
+        refreshAll();
+        toast({
+          title: "Facility cleared",
+          description: `Cleared ${allPatients.length} patient${allPatients.length === 1 ? "" : "s"} for ${facility}.`,
+        });
+      } catch (err) {
+        toast({
+          title: "Delete failed",
+          description: err instanceof Error ? err.message : "Could not delete patients",
+          variant: "destructive",
+        });
+      }
+    },
+    [batches, batchDetails, deletePatientMut, invalidateBatch, refreshAll, toast],
+  );
+
   return (
     <div className="flex flex-col h-full w-full min-w-0">
       <header className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
@@ -466,6 +537,9 @@ export default function PlexusIQPage() {
       </header>
 
       <main className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
+        <div className="w-full px-4 sm:px-6 lg:px-8 pt-6">
+          <PlexusIQDashboardRow summary={summary} batchDetails={batchDetails} />
+        </div>
         <PlexusIQWorkspace
           summary={summary}
           batchDetails={batchDetails}
@@ -473,6 +547,8 @@ export default function PlexusIQPage() {
           analyzingPatients={analyzingPatients}
           onGenerateBatch={handleGenerateBatch}
           onOpenFinalSchedule={handleOpenFinalSchedule}
+          onDeleteAllForBatch={handleDeleteAllForBatch}
+          onDeleteAllForFacility={handleDeleteAllForFacility}
           onUpdatePatient={handleUpdatePatient}
           onDeletePatient={handleDeletePatient}
           onAnalyzeOnePatient={handleAnalyzePatient}
