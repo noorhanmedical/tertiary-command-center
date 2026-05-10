@@ -1,25 +1,27 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Check } from "lucide-react";
-import type { ScreeningBatch, PatientScreening } from "@shared/schema";
+import { Building2, CalendarPlus, ChevronLeft, ChevronRight, Check } from "lucide-react";
 import type { GlobalScheduleEvent } from "@shared/schema/globalSchedule";
-import { getAncillaryCategory, type AncillaryCategory } from "@/features/schedule/ancillaryMeta";
+import type { AncillaryCategory } from "@shared/ancillaryCategory";
 
 // Inline month calendar surface for /plexus-iq.
 //
-// Read-only view fed by canonical endpoints:
-//   - /api/screening-batches — all batches across facilities/dates
-//   - each batch detail (cached via useScreeningBatch in the page) — patient
-//     ancillaries; only fetched lazily by the page when a date is opened
-//   - /api/global-schedule-events — used for the "completed" checkmark via
-//     procedure_complete events in the visible month
-//
-// The cell counts are derived from screening_batches' patientScreenings
-// (joined client-side from each batch's detail). For the at-a-glance dot
-// strip we read each patient's qualifyingTests, classify them via the
-// shared getAncillaryCategory helper, and render one dot per category that
-// appears on that date. The completed badge fires when any
-// procedure_complete event lands on that date.
+// Reads from canonical endpoints only:
+//   - /api/screening-batches/calendar-summary — single aggregated payload
+//     (one row per batch with patientCount + categories + scheduleDate).
+//     Replaces the old per-batch detail N+1 fan-out.
+//   - /api/global-schedule-events?eventType=procedure_complete — drives
+//     the green checkmark for completed ancillaries.
+
+export type CalendarSummaryRow = {
+  id: number;
+  name: string;
+  facility: string | null;
+  scheduleDate: string | null;
+  status: string;
+  patientCount: number;
+  categories: string[]; // subset of "brainwave" | "vitalwave" | "ultrasound"
+};
 
 const ANCILLARY_CATEGORIES: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound"];
 
@@ -55,19 +57,16 @@ function buildMonthGrid(monthStart: Date): Date[] {
   return grid;
 }
 
-type BatchSummary = ScreeningBatch & { patients?: PatientScreening[] };
-
 export function PlexusIQCalendar({
-  batches,
-  batchDetails,
+  summary,
   onSelectDate,
+  onAssignDate,
 }: {
-  // The list of all known batches (from /api/screening-batches).
-  batches: ScreeningBatch[];
-  // A keyed map of batchId -> batch detail (with patients). Only the visible
-  // month's batches need to be hydrated; the page passes whatever it has.
-  batchDetails: Record<number, BatchSummary>;
+  // Aggregated rows from /api/screening-batches/calendar-summary. One row
+  // per batch, regardless of whether scheduleDate is set.
+  summary: CalendarSummaryRow[];
   onSelectDate: (isoDate: string) => void;
+  onAssignDate: (batchId: number, batchLabel: string) => void;
 }) {
   const [cursor, setCursor] = useState<Date>(() => startOfMonth(new Date()));
 
@@ -85,8 +84,6 @@ export function PlexusIQCalendar({
     return d;
   }, [cursor]);
 
-  // Completed indicator source — procedure_complete events from the canonical
-  // global_schedule_events feed. We only need the date and event type.
   const { data: completedEvents = [] } = useQuery<GlobalScheduleEvent[]>({
     queryKey: ["/api/global-schedule-events", { eventType: "procedure_complete", startDate: rangeStart.toISOString(), endDate: rangeEnd.toISOString() }],
     queryFn: async () => {
@@ -112,42 +109,34 @@ export function PlexusIQCalendar({
     return set;
   }, [completedEvents]);
 
-  // Aggregate per-date counts and ancillary categories from batches that have
-  // a scheduleDate. Outreach batches without a scheduleDate aren't placed on
-  // the calendar at all (Plexus IQ keeps them in the "Outreach" type bucket
-  // accessible via the day modal once committed).
-  const perDate = useMemo(() => {
+  // Bucket the summary rows into dated cells + an unscheduled list.
+  const { perDate, unscheduled } = useMemo(() => {
     const map: Record<string, { count: number; cats: Set<AncillaryCategory> }> = {};
-    for (const b of batches) {
-      if (!b.scheduleDate) continue;
-      const key = b.scheduleDate;
+    const orphans: CalendarSummaryRow[] = [];
+    for (const row of summary) {
+      if (!row.scheduleDate) {
+        orphans.push(row);
+        continue;
+      }
+      const key = row.scheduleDate;
       if (!map[key]) map[key] = { count: 0, cats: new Set() };
-      const detail = batchDetails[b.id];
-      if (detail?.patients) {
-        map[key].count += detail.patients.length;
-        for (const p of detail.patients) {
-          for (const t of p.qualifyingTests || []) {
-            const c = getAncillaryCategory(t);
-            if (c !== "other") map[key].cats.add(c);
-          }
+      map[key].count += row.patientCount;
+      for (const c of row.categories) {
+        if (c === "brainwave" || c === "vitalwave" || c === "ultrasound") {
+          map[key].cats.add(c as AncillaryCategory);
         }
-      } else {
-        // Detail not yet loaded — fall back to a placeholder count of "?" via
-        // marking the day as having activity (1) so the dot strip still
-        // surfaces if/when detail loads. Here we use 0 to avoid lying;
-        // the page eagerly fetches details for the visible month.
-        map[key].count += 0;
       }
     }
-    return map;
-  }, [batches, batchDetails]);
+    orphans.sort((a, b) => (a.facility ?? "").localeCompare(b.facility ?? ""));
+    return { perDate: map, unscheduled: orphans };
+  }, [summary]);
 
   const grid = buildMonthGrid(cursor);
   const todayKey = ymd(new Date());
   const cursorMonth = cursor.getMonth();
 
   return (
-    <div className="w-full px-4 sm:px-6 lg:px-8 py-6 space-y-4">
+    <div className="w-full px-4 sm:px-6 lg:px-8 py-6 space-y-5">
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
@@ -240,6 +229,55 @@ export function PlexusIQCalendar({
           );
         })}
       </div>
+
+      {unscheduled.length > 0 && (
+        <section
+          className="rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3"
+          data-testid="plexus-iq-unscheduled-panel"
+        >
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">
+              Unscheduled batches · {unscheduled.length}
+            </h3>
+            <span className="text-[10px] text-amber-700/80">
+              These batches don&apos;t have a date yet, so they don&apos;t appear on the calendar.
+            </span>
+          </div>
+          <ul className="divide-y divide-amber-200/60">
+            {unscheduled.map((row) => {
+              const label = row.facility
+                ? `${row.facility} · ${row.name}`
+                : row.name;
+              return (
+                <li
+                  key={row.id}
+                  className="flex items-center justify-between gap-3 py-2"
+                  data-testid={`plexus-iq-unscheduled-row-${row.id}`}
+                >
+                  <div className="min-w-0 flex items-center gap-2">
+                    <Building2 className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                    <span className="truncate text-sm text-slate-900" title={label}>
+                      {label}
+                    </span>
+                    <span className="shrink-0 text-[11px] text-slate-500">
+                      {row.patientCount} {row.patientCount === 1 ? "patient" : "patients"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onAssignDate(row.id, label)}
+                    className="shrink-0 inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[11px] font-medium text-amber-900 bg-white border border-amber-200 hover:bg-amber-100 transition-colors"
+                    data-testid={`button-plexus-iq-assign-${row.id}`}
+                  >
+                    <CalendarPlus className="w-3.5 h-3.5" />
+                    Assign date
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

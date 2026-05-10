@@ -34,13 +34,16 @@ export function PlexusIQAddPatientModal({
 }: {
   open: boolean;
   onClose: () => void;
+  // Returns true on success, false on failure. The modal only resets +
+  // closes when onSubmit returns true so the user keeps their input on
+  // failure and can correct + retry.
   onSubmit: (input: {
     facility: string;
     scheduleDate: string;
     patientType: PatientType;
     name: string;
     time?: string;
-  }) => void | Promise<void>;
+  }) => Promise<boolean>;
   pending: boolean;
 }) {
   const [facility, setFacility] = useState<string>("");
@@ -70,15 +73,17 @@ export function PlexusIQAddPatientModal({
       return;
     }
     setError(null);
-    await onSubmit({
+    const ok = await onSubmit({
       facility,
       scheduleDate,
       patientType,
       name: name.trim(),
       time: time.trim() || undefined,
     });
-    reset();
-    onClose();
+    if (ok) {
+      reset();
+      onClose();
+    }
   }
 
   return (
