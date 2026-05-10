@@ -4,7 +4,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ChevronRight, User } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import type { PatientScreening } from "@shared/schema";
 import {
   categoryIcons,
@@ -13,6 +13,7 @@ import {
   type AncillaryCategory,
 } from "@/features/schedule/ancillaryMeta";
 import type { ReasoningValue } from "@/lib/pdfGeneration";
+import { PatientSilhouette } from "@/components/PatientSilhouette";
 
 const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound"];
 
@@ -42,13 +43,6 @@ function deriveAge(dob: string | null | undefined, fallback: number | null | und
   if (md < 0 || (md === 0 && now.getDate() < dobDate.getDate())) age -= 1;
   if (age < 0 || age > 130) return "";
   return String(age);
-}
-
-function deriveInitials(name: string): string {
-  const parts = (name || "").split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "";
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 interface PatientDetailDialogProps {
@@ -84,7 +78,6 @@ export function PatientDetailDialog({
   }
 
   const displayName = (patient.name || "").trim() || "Unnamed patient";
-  const initials = deriveInitials(displayName);
   const ageText = deriveAge(patient.dob, patient.age);
   const tests = patient.qualifyingTests || [];
   const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
@@ -109,13 +102,9 @@ export function PatientDetailDialog({
           <div className="flex items-center gap-4">
             <div
               aria-hidden="true"
-              className="shrink-0 inline-flex items-center justify-center h-14 w-14 rounded-full bg-slate-900 text-white"
+              className="shrink-0 inline-flex items-center justify-center h-14 w-14 rounded-full bg-plexus-navy-800 text-white"
             >
-              {initials ? (
-                <span className="text-base font-semibold tracking-wide">{initials}</span>
-              ) : (
-                <User className="w-6 h-6" />
-              )}
+              <PatientSilhouette gender={patient.gender} className="w-7 h-7" />
             </div>
             <div className="min-w-0 flex-1">
               <DialogTitle
