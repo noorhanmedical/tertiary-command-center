@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
-import { Loader2, Sparkles, Trash2, User } from "lucide-react";
+import { Loader2, Sparkles, Trash2 } from "lucide-react";
+import { PatientSilhouette } from "@/components/PatientSilhouette";
 import type { AncillaryAppointment, PatientScreening, ScreeningBatch } from "@shared/schema";
 import {
   categoryIcons,
@@ -169,13 +170,6 @@ export function PatientCard({
 
   const showTimeInBanner = typeLabel === "Visit" && !!patient.time;
 
-  const initials = ((): string => {
-    const parts = displayName.split(/\s+/).filter(Boolean);
-    if (parts.length === 0) return "";
-    if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  })();
-
   const openEdit = () => setEditOpen(true);
 
   return (
@@ -193,7 +187,7 @@ export function PatientCard({
       data-testid={`card-patient-${patient.id}`}
     >
       <div
-        className="relative px-5 py-5 bg-slate-900 text-white"
+        className="relative px-5 py-5 bg-plexus-navy-800 text-white"
         data-testid={`banner-patient-${patient.id}`}
       >
         <div className="flex items-start justify-between gap-3">
@@ -202,13 +196,7 @@ export function PatientCard({
               aria-hidden="true"
               className="shrink-0 inline-flex items-center justify-center h-12 w-12 rounded-full bg-white/10 ring-1 ring-white/20 text-white"
             >
-              {initials ? (
-                <span className="text-sm font-semibold tracking-wide">
-                  {initials}
-                </span>
-              ) : (
-                <User className="w-5 h-5" />
-              )}
+              <PatientSilhouette gender={patient.gender} className="w-6 h-6" />
             </div>
 
             <div className="min-w-0 flex-1 flex flex-col justify-center">

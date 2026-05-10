@@ -14,13 +14,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
-  Building2, Calendar, Check, CheckSquare, ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Printer, Send, Share2, User, Users2,
+  Building2, Calendar, Check, CheckSquare, ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Printer, Send, Share2, Users2,
 } from "lucide-react";
 import type { PatientScreening, ScreeningBatch } from "@shared/schema";
 import { StepTimeline } from "@/components/StepTimeline";
 import { NotesPanelDrawer } from "@/components/NotesPanelDrawer";
 import { QualificationReasoningDialog } from "@/features/schedule/QualificationReasoningDialog";
 import { PatientDetailDialog } from "@/components/PatientDetailDialog";
+import { PatientSilhouette } from "@/components/PatientSilhouette";
 import { categoryIcons, getAncillaryCategory, type AncillaryCategory } from "@/features/schedule/ancillaryMeta";
 
 const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound"];
@@ -31,13 +32,6 @@ const FINAL_ANCILLARY_STROKE: Record<AncillaryCategory, string> = {
   ultrasound: "text-emerald-600",
   other: "text-slate-500",
 };
-
-function deriveInitials(name: string): string {
-  const parts = (name || "").split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "";
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
@@ -411,7 +405,6 @@ export function ResultsView({
               const isOutreach = (patient.patientType || "visit") === "outreach";
               const typeLabel: "Visit" | "Outreach" = isOutreach ? "Outreach" : "Visit";
               const showTimeBlock = !isOutreach && !!patient.time;
-              const initials = deriveInitials(patient.name || "");
               const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
               const visibleCategories = ANCILLARY_ORDER.filter(
                 (c) => allTests.some((t) => getAncillaryCategory(t) === c),
@@ -439,16 +432,12 @@ export function ResultsView({
                   data-testid={`row-result-${patient.id}`}
                 >
                   <div className="flex items-stretch min-h-[88px]">
-                    <div className="bg-slate-900 text-white flex items-center gap-3 px-5 py-4 shrink-0 w-[44%] max-w-[460px] min-w-[260px]">
+                    <div className="bg-plexus-navy-800 text-white flex items-center gap-3 px-5 py-4 shrink-0 w-[44%] max-w-[460px] min-w-[260px]">
                       <div
                         aria-hidden="true"
                         className="shrink-0 inline-flex items-center justify-center h-12 w-12 rounded-full bg-white/10 ring-1 ring-white/20 text-white"
                       >
-                        {initials ? (
-                          <span className="text-sm font-semibold tracking-wide">{initials}</span>
-                        ) : (
-                          <User className="w-5 h-5" />
-                        )}
+                        <PatientSilhouette gender={patient.gender} className="w-6 h-6" />
                       </div>
                       <div className="min-w-0 flex-1">
                         {showTimeBlock ? (
