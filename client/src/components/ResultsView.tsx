@@ -203,6 +203,7 @@ export function ResultsView({
   selectedTestDetail,
   setSelectedTestDetail,
   onUpdatePatient,
+  chromeless = false,
 }: {
   batch: ScreeningBatchWithPatients | undefined;
   patients: PatientScreening[];
@@ -216,6 +217,11 @@ export function ResultsView({
   selectedTestDetail: { patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null;
   setSelectedTestDetail: (v: { patientId: number; category: string; tests: string[]; reasoning: Record<string, ReasoningValue> } | null) => void;
   onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
+  // When true, suppress the StepTimeline + sidebar trigger + title block. The
+  // caller (e.g. Plexus IQ day modal) supplies its own dialog header but still
+  // wants the actions row (Plexus PDF / Clinician PDF / Share / Export /
+  // Send All) and the patient bars. Default false preserves Visit/Outreach.
+  chromeless?: boolean;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -365,25 +371,8 @@ export function ResultsView({
 
   return (
     <div className="flex flex-col h-full relative z-10">
-      <header className="bg-white/80 backdrop-blur-xl sticky top-0 z-50 border-b border-slate-200/60">
-        <StepTimeline current="results" onNavigate={onNavigate} canGoToResults={true} />
-        <div className="px-8 lg:px-[10%] py-3 flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-2">
-            <SidebarTrigger data-testid="button-sidebar-toggle-results" />
-            <div>
-              <h1 className="text-base font-semibold tracking-tight" data-testid="text-results-title">{batch?.name} — Final Schedule</h1>
-              {batch?.clinicianName && (
-                <p className="text-xs font-medium text-primary" data-testid="text-results-clinician">Dr. {batch.clinicianName}</p>
-              )}
-              {batch?.facility && (
-                <p className="text-xs text-slate-600 flex items-center gap-1" data-testid="text-results-facility">
-                  <Building2 className="w-3 h-3 inline" />
-                  {batch.facility}
-                </p>
-              )}
-              <p className="text-xs text-slate-900">{patients.length} patients screened</p>
-            </div>
-          </div>
+      {chromeless ? (
+        <div className="bg-white border-b border-slate-200/60 px-4 sm:px-6 py-3 flex items-center justify-end gap-2 flex-wrap">
           <ResultsHeaderActions
             patients={patients}
             shareButtonText={shareButtonText}
@@ -395,7 +384,39 @@ export function ResultsView({
             isSendingAll={isSendingAll}
           />
         </div>
-      </header>
+      ) : (
+        <header className="bg-white/80 backdrop-blur-xl sticky top-0 z-50 border-b border-slate-200/60">
+          <StepTimeline current="results" onNavigate={onNavigate} canGoToResults={true} />
+          <div className="px-8 lg:px-[10%] py-3 flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <SidebarTrigger data-testid="button-sidebar-toggle-results" />
+              <div>
+                <h1 className="text-base font-semibold tracking-tight" data-testid="text-results-title">{batch?.name} — Final Schedule</h1>
+                {batch?.clinicianName && (
+                  <p className="text-xs font-medium text-primary" data-testid="text-results-clinician">Dr. {batch.clinicianName}</p>
+                )}
+                {batch?.facility && (
+                  <p className="text-xs text-slate-600 flex items-center gap-1" data-testid="text-results-facility">
+                    <Building2 className="w-3 h-3 inline" />
+                    {batch.facility}
+                  </p>
+                )}
+                <p className="text-xs text-slate-900">{patients.length} patients screened</p>
+              </div>
+            </div>
+            <ResultsHeaderActions
+              patients={patients}
+              shareButtonText={shareButtonText}
+              onShare={handleShare}
+              onExport={onExport}
+              onClinicianPdf={handleOpenClinicianPdf}
+              onPlexusPdf={handleOpenPlexusPdf}
+              onSendAllToScheduler={handleSendAllToScheduler}
+              isSendingAll={isSendingAll}
+            />
+          </div>
+        </header>
+      )}
 
       <main className="flex-1 overflow-auto bg-slate-50/50">
         <div className="px-8 lg:px-[10%] py-6">
