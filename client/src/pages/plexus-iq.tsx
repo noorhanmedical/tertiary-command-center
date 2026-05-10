@@ -1,15 +1,28 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Loader2, Plus, Upload } from "lucide-react";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { CalendarDays, Loader2, Plus, Upload } from "lucide-react";
 import {
   useScreeningBatches,
   useCreateBatch,
   useAddPatient,
+  useUpdatePatient,
+  useDeletePatient,
+  useAnalyzePatient,
+  useStartBatchAnalysis,
+  useInvalidateBatch,
+  fetchAnalysisStatus,
 } from "@/hooks/api/screening-batches";
 import { useToast } from "@/hooks/use-toast";
-import type { ScreeningBatch } from "@shared/schema";
+import type { ScreeningBatch, PatientScreening } from "@shared/schema";
+import { qk } from "@/hooks/api/keys";
 import { apiRequest } from "@/lib/queryClient";
 import { PlexusIQCalendar, type CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 import { PlexusIQAddPatientModal } from "@/components/plexus-iq/PlexusIQAddPatientModal";
@@ -19,34 +32,52 @@ import {
 } from "@/components/plexus-iq/PlexusIQBulkImportModal";
 import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
 import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
+import { PlexusIQWorkspace } from "@/components/plexus-iq/PlexusIQWorkspace";
 
-// Plexus IQ page — calendar-first multi-day, multi-facility workspace.
+// Plexus IQ page — patient workspace center + calendar drawer.
 //
-// Architecture:
+// Layout:
+//   Left   — existing app sidebar (provided by App.tsx route shell).
+//   Center — PlexusIQWorkspace: real screening_batches grouped by
+//            facility/date, each section listing the existing PatientCard.
+//   Right  — Sheet drawer (toggled by the calendar icon in the header)
+//            containing PlexusIQCalendar. Date click opens the canonical
+//            <ResultsView/> via PlexusIQDayModal.
+//
+// Architecture rules (preserved from prior hardening pass):
 //   - Plexus IQ owns NO batch of its own.
-//   - The single source of truth is screening_batches keyed by
+//   - Single source of truth: screening_batches keyed by
 //     (facility, scheduleDate). Add Patient and Bulk Import resolve to or
-//     create the matching batch on demand.
+//     create the matching batch on demand via resolveBatchId.
 //   - The day-click popup is the canonical <ResultsView/> rendered inside
 //     a Dialog (with chromeless=true), so PDFs / Share / Export / Send to
 //     Scheduler all come for free from the existing wiring.
-//   - The inline calendar reads from a single aggregated endpoint
+//   - The calendar reads from a single aggregated endpoint
 //     (/api/screening-batches/calendar-summary) that returns one row per
-//     batch with patientCount + categories. No N+1 fan-out per batch.
+//     batch with patientCount + categories. No per-batch fan-out for the
+//     calendar.
+//   - The center workspace fetches per-batch detail ONLY for batches with
+//     patientCount > 0 (lazy `useQueries` over the active subset). Empty
+//     historical batches don't trigger detail fetches.
 //   - Concurrent "Add Patient" clicks for the same (facility, date) are
 //     deduplicated via pendingCreatesRef so we don't double-create batches
 //     during the gap between create resolution and React Query refetch.
 
 const CALENDAR_SUMMARY_KEY = ["/api/screening-batches/calendar-summary"] as const;
 
+type BatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
+
 export default function PlexusIQPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const invalidateBatch = useInvalidateBatch();
   const createBatchMut = useCreateBatch();
   const addPatientMut = useAddPatient();
+  const updatePatientMut = useUpdatePatient();
+  const deletePatientMut = useDeletePatient();
+  const analyzePatientMut = useAnalyzePatient();
+  const startAnalysisMut = useStartBatchAnalysis();
 
-  // Used by Add Patient + Bulk Import to choose between "use existing batch
-  // by id" vs "POST a new one". Lightweight (no patient payloads).
   const { data: batches = [] } = useScreeningBatches();
 
   // Aggregated payload for the calendar (counts + ancillary categories).
@@ -63,16 +94,46 @@ export default function PlexusIQPage() {
     staleTime: 15_000,
   });
 
-  // Day-click modal state.
+  // Active batches = those with at least one patient. Only these need
+  // per-batch detail hydration for the workspace render.
+  const activeBatchIds = useMemo(
+    () => summary.filter((s) => s.patientCount > 0).map((s) => s.id),
+    [summary],
+  );
+
+  const detailQueries = useQueries({
+    queries: activeBatchIds.map((id) => ({
+      queryKey: qk.screeningBatches.detail(id),
+      queryFn: async () => {
+        const res = await fetch(`/api/screening-batches/${id}`, { credentials: "include" });
+        if (!res.ok) throw new Error(`Batch detail fetch failed (${res.status})`);
+        return (await res.json()) as BatchWithPatients;
+      },
+      staleTime: 30_000,
+    })),
+  });
+
+  const batchDetails = useMemo<Record<number, BatchWithPatients>>(() => {
+    const map: Record<number, BatchWithPatients> = {};
+    detailQueries.forEach((q, i) => {
+      const id = activeBatchIds[i];
+      if (id != null && q.data) map[id] = q.data;
+    });
+    return map;
+  }, [detailQueries, activeBatchIds]);
+
+  // ───── Modals + drawer state ─────────────────────────────────────────
+  const [addOpen, setAddOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [openDate, setOpenDate] = useState<string | null>(null);
+
   const batchesForOpenDate = useMemo(
     () => (openDate ? batches.filter((b) => b.scheduleDate === openDate) : []),
     [batches, openDate],
   );
 
-  // Add Patient + Bulk Import modal state.
-  const [addOpen, setAddOpen] = useState(false);
-  const [bulkOpen, setBulkOpen] = useState(false);
+  // ───── Bulk import progress ──────────────────────────────────────────
   const [bulkProgress, setBulkProgress] = useState<{
     current: number;
     total: number;
@@ -81,23 +142,23 @@ export default function PlexusIQPage() {
   } | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
 
-  // Assign-date dialog state for the unscheduled-batches panel.
+  // Assign-date dialog state for the unscheduled-batches panel inside the
+  // calendar drawer.
   const [assignTarget, setAssignTarget] = useState<{ id: number; label: string } | null>(null);
   const [assignPending, setAssignPending] = useState(false);
 
   // Dedup concurrent "Add Patient" clicks targeting the same (facility, date).
-  // If a batch creation for a key is already in flight, all callers reuse the
-  // same promise instead of POSTing /api/batches twice.
   const pendingCreatesRef = useRef<Map<string, Promise<number>>>(new Map());
+
+  // ───── Per-batch + per-patient analysis tracking ─────────────────────
+  const [analyzingBatchId, setAnalyzingBatchId] = useState<number | null>(null);
+  const [analyzingPatients, setAnalyzingPatients] = useState<Set<number>>(new Set());
 
   const refreshAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
     queryClient.invalidateQueries({ queryKey: CALENDAR_SUMMARY_KEY });
   }, [queryClient]);
 
-  // Resolve the target batch id for a given (facility, scheduleDate) pair,
-  // creating a new batch if none exists yet. Concurrent calls with the same
-  // key share a single in-flight POST.
   const resolveBatchId = useCallback(
     async (facility: string, scheduleDate: string): Promise<number> => {
       const existing = batches.find(
@@ -249,9 +310,115 @@ export default function PlexusIQPage() {
     [toast, refreshAll],
   );
 
+  // ───── Per-patient mutations (used by PatientCard inside workspace) ──
+  const handleUpdatePatient = useCallback(
+    (id: number, updates: Record<string, unknown>) => {
+      updatePatientMut.mutate(
+        { id, updates },
+        {
+          onError: (err: unknown) => {
+            toast({
+              title: "Update failed",
+              description: err instanceof Error ? err.message : "Something went wrong",
+              variant: "destructive",
+            });
+          },
+        },
+      );
+    },
+    [updatePatientMut, toast],
+  );
+
+  const handleDeletePatient = useCallback(
+    (id: number) => {
+      deletePatientMut.mutate(id, {
+        onSuccess: () => refreshAll(),
+      });
+    },
+    [deletePatientMut, refreshAll],
+  );
+
+  const handleAnalyzePatient = useCallback(
+    async (patientId: number) => {
+      setAnalyzingPatients((prev) => new Set(prev).add(patientId));
+      try {
+        await analyzePatientMut.mutateAsync(patientId);
+        const owning = batches.find((b) =>
+          (batchDetails[b.id]?.patients ?? []).some((p) => p.id === patientId),
+        );
+        if (owning) invalidateBatch(owning.id);
+        refreshAll();
+        toast({ title: "Patient analyzed" });
+      } catch (err) {
+        toast({
+          title: "Analysis failed",
+          description: err instanceof Error ? err.message : "Analysis failed",
+          variant: "destructive",
+        });
+      } finally {
+        setAnalyzingPatients((prev) => {
+          const next = new Set(prev);
+          next.delete(patientId);
+          return next;
+        });
+      }
+    },
+    [analyzePatientMut, batches, batchDetails, invalidateBatch, refreshAll, toast],
+  );
+
+  // Generate All for a single batch — runs the canonical batch analysis
+  // pipeline and polls the existing /api/batches/:id/analysis-status route.
+  const handleGenerateBatch = useCallback(
+    (batchId: number) => {
+      if (analyzingBatchId !== null) return;
+      setAnalyzingBatchId(batchId);
+      startAnalysisMut.mutate(batchId, {
+        onSuccess: async () => {
+          const MAX_POLLS = 300;
+          try {
+            for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
+              const status = await fetchAnalysisStatus(batchId);
+              if (status.status === "completed") {
+                invalidateBatch(batchId);
+                refreshAll();
+                toast({
+                  title: "Analysis complete",
+                  description: "Patients in this batch have been screened.",
+                });
+                return;
+              }
+              if (status.status === "failed") {
+                throw new Error(status.errorMessage || "Analysis failed.");
+              }
+              await new Promise((r) => setTimeout(r, 3000));
+            }
+            throw new Error("Analysis taking longer than expected.");
+          } catch (err) {
+            toast({
+              title: "Analysis failed",
+              description: err instanceof Error ? err.message : "Analysis failed",
+              variant: "destructive",
+            });
+          } finally {
+            setAnalyzingBatchId(null);
+          }
+        },
+        onError: (err: Error) => {
+          setAnalyzingBatchId(null);
+          toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
+        },
+      });
+    },
+    [analyzingBatchId, startAnalysisMut, invalidateBatch, refreshAll, toast],
+  );
+
+  const handleOpenFinalSchedule = useCallback((scheduleDate: string) => {
+    setOpenDate(scheduleDate);
+  }, []);
+
   return (
-    <div className="flex flex-col h-full">
-      <div className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
+    <div className="flex flex-col h-full w-full min-w-0">
+      <header className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />
@@ -284,17 +451,57 @@ export default function PlexusIQPage() {
               <Plus className="w-4 h-4" />
               Add Patient
             </Button>
+            <button
+              type="button"
+              onClick={() => setCalendarOpen(true)}
+              aria-label="Open calendar"
+              title="Calendar"
+              className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-plexus-navy-800 text-white shadow-sm hover:bg-plexus-navy-700 transition-colors"
+              data-testid="button-plexus-iq-calendar"
+            >
+              <CalendarDays className="w-4 h-4" />
+            </button>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
-        <PlexusIQCalendar
+      <main className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
+        <PlexusIQWorkspace
           summary={summary}
-          onSelectDate={(d) => setOpenDate(d)}
-          onAssignDate={(id, label) => setAssignTarget({ id, label })}
+          batchDetails={batchDetails}
+          analyzingBatchId={analyzingBatchId}
+          analyzingPatients={analyzingPatients}
+          onGenerateBatch={handleGenerateBatch}
+          onOpenFinalSchedule={handleOpenFinalSchedule}
+          onUpdatePatient={handleUpdatePatient}
+          onDeletePatient={handleDeletePatient}
+          onAnalyzeOnePatient={handleAnalyzePatient}
         />
-      </div>
+      </main>
+
+      <Sheet open={calendarOpen} onOpenChange={(v) => { if (!v) setCalendarOpen(false); }}>
+        <SheetContent
+          side="right"
+          className="w-full sm:max-w-xl p-0 gap-0 flex flex-col"
+          data-testid="plexus-iq-calendar-sheet"
+        >
+          <SheetHeader className="px-5 pt-5 pb-3 border-b">
+            <SheetTitle className="text-base font-semibold tracking-tight">
+              Calendar
+            </SheetTitle>
+          </SheetHeader>
+          <div className="flex-1 min-h-0 overflow-auto">
+            <PlexusIQCalendar
+              summary={summary}
+              onSelectDate={(d) => {
+                setOpenDate(d);
+                setCalendarOpen(false);
+              }}
+              onAssignDate={(id, label) => setAssignTarget({ id, label })}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <PlexusIQAddPatientModal
         open={addOpen}
