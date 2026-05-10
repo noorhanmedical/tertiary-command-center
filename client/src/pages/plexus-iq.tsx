@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Loader2, Plus, Upload } from "lucide-react";
@@ -9,16 +9,16 @@ import {
   useAddPatient,
 } from "@/hooks/api/screening-batches";
 import { useToast } from "@/hooks/use-toast";
-import type { ScreeningBatch, PatientScreening } from "@shared/schema";
-import { qk } from "@/hooks/api/keys";
-import { PlexusIQCalendar } from "@/components/plexus-iq/PlexusIQCalendar";
+import type { ScreeningBatch } from "@shared/schema";
+import { apiRequest } from "@/lib/queryClient";
+import { PlexusIQCalendar, type CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 import { PlexusIQAddPatientModal } from "@/components/plexus-iq/PlexusIQAddPatientModal";
 import {
   PlexusIQBulkImportModal,
   type ParsedRow,
 } from "@/components/plexus-iq/PlexusIQBulkImportModal";
 import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
-import { findOrCreateBatchByFacilityDate } from "@/components/plexus-iq/findOrCreateBatch";
+import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
 
 // Plexus IQ page — calendar-first multi-day, multi-facility workspace.
 //
@@ -26,15 +26,18 @@ import { findOrCreateBatchByFacilityDate } from "@/components/plexus-iq/findOrCr
 //   - Plexus IQ owns NO batch of its own.
 //   - The single source of truth is screening_batches keyed by
 //     (facility, scheduleDate). Add Patient and Bulk Import resolve to or
-//     create the matching batch on demand via findOrCreateBatchByFacilityDate.
+//     create the matching batch on demand.
 //   - The day-click popup is the canonical <ResultsView/> rendered inside
 //     a Dialog (with chromeless=true), so PDFs / Share / Export / Send to
 //     Scheduler all come for free from the existing wiring.
-//   - The inline calendar reads patient counts and ancillary categories from
-//     each batch's detail (lazy-fetched via useQueries) and reads
-//     "completed" indicators from /api/global-schedule-events.
+//   - The inline calendar reads from a single aggregated endpoint
+//     (/api/screening-batches/calendar-summary) that returns one row per
+//     batch with patientCount + categories. No N+1 fan-out per batch.
+//   - Concurrent "Add Patient" clicks for the same (facility, date) are
+//     deduplicated via pendingCreatesRef so we don't double-create batches
+//     during the gap between create resolution and React Query refetch.
 
-type BatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
+const CALENDAR_SUMMARY_KEY = ["/api/screening-batches/calendar-summary"] as const;
 
 export default function PlexusIQPage() {
   const { toast } = useToast();
@@ -42,35 +45,23 @@ export default function PlexusIQPage() {
   const createBatchMut = useCreateBatch();
   const addPatientMut = useAddPatient();
 
+  // Used by Add Patient + Bulk Import to choose between "use existing batch
+  // by id" vs "POST a new one". Lightweight (no patient payloads).
   const { data: batches = [] } = useScreeningBatches();
 
-  // Lazy-fetch each batch's detail (just for the patient count + ancillaries
-  // shown in the calendar dots). Batches without a scheduleDate never land
-  // on the calendar, so we skip them. React Query dedupes with the per-batch
-  // detail fetches done elsewhere (e.g. inside the day modal), so opening a
-  // day doesn't refetch.
-  const datedBatches = useMemo(() => batches.filter((b) => !!b.scheduleDate), [batches]);
-
-  const detailQueries = useQueries({
-    queries: datedBatches.map((b) => ({
-      queryKey: qk.screeningBatches.detail(b.id),
-      queryFn: async () => {
-        const res = await fetch(`/api/screening-batches/${b.id}`, { credentials: "include" });
-        if (!res.ok) throw new Error(`Batch detail fetch failed (${res.status})`);
-        return (await res.json()) as BatchWithPatients;
-      },
-      staleTime: 30_000,
-    })),
+  // Aggregated payload for the calendar (counts + ancillary categories).
+  // Single round-trip; replaces the old per-batch detail fan-out.
+  const { data: summary = [] } = useQuery<CalendarSummaryRow[]>({
+    queryKey: CALENDAR_SUMMARY_KEY,
+    queryFn: async () => {
+      const res = await fetch("/api/screening-batches/calendar-summary", {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Calendar summary fetch failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: 15_000,
   });
-
-  const batchDetails = useMemo<Record<number, BatchWithPatients>>(() => {
-    const map: Record<number, BatchWithPatients> = {};
-    detailQueries.forEach((q, i) => {
-      const id = datedBatches[i]?.id;
-      if (id != null && q.data) map[id] = q.data;
-    });
-    return map;
-  }, [detailQueries, datedBatches]);
 
   // Day-click modal state.
   const [openDate, setOpenDate] = useState<string | null>(null);
@@ -90,10 +81,54 @@ export default function PlexusIQPage() {
   } | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
 
-  const refreshBatches = useCallback(() => {
+  // Assign-date dialog state for the unscheduled-batches panel.
+  const [assignTarget, setAssignTarget] = useState<{ id: number; label: string } | null>(null);
+  const [assignPending, setAssignPending] = useState(false);
+
+  // Dedup concurrent "Add Patient" clicks targeting the same (facility, date).
+  // If a batch creation for a key is already in flight, all callers reuse the
+  // same promise instead of POSTing /api/batches twice.
+  const pendingCreatesRef = useRef<Map<string, Promise<number>>>(new Map());
+
+  const refreshAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+    queryClient.invalidateQueries({ queryKey: CALENDAR_SUMMARY_KEY });
   }, [queryClient]);
 
+  // Resolve the target batch id for a given (facility, scheduleDate) pair,
+  // creating a new batch if none exists yet. Concurrent calls with the same
+  // key share a single in-flight POST.
+  const resolveBatchId = useCallback(
+    async (facility: string, scheduleDate: string): Promise<number> => {
+      const existing = batches.find(
+        (b) => b.facility === facility && b.scheduleDate === scheduleDate,
+      );
+      if (existing) return existing.id;
+
+      const key = `${facility}::${scheduleDate}`;
+      const inFlight = pendingCreatesRef.current.get(key);
+      if (inFlight) return inFlight;
+
+      const promise = createBatchMut
+        .mutateAsync({
+          name: `${facility} - ${scheduleDate}`,
+          facility,
+          scheduleDate,
+        })
+        .then((b) => (b as { id: number }).id);
+      pendingCreatesRef.current.set(key, promise);
+      try {
+        return await promise;
+      } finally {
+        pendingCreatesRef.current.delete(key);
+      }
+    },
+    [batches, createBatchMut],
+  );
+
+  // Returns true on success, false on failure. The Add Patient modal uses
+  // the boolean to decide whether to clear and close itself; on failure we
+  // leave the modal open so the user can correct and retry.
   const handleAddPatient = useCallback(
     async (input: {
       facility: string;
@@ -101,14 +136,9 @@ export default function PlexusIQPage() {
       patientType: "visit" | "outreach";
       name: string;
       time?: string;
-    }) => {
+    }): Promise<boolean> => {
       try {
-        const targetBatchId = await findOrCreateBatchByFacilityDate({
-          facility: input.facility,
-          scheduleDate: input.scheduleDate,
-          allBatches: batches,
-          createBatch: (i) => createBatchMut.mutateAsync(i) as Promise<{ id: number }>,
-        });
+        const targetBatchId = await resolveBatchId(input.facility, input.scheduleDate);
         await addPatientMut.mutateAsync({
           batchId: targetBatchId,
           name: input.name,
@@ -119,16 +149,18 @@ export default function PlexusIQPage() {
           title: "Patient added",
           description: `${input.facility} on ${input.scheduleDate}`,
         });
-        refreshBatches();
+        refreshAll();
+        return true;
       } catch (err) {
         toast({
           title: "Add failed",
           description: err instanceof Error ? err.message : "Could not add patient",
           variant: "destructive",
         });
+        return false;
       }
     },
-    [batches, createBatchMut, addPatientMut, toast, refreshBatches],
+    [resolveBatchId, addPatientMut, toast, refreshAll],
   );
 
   const handleBulkImport = useCallback(
@@ -136,8 +168,6 @@ export default function PlexusIQPage() {
       if (rows.length === 0) return;
       setBulkPending(true);
 
-      // Group rows by (facility, scheduleDate) so we resolve each batch only
-      // once, then post all of that group's patients in sequence.
       const groups = new Map<string, ParsedRow[]>();
       for (const r of rows) {
         const key = `${r.facility}::${r.scheduleDate}`;
@@ -151,23 +181,9 @@ export default function PlexusIQPage() {
       const total = rows.length;
 
       try {
-        // Snapshot the current batches list once and grow it in memory as we
-        // create new batches inside this import; this avoids round-tripping
-        // through React Query for each new batch.
-        let workingBatches: ScreeningBatch[] = [...batches];
-
         for (const [, groupRows] of groups) {
           const first = groupRows[0];
-          const targetBatchId = await findOrCreateBatchByFacilityDate({
-            facility: first.facility,
-            scheduleDate: first.scheduleDate,
-            allBatches: workingBatches,
-            createBatch: async (i) => {
-              const created = (await createBatchMut.mutateAsync(i)) as ScreeningBatch & { id: number };
-              workingBatches = [...workingBatches, created as ScreeningBatch];
-              return created;
-            },
-          });
+          const targetBatchId = await resolveBatchId(first.facility, first.scheduleDate);
 
           for (const r of groupRows) {
             await addPatientMut.mutateAsync({
@@ -190,7 +206,7 @@ export default function PlexusIQPage() {
           title: "Import complete",
           description: `Imported ${total} patient${total === 1 ? "" : "s"} into ${groups.size} batch${groups.size === 1 ? "" : "es"} across ${uniqueFacilities} facilit${uniqueFacilities === 1 ? "y" : "ies"}.`,
         });
-        refreshBatches();
+        refreshAll();
         setBulkOpen(false);
       } catch (err) {
         toast({
@@ -203,7 +219,34 @@ export default function PlexusIQPage() {
         setBulkProgress(null);
       }
     },
-    [batches, createBatchMut, addPatientMut, toast, refreshBatches],
+    [resolveBatchId, addPatientMut, toast, refreshAll],
+  );
+
+  const handleAssignDate = useCallback(
+    async (batchId: number, isoDate: string) => {
+      setAssignPending(true);
+      try {
+        const res = await apiRequest("PATCH", `/api/screening-batches/${batchId}`, {
+          scheduleDate: isoDate,
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error ?? `Failed (${res.status})`);
+        }
+        toast({ title: "Date assigned", description: `Batch scheduled for ${isoDate}` });
+        refreshAll();
+        setAssignTarget(null);
+      } catch (err) {
+        toast({
+          title: "Could not assign date",
+          description: err instanceof Error ? err.message : "Update failed",
+          variant: "destructive",
+        });
+      } finally {
+        setAssignPending(false);
+      }
+    },
+    [toast, refreshAll],
   );
 
   return (
@@ -247,9 +290,9 @@ export default function PlexusIQPage() {
 
       <div className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
         <PlexusIQCalendar
-          batches={batches}
-          batchDetails={batchDetails}
+          summary={summary}
           onSelectDate={(d) => setOpenDate(d)}
+          onAssignDate={(id, label) => setAssignTarget({ id, label })}
         />
       </div>
 
@@ -271,8 +314,17 @@ export default function PlexusIQPage() {
       <PlexusIQDayModal
         open={openDate !== null}
         isoDate={openDate}
-        batchesForDate={batchesForOpenDate}
+        batchesForDate={batchesForOpenDate as ScreeningBatch[]}
         onClose={() => setOpenDate(null)}
+      />
+
+      <PlexusIQAssignDateDialog
+        open={assignTarget !== null}
+        batchId={assignTarget?.id ?? null}
+        batchLabel={assignTarget?.label ?? ""}
+        onClose={() => setAssignTarget(null)}
+        onAssign={handleAssignDate}
+        pending={assignPending}
       />
 
       {(addPatientMut.isPending || createBatchMut.isPending) && (
