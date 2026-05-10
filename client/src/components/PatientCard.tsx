@@ -174,7 +174,14 @@ export function PatientCard({
 
   const openEdit = () => setEditOpen(true);
 
+  // The two dialogs below are rendered as siblings of <Card>, NOT as children.
+  // React's synthetic event system propagates events along the React parent
+  // tree even across Radix portals — so a click on the dialog Done/X/overlay
+  // would bubble to the clickable <Card onClick={openEdit}> and reopen the
+  // dialog in the same render. Hoisting them out of the Card subtree breaks
+  // that bubble path while keeping card-click-to-open behavior intact.
   return (
+    <>
     <Card
       role="button"
       tabIndex={0}
@@ -333,25 +340,27 @@ export function PatientCard({
         </div>
       </div>
 
-      <PatientEditDialog
-        patient={patient}
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        onUpdate={onUpdate}
-        showTime={sourceMode !== "outreach"}
-        qualifyingTests={tests}
-        generatingTests={generatingTests}
-        onAddTest={handleAddTest}
-        onRemoveTest={handleRemoveTest}
-        onAnalyze={onAnalyze}
-        isAnalyzing={isAnalyzing}
-        isCompleted={isCompleted}
-      />
-
-      <QualificationReasoningDialog
-        selectedTestDetail={selectedTestDetail}
-        setSelectedTestDetail={setSelectedTestDetail}
-      />
     </Card>
+
+    <PatientEditDialog
+      patient={patient}
+      open={editOpen}
+      onClose={() => setEditOpen(false)}
+      onUpdate={onUpdate}
+      showTime={sourceMode !== "outreach"}
+      qualifyingTests={tests}
+      generatingTests={generatingTests}
+      onAddTest={handleAddTest}
+      onRemoveTest={handleRemoveTest}
+      onAnalyze={onAnalyze}
+      isAnalyzing={isAnalyzing}
+      isCompleted={isCompleted}
+    />
+
+    <QualificationReasoningDialog
+      selectedTestDetail={selectedTestDetail}
+      setSelectedTestDetail={setSelectedTestDetail}
+    />
+    </>
   );
 }
