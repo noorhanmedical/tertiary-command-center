@@ -491,18 +491,27 @@ export function registerBatchRoutes(app: Express) {
         storage.getAllPatientScreenings(),
       ]);
 
-      type Acc = { count: number; cats: Set<string> };
+      type Acc = { count: number; cats: Set<string>; byCategory: Record<string, number> };
       const perBatch = new Map<number, Acc>();
       for (const p of allPatients) {
         let bucket = perBatch.get(p.batchId);
         if (!bucket) {
-          bucket = { count: 0, cats: new Set<string>() };
+          bucket = { count: 0, cats: new Set<string>(), byCategory: { brainwave: 0, vitalwave: 0, ultrasound: 0 } };
           perBatch.set(p.batchId, bucket);
         }
         bucket.count += 1;
+        const patientCats = new Set<string>();
         for (const t of p.qualifyingTests || []) {
           const cat = getAncillaryCategory(t);
-          if (cat !== "other") bucket.cats.add(cat);
+          if (cat !== "other") {
+            bucket.cats.add(cat);
+            patientCats.add(cat);
+          }
+        }
+        // Per-patient unique category counts so a patient with two BrainWave
+        // tests still counts as 1 BrainWave patient on the dashboard.
+        for (const cat of patientCats) {
+          bucket.byCategory[cat] = (bucket.byCategory[cat] ?? 0) + 1;
         }
       }
 
@@ -516,6 +525,7 @@ export function registerBatchRoutes(app: Express) {
           status: b.status,
           patientCount: acc?.count ?? 0,
           categories: acc ? Array.from(acc.cats) : [],
+          byCategory: acc?.byCategory ?? { brainwave: 0, vitalwave: 0, ultrasound: 0 },
         };
       });
       res.json(summary);

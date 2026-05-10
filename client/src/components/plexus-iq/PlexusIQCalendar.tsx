@@ -21,6 +21,7 @@ export type CalendarSummaryRow = {
   status: string;
   patientCount: number;
   categories: string[]; // subset of "brainwave" | "vitalwave" | "ultrasound"
+  byCategory: { brainwave: number; vitalwave: number; ultrasound: number };
 };
 
 const ANCILLARY_CATEGORIES: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound"];
@@ -61,12 +62,19 @@ export function PlexusIQCalendar({
   summary,
   onSelectDate,
   onAssignDate,
+  selectedDate,
+  compact = false,
 }: {
   // Aggregated rows from /api/screening-batches/calendar-summary. One row
   // per batch, regardless of whether scheduleDate is set.
   summary: CalendarSummaryRow[];
   onSelectDate: (isoDate: string) => void;
   onAssignDate: (batchId: number, batchLabel: string) => void;
+  // ISO date currently selected in the parent. Highlighted with a navy
+  // background; today still gets its own ring outline.
+  selectedDate?: string | null;
+  // Compact = right-panel sidebar mode: smaller cells, smaller padding.
+  compact?: boolean;
 }) {
   const [cursor, setCursor] = useState<Date>(() => startOfMonth(new Date()));
 
@@ -136,7 +144,7 @@ export function PlexusIQCalendar({
   const cursorMonth = cursor.getMonth();
 
   return (
-    <div className="w-full px-4 sm:px-6 lg:px-8 py-6 space-y-5">
+    <div className={`w-full ${compact ? "px-3 py-3 space-y-3" : "px-4 sm:px-6 lg:px-8 py-6 space-y-5"}`}>
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
@@ -178,23 +186,38 @@ export function PlexusIQCalendar({
           const hasCompleted = completedDays.has(key);
           const hasAny = count > 0 || cats.size > 0 || hasCompleted;
 
+          const isSelected = selectedDate === key;
           return (
             <button
               key={key}
               type="button"
               onClick={() => onSelectDate(key)}
-              className={`min-h-[100px] rounded-xl border text-left p-2.5 transition-colors flex flex-col ${
-                inMonth ? "border-slate-200 bg-white hover:border-plexus-navy-800/40 hover:bg-slate-50 cursor-pointer" : "border-transparent bg-slate-50/50 text-slate-400 cursor-pointer hover:bg-slate-100/60"
-              } ${isToday ? "ring-1 ring-plexus-navy-800 ring-offset-1" : ""}`}
+              className={`${compact ? "min-h-[52px] rounded-lg p-1.5" : "min-h-[100px] rounded-xl p-2.5"} border text-left transition-colors flex flex-col ${
+                isSelected
+                  ? "border-plexus-navy-800 bg-plexus-navy-800 text-white hover:bg-plexus-navy-700"
+                  : inMonth
+                    ? "border-slate-200 bg-white hover:border-plexus-navy-800/40 hover:bg-slate-50 cursor-pointer"
+                    : "border-transparent bg-slate-50/50 text-slate-400 cursor-pointer hover:bg-slate-100/60"
+              } ${isToday && !isSelected ? "ring-1 ring-plexus-navy-800 ring-offset-1" : ""}`}
               data-testid={`plexus-iq-day-${key}`}
             >
               <div className="flex items-center justify-between gap-1">
-                <span className={`text-sm font-semibold ${inMonth ? "text-slate-900" : "text-slate-400"}`}>
+                <span
+                  className={`${compact ? "text-xs" : "text-sm"} font-semibold ${
+                    isSelected
+                      ? "text-white"
+                      : inMonth
+                        ? "text-slate-900"
+                        : "text-slate-400"
+                  }`}
+                >
                   {d.getDate()}
                 </span>
                 {hasCompleted && (
                   <span
-                    className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-emerald-100 text-emerald-700"
+                    className={`inline-flex items-center justify-center h-4 w-4 rounded-full ${
+                      isSelected ? "bg-white/20 text-white" : "bg-emerald-100 text-emerald-700"
+                    }`}
                     title="Completed ancillary"
                     data-testid={`plexus-iq-day-completed-${key}`}
                   >
@@ -203,10 +226,15 @@ export function PlexusIQCalendar({
                 )}
               </div>
               {hasAny && (
-                <div className="mt-auto space-y-1.5">
-                  {count > 0 && (
-                    <div className="text-[11px] font-medium text-slate-700">
+                <div className={`mt-auto ${compact ? "space-y-0.5" : "space-y-1.5"}`}>
+                  {!compact && count > 0 && (
+                    <div className={`text-[11px] font-medium ${isSelected ? "text-white/90" : "text-slate-700"}`}>
                       {count} {count === 1 ? "patient" : "patients"}
+                    </div>
+                  )}
+                  {compact && count > 0 && (
+                    <div className={`text-[9px] font-medium tabular-nums ${isSelected ? "text-white/90" : "text-slate-600"}`}>
+                      {count}
                     </div>
                   )}
                   {cats.size > 0 && (
@@ -215,7 +243,9 @@ export function PlexusIQCalendar({
                         cats.has(c) ? (
                           <span
                             key={c}
-                            className={`inline-block h-1.5 w-1.5 rounded-full ${ANCILLARY_DOT_COLOR[c]}`}
+                            className={`inline-block ${compact ? "h-1 w-1" : "h-1.5 w-1.5"} rounded-full ${
+                              isSelected ? "bg-white/80" : ANCILLARY_DOT_COLOR[c]
+                            }`}
                             title={c}
                             data-testid={`plexus-iq-day-dot-${key}-${c}`}
                           />
