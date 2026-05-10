@@ -1,0 +1,87 @@
+# Calendar Migration Inventory
+
+This document tracks the **operational calendars** in the app and the order
+in which they should adopt the canonical primitives in
+`client/src/calendar/`. The primitive layer was added without removing
+any existing surface — migrations happen one screen at a time, in a
+controlled sequence, after the primitive layer is green.
+
+## Operational calendars to migrate
+
+These surfaces will eventually mount a canonical primitive
+(`<CanonicalCalendarIcon>`, `<UniversalCalendarDrawer>`, or
+`<UniversalCalendar>`) and stop owning their own calendar logic:
+
+| File / Surface                                                 | Profile target              |
+| -------------------------------------------------------------- | --------------------------- |
+| `client/src/components/plexus-iq/PlexusIQCalendar.tsx` <br/> `client/src/pages/plexus-iq.tsx` | `plexusIq`                  |
+| `client/src/components/outreach/TriClinicCalendar.tsx` <br/> `client/src/components/outreach/ExpandedSectionView.tsx` <br/> `client/src/pages/outreach-scheduler-portal.tsx` | `patientCareSpecialist`     |
+| `client/src/components/clinic-calendar.tsx` (MiniCalendar / SlotGrid) <br/> `client/src/components/portal/PortalShell.tsx` (MonthlyMiniCalendar) | `technician`                |
+| `client/src/pages/team-ops.tsx` (StaffingCalendarTab)          | `manager`                   |
+| `client/src/pages/schedule-dashboard.tsx`                      | `manager` (or `admin`)      |
+| `client/src/pages/appointments.tsx`                            | `manager`                   |
+| `client/src/components/AppointmentModal.tsx`                   | (drawer launcher)           |
+| `client/src/components/ScheduleTile.tsx`                       | (drawer launcher)           |
+
+## Date pickers — **do not** migrate
+
+These are not operational calendars; they pick a single date or range and
+should stay as-is:
+
+- `client/src/components/ui/calendar.tsx` (Radix-backed date picker primitive).
+- DOB / DOS / date input fields on patient cards and forms.
+- PTO range pickers when only used to select dates (e.g. PTO request form).
+- One-off date inputs used to drive a single API field.
+
+If a surface graduates from "pick a date" to "browse / manage scheduled
+work", it moves into the canonical primitive layer.
+
+## Migration order
+
+Migrations run roughly in this order so the most-used / highest-leverage
+surfaces convert first and inform downstream tweaks:
+
+1. **Plexus IQ** — already the de-facto pilot. Plexus IQ's drawer + day
+   modal become the canonical surfaces; existing `PlexusIQCalendar`
+   becomes a thin wrapper around `UniversalCalendar` with
+   `profileId="plexusIq"`.
+2. **Patient Care Specialist / scheduler calendar** — `TriClinicCalendar`
+   and the outreach scheduler portal adopt `profileId="patientCareSpecialist"`.
+3. **Technician / Liaison / portal monthly calendar** — `clinic-calendar`
+   MiniCalendar/SlotGrid and `PortalShell` MonthlyMiniCalendar adopt
+   `profileId="technician"`.
+4. **Manager / Admin / Team Ops staffing calendar** — `team-ops`
+   StaffingCalendarTab adopts `profileId="manager"`.
+5. **Schedule dashboard** — adopts `profileId="manager"` (or `admin` if
+   permission gating tightens).
+6. **Legacy appointments surfaces** — `appointments.tsx`,
+   `AppointmentModal.tsx`, `ScheduleTile.tsx`. These migrate last; some may
+   collapse into a launcher trigger that opens `UniversalCalendarDrawer`.
+
+## Migration mechanics
+
+- Existing calendar components are **not deleted** in this batch. They
+  stay live until each screen successfully boots through the canonical
+  primitives.
+- Each migration replaces the page's own filter list, add buttons, and
+  drawer/grid logic with `<UniversalCalendar profileId="..." context=...>`
+  (or `<UniversalCalendarDrawer>` for popover use).
+- After a screen is migrated and verified, its old calendar component file
+  can be deleted in a follow-up PR.
+- During migration, no schema changes are introduced. All data still flows
+  through `global_schedule_events`, `patient_screenings`, and
+  `patient_execution_cases` via existing routes. The mappers in
+  `calendarEventMapper.ts` adapt those rows to the canonical event shape.
+
+## Checklist for each migration PR
+
+- [ ] Page imports only from `@/calendar`.
+- [ ] No new schema or backend route created.
+- [ ] No new local calendar state owned by the page.
+- [ ] All add actions resolve to canonical APIs (no fake state).
+- [ ] Workflow-only statuses (needs new date, needs insurance review, …)
+      stay out of the calendar filter list.
+- [ ] Plexus IQ qualification keeps only `qualification_incomplete` and
+      `qualification_final`.
+- [ ] `npm run check` and `npm run build` pass.
+- [ ] DB QA suites still pass when `DATABASE_URL` is present.
