@@ -17,8 +17,10 @@ import DocumentUploadPage from "@/pages/document-upload";
 import AppointmentsPage from "@/pages/appointments";
 import OutreachPage from "@/pages/outreach";
 import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
-import TechnicianPortalPage from "@/pages/technician-portal";
-import LiaisonPortalPage from "@/pages/liaison-portal";
+// /technician-portal, /liaison-technician-portal, /liaison-portal now redirect
+// to /ancillary-care-specialist-portal. The page files
+// (technician-portal.tsx, liaison-portal.tsx) remain on disk for
+// compatibility but are no longer imported here.
 import AdminOpsPage from "@/pages/admin-ops";
 import AdminPage from "@/pages/admin";
 import StovetopHeatSettingsPage from "@/pages/stovetop-heat-settings";
@@ -39,6 +41,9 @@ import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
 import PlexusIQPage from "@/pages/plexus-iq";
+import TeamMemberPortalsPage from "@/pages/team-member-portals";
+import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
+import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
 
 const SIDEBAR_STYLE = {
   "--sidebar-width": "18rem",
@@ -103,18 +108,31 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/document-upload" component={DocumentUploadPage} />
                 <Route path="/appointments" component={AppointmentsPage} />
                 <Route path="/outreach/scheduler/:id" component={OutreachSchedulerPortalPage} />
-                <Route path="/outreach-center">
-                  <Redirect to="/scheduler-portal" />
+                <Route path="/team-member-portals">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <TeamMemberPortalsPage />
+                  </SidebarProvider>
                 </Route>
-                <Route path="/scheduler-portal" component={OutreachPage} />
+                <Route path="/patient-care-specialist-portal" component={PatientCareSpecialistPortalPage} />
+                <Route path="/ancillary-care-specialist-portal" component={AncillaryCareSpecialistPortalPage} />
+                <Route path="/outreach-center">
+                  <Redirect to="/patient-care-specialist-portal" />
+                </Route>
+                <Route path="/scheduler-portal">
+                  <Redirect to="/patient-care-specialist-portal" />
+                </Route>
                 <Route path="/outreach">
-                  <Redirect to="/scheduler-portal" />
+                  <Redirect to="/patient-care-specialist-portal" />
                 </Route>
         <Route path="/clinic-workflow-demo" component={ClinicWorkflowDemoPage} />
-                <Route path="/technician-portal" component={TechnicianPortalPage} />
-                <Route path="/liaison-technician-portal" component={LiaisonPortalPage} />
+                <Route path="/technician-portal">
+                  <Redirect to="/ancillary-care-specialist-portal" />
+                </Route>
+                <Route path="/liaison-technician-portal">
+                  <Redirect to="/ancillary-care-specialist-portal" />
+                </Route>
                 <Route path="/liaison-portal">
-                  <Redirect to="/liaison-technician-portal" />
+                  <Redirect to="/ancillary-care-specialist-portal" />
                 </Route>
         <Route path="/patient-intake" component={QualificationPage} />
         <Route path="/qualification">

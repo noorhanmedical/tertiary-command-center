@@ -434,21 +434,21 @@ export function HomeDashboard({
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <SecondaryTile
-                  href="/liaison-technician-portal"
-                  testId="tile-liaison-technician-portal"
-                  label="Liaison Technician Portal"
+                  href="/ancillary-care-specialist-portal"
+                  testId="tile-ancillary-care-specialist-portal"
+                  label="Ancillary Care Specialist"
                   icon={<Stethoscope className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
-                  href="/scheduler-portal"
-                  testId="tile-scheduler-portal"
-                  label="Scheduler Portal"
+                  href="/patient-care-specialist-portal"
+                  testId="tile-patient-care-specialist-portal"
+                  label="Patient Care Specialist"
                   icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
-                  href="/outreach-center"
-                  testId="tile-outreach-center"
-                  label="Outreach Center"
+                  href="/team-member-portals"
+                  testId="tile-team-member-portals"
+                  label="Team Member Portals"
                   icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
