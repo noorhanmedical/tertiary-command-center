@@ -99,3 +99,22 @@ surfaces convert first and inform downstream tweaks:
       `qualification_final`.
 - [ ] `npm run check` and `npm run build` pass.
 - [ ] DB QA suites still pass when `DATABASE_URL` is present.
+
+## Patient-specific scheduling surfaces
+
+Two new surfaces in `client/src/components/portal/`:
+
+- `SchedulePatientDialog.tsx` — popup launched from the calendar icon on
+  right-panel patient cards (Clinic + Ancillary Schedule modes).
+- `SchedulePatientPlayground.tsx` — expanded version of the same context
+  rendered inside the existing center Playground area.
+
+Both share the helpers in
+`client/src/lib/workflow/teamMemberWorkspaceApi.ts`:
+`fetchPatientScheduleDayContext` (reads `/api/global-schedule-events`)
+and `schedulePatientAncillary` (writes
+`/api/global-schedule-events/schedule-ancillary`). No new backend route
+or schema is introduced. These surfaces are independent of the
+canonical `<UniversalCalendar>` primitive; they are per-patient quick
+schedulers, not full calendar workspaces, and they remain inside
+`PortalShell` rather than the calendar primitive layer.

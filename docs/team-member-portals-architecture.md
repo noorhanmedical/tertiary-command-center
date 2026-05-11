@@ -253,3 +253,56 @@ All workspace data must come from the canonical tables:
   profile may be added later.
 - **Right-panel mode** — Clinic Schedule, Ancillary Schedule, or Call
   List (both workspaces; only the default differs).
+
+## Patient Schedule Popup and Playground Expansion
+
+The right-panel patient cards (both **Clinic Schedule** and **Ancillary
+Schedule** modes) expose a patient-specific scheduling surface. This is
+separate from the Plexus IQ calendar drawer — Plexus IQ remains the
+clinic-day analytics surface; this surface is per-patient.
+
+### Surfaces
+
+- **`SchedulePatientDialog`** — compact popup opened by clicking the
+  calendar icon on a right-panel patient card. Shows the schedule form
+  on the left and the current-day context (Clinic Schedule, Ancillary
+  Schedule, This patient, Availability / Blocks) on the right. A
+  `Maximize2` extender in the header transitions the same context into
+  the Playground.
+- **`SchedulePatientPlayground`** — expanded scheduling view rendered
+  inside the existing center Playground area when
+  `centerMode === "playground"` and a playground context is set in
+  `PortalShell`. Same data/write contracts as the dialog, larger
+  layout.
+
+### Data + write paths
+
+Both surfaces share two helpers in
+`client/src/lib/workflow/teamMemberWorkspaceApi.ts`:
+
+- `fetchPatientScheduleDayContext({ facilityId, patientScreeningId,
+  executionCaseId, selectedDate, limit })` — reads
+  `/api/global-schedule-events` for the local day window and buckets
+  events client-side into `clinicEvents` (`doctor_visit`,
+  `same_day_add`), `ancillaryEvents` (`ancillary_appointment`),
+  `availabilityBlocks` (`team_member_availability`, `unavailable_block`,
+  `pto_block`, `sick_day`), `procedureCompleteEvents`
+  (`procedure_complete`), and `patientEvents` (rows matching
+  `patientScreeningId` or `executionCaseId`).
+- `schedulePatientAncillary({ executionCaseId, patientScreeningId,
+  serviceType, startsAt, endsAt, facilityId, assignedUserId, note,
+  metadata })` — POSTs the canonical
+  `/api/global-schedule-events/schedule-ancillary` route with
+  `metadata.source = "schedule_patient_dialog"` or
+  `"schedule_patient_playground"`. No new backend route.
+
+### Gating
+
+Both calendar-icon buttons (clinic + ancillary rows) are gated by the
+profile capability `workspaceCanCallAndSchedule` and only render when
+the Team Member Profile grants it. After a successful schedule write,
+the surfaces invalidate `team-workspace-ancillary-schedule`,
+`team-workspace-clinic-schedule`, `team-workspace-call-list`,
+`/api/global-schedule-events`, `schedule-patient-day-context`, and
+`schedule-patient-playground-context` so the right panel and Plexus IQ
+both reflect the new event.

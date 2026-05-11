@@ -150,8 +150,10 @@ export function PlexusIQWorkspace({
     return facilities;
   }, [summary]);
 
-  const defaultOpenFacility = grouped[0]?.facility ?? "";
-  const defaultOpenDate = grouped[0]?.rows[0] ? `${grouped[0].rows[0].id}` : "";
+  // Accordions start collapsed — users open the facility/date they need.
+  // The legacy default-open-first-facility/date behavior caused new users
+  // to see one fully expanded section that hid the others; collapsed
+  // defaults make the multi-day/multi-facility shape visible at a glance.
 
   if (grouped.length === 0) {
     return (
@@ -170,7 +172,7 @@ export function PlexusIQWorkspace({
   }
 
   return (
-    <div className="w-full px-4 sm:px-6 lg:px-8 py-6 space-y-3">
+    <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3">
       <div className="flex items-center gap-2 px-1">
         <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
           All Facilities
@@ -182,7 +184,7 @@ export function PlexusIQWorkspace({
 
       <Accordion
         type="multiple"
-        defaultValue={defaultOpenFacility ? [defaultOpenFacility] : []}
+        defaultValue={[]}
         className="space-y-3"
       >
         {grouped.map(({ facility, rows }) => {
@@ -217,7 +219,7 @@ export function PlexusIQWorkspace({
               <AccordionContent className="pb-3 pt-0 bg-slate-50/40">
                 <Accordion
                   type="multiple"
-                  defaultValue={facility === defaultOpenFacility ? [defaultOpenDate] : []}
+                  defaultValue={[]}
                   className="px-3 pt-3 space-y-2"
                 >
                   {rows.map((row) => {

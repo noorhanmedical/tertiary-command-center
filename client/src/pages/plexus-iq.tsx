@@ -603,7 +603,7 @@ export default function PlexusIQPage() {
   return (
     <div className="flex flex-col h-full w-full min-w-0">
       <header className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-3 flex-wrap">
+        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />
             <div>
@@ -650,7 +650,7 @@ export default function PlexusIQPage() {
       </header>
 
       <main className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
-        <div className="w-full px-4 sm:px-6 lg:px-8 pt-6">
+        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-6">
           <PlexusIQDashboardRow summary={summary} batchDetails={batchDetails} />
         </div>
         <PlexusIQWorkspace

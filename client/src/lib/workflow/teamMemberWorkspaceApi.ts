@@ -120,6 +120,142 @@ export async function fetchWorkspaceAncillarySchedule(
   return Array.isArray(rows) ? (rows as TeamWorkspaceAncillaryAppointment[]) : [];
 }
 
+// Per-day scheduling context for the patient-specific Schedule Patient
+// dialog + the center Playground expanded scheduling view. Reads from the
+// existing /api/global-schedule-events feed and buckets events client-side
+// so we don't introduce a new backend route in this batch.
+
+export type PatientScheduleDayContext = {
+  clinicEvents: unknown[];
+  ancillaryEvents: unknown[];
+  availabilityBlocks: unknown[];
+  patientEvents: unknown[];
+  procedureCompleteEvents: unknown[];
+  allEvents: unknown[];
+};
+
+export async function fetchPatientScheduleDayContext(params: {
+  facilityId?: string | null;
+  patientScreeningId?: number | null;
+  executionCaseId?: number | null;
+  selectedDate: string;
+  limit?: number;
+}): Promise<PatientScheduleDayContext> {
+  const day = params.selectedDate.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    return {
+      clinicEvents: [],
+      ancillaryEvents: [],
+      availabilityBlocks: [],
+      patientEvents: [],
+      procedureCompleteEvents: [],
+      allEvents: [],
+    };
+  }
+  const startsAt = `${day}T00:00:00.000Z`;
+  const endsAt = `${day}T23:59:59.999Z`;
+  const qs = new URLSearchParams();
+  appendIf(qs, "facilityId", params.facilityId);
+  appendIf(qs, "startDate", startsAt);
+  appendIf(qs, "endDate", endsAt);
+  appendIf(qs, "limit", params.limit ?? 500);
+  const url = `/api/global-schedule-events${qs.toString() ? `?${qs}` : ""}`;
+  const all = await fetchJson<unknown[]>(url);
+  const events = Array.isArray(all) ? all : [];
+  const clinicEvents: unknown[] = [];
+  const ancillaryEvents: unknown[] = [];
+  const availabilityBlocks: unknown[] = [];
+  const procedureCompleteEvents: unknown[] = [];
+  const patientEvents: unknown[] = [];
+  for (const evt of events) {
+    const e = evt as {
+      eventType?: string;
+      patientScreeningId?: number | null;
+      executionCaseId?: number | null;
+    };
+    switch (e.eventType) {
+      case "doctor_visit":
+      case "same_day_add":
+        clinicEvents.push(evt);
+        break;
+      case "ancillary_appointment":
+        ancillaryEvents.push(evt);
+        break;
+      case "team_member_availability":
+      case "unavailable_block":
+      case "pto_block":
+      case "sick_day":
+        availabilityBlocks.push(evt);
+        break;
+      case "procedure_complete":
+        procedureCompleteEvents.push(evt);
+        break;
+      default:
+        break;
+    }
+    const matchesScreening =
+      params.patientScreeningId != null &&
+      e.patientScreeningId === params.patientScreeningId;
+    const matchesCase =
+      params.executionCaseId != null &&
+      e.executionCaseId === params.executionCaseId;
+    if (matchesScreening || matchesCase) {
+      patientEvents.push(evt);
+    }
+  }
+  return {
+    clinicEvents,
+    ancillaryEvents,
+    availabilityBlocks,
+    patientEvents,
+    procedureCompleteEvents,
+    allEvents: events,
+  };
+}
+
+// Schedule a patient-specific ancillary appointment by writing to the
+// canonical /api/global-schedule-events/schedule-ancillary route. No new
+// route is added; the existing endpoint owns global_schedule_events writes.
+export async function schedulePatientAncillary(input: {
+  executionCaseId?: number | null;
+  patientScreeningId?: number | null;
+  serviceType: string;
+  startsAt: string;
+  endsAt?: string | null;
+  facilityId?: string | null;
+  assignedUserId?: string | null;
+  note?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<unknown> {
+  const res = await fetch("/api/global-schedule-events/schedule-ancillary", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      executionCaseId: input.executionCaseId ?? null,
+      patientScreeningId: input.patientScreeningId ?? null,
+      serviceType: input.serviceType,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt ?? null,
+      facilityId: input.facilityId ?? null,
+      assignedUserId: input.assignedUserId ?? null,
+      note: input.note ?? null,
+      metadata: input.metadata ?? {},
+    }),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const body = await res.json();
+      detail = body?.error ?? "";
+    } catch {
+      /* noop */
+    }
+    throw new Error(`schedulePatientAncillary failed (${res.status})${detail ? `: ${detail}` : ""}`);
+  }
+  return res.json();
+}
+
 // /api/scheduler-portal/cases doesn't support startDate/endDate, so we
 // fetch by facility/assigned and filter `nextActionAt` client-side when
 // a date window is supplied.

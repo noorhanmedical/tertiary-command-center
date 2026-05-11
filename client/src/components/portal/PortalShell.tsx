@@ -29,6 +29,11 @@ import {
   fetchWorkspaceAncillarySchedule,
 } from "@/lib/workflow/teamMemberWorkspaceApi";
 import { fetchTeamMemberProfile } from "@/lib/workflow/teamMemberProfileApi";
+import {
+  SchedulePatientDialog,
+  type SchedulePatientDialogPatient,
+} from "@/components/portal/SchedulePatientDialog";
+import { SchedulePatientPlayground } from "@/components/portal/SchedulePatientPlayground";
 
 // The user-facing workspace role lets us distinguish PCS vs ACS for
 // capability gating (procedure-side actions are ACS-only). Legacy direct
@@ -775,7 +780,6 @@ export function PortalShell({
   let workspaceCanCompleteProcedure = workspaceIsAncillaryCareSpecialist;
   let workspaceCanPrimaryConsentScreening = workspaceIsAncillaryCareSpecialist;
   let workspaceCanUploadProcedureReport = workspaceIsAncillaryCareSpecialist;
-  void workspaceCanCallAndSchedule;
   void workspaceCanPrimaryConsentScreening;
   void workspaceCanUploadProcedureReport;
   const { toast } = useToast();
@@ -898,6 +902,10 @@ export function PortalShell({
   const [consentDialog, setConsentDialog] = useState<{ patient: TodayPatient; testType: string | null } | null>(null);
   const [playgroundTab, setPlaygroundTab] = useState<"overview" | "tasks" | "documents">("overview");
   const [scheduleDialogPatient, setScheduleDialogPatient] = useState<TodayPatient | null>(null);
+  const [schedulePatientDialog, setSchedulePatientDialog] =
+    useState<SchedulePatientDialogPatient | null>(null);
+  const [schedulePatientPlaygroundContext, setSchedulePatientPlaygroundContext] =
+    useState<{ patient: SchedulePatientDialogPatient; selectedDate: string } | null>(null);
   const [portalTabs, setPortalTabs] = useState<PortalTab[]>([]);
   const [activePortalTabId, setActivePortalTabId] = useState<string | null>(null);
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
@@ -1148,6 +1156,24 @@ export function PortalShell({
     setScheduleDialogPatient(p);
   }
 
+  function openSchedulePatientDialog(input: SchedulePatientDialogPatient) {
+    if (input.patientScreeningId != null) setSelectedPatientId(input.patientScreeningId);
+    setSchedulePatientDialog(input);
+  }
+
+  function openSchedulePatientPlayground(payload: {
+    patient: SchedulePatientDialogPatient;
+    selectedDate: string;
+  }) {
+    if (payload.patient.patientScreeningId != null) {
+      setSelectedPatientId(payload.patient.patientScreeningId);
+    }
+    setSchedulePatientPlaygroundContext(payload);
+    setSchedulePatientDialog(null);
+    setCenterMode("playground");
+    setDockActiveApp(null);
+  }
+
   function expandScheduleToPlayground(p: TodayPatient) {
     if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
     setCenterMode("scheduleDay");
@@ -1376,23 +1402,56 @@ export function PortalShell({
 
         <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
           <div className="relative mx-auto flex h-full max-w-[1600px] flex-col px-[10%] pt-14">
-            <button
-              type="button"
-              onClick={() => {
-                const collapse = !(leftRailCollapsed && rightRailCollapsed);
-                setLeftRailCollapsed(collapse);
-                setRightRailCollapsed(collapse);
-              }}
+            {/* Playground control — split into three click zones:
+                 left toggles the left rail only, center toggles both
+                 rails, right toggles the right rail only. The outer
+                 visual (pill + facility caption) is preserved. */}
+            <div
               className="absolute left-1/2 top-0 z-30 -translate-x-1/2 text-center"
-              data-testid="button-toggle-both-rails"
+              role="group"
+              aria-label="Playground rail controls"
+              data-testid="group-playground-controls"
             >
-              <div className="rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] px-5 py-2 text-base font-semibold tracking-tight text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl">
-                Playground
+              <div className="inline-flex items-stretch rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setLeftRailCollapsed((v) => !v)}
+                  aria-label="Toggle left panel"
+                  title="Toggle left panel"
+                  className="px-3 py-2 text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+                  data-testid="button-toggle-left-rail-zone"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const bothOpen = !leftRailCollapsed && !rightRailCollapsed;
+                    setLeftRailCollapsed(bothOpen);
+                    setRightRailCollapsed(bothOpen);
+                  }}
+                  aria-label="Toggle both panels"
+                  title="Toggle both panels"
+                  className="px-5 py-2 text-base font-semibold tracking-tight text-white hover:bg-white/10 transition-colors"
+                  data-testid="button-toggle-both-rails"
+                >
+                  Playground
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRightRailCollapsed((v) => !v)}
+                  aria-label="Toggle right panel"
+                  title="Toggle right panel"
+                  className="px-3 py-2 text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+                  data-testid="button-toggle-right-rail-zone"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
               </div>
               <div className="mt-2 text-xs text-slate-600">
                 {facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}
               </div>
-            </button>
+            </div>
 
             {portalTabs.length > 0 && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1" data-testid="portal-playfield-tabs">
@@ -1480,6 +1539,14 @@ export function PortalShell({
                       onConsent={(testType) => setConsentDialog({ patient: selected, testType })}
                     />
                   )}
+                </div>
+              ) : schedulePatientPlaygroundContext ? (
+                <div className="h-full" data-testid="playground-schedule-patient">
+                  <SchedulePatientPlayground
+                    patient={schedulePatientPlaygroundContext.patient}
+                    selectedDate={schedulePatientPlaygroundContext.selectedDate}
+                    onClose={() => setSchedulePatientPlaygroundContext(null)}
+                  />
                 </div>
               ) : (
                 <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto" data-testid="playground-home">
@@ -1888,26 +1955,49 @@ export function PortalShell({
                               <Maximize2 className="h-4 w-4 text-[#4863A0]" />
                             </button>
 
-                            <div className="inline-flex rounded-full border border-slate-200 bg-white overflow-hidden">
-                              <button
-                                type="button"
-                                onClick={() => openScheduleDialog(p)}
-                                className="inline-flex h-8 w-8 items-center justify-center hover:bg-slate-50"
-                                data-testid={`button-patient-calendar-${p.patientScreeningId ?? p.name}`}
-                                title="Schedule popup"
-                              >
-                                <CalendarIcon className="h-4 w-4 text-[#4863A0]" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => openPortalTab("schedule", p)}
-                                className="inline-flex h-8 w-8 items-center justify-center border-l border-slate-200 hover:bg-slate-50"
-                                data-testid={`button-patient-calendar-expand-${p.patientScreeningId ?? p.name}`}
-                                title="Open schedule in Playground"
-                              >
-                                <ChevronLeft className="h-4 w-4 rotate-180 text-[#4863A0]" />
-                              </button>
-                            </div>
+                            {workspaceCanCallAndSchedule && (
+                              <div className="inline-flex rounded-full border border-slate-200 bg-white overflow-hidden">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openSchedulePatientDialog({
+                                      patientName: p.name,
+                                      patientDob: p.dob,
+                                      facilityId: p.facility,
+                                      patientScreeningId: p.patientScreeningId,
+                                      executionCaseId: null,
+                                      serviceType: p.qualifyingTests[0] ?? null,
+                                    })
+                                  }
+                                  className="inline-flex h-8 w-8 items-center justify-center hover:bg-slate-50"
+                                  data-testid={`button-patient-calendar-${p.patientScreeningId ?? p.name}`}
+                                  title="Schedule patient"
+                                >
+                                  <CalendarIcon className="h-4 w-4 text-[#4863A0]" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openSchedulePatientPlayground({
+                                      patient: {
+                                        patientName: p.name,
+                                        patientDob: p.dob,
+                                        facilityId: p.facility,
+                                        patientScreeningId: p.patientScreeningId,
+                                        executionCaseId: null,
+                                        serviceType: p.qualifyingTests[0] ?? null,
+                                      },
+                                      selectedDate,
+                                    })
+                                  }
+                                  className="inline-flex h-8 w-8 items-center justify-center border-l border-slate-200 hover:bg-slate-50"
+                                  data-testid={`button-patient-calendar-expand-${p.patientScreeningId ?? p.name}`}
+                                  title="Open schedule in Playground"
+                                >
+                                  <Maximize2 className="h-4 w-4 text-[#4863A0]" />
+                                </button>
+                              </div>
+                            )}
 
                             <button
                               type="button"
@@ -2030,6 +2120,51 @@ export function PortalShell({
                               </Badge>
                             )}
                           </div>
+                          {workspaceCanCallAndSchedule && (
+                            <div className="mt-2 flex items-center justify-end gap-1">
+                              <div className="inline-flex rounded-full border border-slate-200 bg-white overflow-hidden">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openSchedulePatientDialog({
+                                      patientName: row.patientName ?? null,
+                                      patientDob: row.patientDob ?? null,
+                                      facilityId: row.facilityId ?? null,
+                                      patientScreeningId: row.patientScreeningId ?? null,
+                                      executionCaseId: row.executionCaseId ?? null,
+                                      serviceType: row.serviceType ?? null,
+                                    })
+                                  }
+                                  className="inline-flex h-7 w-7 items-center justify-center hover:bg-slate-50"
+                                  data-testid={`button-ancillary-calendar-${row.id ?? idx}`}
+                                  title="Schedule patient"
+                                >
+                                  <CalendarIcon className="h-3.5 w-3.5 text-[#4863A0]" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openSchedulePatientPlayground({
+                                      patient: {
+                                        patientName: row.patientName ?? null,
+                                        patientDob: row.patientDob ?? null,
+                                        facilityId: row.facilityId ?? null,
+                                        patientScreeningId: row.patientScreeningId ?? null,
+                                        executionCaseId: row.executionCaseId ?? null,
+                                        serviceType: row.serviceType ?? null,
+                                      },
+                                      selectedDate,
+                                    })
+                                  }
+                                  className="inline-flex h-7 w-7 items-center justify-center border-l border-slate-200 hover:bg-slate-50"
+                                  data-testid={`button-ancillary-calendar-expand-${row.id ?? idx}`}
+                                  title="Open schedule in Playground"
+                                >
+                                  <Maximize2 className="h-3.5 w-3.5 text-[#4863A0]" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
                           {workspaceCanCompleteProcedure &&
                             row.patientScreeningId != null &&
                             row.serviceType && (
@@ -2188,6 +2323,16 @@ export function PortalShell({
           role={role}
         />
       )}
+
+      <SchedulePatientDialog
+        open={!!schedulePatientDialog}
+        onOpenChange={(o) => {
+          if (!o) setSchedulePatientDialog(null);
+        }}
+        patient={schedulePatientDialog}
+        defaultDate={selectedDate}
+        onOpenInPlayground={(payload) => openSchedulePatientPlayground(payload)}
+      />
     </div>
   );
 }
