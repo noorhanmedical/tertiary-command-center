@@ -58,3 +58,8 @@ export {
   CalendarAddActionButton,
   type CalendarAddActionButtonProps,
 } from "./CalendarAddActionButton";
+export {
+  CanonicalMonthCalendar,
+  type CanonicalMonthCalendarProps,
+  type CanonicalMonthCellSummary,
+} from "./views/CanonicalMonthCalendar";

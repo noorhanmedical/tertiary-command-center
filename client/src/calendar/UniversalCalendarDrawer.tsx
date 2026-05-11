@@ -12,6 +12,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { UniversalCalendar } from "./UniversalCalendar";
+import type { CanonicalMonthCellSummary } from "./views/CanonicalMonthCalendar";
 import {
   resolveCalendarProfileSettings,
   type CalendarAdminSettingLike,
@@ -28,6 +29,11 @@ export type UniversalCalendarDrawerProps = {
   // Pass through admin_settings rows when available; this batch leaves API
   // wiring out, so default is [] and the resolver falls back to code.
   settings?: CalendarAdminSettingLike[];
+  // Optional pre-mapped per-date cells for the month-grid body. Callers
+  // shape data into CanonicalMonthCellSummary so the drawer stays generic.
+  cells?: Record<string, CanonicalMonthCellSummary>;
+  // Reserved for future week/day/agenda views.
+  summary?: unknown[];
   onSelectDate?: (isoDate: string) => void;
 };
 
@@ -38,6 +44,8 @@ export function UniversalCalendarDrawer({
   onOpenChange,
   title,
   settings = [],
+  cells,
+  summary,
   onSelectDate,
 }: UniversalCalendarDrawerProps) {
   const [internalOpen, setInternalOpen] = useState(false);
@@ -69,6 +77,8 @@ export function UniversalCalendarDrawer({
             profileId={profileId}
             context={context}
             settings={settings}
+            cells={cells}
+            summary={summary}
             onSelectDate={onSelectDate}
           />
         </div>

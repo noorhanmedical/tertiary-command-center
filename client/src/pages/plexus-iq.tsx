@@ -2,13 +2,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { CalendarDays, Loader2, Plus, Upload } from "lucide-react";
+import { CalendarDays, Check, Loader2, Plus, Upload } from "lucide-react";
 import {
   useScreeningBatches,
   useCreateBatch,
@@ -22,9 +16,14 @@ import {
 } from "@/hooks/api/screening-batches";
 import { useToast } from "@/hooks/use-toast";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
+import type { GlobalScheduleEvent } from "@shared/schema/globalSchedule";
 import { qk } from "@/hooks/api/keys";
 import { apiRequest } from "@/lib/queryClient";
-import { PlexusIQCalendar, type CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
+import { type CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
+import {
+  UniversalCalendarDrawer,
+  type CanonicalMonthCellSummary,
+} from "@/calendar";
 import { PlexusIQAddPatientModal } from "@/components/plexus-iq/PlexusIQAddPatientModal";
 import {
   PlexusIQBulkImportModal,
@@ -122,6 +121,85 @@ export default function PlexusIQPage() {
     });
     return map;
   }, [detailQueries, activeBatchIds]);
+
+  // Procedure-complete events for the calendar's checkmark badge. The
+  // canonical month view owns its own cursor, so we fetch a generous fixed
+  // window once instead of round-tripping per month change. Reads only —
+  // no writes to global_schedule_events.
+  const completedEventRange = useMemo(() => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth() - 12, 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 13, 0);
+    return { start: start.toISOString(), end: end.toISOString() };
+  }, []);
+  const { data: completedEvents = [] } = useQuery<GlobalScheduleEvent[]>({
+    queryKey: [
+      "/api/global-schedule-events",
+      {
+        eventType: "procedure_complete",
+        startDate: completedEventRange.start,
+        endDate: completedEventRange.end,
+      },
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("eventType", "procedure_complete");
+      params.set("startDate", completedEventRange.start);
+      params.set("endDate", completedEventRange.end);
+      params.set("limit", "500");
+      const res = await fetch(`/api/global-schedule-events?${params.toString()}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Calendar events fetch failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  // Map summary + completed events into the canonical per-date cell shape
+  // consumed by UniversalCalendarDrawer.
+  const calendarCells = useMemo<Record<string, CanonicalMonthCellSummary>>(() => {
+    const ANCILLARY_DOT_CLASS: Record<string, { className: string; title: string }> = {
+      brainwave: { className: "bg-violet-500", title: "BrainWave" },
+      vitalwave: { className: "bg-red-500", title: "VitalWave" },
+      ultrasound: { className: "bg-emerald-500", title: "Ultrasound" },
+    };
+    type Acc = { count: number; cats: Set<string>; completed: boolean };
+    const acc: Record<string, Acc> = {};
+    for (const row of summary) {
+      if (!row.scheduleDate || row.patientCount === 0) continue;
+      const cur = acc[row.scheduleDate] ?? { count: 0, cats: new Set(), completed: false };
+      cur.count += row.patientCount;
+      for (const c of row.categories ?? []) cur.cats.add(c);
+      acc[row.scheduleDate] = cur;
+    }
+    for (const evt of completedEvents) {
+      const startsAtRaw = evt.startsAt;
+      const startsAt = startsAtRaw ? new Date(startsAtRaw as unknown as string) : null;
+      if (!startsAt || isNaN(startsAt.getTime())) continue;
+      const key = `${startsAt.getFullYear()}-${String(startsAt.getMonth() + 1).padStart(2, "0")}-${String(startsAt.getDate()).padStart(2, "0")}`;
+      const cur = acc[key] ?? { count: 0, cats: new Set(), completed: false };
+      cur.completed = true;
+      acc[key] = cur;
+    }
+    const cells: Record<string, CanonicalMonthCellSummary> = {};
+    for (const [key, val] of Object.entries(acc)) {
+      cells[key] = {
+        count: val.count,
+        dots: Array.from(val.cats)
+          .map((c) => ANCILLARY_DOT_CLASS[c])
+          .filter((x): x is { className: string; title: string } => !!x),
+        badge: val.completed
+          ? {
+              icon: <Check className="w-3 h-3" strokeWidth={3} />,
+              className: "bg-emerald-100 text-emerald-700",
+              title: "Procedure completed",
+            }
+          : undefined,
+      };
+    }
+    return cells;
+  }, [summary, completedEvents]);
 
   // ───── Modals + drawer state ─────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false);
@@ -562,29 +640,17 @@ export default function PlexusIQPage() {
         />
       </main>
 
-      <Sheet open={calendarOpen} onOpenChange={(v) => { if (!v) setCalendarOpen(false); }}>
-        <SheetContent
-          side="right"
-          className="w-full sm:max-w-xl p-0 gap-0 flex flex-col"
-          data-testid="plexus-iq-calendar-sheet"
-        >
-          <SheetHeader className="px-5 pt-5 pb-3 border-b">
-            <SheetTitle className="text-base font-semibold tracking-tight">
-              Calendar
-            </SheetTitle>
-          </SheetHeader>
-          <div className="flex-1 min-h-0 overflow-auto">
-            <PlexusIQCalendar
-              summary={summary}
-              onSelectDate={(d) => {
-                setOpenDate(d);
-                setCalendarOpen(false);
-              }}
-              onAssignDate={(id, label) => setAssignTarget({ id, label })}
-            />
-          </div>
-        </SheetContent>
-      </Sheet>
+      <UniversalCalendarDrawer
+        profileId="plexusIq"
+        open={calendarOpen}
+        onOpenChange={setCalendarOpen}
+        title="Calendar"
+        cells={calendarCells}
+        onSelectDate={(d) => {
+          setOpenDate(d);
+          setCalendarOpen(false);
+        }}
+      />
 
       <PlexusIQAddPatientModal
         open={addOpen}

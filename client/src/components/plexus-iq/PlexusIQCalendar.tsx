@@ -4,14 +4,27 @@ import { Building2, CalendarPlus, ChevronLeft, ChevronRight, Check } from "lucid
 import type { GlobalScheduleEvent } from "@shared/schema/globalSchedule";
 import type { AncillaryCategory } from "@shared/ancillaryCategory";
 
-// Inline month calendar surface for /plexus-iq.
+// LEGACY — Plexus IQ no longer mounts this component.
+//
+// The canonical calendar primitive layer (client/src/calendar/) now powers
+// the /plexus-iq drawer via <UniversalCalendarDrawer profileId="plexusIq">.
+// The Plexus IQ page builds CanonicalMonthCellSummary entries from the same
+// summary feed used here and passes them through the canonical primitive.
+//
+// This file is kept temporarily so the `CalendarSummaryRow` type export is
+// still importable from existing call sites; once all consumers move that
+// type into a shared module, this file is safe to delete.
 //
 // Reads from canonical endpoints only:
 //   - /api/screening-batches/calendar-summary — single aggregated payload
 //     (one row per batch with patientCount + categories + scheduleDate).
-//     Replaces the old per-batch detail N+1 fan-out.
 //   - /api/global-schedule-events?eventType=procedure_complete — drives
 //     the green checkmark for completed ancillaries.
+//
+// Known migration gap: the legacy "Assign date" affordance for unscheduled
+// batches lived inside this component. The Plexus IQ page still mounts the
+// PlexusIQAssignDateDialog, but the trigger needs to be re-attached when
+// UniversalCalendar's add-action layer is wired in a later batch.
 
 export type CalendarSummaryRow = {
   id: number;

@@ -12,16 +12,16 @@ These surfaces will eventually mount a canonical primitive
 (`<CanonicalCalendarIcon>`, `<UniversalCalendarDrawer>`, or
 `<UniversalCalendar>`) and stop owning their own calendar logic:
 
-| File / Surface                                                 | Profile target              |
-| -------------------------------------------------------------- | --------------------------- |
-| `client/src/components/plexus-iq/PlexusIQCalendar.tsx` <br/> `client/src/pages/plexus-iq.tsx` | `plexusIq`                  |
-| `client/src/components/outreach/TriClinicCalendar.tsx` <br/> `client/src/components/outreach/ExpandedSectionView.tsx` <br/> `client/src/pages/outreach-scheduler-portal.tsx` | `patientCareSpecialist`     |
-| `client/src/components/clinic-calendar.tsx` (MiniCalendar / SlotGrid) <br/> `client/src/components/portal/PortalShell.tsx` (MonthlyMiniCalendar) | `technician`                |
-| `client/src/pages/team-ops.tsx` (StaffingCalendarTab)          | `manager`                   |
-| `client/src/pages/schedule-dashboard.tsx`                      | `manager` (or `admin`)      |
-| `client/src/pages/appointments.tsx`                            | `manager`                   |
-| `client/src/components/AppointmentModal.tsx`                   | (drawer launcher)           |
-| `client/src/components/ScheduleTile.tsx`                       | (drawer launcher)           |
+| File / Surface                                                 | Profile target              | Status |
+| -------------------------------------------------------------- | --------------------------- | ------ |
+| `client/src/components/plexus-iq/PlexusIQCalendar.tsx` <br/> `client/src/pages/plexus-iq.tsx` | `plexusIq`                  | **Migrated** — page renders `<UniversalCalendarDrawer profileId="plexusIq">` and passes `cells` derived from the calendar-summary + procedure-complete feeds. `PlexusIQCalendar.tsx` is now legacy (no consumers) and is safe to delete once `CalendarSummaryRow` is moved to a shared module. The PlexusIQAssignDateDialog wiring for unscheduled batches is currently orphaned and needs reattachment when UniversalCalendar's add-actions ship. |
+| `client/src/components/outreach/TriClinicCalendar.tsx` <br/> `client/src/components/outreach/ExpandedSectionView.tsx` <br/> `client/src/pages/outreach-scheduler-portal.tsx` | `patientCareSpecialist`     | pending |
+| `client/src/components/clinic-calendar.tsx` (MiniCalendar / SlotGrid) <br/> `client/src/components/portal/PortalShell.tsx` (MonthlyMiniCalendar) | `technician`                | pending |
+| `client/src/pages/team-ops.tsx` (StaffingCalendarTab)          | `manager`                   | pending |
+| `client/src/pages/schedule-dashboard.tsx`                      | `manager` (or `admin`)      | pending |
+| `client/src/pages/appointments.tsx`                            | `manager`                   | pending |
+| `client/src/components/AppointmentModal.tsx`                   | (drawer launcher)           | pending |
+| `client/src/components/ScheduleTile.tsx`                       | (drawer launcher)           | pending |
 
 ## Date pickers — **do not** migrate
 
@@ -57,6 +57,20 @@ surfaces convert first and inform downstream tweaks:
 6. **Legacy appointments surfaces** — `appointments.tsx`,
    `AppointmentModal.tsx`, `ScheduleTile.tsx`. These migrate last; some may
    collapse into a launcher trigger that opens `UniversalCalendarDrawer`.
+
+## What stayed unchanged in the Plexus IQ migration
+
+- `PlexusIQDayModal` (the day-click popup) still renders the canonical
+  `<ResultsView chromeless />`. Plexus PDF / Clinician PDF / Share /
+  Export CSV / Send All to Scheduler all reuse the existing wiring.
+- `PlexusIQWorkspace` (center facility → date → patient-card accordion)
+  is untouched.
+- The top dashboard row is untouched.
+- The completed-procedure checkmark on the calendar still comes from
+  `/api/global-schedule-events?eventType=procedure_complete`.
+- Plexus IQ qualification keeps only two visible states: **Incomplete**
+  and **Final**. No Ready, Ready-to-Generate, or Pending-Final states
+  are exposed on the calendar.
 
 ## Migration mechanics
 

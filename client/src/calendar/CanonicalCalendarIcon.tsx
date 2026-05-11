@@ -9,6 +9,7 @@
 import { useState } from "react";
 import { CalendarDays } from "lucide-react";
 import { UniversalCalendarDrawer } from "./UniversalCalendarDrawer";
+import type { CanonicalMonthCellSummary } from "./views/CanonicalMonthCalendar";
 import type { CalendarProfileId } from "./calendarProfiles";
 import type { CalendarContext } from "./calendarEventTypes";
 import type { CalendarAdminSettingLike } from "./calendarSettings";
@@ -21,6 +22,8 @@ export type CanonicalCalendarIconProps = {
   buttonClassName?: string;
   drawerTitle?: string;
   settings?: CalendarAdminSettingLike[];
+  cells?: Record<string, CanonicalMonthCellSummary>;
+  summary?: unknown[];
   onSelectDate?: (isoDate: string) => void;
 };
 
@@ -32,6 +35,8 @@ export function CanonicalCalendarIcon({
   buttonClassName,
   drawerTitle,
   settings,
+  cells,
+  summary,
   onSelectDate,
 }: CanonicalCalendarIconProps) {
   const [open, setOpen] = useState(false);
@@ -58,6 +63,8 @@ export function CanonicalCalendarIcon({
         onOpenChange={setOpen}
         title={drawerTitle}
         settings={settings}
+        cells={cells}
+        summary={summary}
         onSelectDate={onSelectDate}
       />
     </span>
