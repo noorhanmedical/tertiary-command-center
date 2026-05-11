@@ -755,25 +755,23 @@ export function PortalShell({
   //     complete, primary consent/screening completion ownership).
   // Legacy direct mounts (technician / liaison) inherit ACS capability
   // since they always owned the procedure-side flow.
-  const workspaceIsPatientCareSpecialist = workspaceRole === "patientCareSpecialist";
+  // Workspace-type flag retained only as a no-profile fallback. Profile
+  // capabilities take precedence (set below). Avoid using this for
+  // permanent gating — admins drive workspace behavior through the Team
+  // Member Profile.
   const workspaceIsAncillaryCareSpecialist =
     workspaceRole === "ancillaryCareSpecialist" ||
     workspaceRole === "technician" ||
     workspaceRole === "liaison" ||
     workspaceRole === undefined;
-  // Capabilities are gated by BOTH workspace type and the profile setting.
-  // PCS-typed profiles can never enable procedure-side capabilities even
-  // if the stored row says they're true — defense-in-depth. Profile rows
-  // are loaded later (see workspaceProfile below); when undefined the
-  // workspace type alone drives the defaults.
-  const workspaceCanCallAndSchedule = true;
-  // workspaceProfile is declared below in this same component — the
-  // capability constants are computed lazily via getters so they pick up
-  // the resolved profile when it arrives. Each capability ANDs the
-  // workspace-type gate with the stored capability bit (defaulting to
-  // ACS true / PCS false).
-  // The actual booleans are reassigned right after `workspaceProfile`
-  // resolves; for the initial render the workspace-type defaults apply.
+  // Capability flags come from the resolved Team Member Profile. Workspace
+  // name (PCS vs ACS) is no longer the gate — what the user can do is
+  // determined by their profile's capabilities map. Fallbacks before the
+  // profile resolves: ACS-typed workspaces default true for procedure-side
+  // capabilities, PCS-typed default false. After the profile loads (see
+  // workspaceProfile below), the values are overwritten from
+  // profile.capabilities.* directly.
+  let workspaceCanCallAndSchedule = true;
   let workspaceCanCompleteProcedure = workspaceIsAncillaryCareSpecialist;
   let workspaceCanPrimaryConsentScreening = workspaceIsAncillaryCareSpecialist;
   let workspaceCanUploadProcedureReport = workspaceIsAncillaryCareSpecialist;
@@ -813,22 +811,21 @@ export function PortalShell({
   const profileViewAllFacilities = !!workspaceProfile?.capabilities?.viewAllFacilities;
   const profileAssignedFacilities = workspaceProfile?.assignedFacilityIds ?? [];
 
-  // Profile capability overrides — applied only when the profile workspace
-  // type matches the procedure-side gate. PCS profiles can never gain
-  // ACS-only capabilities.
-  const profileIsAncillary =
-    workspaceProfile?.workspaceType === "ancillaryCareSpecialist";
+  // Profile capability overrides — driven purely by the stored profile so
+  // the workspace name (PCS vs ACS) does not gate behavior. Once the
+  // profile resolves, its capability bits are authoritative. Admins
+  // control who can do what by editing the Team Member Profile dialog.
   if (workspaceProfile) {
+    workspaceCanCallAndSchedule =
+      workspaceProfile.capabilities?.callAndSchedule !== false;
     workspaceCanCompleteProcedure =
-      profileIsAncillary && workspaceIsAncillaryCareSpecialist &&
-      !!workspaceProfile.capabilities?.completeProcedure;
+      workspaceProfile.capabilities?.completeProcedure === true;
     workspaceCanPrimaryConsentScreening =
-      profileIsAncillary && workspaceIsAncillaryCareSpecialist &&
-      !!workspaceProfile.capabilities?.primaryConsentScreening;
+      workspaceProfile.capabilities?.primaryConsentScreening === true;
     workspaceCanUploadProcedureReport =
-      profileIsAncillary && workspaceIsAncillaryCareSpecialist &&
-      !!workspaceProfile.capabilities?.uploadProcedureReport;
+      workspaceProfile.capabilities?.uploadProcedureReport === true;
   }
+  const allowedServiceTypes = workspaceProfile?.allowedServiceTypes ?? [];
   // No-facility-assigned hint surfaced inside the right-panel body when
   // the profile restricts to a closed set but lists nothing.
   const noFacilityAssigned =
@@ -872,6 +869,26 @@ export function PortalShell({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceProfile?.defaultMode]);
+
+  // Enforce profile facility scope: if the active facility falls outside
+  // the assigned-facility allow-list (and viewAllFacilities is off), snap
+  // to the default or first-assigned facility. Runs once per profile-load
+  // since user-driven facility changes should be respected afterwards.
+  useEffect(() => {
+    if (!workspaceProfile) return;
+    if (profileViewAllFacilities) return;
+    if (profileAssignedFacilities.length === 0) return;
+    if (!facility) return;
+    if (profileAssignedFacilities.includes(facility)) return;
+    const preferred = workspaceProfile.defaultFacilityId;
+    const next = preferred && profileAssignedFacilities.includes(preferred)
+      ? preferred
+      : profileAssignedFacilities[0];
+    if (next && next !== facility) {
+      setFacility(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceProfile, profileViewAllFacilities, profileAssignedFacilities.join("|"), facility]);
 
   const [selectedDate, setSelectedDate] = useState<string>(todayIso());
   const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
@@ -950,12 +967,13 @@ export function PortalShell({
       selectedDate,
     ],
     queryFn: () =>
+      // assignedRole is intentionally omitted — both workspaces read the
+      // canonical call list; canonical priority sorting handles ordering
+      // and the profile's facility scope handles narrowing. Hardcoded
+      // role hints used to differ per workspace name; per spec, the
+      // profile is now authoritative.
       fetchWorkspaceCallList({
         facilityId: facility || null,
-        // Default assignedRole nudges the canonical fetch toward the bucket
-        // most relevant to each workspace. Both PCS and ACS read this — the
-        // role hint only affects priority sorting, not data access.
-        assignedRole: workspaceIsPatientCareSpecialist ? "scheduler" : "liaison",
         startDate: workspaceDayStartIso,
         endDate: workspaceDayEndIso,
         limit: 100,
@@ -997,6 +1015,21 @@ export function PortalShell({
       }),
     enabled: !!facility,
   });
+
+  // Profile-driven Ancillary Schedule filtering. When the team member's
+  // profile lists allowedServiceTypes, only those rows render. Empty list
+  // means "no restriction" — show everything. Matching is case-insensitive
+  // and substring-based so a profile entry like "BrainWave" still matches
+  // canonical service types like "brainwave - 95957".
+  const filteredAncillarySchedule = useMemo(() => {
+    if (allowedServiceTypes.length === 0) return workspaceAncillarySchedule;
+    const lowered = allowedServiceTypes.map((s) => s.toLowerCase());
+    return workspaceAncillarySchedule.filter((row) => {
+      const st = (row.serviceType ?? "").toLowerCase();
+      if (!st) return false;
+      return lowered.some((needle) => st.includes(needle));
+    });
+  }, [workspaceAncillarySchedule, allowedServiceTypes]);
 
   const { data: scheduleData } = useQuery<{ patients: TodayPatient[] }>({
     queryKey: ["/api/portal/today-schedule", facility, selectedDate],
@@ -1784,7 +1817,7 @@ export function PortalShell({
                         workspaceClinicSchedule.length > 0
                           ? workspaceClinicSchedule.length
                           : patients.length,
-                      ancillarySchedule: workspaceAncillarySchedule.length,
+                      ancillarySchedule: filteredAncillarySchedule.length,
                     }}
                   />
                 </div>
@@ -1965,12 +1998,14 @@ export function PortalShell({
                   <div className="space-y-2" data-testid="workspace-mode-body-ancillarySchedule">
                     {workspaceAncillaryLoading ? (
                       <div className="text-xs text-slate-200 py-4 text-center">Loading ancillary schedule…</div>
-                    ) : workspaceAncillarySchedule.length === 0 ? (
+                    ) : filteredAncillarySchedule.length === 0 ? (
                       <div className="text-xs text-slate-200 py-4 text-center">
-                        No ancillary tests scheduled for this facility/date.
+                        {allowedServiceTypes.length > 0 && workspaceAncillarySchedule.length > 0
+                          ? "No ancillary tests in your allowed service types for this facility/date."
+                          : "No ancillary tests scheduled for this facility/date."}
                       </div>
                     ) : (
-                      workspaceAncillarySchedule.map((row, idx) => (
+                      filteredAncillarySchedule.map((row, idx) => (
                         <div
                           key={`${row.id ?? idx}`}
                           className="rounded-lg border border-white/10 bg-white px-2.5 py-2 text-slate-900"

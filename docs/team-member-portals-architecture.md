@@ -69,6 +69,46 @@ intentionally preserved — only the tab strip was added inside the
 existing right-panel body. The right-panel body is now wired to the
 canonical sources per mode (see Hydrated right-panel modes below).
 
+## Profile-driven workspace behavior
+
+**Patient Care Specialist Workspace and Ancillary Care Specialist
+Workspace have exactly the same three tabs:**
+
+1. Clinic Schedule
+2. Ancillary Schedule
+3. Call List
+
+Tab visibility, action availability, facility scope, and default tab
+are **not** hardcoded by workspace name. What the user sees and can do
+is driven entirely by the logged-in team member's profile:
+
+| Profile field            | Effect at runtime                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| `defaultMode`            | Seeds `activeWorkspaceMode` on first render (one-shot; user clicks persist after that).           |
+| `assignedFacilityIds`    | Narrows the left-rail facility chooser. When current facility falls outside the list (and `viewAllFacilities` is false), the shell auto-snaps to `defaultFacilityId` or the first assigned facility. |
+| `defaultFacilityId`      | Pre-selected facility on first render when valid; otherwise first assigned facility wins.         |
+| `capabilities.callAndSchedule`        | Both PCS and ACS default true. Profile can disable for read-only members.                |
+| `capabilities.completeProcedure`      | Controls whether the inline **Procedure Complete** button renders on Ancillary Schedule rows.  Workspace name (PCS vs ACS) is no longer the gate. |
+| `capabilities.primaryConsentScreening`| Controls whether primary consent/screening actions surface (today wired through existing Clinic Schedule patient cards; runtime gate via this flag). |
+| `capabilities.uploadProcedureReport`  | Reserved for upload/report flows; off by default for PCS, on by default for ACS.          |
+| `capabilities.viewAllFacilities`      | Bypasses the `assignedFacilityIds` allow-list and any facility-scope snap-back.            |
+| `allowedServiceTypes`    | Filters the Ancillary Schedule list to rows whose `serviceType` matches (case-insensitive substring). Empty list means no restriction. |
+
+**Both PCS and ACS can call and schedule** by default. The call-list
+read is no longer narrowed by an `assignedRole` hint derived from the
+workspace name — both workspaces hit the same canonical call list and
+the profile's facility scope handles narrowing.
+
+**Procedure-side actions** (procedure complete, consent/screening
+primary ownership, upload procedure report) appear when the matching
+profile capability is `true`, regardless of which workspace label the
+user is logged into.
+
+When a profile has no assigned facilities and `viewAllFacilities` is
+false, the right panel shows:
+
+> *No facility assigned. Ask an admin to update your Team Member Profile.*
+
 ## Hydrated right-panel modes
 
 The mode tabs at the top of the existing right panel render different
