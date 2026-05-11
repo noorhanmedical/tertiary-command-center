@@ -19,7 +19,10 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SignaturePad } from "./SignaturePad";
 import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
-import type { TeamMemberWorkspaceMode } from "@/components/portal/WorkspaceModeSwitcher";
+import {
+  WorkspaceModeSwitcher,
+  type TeamMemberWorkspaceMode,
+} from "@/components/portal/WorkspaceModeSwitcher";
 
 type Role = "technician" | "liaison";
 type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart";
@@ -707,16 +710,26 @@ export function PortalShell({
   workspaceLabel?: string;
   defaultMode?: TeamMemberWorkspaceMode;
 }) {
-  // UI-only state — the visual tab strip that consumes this lives at the
-  // top of the existing right-side panel and is wired in a follow-up batch.
-  // No data is fetched or persisted off this state.
-  const [activeWorkspaceMode, setActiveWorkspaceMode] = useState<TeamMemberWorkspaceMode>(
-    defaultMode ?? "clinicSchedule",
-  );
-  // Suppress unused-locals warning until the switcher is mounted into the
-  // right panel; touch values explicitly so TS keeps the state alive.
-  void activeWorkspaceMode;
-  void setActiveWorkspaceMode;
+  // UI-only state for the right-panel mode tabs.
+  //
+  // Mode → canonical data source the right panel will hydrate from in a
+  // later batch:
+  //   clinicSchedule    → global_schedule_events (doctor_visit / same_day_add)
+  //                       + patient_screenings on the day. For Ancillary
+  //                       Care Specialist, consent and screening form
+  //                       completion live in this mode and come from
+  //                       case_document_readiness / existing document
+  //                       endpoints.
+  //   ancillarySchedule → global_schedule_events (ancillary_appointment)
+  //                       + procedure_events.
+  //   callList          → patient_execution_cases.nextActionAt
+  //                       + patient_journey_events.
+  //
+  // For this batch the mode state is purely visual — the existing
+  // right-panel list/content stays visible below the tabs regardless of
+  // selection.
+  const [activeWorkspaceMode, setActiveWorkspaceMode] =
+    useState<TeamMemberWorkspaceMode>(defaultMode ?? "clinicSchedule");
   const { toast } = useToast();
   const { data: facData } = useQuery<{ facilities: string[] }>({
     queryKey: ["/api/portal/my-facilities"],
@@ -1565,6 +1578,17 @@ export function PortalShell({
 
             {!rightRailCollapsed && (
               <div className="flex-1 overflow-y-auto p-3">
+                {/* Workspace mode tabs — mounted at the top of the
+                    existing right panel. Selection is UI-only in this
+                    batch; the panel body below renders the same canonical
+                    content it always has. Canonical data hydration per
+                    mode lands in a follow-up batch. */}
+                <div className="mb-3">
+                  <WorkspaceModeSwitcher
+                    activeMode={activeWorkspaceMode}
+                    onModeChange={setActiveWorkspaceMode}
+                  />
+                </div>
                 <div className="mb-3 flex items-center justify-between">
                   <Badge variant="outline" data-testid="badge-patient-count">{patients.length}</Badge>
                 </div>

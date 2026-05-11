@@ -63,8 +63,12 @@ differences in this batch are:
   - Ancillary Care Specialist Workspace default: **Clinic Schedule**
 
 Both default-mode state lives in `PortalShell` already; the tab strip
-itself is provided by `WorkspaceModeSwitcher` and gets mounted at the
-top of the existing right panel in a follow-up batch.
+is provided by `WorkspaceModeSwitcher` and is mounted at the top of the
+existing right panel. Layout, colors, and shell structure were
+intentionally preserved — only the tab strip was added inside the
+existing right-panel body. Canonical data hydration per mode is still a
+future batch; until then the existing right-panel content remains
+visible below the tabs regardless of selected mode.
 
 ## Right-panel modes (foundation only in this batch)
 
