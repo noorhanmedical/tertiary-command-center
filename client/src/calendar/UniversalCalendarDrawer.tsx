@@ -12,7 +12,10 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { UniversalCalendar } from "./UniversalCalendar";
-import type { CanonicalMonthCellSummary } from "./views/CanonicalMonthCalendar";
+import type {
+  CanonicalMonthCellSummary,
+  CanonicalCalendarUnscheduledItem,
+} from "./views/CanonicalMonthCalendar";
 import {
   resolveCalendarProfileSettings,
   type CalendarAdminSettingLike,
@@ -35,6 +38,8 @@ export type UniversalCalendarDrawerProps = {
   // Reserved for future week/day/agenda views.
   summary?: unknown[];
   onSelectDate?: (isoDate: string) => void;
+  unscheduledItems?: CanonicalCalendarUnscheduledItem[];
+  onUnscheduledItemAction?: (item: CanonicalCalendarUnscheduledItem) => void;
 };
 
 export function UniversalCalendarDrawer({
@@ -47,6 +52,8 @@ export function UniversalCalendarDrawer({
   cells,
   summary,
   onSelectDate,
+  unscheduledItems,
+  onUnscheduledItemAction,
 }: UniversalCalendarDrawerProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = open !== undefined;
@@ -80,6 +87,8 @@ export function UniversalCalendarDrawer({
             cells={cells}
             summary={summary}
             onSelectDate={onSelectDate}
+            unscheduledItems={unscheduledItems}
+            onUnscheduledItemAction={onUnscheduledItemAction}
           />
         </div>
       </SheetContent>

@@ -9,7 +9,10 @@
 import { useState } from "react";
 import { CalendarDays } from "lucide-react";
 import { UniversalCalendarDrawer } from "./UniversalCalendarDrawer";
-import type { CanonicalMonthCellSummary } from "./views/CanonicalMonthCalendar";
+import type {
+  CanonicalMonthCellSummary,
+  CanonicalCalendarUnscheduledItem,
+} from "./views/CanonicalMonthCalendar";
 import type { CalendarProfileId } from "./calendarProfiles";
 import type { CalendarContext } from "./calendarEventTypes";
 import type { CalendarAdminSettingLike } from "./calendarSettings";
@@ -25,6 +28,8 @@ export type CanonicalCalendarIconProps = {
   cells?: Record<string, CanonicalMonthCellSummary>;
   summary?: unknown[];
   onSelectDate?: (isoDate: string) => void;
+  unscheduledItems?: CanonicalCalendarUnscheduledItem[];
+  onUnscheduledItemAction?: (item: CanonicalCalendarUnscheduledItem) => void;
 };
 
 export function CanonicalCalendarIcon({
@@ -38,6 +43,8 @@ export function CanonicalCalendarIcon({
   cells,
   summary,
   onSelectDate,
+  unscheduledItems,
+  onUnscheduledItemAction,
 }: CanonicalCalendarIconProps) {
   const [open, setOpen] = useState(false);
 
@@ -66,6 +73,8 @@ export function CanonicalCalendarIcon({
         cells={cells}
         summary={summary}
         onSelectDate={onSelectDate}
+        unscheduledItems={unscheduledItems}
+        onUnscheduledItemAction={onUnscheduledItemAction}
       />
     </span>
   );

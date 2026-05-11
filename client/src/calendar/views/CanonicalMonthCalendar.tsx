@@ -5,10 +5,25 @@
 // passes it in. The view only renders prev/next nav, a 6-week grid, and
 // the supplied count/dot/badge primitives.
 //
+// Optionally renders a small "Unscheduled" panel below the grid when the
+// caller passes `unscheduledItems`. The panel surfaces date-less items
+// (e.g. batches that still need a scheduleDate) without requiring the
+// view to know what an item represents — callers supply a label / detail
+// / optional count and an action callback.
+//
 // Future view modes (week/day/agenda) plug in alongside this file.
 
 import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+
+export type CanonicalCalendarUnscheduledItem = {
+  id: string | number;
+  label: string;
+  detail?: string;
+  count?: number;
+  // Defaults to "Assign date" when omitted.
+  actionLabel?: string;
+};
 
 export type CanonicalMonthCellSummary = {
   count?: number;
@@ -24,6 +39,11 @@ export type CanonicalMonthCalendarProps = {
   // Per-date summary keyed by `YYYY-MM-DD`. Days not present render empty.
   cells?: Record<string, CanonicalMonthCellSummary>;
   onSelectDate?: (isoDate: string) => void;
+  // Optional unscheduled-items panel rendered below the grid. The view
+  // does not interpret what an item represents — the caller wires the
+  // action and any modal/dialog flow.
+  unscheduledItems?: CanonicalCalendarUnscheduledItem[];
+  onUnscheduledItemAction?: (item: CanonicalCalendarUnscheduledItem) => void;
   // Initial month displayed; defaults to today.
   initialMonth?: Date;
 };
@@ -54,6 +74,8 @@ function buildMonthGrid(monthStart: Date): Date[] {
 export function CanonicalMonthCalendar({
   cells = {},
   onSelectDate,
+  unscheduledItems,
+  onUnscheduledItemAction,
   initialMonth,
 }: CanonicalMonthCalendarProps) {
   const [cursor, setCursor] = useState<Date>(() =>
@@ -178,6 +200,62 @@ export function CanonicalMonthCalendar({
           );
         })}
       </div>
+
+      {unscheduledItems && unscheduledItems.length > 0 && (
+        <section
+          className="rounded-2xl border border-slate-200 bg-white p-3 space-y-2"
+          data-testid="canonical-month-unscheduled-panel"
+        >
+          <div className="flex items-baseline justify-between gap-2">
+            <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              Unscheduled
+            </h3>
+            <span className="text-[10px] text-slate-400">
+              {unscheduledItems.length}{" "}
+              {unscheduledItems.length === 1 ? "item" : "items"}
+            </span>
+          </div>
+          <ul className="space-y-1.5">
+            {unscheduledItems.map((item) => (
+              <li
+                key={`${item.id}`}
+                className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2"
+                data-testid={`canonical-month-unscheduled-item-${item.id}`}
+              >
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-slate-900 truncate">
+                    {item.label}
+                  </div>
+                  {(item.detail || item.count != null) && (
+                    <div className="text-[10px] text-slate-500 flex items-center gap-1">
+                      {item.count != null && (
+                        <span>
+                          {item.count}{" "}
+                          {item.count === 1 ? "patient" : "patients"}
+                        </span>
+                      )}
+                      {item.count != null && item.detail && (
+                        <span className="text-slate-300">·</span>
+                      )}
+                      {item.detail && <span>{item.detail}</span>}
+                    </div>
+                  )}
+                </div>
+                {onUnscheduledItemAction && (
+                  <button
+                    type="button"
+                    onClick={() => onUnscheduledItemAction(item)}
+                    className="text-[11px] font-medium rounded-full px-2.5 h-7 bg-plexus-navy-800 text-white hover:bg-plexus-navy-700 transition-colors shrink-0"
+                    data-testid={`canonical-month-unscheduled-action-${item.id}`}
+                  >
+                    {item.actionLabel ?? "Assign date"}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

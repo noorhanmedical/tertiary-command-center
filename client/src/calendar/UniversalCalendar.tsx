@@ -19,6 +19,7 @@ import { CalendarAddActionButton } from "./CalendarAddActionButton";
 import {
   CanonicalMonthCalendar,
   type CanonicalMonthCellSummary,
+  type CanonicalCalendarUnscheduledItem,
 } from "./views/CanonicalMonthCalendar";
 import { CALENDAR_FILTERS, type CalendarFilterId } from "./calendarFilters";
 import { type CalendarProfileId } from "./calendarProfiles";
@@ -40,6 +41,9 @@ export type UniversalCalendarProps = {
   // unknown[] so callers don't need to import canonical types.
   summary?: unknown[];
   onSelectDate?: (isoDate: string) => void;
+  // Optional unscheduled-items panel rendered alongside the month grid.
+  unscheduledItems?: CanonicalCalendarUnscheduledItem[];
+  onUnscheduledItemAction?: (item: CanonicalCalendarUnscheduledItem) => void;
 };
 
 export function UniversalCalendar({
@@ -51,6 +55,8 @@ export function UniversalCalendar({
   // so callers don't have to refactor signatures when those views land.
   summary: _summary,
   onSelectDate,
+  unscheduledItems,
+  onUnscheduledItemAction,
 }: UniversalCalendarProps) {
   const profile = useMemo(
     () => resolveCalendarProfileSettings(profileId, context, settings),
@@ -67,6 +73,8 @@ export function UniversalCalendar({
         <CanonicalMonthCalendar
           cells={cells}
           onSelectDate={onSelectDate}
+          unscheduledItems={unscheduledItems}
+          onUnscheduledItemAction={onUnscheduledItemAction}
         />
       );
     }

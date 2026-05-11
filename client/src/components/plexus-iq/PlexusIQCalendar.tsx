@@ -21,10 +21,10 @@ import type { AncillaryCategory } from "@shared/ancillaryCategory";
 //   - /api/global-schedule-events?eventType=procedure_complete — drives
 //     the green checkmark for completed ancillaries.
 //
-// Known migration gap: the legacy "Assign date" affordance for unscheduled
-// batches lived inside this component. The Plexus IQ page still mounts the
-// PlexusIQAssignDateDialog, but the trigger needs to be re-attached when
-// UniversalCalendar's add-action layer is wired in a later batch.
+// The legacy "Assign date" affordance for unscheduled batches lived inside
+// this component. After migration the Plexus IQ page reattached the same
+// dialog flow via the canonical `unscheduledItems` /
+// `onUnscheduledItemAction` props on UniversalCalendarDrawer.
 
 export type CalendarSummaryRow = {
   id: number;

@@ -62,4 +62,5 @@ export {
   CanonicalMonthCalendar,
   type CanonicalMonthCalendarProps,
   type CanonicalMonthCellSummary,
+  type CanonicalCalendarUnscheduledItem,
 } from "./views/CanonicalMonthCalendar";

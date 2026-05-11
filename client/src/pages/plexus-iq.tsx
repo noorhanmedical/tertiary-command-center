@@ -23,6 +23,7 @@ import { type CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar
 import {
   UniversalCalendarDrawer,
   type CanonicalMonthCellSummary,
+  type CanonicalCalendarUnscheduledItem,
 } from "@/calendar";
 import { PlexusIQAddPatientModal } from "@/components/plexus-iq/PlexusIQAddPatientModal";
 import {
@@ -200,6 +201,33 @@ export default function PlexusIQPage() {
     }
     return cells;
   }, [summary, completedEvents]);
+
+  // Unscheduled-batch items surfaced inside the canonical calendar drawer's
+  // "Unscheduled" panel. Clicking the action opens the existing assign-date
+  // dialog, which hits the canonical PATCH on screening_batches —
+  // architecture untouched.
+  const calendarUnscheduledItems = useMemo<CanonicalCalendarUnscheduledItem[]>(
+    () =>
+      summary
+        .filter((row) => !row.scheduleDate && row.patientCount > 0)
+        .map((row) => ({
+          id: row.id,
+          label: row.facility ? `${row.facility} · ${row.name}` : row.name,
+          count: row.patientCount,
+          actionLabel: "Assign date",
+        })),
+    [summary],
+  );
+
+  const handleUnscheduledItemAction = useCallback(
+    (item: CanonicalCalendarUnscheduledItem) => {
+      const numericId =
+        typeof item.id === "number" ? item.id : parseInt(String(item.id), 10);
+      if (Number.isNaN(numericId)) return;
+      setAssignTarget({ id: numericId, label: item.label });
+    },
+    [],
+  );
 
   // ───── Modals + drawer state ─────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false);
@@ -650,6 +678,8 @@ export default function PlexusIQPage() {
           setOpenDate(d);
           setCalendarOpen(false);
         }}
+        unscheduledItems={calendarUnscheduledItems}
+        onUnscheduledItemAction={handleUnscheduledItemAction}
       />
 
       <PlexusIQAddPatientModal
