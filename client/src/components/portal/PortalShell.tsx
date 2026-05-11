@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Stethoscope, HeartHandshake, Calendar as CalendarIcon, Phone, FileSignature,
@@ -28,6 +28,7 @@ import {
   fetchWorkspaceClinicSchedule,
   fetchWorkspaceAncillarySchedule,
 } from "@/lib/workflow/teamMemberWorkspaceApi";
+import { fetchTeamMemberProfile } from "@/lib/workflow/teamMemberProfileApi";
 
 // The user-facing workspace role lets us distinguish PCS vs ACS for
 // capability gating (procedure-side actions are ACS-only). Legacy direct
@@ -760,14 +761,25 @@ export function PortalShell({
     workspaceRole === "technician" ||
     workspaceRole === "liaison" ||
     workspaceRole === undefined;
+  // Capabilities are gated by BOTH workspace type and the profile setting.
+  // PCS-typed profiles can never enable procedure-side capabilities even
+  // if the stored row says they're true — defense-in-depth. Profile rows
+  // are loaded later (see workspaceProfile below); when undefined the
+  // workspace type alone drives the defaults.
   const workspaceCanCallAndSchedule = true;
-  const workspaceCanCompleteProcedure = workspaceIsAncillaryCareSpecialist;
-  const workspaceCanPrimaryConsentScreening = workspaceIsAncillaryCareSpecialist;
-  // Touch flags so unused-locals lint doesn't fire while individual call
-  // sites are wired in follow-up batches. The truthy values are
-  // available for callers via the helpers above.
+  // workspaceProfile is declared below in this same component — the
+  // capability constants are computed lazily via getters so they pick up
+  // the resolved profile when it arrives. Each capability ANDs the
+  // workspace-type gate with the stored capability bit (defaulting to
+  // ACS true / PCS false).
+  // The actual booleans are reassigned right after `workspaceProfile`
+  // resolves; for the initial render the workspace-type defaults apply.
+  let workspaceCanCompleteProcedure = workspaceIsAncillaryCareSpecialist;
+  let workspaceCanPrimaryConsentScreening = workspaceIsAncillaryCareSpecialist;
+  let workspaceCanUploadProcedureReport = workspaceIsAncillaryCareSpecialist;
   void workspaceCanCallAndSchedule;
   void workspaceCanPrimaryConsentScreening;
+  void workspaceCanUploadProcedureReport;
   const { toast } = useToast();
   const { data: facData } = useQuery<{ facilities: string[] }>({
     queryKey: ["/api/portal/my-facilities"],
@@ -776,12 +788,90 @@ export function PortalShell({
       return res.json();
     },
   });
-  const facilities = facData?.facilities ?? [];
+  // Profile fetch — pulls the logged-in user's workspace profile from
+  // admin_settings via /api/admin-settings/effective. Falls back to a
+  // role-derived default when no row exists. Read-only here; profile
+  // updates happen from the Admin Users page.
+  const { data: currentUser } = useQuery<{ id?: string; role?: string | null } | null>({
+    queryKey: ["/api/auth/me"],
+    queryFn: async () => {
+      const res = await fetch("/api/auth/me", { credentials: "include" });
+      if (res.status === 401) return null;
+      if (!res.ok) return null;
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const currentUserId = currentUser?.id ?? null;
+  const currentUserRole = currentUser?.role ?? null;
+  const { data: workspaceProfile } = useQuery({
+    queryKey: ["/api/admin-settings/effective", "team_member", "workspace_profile", currentUserId],
+    queryFn: () => fetchTeamMemberProfile(currentUserId as string, currentUserRole),
+    enabled: !!currentUserId,
+  });
+
+  const profileViewAllFacilities = !!workspaceProfile?.capabilities?.viewAllFacilities;
+  const profileAssignedFacilities = workspaceProfile?.assignedFacilityIds ?? [];
+
+  // Profile capability overrides — applied only when the profile workspace
+  // type matches the procedure-side gate. PCS profiles can never gain
+  // ACS-only capabilities.
+  const profileIsAncillary =
+    workspaceProfile?.workspaceType === "ancillaryCareSpecialist";
+  if (workspaceProfile) {
+    workspaceCanCompleteProcedure =
+      profileIsAncillary && workspaceIsAncillaryCareSpecialist &&
+      !!workspaceProfile.capabilities?.completeProcedure;
+    workspaceCanPrimaryConsentScreening =
+      profileIsAncillary && workspaceIsAncillaryCareSpecialist &&
+      !!workspaceProfile.capabilities?.primaryConsentScreening;
+    workspaceCanUploadProcedureReport =
+      profileIsAncillary && workspaceIsAncillaryCareSpecialist &&
+      !!workspaceProfile.capabilities?.uploadProcedureReport;
+  }
+  // No-facility-assigned hint surfaced inside the right-panel body when
+  // the profile restricts to a closed set but lists nothing.
+  const noFacilityAssigned =
+    !!workspaceProfile &&
+    !profileViewAllFacilities &&
+    profileAssignedFacilities.length === 0;
+
+  // Apply assigned-facility allow-list when the profile has any. The
+  // backend /api/portal/my-facilities is the underlying source of truth;
+  // we narrow client-side so unassigned facilities don't appear in the
+  // existing facility picker. Bypassed when viewAllFacilities is true.
+  const facilities = useMemo(() => {
+    const base = facData?.facilities ?? [];
+    if (profileViewAllFacilities) return base;
+    if (profileAssignedFacilities.length === 0) return base;
+    const allowed = new Set(profileAssignedFacilities);
+    return base.filter((f) => allowed.has(f));
+  }, [facData, profileViewAllFacilities, profileAssignedFacilities]);
 
   const [facility, setFacility] = useState<string>("");
   useEffect(() => {
-    if (!facility && facilities.length > 0) setFacility(facilities[0]);
-  }, [facilities, facility]);
+    if (!facility && facilities.length > 0) {
+      // Prefer the profile's default facility when it lives inside the
+      // resolved list; otherwise fall back to the first available.
+      const preferred = workspaceProfile?.defaultFacilityId;
+      if (preferred && facilities.includes(preferred)) {
+        setFacility(preferred);
+      } else {
+        setFacility(facilities[0]);
+      }
+    }
+  }, [facilities, facility, workspaceProfile?.defaultFacilityId]);
+
+  // Seed the right-panel default mode from the profile once it loads.
+  const profileSeededRef = useRef(false);
+  useEffect(() => {
+    if (profileSeededRef.current) return;
+    if (workspaceProfile?.defaultMode) {
+      profileSeededRef.current = true;
+      setActiveWorkspaceMode(workspaceProfile.defaultMode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceProfile?.defaultMode]);
 
   const [selectedDate, setSelectedDate] = useState<string>(todayIso());
   const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
@@ -1688,8 +1778,24 @@ export function PortalShell({
                   <WorkspaceModeSwitcher
                     activeMode={activeWorkspaceMode}
                     onModeChange={setActiveWorkspaceMode}
+                    counts={{
+                      callList: workspaceCallList.length,
+                      clinicSchedule:
+                        workspaceClinicSchedule.length > 0
+                          ? workspaceClinicSchedule.length
+                          : patients.length,
+                      ancillarySchedule: workspaceAncillarySchedule.length,
+                    }}
                   />
                 </div>
+                {noFacilityAssigned && (
+                  <div
+                    className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800"
+                    data-testid="workspace-no-facility-warning"
+                  >
+                    No facility assigned. Ask an admin to update your Team Member Profile.
+                  </div>
+                )}
                 {activeWorkspaceMode === "clinicSchedule" && (
                 <>
                 <div className="mb-3 flex items-center justify-between">

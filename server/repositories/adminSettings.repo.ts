@@ -45,6 +45,62 @@ export async function getAdminSettingById(id: number): Promise<AdminSetting | un
   return result;
 }
 
+// Upsert by the unique scope tuple (settingDomain, settingKey, facilityId,
+// userId). Matches the existing uniqueIndex on admin_settings. Reactivates
+// a soft-deleted (active=false) row instead of stacking duplicates.
+export async function upsertAdminSetting(input: {
+  settingDomain: string;
+  settingKey: string;
+  settingValue: unknown;
+  facilityId?: string | null;
+  userId?: string | null;
+  active?: boolean;
+  description?: string | null;
+}): Promise<AdminSetting> {
+  const facilityId = input.facilityId ?? null;
+  const userId = input.userId ?? null;
+  const conditions = [
+    eq(adminSettings.settingDomain, input.settingDomain),
+    eq(adminSettings.settingKey, input.settingKey),
+    facilityId === null ? isNull(adminSettings.facilityId) : eq(adminSettings.facilityId, facilityId),
+    userId === null ? isNull(adminSettings.userId) : eq(adminSettings.userId, userId),
+  ];
+  const [existing] = await db
+    .select()
+    .from(adminSettings)
+    .where(and(...conditions))
+    .orderBy(desc(adminSettings.id))
+    .limit(1);
+
+  if (existing) {
+    const [updated] = await db
+      .update(adminSettings)
+      .set({
+        settingValue: input.settingValue as never,
+        active: input.active ?? true,
+        description: input.description ?? existing.description,
+        updatedAt: new Date(),
+      })
+      .where(eq(adminSettings.id, existing.id))
+      .returning();
+    return updated;
+  }
+
+  const [created] = await db
+    .insert(adminSettings)
+    .values({
+      settingDomain: input.settingDomain,
+      settingKey: input.settingKey,
+      settingValue: input.settingValue as never,
+      facilityId,
+      userId,
+      active: input.active ?? true,
+      description: input.description ?? null,
+    })
+    .returning();
+  return created;
+}
+
 // ─── Default seed ──────────────────────────────────────────────────────────
 
 type DefaultAdminSetting = {

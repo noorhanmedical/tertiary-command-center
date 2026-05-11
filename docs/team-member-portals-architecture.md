@@ -112,6 +112,71 @@ content under the same shell, fed by existing canonical read endpoints:
   current user → team member id mapping will be applied via admin
   settings in a future batch. For now, facility scope is authoritative.
 
+## Team Member Profile Settings
+
+New team members are created in **Admin → Users**. The Add User dialog
+captures a username, password, and role (admin / clinician / scheduler /
+technician / liaison / biller).
+
+Each user row in Admin → Users has a **Profile** action that opens the
+**Team Member Profile** dialog. The profile is stored in `admin_settings`
+under:
+
+```
+settingDomain = "team_member"
+settingKey    = "workspace_profile"
+userId        = <user id>
+```
+
+**No new database table is required.** The existing `admin_settings`
+row scoping (per-user, optionally per-facility) is reused.
+
+The profile controls:
+
+- **Workspace Type** — Patient Care Specialist Workspace or Ancillary
+  Care Specialist Workspace.
+- **Assigned Facilities** — facility allow-list applied to the left-rail
+  facility chooser.
+- **Default Facility** — auto-selected when the user first lands in the
+  workspace (must be inside the assigned list unless View All Facilities
+  is on).
+- **Default Mode** — Clinic Schedule, Ancillary Schedule, or Call List.
+  Used to seed the right-panel tab on first render.
+- **Capabilities**:
+  - Can call and schedule (both PCS and ACS).
+  - Can complete procedure (ACS-only at runtime).
+  - Can manage consent / screening (ACS-only at runtime).
+  - Can upload procedure report (ACS-only at runtime).
+  - Can view all facilities.
+- **Allowed Service Types** — optional comma-separated list for future
+  filtering.
+
+**Runtime gates** (defense-in-depth):
+
+- Procedure-side capabilities (complete procedure, consent/screening
+  primary ownership, upload procedure report) require **both** the
+  workspace type to be Ancillary Care Specialist **and** the profile
+  capability bit to be true. A PCS-typed profile can never gain these
+  capabilities even if a stale setting row claims otherwise.
+- When the resolved profile has no assigned facilities and
+  `viewAllFacilities` is false, the right panel shows:
+  *"No facility assigned. Ask an admin to update your Team Member Profile."*
+
+**Endpoints used (read-only / write-on-save):**
+
+- `GET /api/admin-settings/effective?settingDomain=team_member&settingKey=workspace_profile&userId=...`
+  — resolves the most specific active profile row using the canonical
+  (facility, user) → (facility, NULL) → (NULL, user) → (NULL, NULL)
+  precedence.
+- `POST /api/admin-settings/upsert` — admin-only; inserts or updates the
+  row keyed by `(settingDomain, settingKey, facilityId, userId)`.
+- `GET /api/admin-settings?settingDomain=team_member&settingKey=workspace_profile&active=true`
+  — lists every saved profile (used by the admin dialog to show
+  existing rows).
+
+Both PCS and ACS retain call/scheduling capabilities. Only the ACS
+workspace shows procedure-complete + consent/screening primary actions.
+
 ## Right-panel modes (foundation only in this batch)
 
 | Mode ID            | Visible label        | Canonical data source (later batch)                                                          |
