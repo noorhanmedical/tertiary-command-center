@@ -66,9 +66,51 @@ Both default-mode state lives in `PortalShell` already; the tab strip
 is provided by `WorkspaceModeSwitcher` and is mounted at the top of the
 existing right panel. Layout, colors, and shell structure were
 intentionally preserved — only the tab strip was added inside the
-existing right-panel body. Canonical data hydration per mode is still a
-future batch; until then the existing right-panel content remains
-visible below the tabs regardless of selected mode.
+existing right-panel body. The right-panel body is now wired to the
+canonical sources per mode (see Hydrated right-panel modes below).
+
+## Hydrated right-panel modes
+
+The mode tabs at the top of the existing right panel render different
+content under the same shell, fed by existing canonical read endpoints:
+
+| Mode               | Endpoint                                       | Backed by                                                                  |
+| ------------------ | ---------------------------------------------- | -------------------------------------------------------------------------- |
+| Clinic Schedule    | `/api/portal/today-schedule` (existing list) + `/api/technician-liaison/clinic-visits` for loading hint | `global_schedule_events` (doctor_visit, same_day_add) + `patient_screenings` for the day. For ACS this is where consent / screening completion flows run; readiness comes from `case_document_readiness`. |
+| Ancillary Schedule | `/api/technician-liaison/ancillary-schedule`   | `global_schedule_events` (ancillary_appointment). **Facility filter is primary** — so remote-scheduler-created ancillary appointments still surface in ACS Ancillary Schedule for that facility. |
+| Call List          | `/api/scheduler-portal/cases` (client-side date filter on `nextActionAt`) | `patient_execution_cases.nextActionAt` + `patient_journey_events`.        |
+
+**Capabilities:**
+
+- Both Patient Care Specialist Workspace and Ancillary Care Specialist
+  Workspace can **call, schedule, coordinate, reschedule, and document
+  outcomes**. Call List and scheduling actions are not gated to one
+  workspace.
+- **Only Ancillary Care Specialist Workspace** sees procedure-side
+  actions:
+  - Mark Procedure Complete (visible inline on Ancillary Schedule rows
+    that have `patientScreeningId` + `serviceType`).
+  - Primary owner of Consent / Screening Form completion in Clinic
+    Schedule mode.
+  - Procedure report uploads + procedure-side readiness.
+- Patient Care Specialist Workspace **does not** show
+  `<ProcedureCompleteButton>` on its Ancillary Schedule rows.
+
+**Defaults:**
+
+- Patient Care Specialist Workspace default mode: **Call List**
+- Ancillary Care Specialist Workspace default mode: **Clinic Schedule**
+
+**Filtering and scope:**
+
+- Facility filter is always applied when the workspace has an active
+  facility selection (existing left-rail facility chooser).
+- Call List passes `assignedRole` as a hint ("scheduler" for PCS,
+  "liaison" for ACS) so canonical priority sorting matches each
+  workspace, but both workspaces can read the same call list.
+- Per-team-member assignment narrowing is intentionally deferred — the
+  current user → team member id mapping will be applied via admin
+  settings in a future batch. For now, facility scope is authoritative.
 
 ## Right-panel modes (foundation only in this batch)
 

@@ -23,6 +23,20 @@ import {
   WorkspaceModeSwitcher,
   type TeamMemberWorkspaceMode,
 } from "@/components/portal/WorkspaceModeSwitcher";
+import {
+  fetchWorkspaceCallList,
+  fetchWorkspaceClinicSchedule,
+  fetchWorkspaceAncillarySchedule,
+} from "@/lib/workflow/teamMemberWorkspaceApi";
+
+// The user-facing workspace role lets us distinguish PCS vs ACS for
+// capability gating (procedure-side actions are ACS-only). Legacy direct
+// mounts (technician / liaison) pass through unchanged.
+type WorkspaceRole =
+  | "technician"
+  | "liaison"
+  | "patientCareSpecialist"
+  | "ancillaryCareSpecialist";
 
 type Role = "technician" | "liaison";
 type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart";
@@ -705,10 +719,12 @@ export function PortalShell({
   role,
   workspaceLabel,
   defaultMode,
+  workspaceRole,
 }: {
   role: Role;
   workspaceLabel?: string;
   defaultMode?: TeamMemberWorkspaceMode;
+  workspaceRole?: WorkspaceRole;
 }) {
   // UI-only state for the right-panel mode tabs.
   //
@@ -730,6 +746,28 @@ export function PortalShell({
   // selection.
   const [activeWorkspaceMode, setActiveWorkspaceMode] =
     useState<TeamMemberWorkspaceMode>(defaultMode ?? "clinicSchedule");
+
+  // Capability gating per the team-member-workspace spec:
+  //   - Both PCS and ACS can call and schedule (call list, scheduling
+  //     coordination, reschedule, document outcomes).
+  //   - Only ACS can complete procedure-side work (mark procedure
+  //     complete, primary consent/screening completion ownership).
+  // Legacy direct mounts (technician / liaison) inherit ACS capability
+  // since they always owned the procedure-side flow.
+  const workspaceIsPatientCareSpecialist = workspaceRole === "patientCareSpecialist";
+  const workspaceIsAncillaryCareSpecialist =
+    workspaceRole === "ancillaryCareSpecialist" ||
+    workspaceRole === "technician" ||
+    workspaceRole === "liaison" ||
+    workspaceRole === undefined;
+  const workspaceCanCallAndSchedule = true;
+  const workspaceCanCompleteProcedure = workspaceIsAncillaryCareSpecialist;
+  const workspaceCanPrimaryConsentScreening = workspaceIsAncillaryCareSpecialist;
+  // Touch flags so unused-locals lint doesn't fire while individual call
+  // sites are wired in follow-up batches. The truthy values are
+  // available for callers via the helpers above.
+  void workspaceCanCallAndSchedule;
+  void workspaceCanPrimaryConsentScreening;
   const { toast } = useToast();
   const { data: facData } = useQuery<{ facilities: string[] }>({
     queryKey: ["/api/portal/my-facilities"],
@@ -806,6 +844,69 @@ export function PortalShell({
       { test: "BrainWave", cooldownUntil: "2026-04-30" },
     ],
   }), []);
+
+  // ───── Canonical right-panel mode queries ──────────────────────────
+  // Day window for date-bounded endpoints (clinic + ancillary schedule).
+  // /api/scheduler-portal/cases does NOT support date filters; the helper
+  // applies the same window client-side over nextActionAt.
+  const workspaceDayStartIso = `${selectedDate}T00:00:00.000Z`;
+  const workspaceDayEndIso = `${selectedDate}T23:59:59.999Z`;
+
+  const { data: workspaceCallList = [], isLoading: workspaceCallListLoading } = useQuery({
+    queryKey: [
+      "team-workspace-call-list",
+      workspaceRole ?? role,
+      facility,
+      selectedDate,
+    ],
+    queryFn: () =>
+      fetchWorkspaceCallList({
+        facilityId: facility || null,
+        // Default assignedRole nudges the canonical fetch toward the bucket
+        // most relevant to each workspace. Both PCS and ACS read this — the
+        // role hint only affects priority sorting, not data access.
+        assignedRole: workspaceIsPatientCareSpecialist ? "scheduler" : "liaison",
+        startDate: workspaceDayStartIso,
+        endDate: workspaceDayEndIso,
+        limit: 100,
+      }),
+    enabled: !!facility,
+  });
+
+  const { data: workspaceClinicSchedule = [], isLoading: workspaceClinicLoading } = useQuery({
+    queryKey: [
+      "team-workspace-clinic-schedule",
+      facility,
+      selectedDate,
+    ],
+    queryFn: () =>
+      fetchWorkspaceClinicSchedule({
+        facilityId: facility || null,
+        startDate: workspaceDayStartIso,
+        endDate: workspaceDayEndIso,
+        limit: 100,
+      }),
+    enabled: !!facility,
+  });
+
+  const { data: workspaceAncillarySchedule = [], isLoading: workspaceAncillaryLoading } = useQuery({
+    queryKey: [
+      "team-workspace-ancillary-schedule",
+      facility,
+      selectedDate,
+    ],
+    // Facility filter is the primary scope so ancillary appointments written
+    // to global_schedule_events by remote schedulers still surface for that
+    // facility, regardless of assigned user.
+    queryFn: () =>
+      fetchWorkspaceAncillarySchedule({
+        facilityId: facility || null,
+        startDate: workspaceDayStartIso,
+        endDate: workspaceDayEndIso,
+        limit: 100,
+      }),
+    enabled: !!facility,
+  });
 
   const { data: scheduleData } = useQuery<{ patients: TodayPatient[] }>({
     queryKey: ["/api/portal/today-schedule", facility, selectedDate],
@@ -1589,6 +1690,8 @@ export function PortalShell({
                     onModeChange={setActiveWorkspaceMode}
                   />
                 </div>
+                {activeWorkspaceMode === "clinicSchedule" && (
+                <>
                 <div className="mb-3 flex items-center justify-between">
                   <Badge variant="outline" data-testid="badge-patient-count">{patients.length}</Badge>
                 </div>
@@ -1710,6 +1813,110 @@ export function PortalShell({
                     })}
                   </div>
                 )}
+                </>
+                )}
+
+                {activeWorkspaceMode === "callList" && (
+                  <div className="space-y-2" data-testid="workspace-mode-body-callList">
+                    {workspaceCallListLoading ? (
+                      <div className="text-xs text-slate-200 py-4 text-center">Loading call list…</div>
+                    ) : workspaceCallList.length === 0 ? (
+                      <div className="text-xs text-slate-200 py-4 text-center">
+                        No calls for this facility/date.
+                      </div>
+                    ) : (
+                      workspaceCallList.map((row, idx) => (
+                        <div
+                          key={`${row.id ?? idx}`}
+                          className="rounded-lg border border-white/10 bg-white px-2.5 py-2 text-slate-900"
+                          data-testid={`workspace-call-${row.id ?? idx}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium truncate">
+                                {row.patientName ?? "Unnamed patient"}
+                              </div>
+                              <div className="text-[11px] text-slate-500 truncate">
+                                {row.facilityId ?? "—"}
+                                {row.nextActionAt
+                                  ? ` · ${new Date(row.nextActionAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
+                                  : ""}
+                              </div>
+                            </div>
+                            {(row.engagementStatus || row.lifecycleStatus) && (
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                {row.engagementStatus ?? row.lifecycleStatus}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {activeWorkspaceMode === "ancillarySchedule" && (
+                  <div className="space-y-2" data-testid="workspace-mode-body-ancillarySchedule">
+                    {workspaceAncillaryLoading ? (
+                      <div className="text-xs text-slate-200 py-4 text-center">Loading ancillary schedule…</div>
+                    ) : workspaceAncillarySchedule.length === 0 ? (
+                      <div className="text-xs text-slate-200 py-4 text-center">
+                        No ancillary tests scheduled for this facility/date.
+                      </div>
+                    ) : (
+                      workspaceAncillarySchedule.map((row, idx) => (
+                        <div
+                          key={`${row.id ?? idx}`}
+                          className="rounded-lg border border-white/10 bg-white px-2.5 py-2 text-slate-900"
+                          data-testid={`workspace-ancillary-${row.id ?? idx}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium truncate">
+                                {row.patientName ?? "Unnamed patient"}
+                              </div>
+                              <div className="text-[11px] text-slate-500 truncate">
+                                {row.serviceType ?? "Ancillary"}
+                                {row.startsAt
+                                  ? ` · ${new Date(row.startsAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
+                                  : ""}
+                                {row.facilityId ? ` · ${row.facilityId}` : ""}
+                              </div>
+                            </div>
+                            {row.status && (
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                {row.status}
+                              </Badge>
+                            )}
+                          </div>
+                          {workspaceCanCompleteProcedure &&
+                            row.patientScreeningId != null &&
+                            row.serviceType && (
+                              <div className="mt-2 flex justify-end">
+                                <ProcedureCompleteButton
+                                  patientScreeningId={row.patientScreeningId}
+                                  patientName={row.patientName ?? null}
+                                  patientDob={row.patientDob ?? null}
+                                  facilityId={row.facilityId ?? null}
+                                  serviceType={row.serviceType}
+                                />
+                              </div>
+                            )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+                {/* clinicSchedule loading hint surfaced if today-schedule
+                    + technician-liaison/clinic-visits still hydrating. */}
+                {activeWorkspaceMode === "clinicSchedule" &&
+                  workspaceClinicLoading &&
+                  workspaceClinicSchedule.length === 0 &&
+                  patients.length === 0 && (
+                    <div className="text-xs text-slate-200 py-2 text-center">
+                      Loading clinic schedule…
+                    </div>
+                  )}
               </div>
             )}
           </div>

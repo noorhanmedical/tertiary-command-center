@@ -49,6 +49,7 @@ export default function ClinicWorkflowPortal({
       role={INTERNAL_ROLE[role]}
       workspaceLabel={WORKSPACE_LABEL[role]}
       defaultMode={DEFAULT_MODE[role]}
+      workspaceRole={role}
     />
   );
 }
