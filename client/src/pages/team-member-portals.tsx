@@ -22,20 +22,20 @@ type PortalCard = {
 
 const PORTALS: PortalCard[] = [
   {
-    title: "Patient Care Specialist Portal",
+    title: "Patient Care Specialist Workspace",
     subtitle:
-      "Call lists, scheduling, patient outreach, callbacks, and appointment coordination.",
+      "Calls, scheduling, callbacks, patient coordination, and appointment workflow.",
     href: "/patient-care-specialist-portal",
     icon: <Headphones className="w-7 h-7" strokeWidth={1.75} />,
-    testId: "card-patient-care-specialist-portal",
+    testId: "card-patient-care-specialist-workspace",
   },
   {
-    title: "Ancillary Care Specialist Portal",
+    title: "Ancillary Care Specialist Workspace",
     subtitle:
       "Clinic schedule, ancillary schedule, call list, consent, screening forms, procedure completion, uploads, and reports.",
     href: "/ancillary-care-specialist-portal",
     icon: <Stethoscope className="w-7 h-7" strokeWidth={1.75} />,
-    testId: "card-ancillary-care-specialist-portal",
+    testId: "card-ancillary-care-specialist-workspace",
   },
 ];
 

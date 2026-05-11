@@ -1,66 +1,87 @@
 # Team Member Portals Architecture
 
-There are **two — and only two — team-member portals**:
+**Team Member Portals** is the landing surface for the two — and only two —
+team-member workspaces:
 
-1. **Patient Care Specialist Portal**
-2. **Ancillary Care Specialist Portal**
+1. **Patient Care Specialist Workspace**
+2. **Ancillary Care Specialist Workspace**
 
-## Naming
+**Outreach / Engagement Center** is **separate** from the Patient Care
+Specialist Workspace and is **not** part of Team Member Portals. It is
+its own command-center surface accessible from its own tile and route.
 
-- **Scheduler Portal** is the legacy user-facing name for **Patient Care
-  Specialist Portal**. New screens and copy must use the new name.
-- **Technician Portal** and **Liaison / Liaison Technician Portal** are
-  consolidated into **Ancillary Care Specialist Portal**.
-- **Liaison is not a separate portal.** Liaison capabilities live inside
-  the Ancillary Care Specialist Portal.
-- There is no other team-member portal.
+## Hard rules
+
+- Patient Care Specialist Workspace and Ancillary Care Specialist Workspace
+  share the **same shell architecture** (`ClinicWorkflowPortal` →
+  `PortalShell`). They look structurally identical. Data and right-panel
+  defaults may differ; layout, left rail, center area, and right panel
+  do not.
+- Patient Care Specialist Workspace must **not** render OutreachPage.
+- Outreach / Engagement Center renders OutreachPage and lives at
+  `/engagement-center`.
+- Scheduler / Technician / Liaison portal names are legacy and must not
+  appear as visible labels in new copy.
+- Liaison is not a separate portal. Liaison capabilities live inside
+  Ancillary Care Specialist Workspace.
 
 ## Routes
 
-| Canonical route                          | Legacy redirects                                                  |
-| ---------------------------------------- | ----------------------------------------------------------------- |
-| `/team-member-portals`                   | (new landing page — pick your portal)                             |
-| `/patient-care-specialist-portal`        | `/scheduler-portal`, `/outreach-center`, `/outreach`              |
-| `/ancillary-care-specialist-portal`      | `/technician-portal`, `/liaison-technician-portal`, `/liaison-portal` |
+| Canonical route                          | Renders                                              | Legacy redirects                          |
+| ---------------------------------------- | ---------------------------------------------------- | ----------------------------------------- |
+| `/team-member-portals`                   | Two-card landing                                     | —                                         |
+| `/patient-care-specialist-portal`        | `<ClinicWorkflowPortal role="patientCareSpecialist" />` | `/scheduler-portal`                       |
+| `/ancillary-care-specialist-portal`      | `<ClinicWorkflowPortal role="ancillaryCareSpecialist" />` | `/technician-portal`, `/liaison-technician-portal`, `/liaison-portal` |
+| `/engagement-center`                     | `OutreachPage`                                       | `/outreach`, `/outreach-center`           |
 
-Legacy routes remain wired so deep-links, bookmarks, and existing code that
-hands users URLs continue to work — they just `<Redirect>` to the
-canonical path.
+`/outreach/scheduler/:id` is unchanged.
 
-## Implementation (foundation batch)
+## Shell architecture
 
-This batch creates the two canonical pages as **thin wrappers** so existing
-data flows stay intact while future batches reshape internals.
+```
+┌────────────────────────────────────────────────────────────┐
+│ Workspace header (title flips per role)                    │
+├──────────────┬───────────────────────────────┬─────────────┤
+│ Left rail    │ Center patient / workflow     │ Right panel │
+│ (unchanged)  │ area (unchanged)              │             │
+│              │                               │  [ mode     │
+│              │                               │    tabs ]   │
+│              │                               │  (existing  │
+│              │                               │   list /    │
+│              │                               │   content)  │
+└──────────────┴───────────────────────────────┴─────────────┘
+```
 
-- `client/src/pages/patient-care-specialist-portal.tsx` → renders the
-  existing `OutreachPage`.
-- `client/src/pages/ancillary-care-specialist-portal.tsx` → renders
-  `<ClinicWorkflowPortal role="technician" />`.
-- `client/src/pages/team-member-portals.tsx` → premium two-card chooser.
+The shell is **the same** for both workspaces. The only role-specific
+differences in this batch are:
 
-The legacy page files (`scheduler-portal`-equivalent `outreach.tsx`,
-`technician-portal.tsx`, `liaison-portal.tsx`) remain on disk for
-compatibility. They are no longer imported in `App.tsx` once the redirects
-are in place.
+- The header **title** flips between
+  `Patient Care Specialist Workspace` and
+  `Ancillary Care Specialist Workspace`.
+- The right-panel **default mode** differs:
+  - Patient Care Specialist Workspace default: **Call List**
+  - Ancillary Care Specialist Workspace default: **Clinic Schedule**
 
-## Future right-panel modes (Ancillary Care Specialist)
+Both default-mode state lives in `PortalShell` already; the tab strip
+itself is provided by `WorkspaceModeSwitcher` and gets mounted at the
+top of the existing right panel in a follow-up batch.
 
-The Ancillary Care Specialist Portal will eventually expose three
-right-panel modes:
+## Right-panel modes (foundation only in this batch)
 
-1. **Clinic Schedule** *(same operational concept as **Visit Schedule**)*
-2. **Ancillary Schedule**
-3. **Call List**
+| Mode ID            | Visible label        | Canonical data source (later batch)                                                          |
+| ------------------ | -------------------- | --------------------------------------------------------------------------------------------- |
+| `clinicSchedule`   | Clinic Schedule      | `global_schedule_events` (doctor_visit, same_day_add) + `patient_screenings` for the day      |
+| `ancillarySchedule`| Ancillary Schedule   | `global_schedule_events` (ancillary_appointment) + `procedure_events`                         |
+| `callList`         | Call List            | `patient_execution_cases.nextActionAt` + `patient_journey_events`                             |
 
-Informed consent and screening form completion live inside the
-**Clinic Schedule / Visit Schedule** mode.
+**Clinic Schedule** and **Visit Schedule** are the same operational
+concept. Consent and screening-form completion live inside Clinic
+Schedule mode for the Ancillary Care Specialist Workspace; readiness
+comes from `case_document_readiness` and existing document endpoints.
 
-These modes are not implemented in this foundation batch.
+## Canonical data sources
 
-## Data sources
-
-All portal data must come from the **canonical** backend tables. Portals
-never own their own schedule state.
+All workspace data must come from the canonical tables:
 
 - `global_schedule_events`
 - `patient_execution_cases`
@@ -69,31 +90,15 @@ never own their own schedule state.
 - `procedure_events`
 - `case_document_readiness`
 
-## What controls what is visible inside a portal
-
-Visibility and content for a given team member are driven by:
+## What controls what is visible inside a workspace
 
 - **Assigned facility / facilities** — physical scope.
-- **Team member profile** — who they are, identity, contact.
-- **Role / capability settings** — what actions they can take
-  (`admin_settings` with `settingDomain="role_capabilities"` is the target
-  surface; not implemented in this batch).
-- **Calendar profile** — which canonical calendar profile they see (see
-  `docs/calendar-architecture.md`). Patient Care Specialist uses
-  `profileId="patientCareSpecialist"`; Ancillary Care Specialist uses
-  `profileId="technician"` while internals consolidate.
-- **Right-panel mode** — Clinic Schedule, Ancillary Schedule, or Call List
-  (Ancillary Care Specialist only).
-
-## Migration plan (future batches)
-
-This batch is the **naming + routing foundation**. Subsequent batches will:
-
-1. Migrate the Patient Care Specialist Portal's calendar drawer to the
-   canonical primitive layer (`UniversalCalendarDrawer
-   profileId="patientCareSpecialist"`).
-2. Migrate the Ancillary Care Specialist Portal's calendar surfaces to
-   `UniversalCalendarDrawer profileId="technician"` (or split out an
-   `ancillaryCareSpecialist` profile if needed).
-3. Build the three right-panel modes on top of canonical data.
-4. Retire the legacy page files once nothing imports them.
+- **Team member profile** — identity, contact.
+- **Role / capability settings** — what actions they can take (future
+  `admin_settings` entries; not implemented in this batch).
+- **Calendar profile** — see `docs/calendar-architecture.md`. PCS uses
+  `profileId="patientCareSpecialist"`; ACS uses `profileId="technician"`
+  while internals consolidate. A dedicated `ancillaryCareSpecialist`
+  profile may be added later.
+- **Right-panel mode** — Clinic Schedule, Ancillary Schedule, or Call
+  List (both workspaces; only the default differs).

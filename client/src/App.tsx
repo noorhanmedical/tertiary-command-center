@@ -15,7 +15,8 @@ import BillingPage from "@/pages/billing";
 import InvoicesPage from "@/pages/invoices";
 import DocumentUploadPage from "@/pages/document-upload";
 import AppointmentsPage from "@/pages/appointments";
-import OutreachPage from "@/pages/outreach";
+// OutreachPage is now mounted through @/pages/engagement-center. Legacy
+// /outreach + /outreach-center routes redirect to /engagement-center.
 import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
 // /technician-portal, /liaison-technician-portal, /liaison-portal now redirect
 // to /ancillary-care-specialist-portal. The page files
@@ -44,6 +45,7 @@ import PlexusIQPage from "@/pages/plexus-iq";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
+import EngagementCenterPage from "@/pages/engagement-center";
 
 const SIDEBAR_STYLE = {
   "--sidebar-width": "18rem",
@@ -115,14 +117,15 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/patient-care-specialist-portal" component={PatientCareSpecialistPortalPage} />
                 <Route path="/ancillary-care-specialist-portal" component={AncillaryCareSpecialistPortalPage} />
+                <Route path="/engagement-center" component={EngagementCenterPage} />
                 <Route path="/outreach-center">
-                  <Redirect to="/patient-care-specialist-portal" />
+                  <Redirect to="/engagement-center" />
                 </Route>
                 <Route path="/scheduler-portal">
                   <Redirect to="/patient-care-specialist-portal" />
                 </Route>
                 <Route path="/outreach">
-                  <Redirect to="/patient-care-specialist-portal" />
+                  <Redirect to="/engagement-center" />
                 </Route>
         <Route path="/clinic-workflow-demo" component={ClinicWorkflowDemoPage} />
                 <Route path="/technician-portal">

@@ -1,15 +1,17 @@
-// Patient Care Specialist Portal is the user-facing successor to the
-// former Scheduler Portal. It hosts call lists, scheduling, patient
-// outreach, callbacks, and appointment coordination.
+// Patient Care Specialist Workspace.
 //
-// In this foundation batch the page is a thin wrapper around the existing
-// OutreachPage implementation so existing data flows stay intact while
-// future batches reshape internals (right-panel modes, calendar profile,
-// canonical event hydration). Old routes (/scheduler-portal,
-// /outreach-center, /outreach) redirect here.
+// This is one of the two team-member workspaces. It is intentionally
+// NOT Outreach / Engagement Center — the standalone Outreach surface is
+// available separately at /engagement-center.
+//
+// Both team-member workspaces (Patient Care Specialist + Ancillary Care
+// Specialist) share the same shell architecture provided by
+// ClinicWorkflowPortal → PortalShell. Workspace-specific customization
+// (default right-panel mode, visible label) is applied at the
+// ClinicWorkflowPortal boundary; internals stay unchanged in this batch.
 
-import OutreachPage from "@/pages/outreach";
+import ClinicWorkflowPortal from "@/components/workflow/ClinicWorkflowPortal";
 
 export default function PatientCareSpecialistPortalPage() {
-  return <OutreachPage />;
+  return <ClinicWorkflowPortal role="patientCareSpecialist" />;
 }

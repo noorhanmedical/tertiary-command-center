@@ -1,17 +1,14 @@
-// Ancillary Care Specialist Portal consolidates technician and liaison
-// capabilities into a single team-member portal. It hosts the clinic /
-// visit schedule, ancillary schedule, call list, consent + screening form
-// completion, procedure completion, uploads, and reports.
+// Ancillary Care Specialist Workspace.
 //
-// In this foundation batch the page is a thin wrapper around the existing
-// ClinicWorkflowPortal in technician mode so existing data flows stay
-// intact while future batches reshape internals (right-panel modes,
-// canonical event hydration, liaison-side capabilities). Old routes
-// (/technician-portal, /liaison-technician-portal, /liaison-portal)
-// redirect here.
+// Consolidates the former Technician and Liaison portal capabilities into
+// a single team-member workspace. Shares its shell with the Patient Care
+// Specialist Workspace at /patient-care-specialist-portal via
+// ClinicWorkflowPortal → PortalShell. Default right-panel mode is
+// Clinic Schedule; future right-panel modes (Ancillary Schedule, Call
+// List) are wired in a follow-up batch.
 
 import ClinicWorkflowPortal from "@/components/workflow/ClinicWorkflowPortal";
 
 export default function AncillaryCareSpecialistPortalPage() {
-  return <ClinicWorkflowPortal role="technician" />;
+  return <ClinicWorkflowPortal role="ancillaryCareSpecialist" />;
 }

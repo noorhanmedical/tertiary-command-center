@@ -15,7 +15,6 @@ import {
   CheckSquare,
   FolderOpen,
   Library,
-  Stethoscope,
   HeartHandshake,
 } from "lucide-react";
 import { useState, useEffect } from "react";
@@ -31,7 +30,8 @@ type NavItemDef = {
 const NAV_ITEMS: NavItemDef[] = [
   { href: "/home",             label: "Home",             Icon: HomeIcon,     roles: ["admin", "clinician", "scheduler"] },
   { href: "/schedule",         label: "Schedule",         Icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
-  { href: "/patient-care-specialist-portal", label: "Patient Care Specialist", Icon: Phone, roles: ["admin", "clinician", "scheduler"] },
+  { href: "/team-member-portals", label: "Team Member Portals", Icon: HeartHandshake, roles: ["admin", "clinician", "scheduler", "technician", "liaison"] },
+  { href: "/engagement-center", label: "Outreach / Engagement Center", Icon: Phone, roles: ["admin", "clinician", "scheduler"] },
   { href: "/ancillary-documents",        label: "Ancillary Documents",   Icon: FileText,     roles: ["admin", "clinician"] },
   { href: "/billing",          label: "Billing",          Icon: CreditCard,   roles: ["admin", "biller"] },
   { href: "/invoices",         label: "Invoices",         Icon: Receipt,      roles: ["admin", "biller"] },
@@ -40,8 +40,6 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/drive",            label: "Plexus Drive",     Icon: FolderOpen,   roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },
-  { href: "/ancillary-care-specialist-portal", label: "Ancillary Care Specialist", Icon: Stethoscope, roles: ["admin", "technician", "liaison"] },
-  { href: "/team-member-portals", label: "Team Member Portals", Icon: HeartHandshake, roles: ["admin", "technician", "liaison", "clinician", "scheduler"] },
 ];
 
 function TodayBadge({ count }: { count: number }) {

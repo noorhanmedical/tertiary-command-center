@@ -19,6 +19,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SignaturePad } from "./SignaturePad";
 import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
+import type { TeamMemberWorkspaceMode } from "@/components/portal/WorkspaceModeSwitcher";
 
 type Role = "technician" | "liaison";
 type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart";
@@ -689,7 +690,33 @@ function AiBar({ context }: { context: string }) {
   );
 }
 
-export function PortalShell({ role }: { role: Role }) {
+// Optional workspaceLabel / defaultMode flow in from ClinicWorkflowPortal
+// so the same shell renders the Patient Care Specialist Workspace and the
+// Ancillary Care Specialist Workspace without changing internal data
+// branching. Default modes per spec: PCS → callList, ACS → clinicSchedule.
+//
+// `role` continues to drive existing data-aware branches inside the shell
+// (technician vs liaison). When a workspace-level label is supplied, the
+// header title flips to use it.
+export function PortalShell({
+  role,
+  workspaceLabel,
+  defaultMode,
+}: {
+  role: Role;
+  workspaceLabel?: string;
+  defaultMode?: TeamMemberWorkspaceMode;
+}) {
+  // UI-only state — the visual tab strip that consumes this lives at the
+  // top of the existing right-side panel and is wired in a follow-up batch.
+  // No data is fetched or persisted off this state.
+  const [activeWorkspaceMode, setActiveWorkspaceMode] = useState<TeamMemberWorkspaceMode>(
+    defaultMode ?? "clinicSchedule",
+  );
+  // Suppress unused-locals warning until the switcher is mounted into the
+  // right panel; touch values explicitly so TS keeps the state alive.
+  void activeWorkspaceMode;
+  void setActiveWorkspaceMode;
   const { toast } = useToast();
   const { data: facData } = useQuery<{ facilities: string[] }>({
     queryKey: ["/api/portal/my-facilities"],
@@ -829,7 +856,12 @@ export function PortalShell({ role }: { role: Role }) {
   }, [patients, selectedPatientId]);
 
   const RoleIcon = role === "technician" ? Stethoscope : HeartHandshake;
-  const title = role === "technician" ? "Technician Portal" : "Liaison Technician Portal";
+  // Visible header title — prefer the workspace-level label (PCS / ACS)
+  // when provided; otherwise fall back to the legacy role label so existing
+  // direct mounts continue to look the same.
+  const title =
+    workspaceLabel ??
+    (role === "technician" ? "Technician Portal" : "Liaison Technician Portal");
   const subtitle = role === "technician"
     ? "Run today's tests · sign consents · upload chart docs"
     : "";

@@ -434,28 +434,22 @@ export function HomeDashboard({
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <SecondaryTile
-                  href="/ancillary-care-specialist-portal"
-                  testId="tile-ancillary-care-specialist-portal"
-                  label="Ancillary Care Specialist"
-                  icon={<Stethoscope className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/patient-care-specialist-portal"
-                  testId="tile-patient-care-specialist-portal"
-                  label="Patient Care Specialist"
-                  icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
                   href="/team-member-portals"
                   testId="tile-team-member-portals"
                   label="Team Member Portals"
+                  icon={<Users2 className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/engagement-center"
+                  testId="tile-engagement-center"
+                  label="Outreach / Engagement Center"
                   icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/team-ops"
                   testId="tile-team-ops"
                   label="Team Ops"
-                  icon={<Users2 className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<Stethoscope className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
               </div>
 
