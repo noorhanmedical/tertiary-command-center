@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -72,6 +72,14 @@ export default function PlexusIQPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const invalidateBatch = useInvalidateBatch();
+  const mainScrollRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    requestAnimationFrame(() => {
+      mainScrollRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    });
+  }, []);
   const createBatchMut = useCreateBatch();
   const addPatientMut = useAddPatient();
   const updatePatientMut = useUpdatePatient();
@@ -649,7 +657,10 @@ export default function PlexusIQPage() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
+      <main
+        ref={mainScrollRef}
+        className="flex-1 min-h-0 overflow-auto bg-slate-50/40"
+      >
         <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-6">
           <PlexusIQDashboardRow summary={summary} batchDetails={batchDetails} />
         </div>
