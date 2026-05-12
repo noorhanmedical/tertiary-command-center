@@ -54,6 +54,14 @@ export type ParsedRow = {
   history?: string;
   medications?: string;
   notes?: string;
+  // Optional fields surfaced in the preview UI for the clinical-paste
+  // format so reviewers can see age/sex/MRN/ancillaries at a glance
+  // without expanding the notes blob.
+  age?: string;
+  sex?: string;
+  mrn?: string;
+  previousAncillaries?: string;
+  rowIndex?: number;
   // The raw block text — surfaced in the preview UI; not posted to the
   // server unless one of the structured fields above absorbs it.
   raw?: string;
@@ -375,6 +383,9 @@ export function PlexusIQBulkImportModal({
         reason: e.reason,
       }));
       // Mirror into the legacy ParsedRow shape for the preview card.
+      // Age/sex/MRN/previousAncillaries are surfaced as their own
+      // optional fields so the preview can display them as dedicated
+      // meta chips alongside DOB/Insurance/Time.
       const previewRows: ParsedRow[] = clinical.rows.map((r) => ({
         facility: r.facility ?? defFacility,
         scheduleDate: r.scheduleDate ?? defDate,
@@ -386,16 +397,12 @@ export function PlexusIQBulkImportModal({
         diagnoses: r.diagnoses,
         history: r.history,
         medications: r.medications,
-        notes: [
-          r.mrn ? `MRN: ${r.mrn}` : null,
-          r.age ? `AGE: ${r.age}` : null,
-          r.sex ? `SEX: ${r.sex}` : null,
-          r.previousAncillaries
-            ? `Ancillaries Completed: ${r.previousAncillaries}`
-            : null,
-        ]
-          .filter(Boolean)
-          .join("\n") || undefined,
+        age: r.age,
+        sex: r.sex,
+        mrn: r.mrn,
+        previousAncillaries: r.previousAncillaries,
+        rowIndex: r.rowIndex,
+        notes: undefined,
         raw: r.raw,
       }));
       return {
@@ -721,10 +728,15 @@ export function PlexusIQBulkImportModal({
 
 function PreviewCard({ index, row }: { index: number; row: ParsedRow }) {
   const meta: { label: string; value: string }[] = [];
+  if (row.rowIndex != null) meta.push({ label: "Row #", value: String(row.rowIndex) });
+  if (row.mrn) meta.push({ label: "MRN", value: row.mrn });
   if (row.dob) meta.push({ label: "DOB", value: row.dob });
+  if (row.age) meta.push({ label: "Age", value: row.age });
+  if (row.sex) meta.push({ label: "Sex", value: row.sex });
   if (row.phoneNumber) meta.push({ label: "Phone", value: row.phoneNumber });
   if (row.insurance) meta.push({ label: "Insurance", value: row.insurance });
   if (row.time) meta.push({ label: "Time", value: row.time });
+  if (row.previousAncillaries) meta.push({ label: "Ancillaries", value: row.previousAncillaries });
   return (
     <div
       className="rounded-xl border border-slate-200 bg-white p-3"

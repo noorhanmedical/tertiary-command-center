@@ -113,6 +113,19 @@ async function main() {
       dob: "1957-05-05",
       time: "10:00",
     },
+    {
+      name: "Smoke Test Patient Three",
+      diagnoses: "Atrial fibrillation\nHyperlipidemia",
+      history: "AFib x 4y",
+      medications: "Apixaban 5mg BID",
+      previousAncillaries: "BrainWave 2025-12-01",
+      insurance: "Cigna",
+      mrn: "SMOKE-3",
+      age: "72",
+      sex: "M",
+      dob: "1953-03-03",
+      time: "10:30",
+    },
   ];
 
   // Resolve (or create) the batch.
@@ -135,8 +148,9 @@ async function main() {
     createdBatchIds.push(batchId);
   }
 
-  // Bulk insert.
-  const inserts = fakeRows.map((r) => ({
+  // Bulk insert. Notes use the same structured prefix the production
+  // import route writes so we can verify the rowIndex/MRN trace.
+  const inserts = fakeRows.map((r, idx) => ({
     batchId,
     name: r.name,
     time: r.time,
@@ -150,7 +164,7 @@ async function main() {
     medications: r.medications,
     previousTests: r.previousAncillaries,
     noPreviousTests: /no\s+record/i.test(r.previousAncillaries),
-    notes: `MRN: ${r.mrn}\nAncillaries Completed: ${r.previousAncillaries}`,
+    notes: `[plexus-iq-clinical-import]\nsource: plexus-iq-clinical-import\nrowIndex: ${idx + 1}\nMRN: ${r.mrn}\nAncillaries Completed: ${r.previousAncillaries}`,
     qualifyingTests: [] as string[],
     reasoning: {} as Record<string, unknown>,
     status: "draft" as const,
@@ -170,21 +184,41 @@ async function main() {
     "all inserted patients linked to one batch",
   );
 
-  // Spot-check fields didn't get mixed up.
+  // Spot-check fields didn't get mixed up across patients.
   const p1 = inserted[0];
+  const p2 = inserted[1];
+  const p3 = inserted[2];
+
   assert(
     p1.diagnoses === "Hypertension\nType 2 diabetes",
-    "multiline Dx preserved",
+    "p1 multiline Dx preserved",
   );
-  assert(p1.history === "HTN x 10y", "Hx preserved (not mixed with Dx)");
-  assert(p1.medications === "Metformin 1000mg BID", "Rx preserved (not mixed)");
-  assert(p1.previousTests === "VitalWave 2026-02-01", "previousTests preserved");
-  assert(p1.insurance === "Medicare", "insurance preserved");
-  assert(p1.gender === "M", "gender (sex) preserved");
-  assert(p1.age === 75, "age parsed numeric");
+  assert(p1.history === "HTN x 10y", "p1 Hx preserved (not mixed with Dx)");
+  assert(p2.diagnoses === "CAD", "p2 Dx preserved");
+  assert(p3.diagnoses === "Atrial fibrillation\nHyperlipidemia", "p3 multiline Dx preserved");
 
-  const p2 = inserted[1];
-  assert(p2.noPreviousTests === true, "'No Record' triggers noPreviousTests flag");
+  // Per-patient cross-contamination guards.
+  assert(!p1.diagnoses?.includes("CAD"), "p1 Dx does not include p2 Dx");
+  assert(!p2.diagnoses?.includes("Hypertension"), "p2 Dx does not include p1 Dx");
+  assert(!p3.medications?.includes("Metformin"), "p3 Rx does not include p1 Rx");
+  assert(!p1.medications?.includes("Apixaban"), "p1 Rx does not include p3 Rx");
+  assert(p1.previousTests === "VitalWave 2026-02-01", "p1 previousTests preserved");
+  assert(p2.noPreviousTests === true, "p2 'No Record' triggers noPreviousTests flag");
+  assert(p3.previousTests === "BrainWave 2025-12-01", "p3 previousTests preserved");
+
+  // Per-patient traceability: MRN + rowIndex live in structured notes.
+  assert(p1.notes?.includes("MRN: SMOKE-1"), "p1 MRN preserved in notes");
+  assert(p2.notes?.includes("MRN: SMOKE-2"), "p2 MRN preserved in notes");
+  assert(p3.notes?.includes("MRN: SMOKE-3"), "p3 MRN preserved in notes");
+  assert(p1.notes?.includes("rowIndex: 1"), "p1 rowIndex preserved in notes");
+  assert(p2.notes?.includes("rowIndex: 2"), "p2 rowIndex preserved in notes");
+  assert(p3.notes?.includes("rowIndex: 3"), "p3 rowIndex preserved in notes");
+
+  // Age/gender land in dedicated columns and don't drift.
+  assert(p1.age === 75 && p2.age === 68 && p3.age === 72, "ages preserved per row");
+  assert(p1.gender === "M" && p2.gender === "F" && p3.gender === "M", "genders preserved per row");
+  assert(p1.medications === "Metformin 1000mg BID", "p1 Rx preserved (not mixed)");
+  assert(p1.insurance === "Medicare" && p2.insurance === "BCBS" && p3.insurance === "Cigna", "insurance preserved per row");
 
   console.log("\n--- analysis_jobs read-shape sanity ---");
   // The qualification-job status endpoint reads analysis_jobs by id and

@@ -312,6 +312,131 @@ header("Case 9: legacy formats fall through to caller");
   );
 }
 
+// ─── Case 10a: two adjacent rows — no Dx/Hx/Rx/Ancillaries cross-bleed ──
+header("Case 10a: adjacent rows do not mix Dx/Hx/Rx/Ancillaries");
+{
+  const r1 = tab([
+    "Start",
+    "2026-06-12",
+    "09:00",
+    "Patient One",
+    "1950-01-01",
+    "75",
+    "M",
+    "MRN-A",
+    "Hypertension",
+    "HTN x 10y",
+    "Metformin 1000mg",
+    "BrainWave 2025-12-01",
+    "Medicare",
+    "End",
+  ]);
+  const r2 = tab([
+    "Start",
+    "2026-06-12",
+    "09:30",
+    "Patient Two",
+    "1955-05-05",
+    "70",
+    "F",
+    "MRN-B",
+    "Atrial fibrillation",
+    "AFib x 4y",
+    "Apixaban 5mg",
+    "VitalWave 2025-11-15",
+    "BCBS",
+    "End",
+  ]);
+  const result = parsePlexusIqClinicalImport(`${r1}\n${r2}`, {});
+  assert(result.rows.length === 2, "two rows parsed");
+  const p1 = result.rows[0];
+  const p2 = result.rows[1];
+  assert(p1.diagnoses === "Hypertension", "p1 Dx clean");
+  assert(p2.diagnoses === "Atrial fibrillation", "p2 Dx clean");
+  assert(!p1.diagnoses?.includes("Atrial"), "p1 Dx does not contain p2 Dx");
+  assert(!p2.diagnoses?.includes("Hypertension"), "p2 Dx does not contain p1 Dx");
+  assert(p1.medications === "Metformin 1000mg", "p1 Rx clean");
+  assert(p2.medications === "Apixaban 5mg", "p2 Rx clean");
+  assert(!p1.medications?.includes("Apixaban"), "p1 Rx does not contain p2 Rx");
+  assert(!p2.medications?.includes("Metformin"), "p2 Rx does not contain p1 Rx");
+  assert(p1.previousAncillaries === "BrainWave 2025-12-01", "p1 ancillaries clean");
+  assert(p2.previousAncillaries === "VitalWave 2025-11-15", "p2 ancillaries clean");
+  assert(p1.mrn === "MRN-A" && p2.mrn === "MRN-B", "MRN distinct per row");
+  assert(p1.age === "75" && p2.age === "70", "AGE distinct per row");
+  assert(p1.sex === "M" && p2.sex === "F", "SEX distinct per row");
+}
+
+// ─── Case 10b: 3 rows, middle has multi-line clinical text — outer rows stay clean ──
+header("Case 10b: middle row has multi-line clinical cells");
+{
+  const r1 = tab([
+    "Start", "2026-06-12", "09:00", "Alpha", "", "70", "M", "MRN-1",
+    "HTN", "HTN x 5y", "Lisinopril", "", "Medicare", "End",
+  ]);
+  const middleDx = "Hypertension\nType 2 diabetes\nCKD stage 2";
+  const middleHx = "HTN x 15y\nDM2 x 8y";
+  const middleRx = "Metformin 1000mg BID\nLosartan 50mg";
+  const r2 = tab([
+    "Start", "2026-06-12", "09:30", "Bravo", "", "72", "F", "MRN-2",
+    middleDx, middleHx, middleRx, "BrainWave 2025-01-01", "BCBS", "End",
+  ]);
+  const r3 = tab([
+    "Start", "2026-06-12", "10:00", "Charlie", "", "68", "M", "MRN-3",
+    "CAD", "MI 2020", "ASA 81mg", "", "Aetna", "End",
+  ]);
+  const result = parsePlexusIqClinicalImport(`${r1}\n${r2}\n${r3}`, {});
+  assert(result.rows.length === 3, "three rows parsed");
+  const [alpha, bravo, charlie] = result.rows;
+  assert(alpha.diagnoses === "HTN", "alpha Dx clean (no bravo bleed)");
+  assert(charlie.diagnoses === "CAD", "charlie Dx clean (no bravo bleed)");
+  assert(bravo.diagnoses === middleDx, "bravo multi-line Dx preserved");
+  assert(bravo.history === middleHx, "bravo multi-line Hx preserved");
+  assert(bravo.medications === middleRx, "bravo multi-line Rx preserved");
+  assert(!alpha.medications?.includes("Metformin"), "alpha Rx unaffected");
+  assert(!charlie.medications?.includes("Losartan"), "charlie Rx unaffected");
+  assert(alpha.mrn === "MRN-1" && bravo.mrn === "MRN-2" && charlie.mrn === "MRN-3", "MRN preserved across multi-line block");
+}
+
+// ─── Case 10c: missing End marker is reported, not silent ─────────
+header("Case 10c: missing End marker yields error, not silent partial");
+{
+  // Two Starts but only one End. The second row is dangling and the
+  // parser must report it.
+  const orphan = tab([
+    "Start", "2026-06-12", "09:00", "Orphan Patient", "", "", "", "", "", "", "", "", "", // no End
+  ]);
+  const closed = tab([
+    "Start", "2026-06-12", "09:30", "Closed Patient", "", "70", "M", "", "HTN", "", "", "", "", "End",
+  ]);
+  const result = parsePlexusIqClinicalImport(`${closed}\n${orphan}`, {});
+  // The parser captures the closed row; the orphan must be reported.
+  assert(result.rows.length === 1, "only the closed row is captured");
+  assert(result.rows[0].name === "Closed Patient", "closed row name correct");
+  assert(
+    result.errors.some((e) => /unterminated/i.test(e.reason)),
+    "dangling Start surfaced as 'Unterminated' error",
+  );
+}
+
+// ─── Case 10d: extra blank lines + tabs do not shift columns ──────
+header("Case 10d: extra blank lines/tabs do not break alignment");
+{
+  // Insert blank lines between rows to simulate spreadsheet padding.
+  const row = tab([
+    "Start", "2026-06-12", "09:00", "Padded Patient", "1950-01-01", "76", "F", "MRN-X",
+    "Asthma", "Asthma x 20y", "Albuterol inhaler", "No Record of Plexus Ancillary Screens", "Cigna", "End",
+  ]);
+  const text = `\n\n\n${row}\n\n\n`;
+  const result = parsePlexusIqClinicalImport(text, {});
+  assert(result.rows.length === 1, "padded row parsed");
+  const r = result.rows[0];
+  assert(r.name === "Padded Patient", "name preserved despite padding");
+  assert(r.diagnoses === "Asthma", "Dx not shifted by blank lines");
+  assert(r.medications === "Albuterol inhaler", "Rx not shifted by blank lines");
+  assert(r.previousAncillaries === "No Record of Plexus Ancillary Screens", "ancillaries text preserved");
+  assert(r.insurance === "Cigna", "insurance not shifted by blank lines");
+}
+
 // ─── Case 10: defaults default — scheduleDate default = today ─────────
 header("Case 10: scheduleDate falls back to today when undefined");
 {

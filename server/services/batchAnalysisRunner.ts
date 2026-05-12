@@ -115,12 +115,22 @@ async function runAnalysisLoop(
       patients,
       async (patient) => {
         try {
+          // Per-patient AI qualification. Each iteration here processes
+          // exactly one patient through screenSinglePatientWithAI — no
+          // batch-level AI call exists or is acceptable. The clinical
+          // import fields (dob, insurance, previousTests, full notes
+          // including MRN / row index / parser warnings) are
+          // intentionally forwarded so each patient is evaluated on
+          // their own full saved record.
           const result = await screenSinglePatientWithAI(
             {
               name: patient.name,
               time: patient.time,
               age: patient.age,
               gender: patient.gender,
+              dob: patient.dob,
+              insurance: patient.insurance,
+              previousTests: patient.previousTests,
               diagnoses: patient.diagnoses,
               history: patient.history,
               medications: patient.medications,
@@ -169,13 +179,23 @@ async function runAnalysisLoop(
             );
           }
         } catch (err: any) {
+          const errMsg = err?.message ?? String(err);
           console.error(
             `[batchAnalysisRunner:${batchId}] failed to analyze patient ${patient.name}:`,
-            err.message,
+            errMsg,
           );
+          // Preserve the failure detail in `reasoning` (JSONB) so the
+          // qualification-jobs status endpoint can surface per-patient
+          // error reasons without a new schema column. Retry resets
+          // this back to {} before the next attempt.
           await storage.updatePatientScreening(patient.id, {
             qualifyingTests: [],
-            reasoning: {},
+            reasoning: {
+              __analysisError: {
+                message: errMsg,
+                failedAt: new Date().toISOString(),
+              },
+            } as Record<string, unknown>,
             status: "error",
           });
         }

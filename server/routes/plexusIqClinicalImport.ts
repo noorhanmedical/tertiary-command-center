@@ -22,28 +22,46 @@ import { extractDateFromPrevTests } from "./helpers";
 // Plexus IQ. Re-uses the existing analysis_jobs infra so the client can
 // poll progress with the same shape used by /api/batches/:id/analysis-status.
 
-// Compose AGE / SEX / MRN / Ancillaries Completed into the existing
-// patient notes column when no dedicated schema columns exist. Long
-// clinical text is preserved verbatim; we only prepend a structured
-// header.
-function structuredNotes(input: {
+// Per-patient traceability sentinel. Every clinical-import insert
+// stamps this prefix so future readers (status endpoint, retries,
+// human inspection) can recover the import row index, MRN, parser
+// warnings, and raw row snippet without touching the schema.
+const CLINICAL_IMPORT_NOTES_HEADER = "[plexus-iq-clinical-import]";
+
+// Build the structured notes block for one imported clinical row. The
+// AGE and SEX values are NOT included here because they have dedicated
+// columns (`age` + `gender`); duplicating them in notes would mislead
+// reviewers. Long clinical text inside `extra` is preserved verbatim.
+function buildClinicalImportNotes(input: {
+  rowIndex?: number | null;
   mrn?: string | null;
-  age?: string | null;
-  sex?: string | null;
   previousAncillaries?: string | null;
+  parserWarnings?: string[] | null;
   raw?: string | null;
-  extra?: string | null;
+  existingNotes?: string | null;
 }): string | null {
-  const lines: string[] = [];
-  if (input.mrn?.trim()) lines.push(`MRN: ${input.mrn.trim()}`);
-  if (input.age?.trim()) lines.push(`AGE: ${input.age.trim()}`);
-  if (input.sex?.trim()) lines.push(`SEX: ${input.sex.trim()}`);
+  const headerLines: string[] = [CLINICAL_IMPORT_NOTES_HEADER];
+  headerLines.push(`source: plexus-iq-clinical-import`);
+  if (input.rowIndex != null) headerLines.push(`rowIndex: ${input.rowIndex}`);
+  if (input.mrn?.trim()) headerLines.push(`MRN: ${input.mrn.trim()}`);
   if (input.previousAncillaries?.trim())
-    lines.push(`Ancillaries Completed: ${input.previousAncillaries.trim()}`);
-  const header = lines.join("\n");
-  const body = (input.extra ?? "").trim();
-  if (header && body) return `${header}\n\n${body}`;
-  return header || body || null;
+    headerLines.push(`Ancillaries Completed: ${input.previousAncillaries.trim()}`);
+  if (input.parserWarnings?.length) {
+    for (const w of input.parserWarnings) headerLines.push(`Parser warning: ${w}`);
+  }
+  if (input.raw?.trim()) {
+    // Cap raw at 2000 chars to keep notes readable but not lossy for
+    // typical clinical paste rows (which are well under that).
+    const snippet =
+      input.raw.length > 2000
+        ? input.raw.slice(0, 2000) + "\n…(truncated)"
+        : input.raw;
+    headerLines.push(`raw:\n${snippet}`);
+  }
+  const header = headerLines.join("\n");
+  const existing = (input.existingNotes ?? "").trim();
+  if (header && existing) return `${header}\n\n${existing}`;
+  return header || existing || null;
 }
 
 const clinicalImportRowSchema = z.object({
@@ -169,29 +187,51 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
       patientType: "visit" | "outreach";
     };
     const resolvedRows: Resolved[] = [];
-    const errors: Array<{ rowIndex: number; reason: string }> = [];
+    // Skip records are visible — every dropped row carries rowIndex,
+    // patientName when available, reason, and a short raw snippet so
+    // the client UI can show "X skipped, why, which rows" rather than
+    // a silent drop.
+    type SkipError = {
+      rowIndex: number;
+      patientName?: string;
+      reason: string;
+      raw?: string;
+    };
+    const errors: SkipError[] = [];
 
     rows.forEach((r, idx) => {
       const rowIndex = r.rowIndex ?? idx + 1;
+      const rawSnippet = r.raw && r.raw.length > 200 ? r.raw.slice(0, 200) + "…" : r.raw;
       const facility =
         resolveFacility(r.facility ?? defaultFacility) ??
         (defaultFacility ? resolveFacility(defaultFacility) : null);
       if (!facility) {
         errors.push({
           rowIndex,
+          patientName: r.name?.trim() || undefined,
           reason: `Unknown or missing facility "${r.facility ?? defaultFacility ?? ""}"`,
+          raw: rawSnippet,
         });
         return;
       }
       const scheduleDate = r.scheduleDate ?? defaultScheduleDate;
       if (!scheduleDate) {
-        errors.push({ rowIndex, reason: "Missing scheduleDate" });
+        errors.push({
+          rowIndex,
+          patientName: r.name?.trim() || undefined,
+          reason: "Missing scheduleDate",
+          raw: rawSnippet,
+        });
         return;
       }
       const patientType: "visit" | "outreach" =
         r.patientType ?? defaultPatientType ?? "visit";
       if (!r.name?.trim()) {
-        errors.push({ rowIndex, reason: "Missing name" });
+        errors.push({
+          rowIndex,
+          reason: "Missing name",
+          raw: rawSnippet,
+        });
         return;
       }
       resolvedRows.push({ ...r, rowIndex, facility, scheduleDate, patientType });
@@ -244,14 +284,17 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
           const ageNum = r.age?.trim()
             ? Number.parseInt(r.age.trim().replace(/[^0-9-]/g, ""), 10) || null
             : null;
-          // MRN doesn't have a dedicated column — keep it in notes so it
-          // surfaces in the UI alongside the previousAncillaries copy.
-          const notes = structuredNotes({
+          // MRN + rowIndex + parser warnings + raw row trace go into
+          // structured notes so every imported patient is individually
+          // traceable back to the clinical paste, without any new
+          // schema columns.
+          const notes = buildClinicalImportNotes({
+            rowIndex: r.rowIndex ?? null,
             mrn: r.mrn ?? null,
-            age: null,
-            sex: null,
             previousAncillaries: r.previousAncillaries ?? null,
-            extra: null,
+            parserWarnings: null,
+            raw: r.raw ?? null,
+            existingNotes: null,
           });
           return {
             batchId,
@@ -286,6 +329,21 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
           .insert(patientScreenings)
           .values(inserts)
           .returning();
+
+        // Reconciliation guard: every row we attempted to insert must
+        // come back, otherwise we'd silently drop a patient. This is
+        // belt-and-braces — Drizzle returning() will already throw on
+        // failure — but the explicit check makes the contract visible
+        // and surfaces the mismatch as a structured row error.
+        if (insertedRows.length !== inserts.length) {
+          for (let i = insertedRows.length; i < inserts.length; i++) {
+            errors.push({
+              rowIndex: groupRows[i]?.rowIndex ?? i + 1,
+              reason: `INSERT returned ${insertedRows.length}/${inserts.length} rows — patient not persisted`,
+            });
+          }
+        }
+
         for (const row of insertedRows) {
           patientIds.push(row.id);
         }
@@ -445,13 +503,24 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
         const queued = Math.max(0, total - completed);
 
         // Aggregate per-patient failure detail from patient_screenings.
+        // Each failed patient carries the AI error reason in reasoning
+        // under the reserved key __analysisError.message; surface it
+        // so the multi-job status UI can show the actual cause per row
+        // rather than a generic "Analysis failed".
         const patients = await storage.getPatientScreeningsByBatch(job.batchId);
         const failed = patients.filter((p) => p.status === "error");
-        const errors = failed.map((p) => ({
-          patientId: p.id,
-          patientName: p.name,
-          error: "Analysis failed (status=error)",
-        }));
+        const errors = failed.map((p) => {
+          const reasoning = (p.reasoning ?? {}) as Record<string, unknown>;
+          const analysisErr = reasoning["__analysisError"] as
+            | { message?: string; failedAt?: string }
+            | undefined;
+          return {
+            patientId: p.id,
+            patientName: p.name,
+            error:
+              analysisErr?.message ?? "Analysis failed (status=error)",
+          };
+        });
 
         let status: "queued" | "processing" | "completed" | "failed" | "cancelled" =
           "processing";

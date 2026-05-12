@@ -98,6 +98,12 @@ export interface ScreeningPatientInput {
   history?: string | null;
   medications?: string | null;
   notes?: string | null;
+  // Optional clinical fields forwarded by the clinical-import flow so
+  // every patient is qualified on their full record. The model treats
+  // these the same as any other narrative input.
+  dob?: string | null;
+  insurance?: string | null;
+  previousTests?: string | null;
 }
 
 const USER_PROMPT_SUFFIX: Record<QualificationMode, string> = {
@@ -112,9 +118,12 @@ export async function screenSinglePatientWithAI(patient: ScreeningPatientInput, 
   if (patient.time) parts.push(`Time: ${patient.time}`);
   if (patient.age) parts.push(`Age: ${patient.age}`);
   if (patient.gender) parts.push(`Gender: ${patient.gender}`);
+  if (patient.dob) parts.push(`DOB: ${patient.dob}`);
+  if (patient.insurance) parts.push(`Insurance: ${patient.insurance}`);
   if (patient.diagnoses) parts.push(`Diagnoses: ${patient.diagnoses}`);
   if (patient.history) parts.push(`History/HPI: ${patient.history}`);
   if (patient.medications) parts.push(`Medications: ${patient.medications}`);
+  if (patient.previousTests) parts.push(`Previous Ancillary Tests: ${patient.previousTests}`);
   if (patient.notes) parts.push(`Notes: ${patient.notes}`);
   const description = parts.join("\n");
 

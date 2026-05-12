@@ -14,7 +14,12 @@ export type ClinicalImportResponse = {
   ok: boolean;
   importedCount: number;
   skippedCount: number;
-  errors: Array<{ rowIndex: number; reason: string }>;
+  errors: Array<{
+    rowIndex: number;
+    patientName?: string;
+    reason: string;
+    raw?: string;
+  }>;
   batchIds: number[];
   patientIds: number[];
   batchPatientMap: Array<{

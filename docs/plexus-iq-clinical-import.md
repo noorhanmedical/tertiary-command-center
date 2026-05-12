@@ -117,6 +117,56 @@ Dismissing the banner clears the local list; the underlying
 `analysis_jobs` rows remain on the server and are still queryable via
 `/api/batches/:id/analysis-status`.
 
+## Per-patient integrity guarantees
+
+The clinical import path is built so every imported patient is given
+their due: each row produces exactly one patient unless there is a
+visible, structured error, and clinical fields never cross between
+adjacent rows.
+
+- **One row → one patient.** The route's reconciliation guard checks
+  that the DB `INSERT` returns the same number of rows it was given.
+  Any mismatch is surfaced as a row-level error (`INSERT returned X/Y
+  rows — patient not persisted`).
+- **No silent skips.** Every row that fails validation comes back in
+  `errors[]` with `{ rowIndex, patientName?, reason, raw? }`. The
+  `importedCount + skippedCount` always equals the request's row
+  count.
+- **No cross-contamination.** The parser splits Start/End rows
+  deterministically and never re-uses the previous row's cells.
+  Parser tests assert this with adjacent rows that share no Dx/Hx/Rx
+  content; a multi-line middle row is verified to not bleed into its
+  neighbors. The API smoke test re-verifies the same contract at the
+  DB layer with three patients.
+- **Unterminated rows.** A `Start` marker without a matching `End`
+  produces a parser error (`Unterminated clinical row — missing End
+  marker`) instead of silently consuming the next row.
+- **Per-patient AI qualification.** The shared `batchAnalysisRunner`
+  iterates patients one at a time through `screenSinglePatientWithAI`
+  inside `batchProcess`. There is no batch-level AI call. Each AI
+  call receives the full saved record — `name`, `time`, `age`,
+  `gender`, `dob`, `insurance`, `previousTests`, `diagnoses`,
+  `history`, `medications`, and the structured `notes` (which
+  contains the clinical-import row index, MRN, parser warnings, and
+  raw row snippet).
+- **Per-patient failure detail.** When an AI call throws, the
+  runner records `reasoning.__analysisError = { message, failedAt }`
+  on the patient. The qualification-jobs status endpoint reads this
+  field so the multi-job UI shows the actual error reason for each
+  failed patient, not a generic "failed" status.
+- **Retry preserves original data.** `retry-failed` resets the
+  patient's `status` to `draft` and clears `qualifyingTests` /
+  `reasoning`, but does not touch any imported clinical fields. The
+  next AI call sees the same record the original call did.
+- **MRN + row index traceability.** Every imported patient's `notes`
+  column begins with the sentinel `[plexus-iq-clinical-import]` and
+  carries `source`, `rowIndex`, `MRN`, `Ancillaries Completed`, any
+  parser warnings, and a capped raw row snippet — enough to recover
+  the origin row long after the import has scrolled off.
+- **PDFs are never generated during a job.** Plexus PDF / Clinician
+  PDF generation runs on demand from the saved
+  `qualifyingTests` + `reasoning`, after the job completes.
+
 ## Reliability rules
 
 - The clinical-import endpoint **does not** call OpenAI. Importing

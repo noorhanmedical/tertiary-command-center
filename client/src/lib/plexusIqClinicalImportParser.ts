@@ -262,6 +262,17 @@ function getCell(
   return trimOrUndefined(rawRow.cells[idx]);
 }
 
+// Count Start markers in body text — anything that looks like a row
+// boundary but has no matching End is a dangling row that the
+// row-extractor will silently drop. We surface them as explicit errors
+// so a missing End marker can never produce a phantom-skipped patient.
+function countStartMarkers(body: string): number {
+  const re = /(?:^|\n|\t)[\t ]*Start[\t ]*(?:\t|\n)/gi;
+  let count = 0;
+  while (re.exec(body) !== null) count += 1;
+  return count;
+}
+
 function parseClinicalSpreadsheet(
   text: string,
   defaults: PlexusIqClinicalImportDefaults,
@@ -273,6 +284,17 @@ function parseClinicalSpreadsheet(
   }
   const out: PlexusIqClinicalImportRow[] = [];
   const errors: PlexusIqClinicalImportError[] = [];
+
+  const expectedStarts = countStartMarkers(bodyText);
+  if (expectedStarts > rows.length) {
+    const missing = expectedStarts - rows.length;
+    for (let i = 0; i < missing; i++) {
+      errors.push({
+        rowIndex: rows.length + i + 1,
+        reason: "Unterminated clinical row — missing End marker",
+      });
+    }
+  }
 
   for (const r of rows) {
     const name = getCell(r, headerMap, "NAME", 2);
