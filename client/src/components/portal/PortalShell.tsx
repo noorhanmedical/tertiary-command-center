@@ -1402,51 +1402,47 @@ export function PortalShell({
 
         <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
           <div className="relative mx-auto flex h-full max-w-[1600px] flex-col px-[10%] pt-14">
-            {/* Playground control — split into three click zones:
-                 left toggles the left rail only, center toggles both
-                 rails, right toggles the right rail only. The outer
-                 visual (pill + facility caption) is preserved. */}
+            {/* Playground control — single continuous pill with three
+                 invisible click zones overlaid: left 25% toggles the
+                 left rail only, center 50% toggles both rails, right
+                 25% toggles the right rail only. No visible arrows or
+                 dividers. */}
             <div
               className="absolute left-1/2 top-0 z-30 -translate-x-1/2 text-center"
               role="group"
               aria-label="Playground rail controls"
               data-testid="group-playground-controls"
             >
-              <div className="inline-flex items-stretch rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl overflow-hidden">
+              <div className="relative inline-flex items-center justify-center rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] px-5 py-2 text-base font-semibold tracking-tight text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl overflow-hidden">
+                <span className="relative z-10 pointer-events-none">Playground</span>
                 <button
                   type="button"
-                  onClick={() => setLeftRailCollapsed((v) => !v)}
                   aria-label="Toggle left panel"
                   title="Toggle left panel"
-                  className="px-3 py-2 text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+                  onClick={() => setLeftRailCollapsed((v) => !v)}
+                  className="absolute left-0 top-0 h-full w-1/4 opacity-0 cursor-pointer"
                   data-testid="button-toggle-left-rail-zone"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
+                />
                 <button
                   type="button"
+                  aria-label="Toggle both panels"
+                  title="Toggle both panels"
                   onClick={() => {
                     const bothOpen = !leftRailCollapsed && !rightRailCollapsed;
                     setLeftRailCollapsed(bothOpen);
                     setRightRailCollapsed(bothOpen);
                   }}
-                  aria-label="Toggle both panels"
-                  title="Toggle both panels"
-                  className="px-5 py-2 text-base font-semibold tracking-tight text-white hover:bg-white/10 transition-colors"
+                  className="absolute left-1/4 top-0 h-full w-1/2 opacity-0 cursor-pointer"
                   data-testid="button-toggle-both-rails"
-                >
-                  Playground
-                </button>
+                />
                 <button
                   type="button"
-                  onClick={() => setRightRailCollapsed((v) => !v)}
                   aria-label="Toggle right panel"
                   title="Toggle right panel"
-                  className="px-3 py-2 text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+                  onClick={() => setRightRailCollapsed((v) => !v)}
+                  className="absolute right-0 top-0 h-full w-1/4 opacity-0 cursor-pointer"
                   data-testid="button-toggle-right-rail-zone"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
+                />
               </div>
               <div className="mt-2 text-xs text-slate-600">
                 {facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}
