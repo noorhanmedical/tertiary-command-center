@@ -86,12 +86,36 @@ shows the status banner at the top of the workspace.
   percent, errors }`. The shape mirrors `/api/batches/:id/analysis-status`
   but adds per-patient failure detail by joining
   `patient_screenings.status === "error"`.
-- The banner UI polls every 2.5 seconds while the job is
-  `queued`/`processing` and stops polling once the job is terminal.
+- The banner UI polls every 2.5 seconds while a job is
+  `queued`/`processing` and stops polling once that job is terminal.
 - `POST /api/plexus-iq/qualification-jobs/:jobId/retry-failed` resets
   patients with `status="error"` in the underlying batch back to
   `draft` and re-kicks the runner. Returns the new `jobId`; the
-  banner swaps to it automatically.
+  affected row in the banner swaps to it automatically while the
+  other jobs are untouched.
+
+## Multi-job tracking
+
+When a clinical import creates patients across multiple
+`(facility, scheduleDate)` groups, the response from
+`POST /api/plexus-iq/qualification-jobs` includes a `jobs[]` array —
+one entry per batch. The Plexus IQ page tracks the full array and
+renders one combined banner that:
+
+- Polls each job concurrently via `useQueries` (one queryKey per
+  jobId, refetch every 2.5s while non-terminal).
+- Shows a header **patient-weighted** progress bar:
+  `percent = (Σcompleted + Σfailed + Σskipped) / Σtotal`.
+- Lists each job as a row underneath with its own status, counts,
+  failure expander, and per-job **Retry failed** button.
+- Retrying one job swaps in the new jobId in place without removing
+  the other rows. All rows keep polling.
+- Header status resolves to `completed` only when every row is
+  terminal; if any row failed, the header status is `failed`.
+
+Dismissing the banner clears the local list; the underlying
+`analysis_jobs` rows remain on the server and are still queryable via
+`/api/batches/:id/analysis-status`.
 
 ## Reliability rules
 
@@ -131,7 +155,8 @@ shows the status banner at the top of the workspace.
 | `client/src/lib/plexusIqClinicalImportParser.ts` | Deterministic Start/End tab-separated parser |
 | `client/src/lib/plexusIqClinicalImportApi.ts` | Fetch helpers for the new routes |
 | `client/src/components/plexus-iq/PlexusIQBulkImportModal.tsx` | Adds clinical-spreadsheet detection + format indicator |
-| `client/src/components/plexus-iq/PlexusIQQualificationJobStatus.tsx` | Polled progress banner with retry-failed |
+| `client/src/components/plexus-iq/PlexusIQQualificationJobStatus.tsx` | Legacy single-job progress banner (kept; unused on the page now) |
+| `client/src/components/plexus-iq/PlexusIQQualificationJobsStatus.tsx` | Multi-job banner used by `plexus-iq.tsx`: aggregates progress + per-job rows + per-job retry |
 | `client/src/pages/plexus-iq.tsx` | Wires the clinical-import flow + status banner |
 | `server/routes/plexusIqClinicalImport.ts` | Bulk-import endpoint + qualification-job routes |
 | `server/services/batchAnalysisRunner.ts` | Shared analyze runner reused by `/api/batches/:id/analyze` and the new qualification-jobs route |

@@ -35,7 +35,10 @@ import {
   startPlexusIqQualificationJob,
 } from "@/lib/plexusIqClinicalImportApi";
 import type { PlexusIqClinicalImportRow } from "@/lib/plexusIqClinicalImportParser";
-import { PlexusIQQualificationJobStatus } from "@/components/plexus-iq/PlexusIQQualificationJobStatus";
+import {
+  PlexusIQQualificationJobsStatus,
+  type ActiveQualificationJob,
+} from "@/components/plexus-iq/PlexusIQQualificationJobsStatus";
 import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
 import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
 import { PlexusIQWorkspace } from "@/components/plexus-iq/PlexusIQWorkspace";
@@ -345,12 +348,15 @@ export default function PlexusIQPage() {
     [resolveBatchId, addPatientMut, toast, refreshAll],
   );
 
-  // Active qualification-job id for the clinical-import status banner.
-  // Cleared when the user dismisses it or starts a new import. Stored in
-  // a ref-like state so the user can navigate away and back without
-  // losing the poll target (the analysis_jobs row is durable on the
-  // server; we just need to remember the id).
-  const [activeQualificationJobId, setActiveQualificationJobId] = useState<number | null>(null);
+  // Active qualification jobs for the clinical-import status banner.
+  // A clinical import spanning multiple (facility, scheduleDate) groups
+  // creates one analysis_jobs row per group; we track and poll all of
+  // them concurrently. Dismissing the banner clears the local list — the
+  // jobs themselves stay alive on the server and can be re-attached by
+  // re-importing or by reading /api/batches/:id/analysis-status directly.
+  const [activeQualificationJobs, setActiveQualificationJobs] = useState<
+    ActiveQualificationJob[]
+  >([]);
 
   const handleClinicalImport = useCallback(
     async (
@@ -391,14 +397,30 @@ export default function PlexusIQPage() {
         });
 
         // Kick off qualification jobs for every created batch. We poll
-        // the first one in the banner; failed/incomplete patients can
-        // be retried from there.
+        // all of them concurrently in the banner; failed/incomplete
+        // patients can be retried per-job from there.
         try {
           const job = await startPlexusIqQualificationJob({
             batchIds: result.batchIds,
           });
-          if (job.ok && job.jobId != null) {
-            setActiveQualificationJobId(job.jobId);
+          if (job.ok && job.jobs.length > 0) {
+            // Dedup by jobId in case the user re-imports overlapping batches.
+            setActiveQualificationJobs(() => {
+              const seen = new Set<number>();
+              const out: ActiveQualificationJob[] = [];
+              for (const j of job.jobs) {
+                if (seen.has(j.jobId)) continue;
+                seen.add(j.jobId);
+                out.push({
+                  jobId: j.jobId,
+                  batchId: j.batchId,
+                  totalPatients: j.totalPatients,
+                });
+              }
+              return out;
+            });
+          } else if (job.ok && job.jobId != null) {
+            setActiveQualificationJobs([{ jobId: job.jobId }]);
           }
         } catch (jobErr) {
           toast({
@@ -749,12 +771,12 @@ export default function PlexusIQPage() {
         <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-6">
           <PlexusIQDashboardRow summary={summary} batchDetails={batchDetails} />
         </div>
-        {activeQualificationJobId !== null && (
+        {activeQualificationJobs.length > 0 && (
           <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-3">
-            <PlexusIQQualificationJobStatus
-              jobId={activeQualificationJobId}
-              onJobChange={setActiveQualificationJobId}
-              onDismiss={() => setActiveQualificationJobId(null)}
+            <PlexusIQQualificationJobsStatus
+              jobs={activeQualificationJobs}
+              onJobsChange={setActiveQualificationJobs}
+              onDismiss={() => setActiveQualificationJobs([])}
             />
           </div>
         )}
