@@ -33,7 +33,9 @@
     "test:final-schedule-commit-to-caller": "tsx script/testFinalScheduleCommitToCaller.ts",
     "test:final-schedule-canonical-actions": "tsx script/testFinalScheduleCanonicalActions.ts",
     "test:build-screen-data-entry-model": "tsx script/testBuildScreenDataEntryModel.ts",
-    "test:ui-path-api-smoke": "tsx script/uiPathApiSmoke.ts"
+    "test:ui-path-api-smoke": "tsx script/uiPathApiSmoke.ts",
+    "test:plexus-iq-clinical-parser": "tsx script/testPlexusIqClinicalImportParser.ts",
+    "test:plexus-iq-clinical-import-api": "tsx script/testPlexusIqClinicalImportApi.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",

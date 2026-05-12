@@ -19,6 +19,10 @@ import {
 } from "@/components/ui/select";
 import { ChevronLeft, FileText, Loader2, Upload, User } from "lucide-react";
 import { VALID_FACILITIES } from "@shared/plexus";
+import {
+  parsePlexusIqClinicalImport,
+  type PlexusIqClinicalImportRow,
+} from "@/lib/plexusIqClinicalImportParser";
 
 // Two-step bulk-import modal for /plexus-iq.
 //
@@ -56,6 +60,12 @@ export type ParsedRow = {
 };
 
 export type ParsedRowError = { line: number; reason: string };
+
+export type DetectedImportFormat =
+  | "clinical-spreadsheet"
+  | "start-end-labels"
+  | "legacy-csv"
+  | "empty";
 
 type PatientType = "visit" | "outreach";
 
@@ -283,12 +293,21 @@ export function PlexusIQBulkImportModal({
   open,
   onClose,
   onImport,
+  onClinicalImport,
   pending,
   progress,
 }: {
   open: boolean;
   onClose: () => void;
+  // Legacy code-path: per-row POST loop (still used for the Start/End
+  // label-block and legacy CSV formats so existing behaviour is preserved).
   onImport: (rows: ParsedRow[]) => Promise<void>;
+  // New clinical-spreadsheet code-path: one bulk POST + optional
+  // qualification-job kickoff. Supplied by /plexus-iq.tsx.
+  onClinicalImport?: (
+    rows: PlexusIqClinicalImportRow[],
+    defaults: { facility: string; scheduleDate: string; patientType: "visit" | "outreach" },
+  ) => Promise<void>;
   pending: boolean;
   progress: { current: number; total: number; uniqueBatches: number; uniqueFacilities: number } | null;
 }) {
@@ -326,11 +345,67 @@ export function PlexusIQBulkImportModal({
     }
   }
 
-  // Parse the current source text into preview rows. If the text contains
-  // Start/End markers, use the block parser; else fall back to CSV when the
-  // header looks right; else surface a single error.
+  // Parse the current source text into preview rows.
+  //
+  // Format detection order:
+  //   1. Clinical-spreadsheet (tab-separated rows between Start/End markers)
+  //      → handled by the new bulk-clinical endpoint.
+  //   2. Start/End label-blocks (multi-line text per block)
+  //      → handled by the existing per-row POST loop.
+  //   3. Legacy CSV (`facility,date,name,type,time`)
+  //      → handled by the existing per-row POST loop.
   const preview = useMemo(() => {
-    if (!text.trim()) return { rows: [] as ParsedRow[], errors: [] as ParsedRowError[] };
+    if (!text.trim()) {
+      return {
+        rows: [] as ParsedRow[],
+        clinicalRows: [] as PlexusIqClinicalImportRow[],
+        errors: [] as ParsedRowError[],
+        format: "empty" as DetectedImportFormat,
+      };
+    }
+    // 1. Clinical spreadsheet
+    const clinical = parsePlexusIqClinicalImport(text, {
+      facility: defFacility || undefined,
+      scheduleDate: defDate || undefined,
+      patientType: defType,
+    });
+    if (clinical.format === "clinical-spreadsheet") {
+      const errs: ParsedRowError[] = clinical.errors.map((e) => ({
+        line: e.rowIndex,
+        reason: e.reason,
+      }));
+      // Mirror into the legacy ParsedRow shape for the preview card.
+      const previewRows: ParsedRow[] = clinical.rows.map((r) => ({
+        facility: r.facility ?? defFacility,
+        scheduleDate: r.scheduleDate ?? defDate,
+        patientType: r.patientType ?? defType,
+        name: r.name,
+        time: r.time,
+        dob: r.dob,
+        insurance: r.insurance,
+        diagnoses: r.diagnoses,
+        history: r.history,
+        medications: r.medications,
+        notes: [
+          r.mrn ? `MRN: ${r.mrn}` : null,
+          r.age ? `AGE: ${r.age}` : null,
+          r.sex ? `SEX: ${r.sex}` : null,
+          r.previousAncillaries
+            ? `Ancillaries Completed: ${r.previousAncillaries}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join("\n") || undefined,
+        raw: r.raw,
+      }));
+      return {
+        rows: previewRows,
+        clinicalRows: clinical.rows,
+        errors: errs,
+        format: "clinical-spreadsheet" as DetectedImportFormat,
+      };
+    }
+    // 2. Start/End label-blocks
     const blocks = splitStartEndBlocks(text);
     if (blocks.length > 0) {
       const defaults = {
@@ -345,20 +420,34 @@ export function PlexusIQBulkImportModal({
         if (!r.scheduleDate) errs.push({ line: i + 1, reason: `Block ${i + 1}: missing date (set default above)` });
         return r;
       });
-      return { rows, errors: errs };
+      return {
+        rows,
+        clinicalRows: [] as PlexusIqClinicalImportRow[],
+        errors: errs,
+        format: "start-end-labels" as DetectedImportFormat,
+      };
     }
+    // 3. Legacy CSV
     if (looksLikeCsv(text)) {
-      return parseCsv(text);
+      const csv = parseCsv(text);
+      return {
+        rows: csv.rows,
+        clinicalRows: [] as PlexusIqClinicalImportRow[],
+        errors: csv.errors,
+        format: "legacy-csv" as DetectedImportFormat,
+      };
     }
     return {
       rows: [] as ParsedRow[],
+      clinicalRows: [] as PlexusIqClinicalImportRow[],
       errors: [
         {
           line: 1,
           reason:
-            'No Start/End markers found. Wrap each patient in lines reading "Start" and "End", or paste a CSV with header "facility,date,name,type,time".',
+            'No recognized format. Paste the clinical-spreadsheet (Start ... End tab-separated rows), Start/End label blocks, or a CSV with header "facility,date,name,type,time".',
         },
       ],
+      format: "empty" as DetectedImportFormat,
     };
   }, [text, defFacility, defDate, defType]);
 
@@ -385,6 +474,31 @@ export function PlexusIQBulkImportModal({
         },
       ]);
       setStep("source");
+      return;
+    }
+    // Clinical-spreadsheet → bulk path (handles 100-200 rows in one POST).
+    // Legacy Start/End label-blocks + CSV → existing per-row POST loop.
+    if (
+      preview.format === "clinical-spreadsheet" &&
+      onClinicalImport &&
+      preview.clinicalRows.length > 0
+    ) {
+      if (!defFacility || !defDate) {
+        setErrors([
+          {
+            line: 0,
+            reason:
+              "Clinical-spreadsheet import requires a default facility and date in Step 1.",
+          },
+        ]);
+        setStep("source");
+        return;
+      }
+      await onClinicalImport(preview.clinicalRows, {
+        facility: defFacility,
+        scheduleDate: defDate,
+        patientType: defType,
+      });
       return;
     }
     await onImport(preview.rows);
@@ -528,6 +642,18 @@ export function PlexusIQBulkImportModal({
               {preview.rows.length} patient{preview.rows.length === 1 ? "" : "s"} ready to import. Review each below
               and click <span className="font-medium">Confirm Import</span> to create the cards.
             </p>
+            <div className="flex items-center gap-2 text-[11px]" data-testid="plexus-iq-bulk-format-indicator">
+              <span className="text-slate-500">Detected format:</span>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-800">
+                {preview.format === "clinical-spreadsheet"
+                  ? "Clinical spreadsheet"
+                  : preview.format === "start-end-labels"
+                  ? "Start/End labeled blocks"
+                  : preview.format === "legacy-csv"
+                  ? "Legacy CSV"
+                  : "Unknown"}
+              </span>
+            </div>
             <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
               {preview.rows.map((row, idx) => (
                 <PreviewCard key={idx} index={idx + 1} row={row} />

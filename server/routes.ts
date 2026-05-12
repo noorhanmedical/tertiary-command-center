@@ -8,6 +8,7 @@ import { registerGeneratedNotesRoutes } from "./routes/generatedNotes";
 import { registerGoogleRoutes } from "./routes/google";
 import { registerPlexusTasksRoutes } from "./routes/plexusTasks";
 import { registerBatchRoutes } from "./routes/batches";
+import { registerPlexusIqClinicalImportRoutes } from "./routes/plexusIqClinicalImport";
 import { registerPatientRoutes } from "./routes/patients";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerInvoiceRoutes } from "./routes/invoices";
@@ -211,6 +212,7 @@ export async function registerRoutes(
   registerGeneratedNotesRoutes(app);
   registerPlexusTasksRoutes(app);
   registerBatchRoutes(app);
+  registerPlexusIqClinicalImportRoutes(app);
   // PatientDatabaseRoutes must be registered before PatientRoutes so that
   // the static `/api/patients/database*` paths take precedence over the
   // `/api/patients/:id` parameterised handler.

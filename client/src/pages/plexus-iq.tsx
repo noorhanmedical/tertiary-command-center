@@ -30,6 +30,12 @@ import {
   PlexusIQBulkImportModal,
   type ParsedRow,
 } from "@/components/plexus-iq/PlexusIQBulkImportModal";
+import {
+  importPlexusIqClinicalRows,
+  startPlexusIqQualificationJob,
+} from "@/lib/plexusIqClinicalImportApi";
+import type { PlexusIqClinicalImportRow } from "@/lib/plexusIqClinicalImportParser";
+import { PlexusIQQualificationJobStatus } from "@/components/plexus-iq/PlexusIQQualificationJobStatus";
 import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
 import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
 import { PlexusIQWorkspace } from "@/components/plexus-iq/PlexusIQWorkspace";
@@ -337,6 +343,85 @@ export default function PlexusIQPage() {
       }
     },
     [resolveBatchId, addPatientMut, toast, refreshAll],
+  );
+
+  // Active qualification-job id for the clinical-import status banner.
+  // Cleared when the user dismisses it or starts a new import. Stored in
+  // a ref-like state so the user can navigate away and back without
+  // losing the poll target (the analysis_jobs row is durable on the
+  // server; we just need to remember the id).
+  const [activeQualificationJobId, setActiveQualificationJobId] = useState<number | null>(null);
+
+  const handleClinicalImport = useCallback(
+    async (
+      rows: PlexusIqClinicalImportRow[],
+      defaults: { facility: string; scheduleDate: string; patientType: "visit" | "outreach" },
+    ) => {
+      if (rows.length === 0) return;
+      setBulkPending(true);
+      try {
+        const result = await importPlexusIqClinicalRows(
+          rows.map((r) => ({
+            ...r,
+            // strip `raw` from the wire payload — the server doesn't need it
+            raw: undefined,
+          })),
+          defaults,
+        );
+
+        // Refresh the workspace and calendar to show the new batches/patients.
+        refreshAll();
+
+        if (!result.ok || result.importedCount === 0) {
+          toast({
+            title: "Import failed",
+            description:
+              result.errors[0]?.reason ?? "No rows imported. Check the errors and retry.",
+            variant: "destructive",
+          });
+          setBulkPending(false);
+          return;
+        }
+
+        toast({
+          title: "Import complete",
+          description: `Imported ${result.importedCount} patient${result.importedCount === 1 ? "" : "s"} into ${result.batchIds.length} batch${result.batchIds.length === 1 ? "" : "es"}.${
+            result.skippedCount > 0 ? ` Skipped ${result.skippedCount}.` : ""
+          }`,
+        });
+
+        // Kick off qualification jobs for every created batch. We poll
+        // the first one in the banner; failed/incomplete patients can
+        // be retried from there.
+        try {
+          const job = await startPlexusIqQualificationJob({
+            batchIds: result.batchIds,
+          });
+          if (job.ok && job.jobId != null) {
+            setActiveQualificationJobId(job.jobId);
+          }
+        } catch (jobErr) {
+          toast({
+            title: "Could not start qualification",
+            description:
+              jobErr instanceof Error ? jobErr.message : "Qualification job failed to start",
+            variant: "destructive",
+          });
+        }
+
+        setBulkOpen(false);
+      } catch (err) {
+        toast({
+          title: "Import failed",
+          description: err instanceof Error ? err.message : "Bulk import failed",
+          variant: "destructive",
+        });
+      } finally {
+        setBulkPending(false);
+        setBulkProgress(null);
+      }
+    },
+    [toast, refreshAll],
   );
 
   const handleBulkImport = useCallback(
@@ -664,6 +749,15 @@ export default function PlexusIQPage() {
         <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-6">
           <PlexusIQDashboardRow summary={summary} batchDetails={batchDetails} />
         </div>
+        {activeQualificationJobId !== null && (
+          <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-3">
+            <PlexusIQQualificationJobStatus
+              jobId={activeQualificationJobId}
+              onJobChange={setActiveQualificationJobId}
+              onDismiss={() => setActiveQualificationJobId(null)}
+            />
+          </div>
+        )}
         <PlexusIQWorkspace
           summary={summary}
           batchDetails={batchDetails}
@@ -704,6 +798,7 @@ export default function PlexusIQPage() {
         open={bulkOpen}
         onClose={() => setBulkOpen(false)}
         onImport={handleBulkImport}
+        onClinicalImport={handleClinicalImport}
         pending={bulkPending}
         progress={bulkProgress}
       />
