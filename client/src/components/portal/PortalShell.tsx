@@ -1413,7 +1413,7 @@ export function PortalShell({
               aria-label="Playground rail controls"
               data-testid="group-playground-controls"
             >
-              <div className="relative inline-flex items-center justify-center rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] px-5 py-2 text-base font-semibold tracking-tight text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl overflow-hidden">
+              <div className="relative inline-flex items-center justify-center rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] px-7 py-2 text-base font-semibold tracking-tight text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl overflow-hidden">
                 <span className="relative z-10 pointer-events-none">Playground</span>
                 <button
                   type="button"
