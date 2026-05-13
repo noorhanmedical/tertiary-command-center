@@ -10,7 +10,7 @@ import {
   outreachSchedulers,
   type OutreachCallOutcome,
 } from "../../shared/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { buildOutreachDashboard } from "../services/outreachService";
 import { ensureCanonicalSpineForScreening } from "../services/patientCommitService";
 
@@ -26,7 +26,10 @@ async function getAssignedSchedulerUserIdForPatient(
     .from(patientScreenings)
     .innerJoin(screeningBatches, eq(patientScreenings.batchId, screeningBatches.id))
     .leftJoin(outreachSchedulers, eq(screeningBatches.assignedSchedulerId, outreachSchedulers.id))
-    .where(eq(patientScreenings.id, patientScreeningId))
+    .where(and(
+      eq(patientScreenings.id, patientScreeningId),
+      sql`${patientScreenings.deletedAt} IS NULL`,
+    ))
     .limit(1);
   return rows[0]?.userId ?? null;
 }

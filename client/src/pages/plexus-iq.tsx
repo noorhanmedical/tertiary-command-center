@@ -39,6 +39,8 @@ import {
   PlexusIQQualificationJobsStatus,
   type ActiveQualificationJob,
 } from "@/components/plexus-iq/PlexusIQQualificationJobsStatus";
+import { PlexusIQRecentQualificationCards } from "@/components/plexus-iq/PlexusIQRecentQualificationCards";
+import { PlexusIQRecentlyDeleted } from "@/components/plexus-iq/PlexusIQRecentlyDeleted";
 
 // LocalStorage key for the active clinical-import qualification job
 // banner. Bumping the suffix (`.v1`) is the migration story if the
@@ -838,6 +840,21 @@ export default function PlexusIQPage() {
             />
           </div>
         )}
+        {activeQualificationJobs.length > 0 && (
+          <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-3">
+            <PlexusIQRecentQualificationCards
+              jobs={activeQualificationJobs}
+              batchDetails={batchDetails}
+              analyzingPatients={analyzingPatients}
+              onUpdatePatient={handleUpdatePatient}
+              onDeletePatient={handleDeletePatient}
+              onAnalyzeOnePatient={handleAnalyzePatient}
+            />
+          </div>
+        )}
+        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-3">
+          <PlexusIQRecentlyDeleted />
+        </div>
         <PlexusIQWorkspace
           summary={summary}
           batchDetails={batchDetails}

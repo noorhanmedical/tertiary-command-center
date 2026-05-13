@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { db } from "../db";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { patientScreenings } from "@shared/schema";
 import {
   appendPatientJourneyEvent,
@@ -475,7 +475,10 @@ export function registerPlexusTasksRoutes(app: Express) {
         const [screening] = await db
           .select({ name: patientScreenings.name, dob: patientScreenings.dob })
           .from(patientScreenings)
-          .where(eq(patientScreenings.id, patientScreeningId))
+          .where(and(
+            eq(patientScreenings.id, patientScreeningId),
+            sql`${patientScreenings.deletedAt} IS NULL`,
+          ))
           .limit(1);
         if (screening) {
           if (!patientName) patientName = screening.name;

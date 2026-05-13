@@ -1,6 +1,6 @@
 import type { Express, Request } from "express";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { storage } from "../storage";
 import { db } from "../db";
 import { patientScreenings, screeningBatches, outreachSchedulers } from "../../shared/schema";
@@ -36,7 +36,10 @@ async function userMayActOnPatient(
     .from(patientScreenings)
     .innerJoin(screeningBatches, eq(patientScreenings.batchId, screeningBatches.id))
     .leftJoin(outreachSchedulers, eq(screeningBatches.assignedSchedulerId, outreachSchedulers.id))
-    .where(eq(patientScreenings.id, patientScreeningId))
+    .where(and(
+      eq(patientScreenings.id, patientScreeningId),
+      sql`${patientScreenings.deletedAt} IS NULL`,
+    ))
     .limit(1);
   if (rows[0]?.userId && rows[0].userId === userId) return true;
 

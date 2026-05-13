@@ -65,6 +65,68 @@ Sorting:
 - Backend: no new routes, no schema changes.
 - Plexus IQ clinical-import parser / qualification-job flow.
 
+## Top-of-page shelves
+
+The Plexus IQ interior renders, in order, above the workspace tabs:
+
+1. `PlexusIQDashboardRow` — existing snapshot.
+2. `PlexusIQQualificationJobsStatus` — active jobs banner (multi-job).
+3. **`PlexusIQRecentQualificationCards`** *(new)* — for every job in
+   `activeQualificationJobs`, expands to the actual patient cards from
+   `batchDetails[batchId]`. Same patient actions as the workspace
+   (update / delete / analyze one). Default-collapsed per job so
+   8+ recent jobs don't dump hundreds of cards at once. Soft-deleted
+   patients are already filtered server-side, so the shelf only ever
+   shows active rows.
+4. **`PlexusIQRecentlyDeleted`** *(new)* — compact card listing
+   patients soft-deleted within the last 14 days with a **Reactivate**
+   button that calls the canonical restore endpoint.
+
+Order is intentional: jobs first (status + their cards), then the
+restore shelf, then the full status-first tabbed workspace.
+
+## Soft delete + restore
+
+Deleting a patient from any UI surface now performs a **soft delete**:
+
+- `DELETE /api/patients/:id` sets `deleted_at`, `deleted_by_user_id`,
+  `delete_expires_at` (now + 14 days), and `delete_reason`. The row
+  stays in `patient_screenings` so downstream references
+  (`patient_execution_cases`, `analysis_jobs`, `patient_journey_events`,
+  `global_schedule_events`, etc.) remain valid.
+- The screening repository filters `deletedAt IS NULL` on every read
+  path used by the active workspace: `listScreeningsByBatch`,
+  `listAllScreenings`, `getScreening`, `searchPatientsByName`,
+  `getGroupScreenings`, the roster + cooldown + history-import CTEs.
+- Direct ad-hoc queries from `documentLibrary`, `email`, `outreach`,
+  `executionCases`, `plexusTasks`, and `patientPacket.repo` were
+  also patched to `deletedAt IS NULL` so a soft-deleted patient
+  doesn't sneak into a downstream document / email / scheduling
+  lookup.
+- Batch/facility "Delete all" loops continue to call the single-patient
+  endpoint per id, so they inherit soft-delete automatically.
+
+Restore:
+
+- `POST /api/patient-screenings/:id/restore` clears `deletedAt`,
+  `deletedByUserId`, `deleteExpiresAt`, and `deleteReason`. Returns
+  410 if the restore window has expired; idempotent if the patient
+  is already active.
+- The frontend invalidates the `recently-deleted` query, the
+  screening-batches list, the calendar summary, and any cached batch
+  detail so the restored patient reappears in the workspace
+  immediately.
+- A patient deleted while a qualification job is running may still be
+  processed server-side if the runner already started its iteration —
+  the row's `status` may transition normally. The UI hides it until
+  restored, at which point any AI result (`qualifyingTests`,
+  `reasoning`) is preserved exactly as it was.
+
+Migration: `migrations/0023_add_patient_screening_soft_delete.sql`
+adds the four nullable columns and two indexes. No application code
+hard-deletes `patient_screenings` rows except the explicit batch /
+test-fixture cleanup paths.
+
 ## Send to Engagement
 
 Finalized/dark-blue completed patient cards expose a **Send to

@@ -5,7 +5,7 @@ import { saveBlob, readBlob, deleteBlob, getLatestBlobForOwner } from "../servic
 import { enqueueDriveFile } from "../services/outbox";
 import { db } from "../db";
 import { uploadedDocuments, documents as documentsTable, documentSurfaceAssignments, patientScreenings } from "@shared/schema";
-import { desc, eq, like, sql } from "drizzle-orm";
+import { and, desc, eq, like, sql } from "drizzle-orm";
 import {
   appendPatientJourneyEvent,
   getExecutionCaseById,
@@ -110,7 +110,10 @@ async function migrateLegacyUploadedDocuments(): Promise<void> {
       try {
         const matches = await db.select({ id: patientScreenings.id })
           .from(patientScreenings)
-          .where(eq(patientScreenings.name, row.patientName))
+          .where(and(
+            eq(patientScreenings.name, row.patientName),
+            sql`${patientScreenings.deletedAt} IS NULL`,
+          ))
           .orderBy(desc(patientScreenings.id))
           .limit(1);
         const patientScreeningId = matches[0]?.id ?? null;
@@ -626,7 +629,10 @@ function mountRoutes(app: Express, basePath: string) {
         const [screening] = await db
           .select({ name: patientScreenings.name, dob: patientScreenings.dob })
           .from(patientScreenings)
-          .where(eq(patientScreenings.id, patientScreeningId))
+          .where(and(
+            eq(patientScreenings.id, patientScreeningId),
+            sql`${patientScreenings.deletedAt} IS NULL`,
+          ))
           .limit(1);
         if (screening) {
           if (!patientName) patientName = screening.name;

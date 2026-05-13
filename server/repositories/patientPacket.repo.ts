@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { patientScreenings, type PatientScreening } from "@shared/schema/screening";
 import { patientExecutionCases } from "@shared/schema/executionCase";
 
@@ -58,7 +58,11 @@ async function findScreeningByNameAndDob(
   const [row] = await db
     .select()
     .from(patientScreenings)
-    .where(and(eq(patientScreenings.name, patientName), eq(patientScreenings.dob, patientDob)))
+    .where(and(
+      eq(patientScreenings.name, patientName),
+      eq(patientScreenings.dob, patientDob),
+      sql`${patientScreenings.deletedAt} IS NULL`,
+    ))
     .orderBy(desc(patientScreenings.id))
     .limit(1);
   return row;
@@ -70,7 +74,10 @@ async function findLatestScreeningByName(
   const [row] = await db
     .select()
     .from(patientScreenings)
-    .where(eq(patientScreenings.name, patientName))
+    .where(and(
+      eq(patientScreenings.name, patientName),
+      sql`${patientScreenings.deletedAt} IS NULL`,
+    ))
     .orderBy(desc(patientScreenings.id))
     .limit(1);
   return row;
@@ -90,7 +97,10 @@ async function findLatestCanonicalScreeningByName(
       patientExecutionCases,
       eq(patientExecutionCases.patientScreeningId, patientScreenings.id),
     )
-    .where(eq(patientScreenings.name, patientName))
+    .where(and(
+      eq(patientScreenings.name, patientName),
+      sql`${patientScreenings.deletedAt} IS NULL`,
+    ))
     .orderBy(desc(patientExecutionCases.id))
     .limit(1);
   return rows[0]?.screening;
@@ -100,7 +110,10 @@ async function getScreeningById(id: number): Promise<PatientScreening | undefine
   const [row] = await db
     .select()
     .from(patientScreenings)
-    .where(eq(patientScreenings.id, id))
+    .where(and(
+      eq(patientScreenings.id, id),
+      sql`${patientScreenings.deletedAt} IS NULL`,
+    ))
     .limit(1);
   return row;
 }

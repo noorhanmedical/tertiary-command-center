@@ -139,23 +139,78 @@ export function registerPatientRoutes(
     }
   });
 
+  // Soft-delete: marks the patient deleted with a 14-day restore
+  // window. Subsequent reads through the storage facade exclude the
+  // patient automatically. The row stays in patient_screenings so
+  // analysis_jobs / execution_cases / journey_events references stay
+  // intact through the restore window.
   app.delete("/api/patients/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const patient = await storage.getPatientScreening(id);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
 
-      await storage.deletePatientScreening(id);
+      const reason =
+        typeof req.body?.reason === "string" && req.body.reason.trim()
+          ? req.body.reason.trim()
+          : null;
+      await storage.deletePatientScreening(id, {
+        userId: req.session.userId ?? null,
+        reason,
+      });
 
       await storage.updateScreeningBatch(patient.batchId, {
         patientCount: (await storage.getPatientScreeningsByBatch(patient.batchId)).length,
       });
 
-      void logAudit(req, "delete", "patient", id, { name: patient.name });
+      void logAudit(req, "delete", "patient", id, { name: patient.name, soft: true });
       invalidatePatientDatabase();
       res.status(204).send();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Recently soft-deleted patients within the restore window. Used by
+  // the Plexus IQ Recently Deleted card. Expired rows (delete_expires_at
+  // < now) are omitted.
+  app.get("/api/patient-screenings/recently-deleted", async (req, res) => {
+    try {
+      const limit = Number.parseInt(String(req.query.limit ?? "100"), 10);
+      const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 500) : 100;
+      const rows = await storage.listRecentlyDeletedPatientScreenings(safeLimit);
+      res.json(rows);
+    } catch (error: any) {
+      console.error("recently-deleted error:", error?.message ?? error);
+      res.status(500).json({ error: "Failed to fetch recently deleted patients" });
+    }
+  });
+
+  // Restore a soft-deleted patient. 404 if no such row, 410 if the
+  // restore window has expired, idempotent ok if already active.
+  app.post("/api/patient-screenings/:id/restore", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const existing = await storage.getPatientScreeningIncludingDeleted(id);
+      if (!existing) return res.status(404).json({ error: "Patient not found" });
+
+      if (!existing.deletedAt) {
+        return res.json({ ok: true, alreadyActive: true, patient: existing });
+      }
+      if (existing.deleteExpiresAt && existing.deleteExpiresAt.getTime() < Date.now()) {
+        return res.status(410).json({ error: "Restore window expired" });
+      }
+
+      const restored = await storage.restorePatientScreening(id);
+      await storage.updateScreeningBatch(existing.batchId, {
+        patientCount: (await storage.getPatientScreeningsByBatch(existing.batchId)).length,
+      });
+      void logAudit(req, "update", "patient", id, { name: existing.name, restored: true });
+      invalidatePatientDatabase();
+      res.json({ ok: true, patient: restored });
+    } catch (error: any) {
+      console.error("restore patient error:", error?.message ?? error);
+      res.status(500).json({ error: "Failed to restore patient" });
     }
   });
 

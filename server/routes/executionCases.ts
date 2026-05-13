@@ -1,6 +1,6 @@
 import type { Express, Request } from "express";
 import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { patientExecutionCases } from "@shared/schema/executionCase";
@@ -222,7 +222,11 @@ export function registerExecutionCaseRoutes(app: Express) {
         const [screening] = await db
           .select()
           .from(patientScreenings)
-          .where(and(eq(patientScreenings.name, patientName), eq(patientScreenings.dob, patientDob)))
+          .where(and(
+            eq(patientScreenings.name, patientName),
+            eq(patientScreenings.dob, patientDob),
+            sql`${patientScreenings.deletedAt} IS NULL`,
+          ))
           .orderBy(desc(patientScreenings.id))
           .limit(1);
         if (screening) {
