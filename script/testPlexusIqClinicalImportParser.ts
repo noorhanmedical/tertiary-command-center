@@ -450,6 +450,214 @@ header("Case 10: scheduleDate falls back to today when undefined");
   assert(result.rows[0].scheduleDate === iso, `scheduleDate defaulted to today (${iso})`);
 }
 
+// ─── Case 11: header-driven, no Start/End, normal order ────────────────
+header("Case 11: header-driven without Start/End (normal order)");
+{
+  const headerRow = tab([
+    "DATE",
+    "TIME",
+    "NAME",
+    "DOB",
+    "AGE",
+    "SEX",
+    "MRN",
+    "Dx",
+    "Hx",
+    "Rx",
+    "Ancillaries Completed",
+    "INSURANCE",
+  ]);
+  const dataRow = tab([
+    "2026-06-12",
+    "09:30",
+    "Header Jane",
+    "1950-03-14",
+    "76",
+    "Female",
+    "MRN-A1",
+    "Hypertension",
+    "HTN x 10y",
+    "Metformin 1000mg BID",
+    "BrainWave 2025-11-01",
+    "Medicare",
+  ]);
+  const result = parsePlexusIqClinicalImport(`${headerRow}\n${dataRow}`, {});
+  assert(result.format === "clinical-spreadsheet", "format detected as clinical-spreadsheet");
+  assert(result.rows.length === 1, "one row parsed");
+  const r = result.rows[0];
+  assert(r.name === "Header Jane", "NAME extracted");
+  assert(r.diagnoses === "Hypertension", "Dx extracted");
+  assert(r.medications === "Metformin 1000mg BID", "Rx extracted");
+  assert(r.previousAncillaries === "BrainWave 2025-11-01", "previousAncillaries extracted");
+}
+
+// ─── Case 12: header-driven, NAME moved to a later column ───────────
+header("Case 12: NAME moved to a later column");
+{
+  const headerRow = tab([
+    "MRN", "DOB", "DATE", "TIME", "AGE", "SEX", "NAME", "Dx", "Hx", "Rx",
+    "Ancillaries Completed", "INSURANCE",
+  ]);
+  const dataRow = tab([
+    "MRN-B2", "1955-05-05", "2026-06-12", "10:00", "70", "F",
+    "Late Name Lila", "Atrial fibrillation", "AFib x 4y", "Apixaban 5mg",
+    "VitalWave 2025-11-15", "BCBS",
+  ]);
+  const result = parsePlexusIqClinicalImport(`${headerRow}\n${dataRow}`, {});
+  assert(result.rows.length === 1, "row parsed");
+  const r = result.rows[0];
+  assert(r.name === "Late Name Lila", "NAME picked from later position");
+  assert(r.mrn === "MRN-B2", "MRN picked from first column");
+  assert(r.diagnoses === "Atrial fibrillation", "Dx still correct");
+  assert(r.medications === "Apixaban 5mg", "Rx still correct");
+}
+
+// ─── Case 13: header-driven, Dx/Hx/Rx shuffled ──────────────────────
+header("Case 13: Dx/Hx/Rx columns shuffled");
+{
+  const headerRow = tab([
+    "DATE", "TIME", "NAME", "Rx", "Hx", "Dx", "DOB",
+    "Ancillaries Completed", "INSURANCE",
+  ]);
+  const dataRow = tab([
+    "2026-06-12", "11:00", "Shuffle Sam",
+    "Atorvastatin 40mg", "Diet-controlled HTN", "Hyperlipidemia",
+    "1948-02-02", "BrainWave 2025-10-01", "Aetna",
+  ]);
+  const result = parsePlexusIqClinicalImport(`${headerRow}\n${dataRow}`, {});
+  assert(result.rows.length === 1, "row parsed");
+  const r = result.rows[0];
+  assert(r.diagnoses === "Hyperlipidemia", "Dx mapped by header");
+  assert(r.history === "Diet-controlled HTN", "Hx mapped by header");
+  assert(r.medications === "Atorvastatin 40mg", "Rx mapped by header");
+  assert(!r.diagnoses?.includes("Atorvastatin"), "Dx does not contain Rx text");
+  assert(!r.medications?.includes("Hyperlipidemia"), "Rx does not contain Dx text");
+}
+
+// ─── Case 14: extra irrelevant columns are ignored ──────────────────
+header("Case 14: extra irrelevant columns ignored");
+{
+  const headerRow = tab([
+    "Foo", "DATE", "Bar", "NAME", "Dx", "Hx", "Rx", "Baz", "INSURANCE",
+  ]);
+  const dataRow = tab([
+    "junk1", "2026-06-12", "junk2", "Extra Cols Patient", "HTN", "HTN x 5y",
+    "Lisinopril", "junk3", "Medicare",
+  ]);
+  const result = parsePlexusIqClinicalImport(`${headerRow}\n${dataRow}`, {});
+  assert(result.rows.length === 1, "row parsed");
+  assert(result.rows[0].name === "Extra Cols Patient", "NAME correct");
+  assert(result.rows[0].diagnoses === "HTN", "Dx correct");
+  assert(result.rows[0].insurance === "Medicare", "insurance correct");
+}
+
+// ─── Case 15: missing optional DOB/Ancillaries ──────────────────────
+header("Case 15: optional DOB and Ancillaries missing");
+{
+  const headerRow = tab(["DATE", "NAME", "Dx", "Hx", "Rx", "INSURANCE"]);
+  const dataRow = tab(["2026-06-12", "No DOB Patient", "Fatigue", "", "", "Self-pay"]);
+  const result = parsePlexusIqClinicalImport(`${headerRow}\n${dataRow}`, {});
+  assert(result.rows.length === 1, "row parsed");
+  const r = result.rows[0];
+  assert(r.dob === undefined, "DOB undefined when column absent");
+  assert(r.previousAncillaries === undefined, "Ancillaries undefined when column absent");
+  assert(r.diagnoses === "Fatigue", "Dx still preserved");
+}
+
+// ─── Case 16: header aliases (Patient Name / Diagnoses / Medications / Previous Screens) ─
+header("Case 16: alternate header aliases");
+{
+  const headerRow = tab([
+    "Appointment Date", "Patient Name", "Date of Birth", "Diagnoses",
+    "Medical History", "Medications", "Previous Screens", "Primary Insurance",
+  ]);
+  const dataRow = tab([
+    "06/12/2026", "Alias Alice", "01/15/1955", "COPD", "Smoker 30 pack-yrs",
+    "Albuterol", "VitalWave 2025-10-01", "Humana",
+  ]);
+  const result = parsePlexusIqClinicalImport(`${headerRow}\n${dataRow}`, {});
+  assert(result.rows.length === 1, "row parsed");
+  const r = result.rows[0];
+  assert(r.name === "Alias Alice", "Patient Name → NAME");
+  assert(r.scheduleDate === "2026-06-12", "Appointment Date → DATE (normalized)");
+  assert(r.dob === "1955-01-15", "Date of Birth → DOB (normalized)");
+  assert(r.diagnoses === "COPD", "Diagnoses → Dx");
+  assert(r.history === "Smoker 30 pack-yrs", "Medical History → Hx");
+  assert(r.medications === "Albuterol", "Medications → Rx");
+  assert(r.previousAncillaries === "VitalWave 2025-10-01", "Previous Screens → Ancillaries Completed");
+  assert(r.insurance === "Humana", "Primary Insurance → INSURANCE");
+}
+
+// ─── Case 17: missing NAME yields visible row error ──────────────────
+header("Case 17: missing NAME in header-driven row");
+{
+  const headerRow = tab(["DATE", "NAME", "Dx", "Hx", "Rx"]);
+  const dataRow = tab(["2026-06-12", "", "HTN", "HTN x 5y", "Lisinopril"]);
+  const result = parsePlexusIqClinicalImport(`${headerRow}\n${dataRow}`, {});
+  assert(result.rows.length === 0, "no row inserted");
+  assert(result.errors.length === 1, "one error reported");
+  assert(/missing name/i.test(result.errors[0].reason), "error mentions missing NAME");
+}
+
+// ─── Case 18: unquoted ambiguous multiline produces visible error ────
+header("Case 18: ambiguous multiline (unquoted) reports an error");
+{
+  // Header row promises 6 cells per row; the data row spans two physical
+  // lines without quotes, so the second line under-fills. Parser should
+  // emit a structured error rather than silently mis-assemble.
+  const headerRow = tab(["DATE", "NAME", "Dx", "Hx", "Rx", "INSURANCE"]);
+  const dataRow1 = tab(["2026-06-12", "Ambig Pat", "HTN", "HTN x 5y", "Lisinopril", "Medicare"]);
+  const orphanFragment = "extra fragment without delimiters";
+  const result = parsePlexusIqClinicalImport(
+    `${headerRow}\n${dataRow1}\n${orphanFragment}`,
+    {},
+  );
+  // The first complete data row should parse; the fragment should error.
+  assert(result.rows.length === 1, "complete row still parses");
+  assert(
+    result.errors.some((e) => /multiline clinical cells/i.test(e.reason)),
+    "ambiguous fragment surfaces a multiline-cells error",
+  );
+}
+
+// ─── Case 19: header-driven adjacent rows do not cross-contaminate ──
+header("Case 19: header-driven adjacent rows do not mix Dx/Hx/Rx");
+{
+  const headerRow = tab([
+    "DATE", "TIME", "NAME", "Dx", "Hx", "Rx", "Ancillaries Completed", "INSURANCE",
+  ]);
+  const row1 = tab([
+    "2026-06-12", "09:00", "Patient One",
+    "Hypertension", "HTN x 10y", "Metformin 1000mg",
+    "BrainWave 2025-12-01", "Medicare",
+  ]);
+  const row2 = tab([
+    "2026-06-12", "09:30", "Patient Two",
+    "Atrial fibrillation", "AFib x 4y", "Apixaban 5mg",
+    "VitalWave 2025-11-15", "BCBS",
+  ]);
+  const result = parsePlexusIqClinicalImport(`${headerRow}\n${row1}\n${row2}`, {});
+  assert(result.rows.length === 2, "two rows parsed");
+  const [p1, p2] = result.rows;
+  assert(p1.diagnoses === "Hypertension" && p2.diagnoses === "Atrial fibrillation", "Dx isolated");
+  assert(p1.medications === "Metformin 1000mg" && p2.medications === "Apixaban 5mg", "Rx isolated");
+  assert(p1.previousAncillaries === "BrainWave 2025-12-01" && p2.previousAncillaries === "VitalWave 2025-11-15", "ancillaries isolated");
+  assert(!p1.medications?.includes("Apixaban") && !p2.medications?.includes("Metformin"), "no cross-contamination");
+}
+
+// ─── Case 20: Start/End still parses (regression check) ─────────────
+header("Case 20: Start/End still parses after header-driven path lands");
+{
+  const r1 = tab([
+    "Start", "2026-06-12", "09:00", "Start End Survivor", "1950-01-01", "75",
+    "M", "MRN-S", "HTN", "HTN x 5y", "Lisinopril", "", "Medicare", "End",
+  ]);
+  const result = parsePlexusIqClinicalImport(r1, {});
+  assert(result.format === "clinical-spreadsheet", "Start/End detected");
+  assert(result.rows.length === 1, "row parsed");
+  assert(result.rows[0].name === "Start End Survivor", "name picked from Start/End row");
+}
+
 function summarize(rows: PlexusIqClinicalImportRow[]): string {
   return rows.map((r) => `${r.rowIndex}:${r.name}`).join(", ");
 }

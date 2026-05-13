@@ -85,23 +85,35 @@ type ClinicalCol = (typeof CLINICAL_COLUMNS)[number];
 
 const HEADER_ALIASES: Record<ClinicalCol, string[]> = {
   Start: ["start"],
-  DATE: ["date", "schedule date", "appt date", "appointment date"],
-  TIME: ["time", "appt time", "appointment time"],
-  NAME: ["name", "patient", "patient name"],
+  DATE: ["date", "schedule date", "appointment date", "appt date", "dos"],
+  TIME: ["time", "appointment time", "appt time"],
+  NAME: ["name", "patient", "patient name", "full name"],
   DOB: ["dob", "date of birth"],
   AGE: ["age"],
   SEX: ["sex", "gender"],
-  MRN: ["mrn", "medical record number", "chart"],
-  Dx: ["dx", "diagnoses", "diagnosis", "problems"],
-  Hx: ["hx", "history", "pmh"],
-  Rx: ["rx", "medications", "meds"],
+  MRN: [
+    "mrn",
+    "medical record number",
+    "chart",
+    "chart number",
+    "patient id",
+    "external patient id",
+  ],
+  Dx: ["dx", "diagnosis", "diagnoses", "problems", "problem list"],
+  Hx: ["hx", "history", "pmh", "medical history", "past medical history"],
+  Rx: ["rx", "meds", "medications", "medication list"],
   "Ancillaries Completed": [
     "ancillaries completed",
+    "ancillary completed",
     "ancillaries",
     "previous ancillaries",
+    "previous screens",
     "previous tests",
+    "prior ancillaries",
+    "prior screens",
+    "no record of plexus ancillary screens",
   ],
-  INSURANCE: ["insurance", "payer", "plan"],
+  INSURANCE: ["insurance", "payer", "plan", "primary insurance"],
   End: ["end"],
 };
 
@@ -343,6 +355,215 @@ function parseClinicalSpreadsheet(
   };
 }
 
+// ─── Header-driven table path (delimiter = tab or comma) ───────────────
+//
+// Goal: parse a pasted spreadsheet table where the FIRST non-blank row
+// is a header row whose tokens we recognise via HEADER_ALIASES. Column
+// order does not matter — NAME, Dx, Hx, Rx, MRN, INSURANCE, etc. can
+// be in any position. Start/End cells are not required.
+//
+// Multiline cells are supported when properly quoted ("foo\nbar"). If a
+// data line under-fills the expected column count and quote-state is
+// closed, we emit a structured error rather than trying to merge
+// physical lines (which would risk silently rebuilding the wrong row).
+//
+// The parser is independent of the Start/End path. The dispatcher in
+// parsePlexusIqClinicalImport tries this path first when the first
+// non-blank line looks like a header.
+
+type DelimitedRow = { rowIndex: number; cells: string[]; raw: string };
+
+function detectDelimiter(text: string): "\t" | "," {
+  const firstLine =
+    text.replace(/\r\n/g, "\n").split("\n").find((l) => l.trim()) ?? "";
+  if (firstLine.includes("\t")) return "\t";
+  return ",";
+}
+
+// Quote-aware row reader. Returns DelimitedRow[] where each row's
+// cells[] preserves any newlines that appeared inside quoted cells.
+// Sets `closedAtEOF` to false if EOF was reached mid-quote — callers
+// should report that as an unterminated-quote error.
+function parseDelimitedRows(
+  text: string,
+  delim: "\t" | ",",
+): { rows: DelimitedRow[]; closedAtEOF: boolean } {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const rows: DelimitedRow[] = [];
+  let cur = "";
+  let cells: string[] = [];
+  let rawStart = 0;
+  let inQuote = false;
+  let rowIndex = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    const c = normalized[i];
+    if (inQuote) {
+      if (c === '"' && normalized[i + 1] === '"') {
+        cur += '"';
+        i++;
+        continue;
+      }
+      if (c === '"') {
+        inQuote = false;
+        continue;
+      }
+      cur += c;
+      continue;
+    }
+    if (c === '"') {
+      inQuote = true;
+      continue;
+    }
+    if (c === delim) {
+      cells.push(cur);
+      cur = "";
+      continue;
+    }
+    if (c === "\n") {
+      cells.push(cur);
+      const raw = normalized.slice(rawStart, i);
+      // Skip rows that are entirely empty (no content on this line)
+      if (cells.length > 1 || cells[0].trim() !== "") {
+        rowIndex += 1;
+        rows.push({ rowIndex, cells, raw });
+      }
+      cells = [];
+      cur = "";
+      rawStart = i + 1;
+      continue;
+    }
+    cur += c;
+  }
+  // Final row (no trailing newline)
+  if (cur.length > 0 || cells.length > 0) {
+    cells.push(cur);
+    if (cells.length > 1 || cells[0].trim() !== "") {
+      rowIndex += 1;
+      rows.push({ rowIndex, cells, raw: normalized.slice(rawStart) });
+    }
+  }
+  return { rows, closedAtEOF: !inQuote };
+}
+
+// Clinical-only columns — the presence of one of these in the header
+// distinguishes a clinical-spreadsheet table from the legacy CSV
+// (`facility,date,name,type,time`), whose columns are all non-clinical.
+const CLINICAL_HEADER_KEYS: ClinicalCol[] = [
+  "DOB",
+  "AGE",
+  "SEX",
+  "MRN",
+  "Dx",
+  "Hx",
+  "Rx",
+  "Ancillaries Completed",
+  "INSURANCE",
+];
+
+function looksLikeHeaderRow(cells: string[]): {
+  ok: boolean;
+  headerMap: Record<string, number>;
+} {
+  const lowered = cells.map((c) => c.trim().toLowerCase());
+  const headerMap: Record<string, number> = {};
+  for (const col of CLINICAL_COLUMNS) {
+    const aliases = HEADER_ALIASES[col].map((a) => a.toLowerCase());
+    const idx = lowered.findIndex((c) => aliases.includes(c));
+    if (idx >= 0) headerMap[col] = idx;
+  }
+  // Header-driven detection requires:
+  //   - NAME is present (so we can identify the patient), AND
+  //   - at least one clinical-only column is present (so we don't
+  //     accidentally swallow the legacy CSV import, whose columns are
+  //     facility/date/name/type/time — non-clinical).
+  const hasName = headerMap["NAME"] != null;
+  const hasClinical = CLINICAL_HEADER_KEYS.some((k) => headerMap[k] != null);
+  return { ok: hasName && hasClinical, headerMap };
+}
+
+function pickCellByHeader(
+  cells: string[],
+  headerMap: Record<string, number>,
+  col: ClinicalCol,
+): string | undefined {
+  const idx = headerMap[col];
+  if (idx == null) return undefined;
+  if (idx < 0 || idx >= cells.length) return undefined;
+  return trimOrUndefined(cells[idx]);
+}
+
+function parseHeaderDrivenTable(
+  text: string,
+  defaults: PlexusIqClinicalImportDefaults,
+): PlexusIqClinicalImportParseResult {
+  const delim = detectDelimiter(text);
+  const { rows, closedAtEOF } = parseDelimitedRows(text, delim);
+  if (rows.length === 0) {
+    return { rows: [], errors: [], format: "unknown" };
+  }
+  const headerCheck = looksLikeHeaderRow(rows[0].cells);
+  if (!headerCheck.ok) {
+    return { rows: [], errors: [], format: "unknown" };
+  }
+  const headerMap = headerCheck.headerMap;
+  const expectedCellCount = rows[0].cells.length;
+  const out: PlexusIqClinicalImportRow[] = [];
+  const errors: PlexusIqClinicalImportError[] = [];
+
+  if (!closedAtEOF) {
+    errors.push({
+      rowIndex: rows.length,
+      reason: "Unterminated quoted cell — closing \" expected before EOF",
+    });
+  }
+
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    // A data row that's wildly short suggests an unquoted multiline
+    // cell that fragmented across lines. We don't try to merge — emit
+    // a visible error so the user fixes the source rather than us
+    // guessing where the row continues.
+    if (r.cells.length < Math.max(2, Math.floor(expectedCellCount / 2))) {
+      errors.push({
+        rowIndex: r.rowIndex,
+        reason:
+          "Multiline clinical cells require either quoted spreadsheet export/upload or Start/End boundaries.",
+        raw: r.raw,
+      });
+      continue;
+    }
+    const name = pickCellByHeader(r.cells, headerMap, "NAME");
+    if (!name) {
+      errors.push({ rowIndex: r.rowIndex, reason: "Missing NAME", raw: r.raw });
+      continue;
+    }
+    const dateRaw = pickCellByHeader(r.cells, headerMap, "DATE");
+    const scheduleDate =
+      normalizeDate(dateRaw) ?? defaults.scheduleDate ?? undefined;
+    const dobRaw = pickCellByHeader(r.cells, headerMap, "DOB");
+    out.push({
+      rowIndex: r.rowIndex,
+      facility: defaults.facility,
+      scheduleDate,
+      time: pickCellByHeader(r.cells, headerMap, "TIME"),
+      name,
+      dob: normalizeDate(dobRaw) ?? dobRaw,
+      age: pickCellByHeader(r.cells, headerMap, "AGE"),
+      sex: pickCellByHeader(r.cells, headerMap, "SEX"),
+      mrn: pickCellByHeader(r.cells, headerMap, "MRN"),
+      diagnoses: pickCellByHeader(r.cells, headerMap, "Dx"),
+      history: pickCellByHeader(r.cells, headerMap, "Hx"),
+      medications: pickCellByHeader(r.cells, headerMap, "Rx"),
+      previousAncillaries: pickCellByHeader(r.cells, headerMap, "Ancillaries Completed"),
+      insurance: pickCellByHeader(r.cells, headerMap, "INSURANCE"),
+      patientType: normalizePatientType(undefined, defaults.patientType ?? "visit"),
+      raw: r.raw,
+    });
+  }
+
+  return { rows: out, errors, format: "clinical-spreadsheet" };
+}
+
 // Detect whether the pasted text looks like clinical-spreadsheet: it must
 // contain a Start...End pair separated by at least one tab somewhere in
 // the segment. Pure label-block paste (Start\n…\nEnd) has no tabs.
@@ -370,6 +591,25 @@ export function parsePlexusIqClinicalImport(
 
   if (!text || !text.trim()) {
     return { rows: [], errors: [], format: "unknown" };
+  }
+
+  // Detection order:
+  //   1. Header-driven delimited table (no Start/End needed). Wins when
+  //      the first non-blank line looks like a recognisable header row.
+  //   2. Start/End spreadsheet with header or positional layout.
+  //   3. Fall through — caller handles legacy Start/End label-blocks
+  //      and legacy CSV (`facility,date,name,type,time`).
+  const firstNonBlank =
+    text.replace(/\r\n/g, "\n").split("\n").find((l) => l.trim()) ?? "";
+  if (firstNonBlank.includes("\t") || firstNonBlank.includes(",")) {
+    const delim = firstNonBlank.includes("\t") ? "\t" : ",";
+    const { rows: probeRows } = parseDelimitedRows(text, delim);
+    if (probeRows.length > 0) {
+      const probe = looksLikeHeaderRow(probeRows[0].cells);
+      if (probe.ok) {
+        return parseHeaderDrivenTable(text, resolvedDefaults);
+      }
+    }
   }
 
   if (looksLikeClinicalSpreadsheet(text)) {

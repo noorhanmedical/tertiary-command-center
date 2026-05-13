@@ -587,10 +587,21 @@ export function PlexusIQBulkImportModal({
 
             <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-3">
               <p className="text-[11px] text-slate-600 leading-snug">
-                Wrap each patient between <code className="bg-white px-1 py-0.5 rounded text-[10px]">Start</code> and{" "}
-                <code className="bg-white px-1 py-0.5 rounded text-[10px]">End</code> markers (case-insensitive).
-                Inside each block, label what you can — DOB, Phone, Insurance, Hx, Dx, Rx, Time. Anything
-                unrecognized is preserved as notes. CSV with header{" "}
+                <span className="font-medium text-slate-800">Best option:</span>{" "}
+                paste a spreadsheet with a header row (tab- or
+                comma-separated). Column order does not matter when
+                headers are present —{" "}
+                <code className="bg-white px-1 py-0.5 rounded text-[10px]">NAME</code>,{" "}
+                <code className="bg-white px-1 py-0.5 rounded text-[10px]">Dx</code>,{" "}
+                <code className="bg-white px-1 py-0.5 rounded text-[10px]">Hx</code>,{" "}
+                <code className="bg-white px-1 py-0.5 rounded text-[10px]">Rx</code>,{" "}
+                <code className="bg-white px-1 py-0.5 rounded text-[10px]">MRN</code>, and{" "}
+                <code className="bg-white px-1 py-0.5 rounded text-[10px]">INSURANCE</code>{" "}
+                are matched by name.{" "}
+                <code className="bg-white px-1 py-0.5 rounded text-[10px]">Start</code>/
+                <code className="bg-white px-1 py-0.5 rounded text-[10px]">End</code>{" "}
+                markers are only needed for messy multiline pasted text.
+                Legacy CSV with header{" "}
                 <code className="bg-white px-1 py-0.5 rounded text-[10px]">facility,date,name,type,time</code>{" "}
                 also works.
               </p>

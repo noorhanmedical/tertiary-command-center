@@ -5,6 +5,60 @@ Plexus IQ. The flow is designed for 100–200 patients pasted from a
 spreadsheet, and runs qualification as a separate durable job so the
 HTTP request that imports patients never blocks on AI calls.
 
+## Header-driven import
+
+The preferred input shape is a **header-driven** spreadsheet paste —
+the first non-blank line is a row of column names, and subsequent
+lines are patient rows. The parser matches columns by header name, so
+**column order does not matter**. `Start`/`End` markers are not
+required when headers are present.
+
+Recognised header aliases (case-insensitive):
+
+| Canonical | Aliases |
+| --- | --- |
+| DATE | `date`, `schedule date`, `appointment date`, `appt date`, `dos` |
+| TIME | `time`, `appointment time`, `appt time` |
+| NAME | `name`, `patient`, `patient name`, `full name` |
+| DOB | `dob`, `date of birth` |
+| AGE | `age` |
+| SEX | `sex`, `gender` |
+| MRN | `mrn`, `medical record number`, `chart`, `chart number`, `patient id`, `external patient id` |
+| Dx | `dx`, `diagnosis`, `diagnoses`, `problems`, `problem list` |
+| Hx | `hx`, `history`, `pmh`, `medical history`, `past medical history` |
+| Rx | `rx`, `meds`, `medications`, `medication list` |
+| Ancillaries Completed | `ancillaries completed`, `ancillary completed`, `ancillaries`, `previous ancillaries`, `previous screens`, `previous tests`, `prior ancillaries`, `prior screens`, `no record of plexus ancillary screens` |
+| INSURANCE | `insurance`, `payer`, `plan`, `primary insurance` |
+
+Rules:
+
+- **Column order is free.** `NAME` can be column 1, 7, or 14 — the
+  header lookup binds by name.
+- **Extra columns are ignored.** Anything not in the alias map is
+  dropped.
+- **Missing optional columns** (DOB, AGE, SEX, MRN, Ancillaries
+  Completed, INSURANCE, TIME) do not fail the row.
+- **Missing `NAME` fails the row** with a visible parser error
+  (`Missing NAME`).
+- **Missing `DATE`** in a row falls back to the modal's default date.
+- **Ambiguous multi-line cells**: if a clinical cell spans multiple
+  physical lines but isn't quoted, the parser emits
+  `Multiline clinical cells require either quoted spreadsheet
+  export/upload or Start/End boundaries.` rather than guessing the
+  row boundary.
+- **Delimiter** is auto-detected: tab if the header row contains a
+  tab, comma otherwise.
+- **Header-driven detection** requires `NAME` plus at least one
+  clinical-only column (DOB / AGE / SEX / MRN / Dx / Hx / Rx /
+  Ancillaries Completed / INSURANCE). This protects the legacy CSV
+  import (`facility,date,name,type,time`) from being absorbed by
+  the clinical parser.
+
+`Start`/`End` boundaries remain a supported fallback for messy paste
+where row boundaries can't be inferred from the delimiter alone (e.g.
+when clinical text legitimately spans multiple newlines without CSV
+quoting).
+
 ## Supported paste format
 
 The new clinical-spreadsheet format uses tab-separated rows, each row
