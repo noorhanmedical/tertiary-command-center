@@ -247,7 +247,7 @@ export function registerPatientRoutes(
         if (result.error.code === "not_found") return res.status(404).json({ error: "Patient not found" });
         if (result.error.code === "validation") {
           return res.status(400).json({
-            error: `Cannot send to schedulers — missing required field${result.error.missing.length === 1 ? "" : "s"}: ${result.error.missing.join(", ")}`,
+            error: `Cannot send to Engagement — missing required field${result.error.missing.length === 1 ? "" : "s"}: ${result.error.missing.join(", ")}`,
             missing: result.error.missing,
           });
         }

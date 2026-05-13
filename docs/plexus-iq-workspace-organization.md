@@ -65,6 +65,48 @@ Sorting:
 - Backend: no new routes, no schema changes.
 - Plexus IQ clinical-import parser / qualification-job flow.
 
+## Send to Engagement
+
+Finalized/dark-blue completed patient cards expose a **Send to
+Engagement** action. The action keeps the existing send/arrow icon
+(`Send` from `lucide-react`) and uses the canonical
+`POST /api/patients/:id/commit` endpoint, which delegates to
+`commitPatient()`:
+
+- Sets `commitStatus = Ready`.
+- Creates/updates the `patient_execution_case`.
+- Inserts a `global_schedule_events` row when an appointment datetime
+  exists.
+- Creates insurance-eligibility review and cooldown records.
+- Appends `patient_journey_events`.
+- Calls `autoAssignSchedulerForExecutionCase()` so a scheduler is
+  assigned by the platform after the engagement case exists — the UI
+  no longer describes this as sending the patient directly to a
+  scheduler.
+
+User-facing copy was renamed in this batch:
+
+| Surface | Before | After |
+| --- | --- | --- |
+| `ResultsView` Send-All button | `Send All to Scheduler` | `Send All to Engagement` |
+| `ResultsView` per-patient icon | `aria-label="Send to scheduler"` | `aria-label="Send to Engagement"` |
+| `ResultsView` toasts | `Sent to scheduler queue` / `Already sent to scheduler` / `Could not send patient to scheduler` / `Send to scheduler complete` | `Sent to Engagement` / `Already in Engagement` / `Could not send patient to Engagement` / `Send to Engagement complete` |
+| `outreach-qualification` & `home` handoff toast | `Sent to schedulers.` | `Sent to Engagement.` |
+| `schedule-dashboard` empty state | `…when a patient is sent to schedulers it will appear here.` | `…when a patient is sent to Engagement it will appear here.` |
+| `POST /api/patients/:id/commit` validation error | `Cannot send to schedulers — missing required field …` | `Cannot send to Engagement — missing required field …` |
+
+What did **not** change:
+- Endpoint paths, request shapes, response shapes.
+- Function/handler names (`handleSendOneToScheduler`,
+  `sendPatientToScheduler`, etc.) — internal-only.
+- `commitStatus` values (`Draft` / `Ready` / `WithScheduler` etc.).
+- `data-testid`s used by automated tests.
+- The `Send` lucide icon — the arrow/send look is preserved.
+
+Where the UI legitimately refers to a *scheduler user* (e.g. assigned
+scheduler name on a batch, the Schedule Dashboard for schedulers), the
+word "Scheduler" is unchanged.
+
 ## File map
 
 | File | Purpose |

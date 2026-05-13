@@ -155,10 +155,10 @@ function ResultsHeaderActions({
         disabled={isSendingAll || eligibleCount === 0}
         className="gap-1.5 rounded-xl"
         data-testid="final-schedule-send-all-scheduler"
-        title="Send every visible patient to the scheduler queue"
+        title="Send every visible patient to Engagement"
       >
         {isSendingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-        Send All to Scheduler
+        Send All to Engagement
       </Button>
       <Button variant="outline" size="sm" onClick={onShare} className="gap-1.5 rounded-xl" data-testid="button-share">
         {shareButtonText === "Copied!" ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />} {shareButtonText}
@@ -264,12 +264,12 @@ export function ResultsView({
       try {
         const outcome = await sendPatientToScheduler(patient);
         if (outcome === "sent") {
-          toast({ title: "Sent to scheduler queue", description: patient.name });
+          toast({ title: "Sent to Engagement", description: patient.name });
         } else if (outcome === "alreadySent") {
-          toast({ title: "Already sent to scheduler", description: patient.name });
+          toast({ title: "Already in Engagement", description: patient.name });
         } else {
           toast({
-            title: "Could not send patient to scheduler",
+            title: "Could not send patient to Engagement",
             description: patient.name,
             variant: "destructive",
           });
@@ -308,8 +308,8 @@ export function ResultsView({
         else failed += 1;
       }
       toast({
-        title: failed === 0 ? "Send to scheduler complete" : "Send to scheduler finished with errors",
-        description: `Sent ${sent} patient${sent === 1 ? "" : "s"} to scheduler queue · ${alreadySent} already sent · ${failed} failed`,
+        title: failed === 0 ? "Send to Engagement complete" : "Send to Engagement finished with errors",
+        description: `Sent ${sent} patient${sent === 1 ? "" : "s"} to Engagement · ${alreadySent} already in Engagement · ${failed} failed`,
         variant: failed === 0 ? undefined : "destructive",
       });
       if (batch?.id != null) {
@@ -650,8 +650,8 @@ export function ResultsView({
                           }
                         }}
                         disabled={sendingPatientIds.has(patient.id)}
-                        aria-label="Send to scheduler"
-                        title="Send to scheduler"
+                        aria-label="Send to Engagement"
+                        title="Send to Engagement"
                         className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-white text-slate-900 hover:bg-slate-100 disabled:opacity-50 transition-colors"
                         data-testid={`final-schedule-patient-send-scheduler-${patient.id}`}
                       >

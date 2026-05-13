@@ -131,7 +131,7 @@ export default function OutreachQualificationPage() {
         const handoff = body.autoCommittedSchedulerName
           ? `Sent to ${body.autoCommittedSchedulerName}.`
           : body.commitStatus && body.commitStatus !== "Draft"
-            ? "Sent to schedulers."
+            ? "Sent to Engagement."
             : undefined;
         toast({ title: "Patient analyzed", description: handoff });
       } catch (err: unknown) {

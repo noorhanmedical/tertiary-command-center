@@ -458,7 +458,7 @@ export default function ScheduleDashboardPage() {
           </div>
           {(data?.recentlyCommitted ?? []).length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-center text-sm text-slate-500" data-testid="text-no-recent-commits">
-              Nothing committed yet today — when a patient is sent to schedulers it will appear here.
+              Nothing committed yet today — when a patient is sent to Engagement it will appear here.
             </div>
           ) : (
             <ul className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white">
