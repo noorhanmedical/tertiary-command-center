@@ -164,6 +164,10 @@ export function PlexusIQQualificationJobsStatus({
                 </span>
               )}
             </div>
+            <p className="text-[10px] text-slate-500 leading-snug" data-testid="qualification-jobs-transparency">
+              Each patient is qualified individually. Jobs run with limited
+              concurrency, so multiple patients may complete at the same time.
+            </p>
           </div>
         </div>
 
@@ -211,6 +215,9 @@ export function PlexusIQQualificationJobsStatus({
                 variant: "destructive",
               });
             }}
+            onHide={() => {
+              onJobsChange(jobs.filter((j) => j.jobId !== job.jobId));
+            }}
           />
         ))}
       </ul>
@@ -226,6 +233,7 @@ function JobRow({
   error,
   onRetried,
   onRetryError,
+  onHide,
 }: {
   job: ActiveQualificationJob;
   status: QualificationJobStatus | undefined;
@@ -234,6 +242,7 @@ function JobRow({
   error: unknown;
   onRetried: (newJobId: number, totalPatients: number | null) => void;
   onRetryError: (msg: string) => void;
+  onHide: () => void;
 }) {
   const retryMutation = useMutation({
     mutationFn: () => retryPlexusIqQualificationJobFailed(job.jobId),
@@ -313,6 +322,18 @@ function JobRow({
               Retry failed
             </Button>
           )}
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={onHide}
+            className="h-6 w-6 p-0 text-slate-400 hover:text-slate-700"
+            aria-label="Hide this job from this page"
+            title="Hide this job from this page. This does not cancel server processing."
+            data-testid={`button-qualification-job-${job.jobId}-hide`}
+          >
+            <X className="h-3 w-3" />
+          </Button>
         </div>
       </div>
 

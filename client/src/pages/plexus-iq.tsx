@@ -39,6 +39,29 @@ import {
   PlexusIQQualificationJobsStatus,
   type ActiveQualificationJob,
 } from "@/components/plexus-iq/PlexusIQQualificationJobsStatus";
+
+// LocalStorage key for the active clinical-import qualification job
+// banner. Bumping the suffix (`.v1`) is the migration story if the
+// shape ever needs to change.
+const ACTIVE_JOBS_STORAGE_KEY = "plexusIq.activeQualificationJobs.v1";
+
+// Merge incoming qualification jobs into an existing active list.
+// New jobs append; duplicates by jobId update the existing entry. The
+// sort is newest-jobId-first so the most recent run is at the top.
+function mergeQualificationJobs(
+  existing: ActiveQualificationJob[],
+  incoming: ActiveQualificationJob[],
+): ActiveQualificationJob[] {
+  const byId = new Map<number, ActiveQualificationJob>();
+  for (const j of existing) {
+    if (typeof j.jobId === "number") byId.set(j.jobId, j);
+  }
+  for (const j of incoming) {
+    if (typeof j.jobId !== "number") continue;
+    byId.set(j.jobId, { ...byId.get(j.jobId), ...j });
+  }
+  return Array.from(byId.values()).sort((a, b) => b.jobId - a.jobId);
+}
 import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
 import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
 import { PlexusIQWorkspace } from "@/components/plexus-iq/PlexusIQWorkspace";
@@ -349,14 +372,51 @@ export default function PlexusIQPage() {
   );
 
   // Active qualification jobs for the clinical-import status banner.
+  //
   // A clinical import spanning multiple (facility, scheduleDate) groups
   // creates one analysis_jobs row per group; we track and poll all of
-  // them concurrently. Dismissing the banner clears the local list — the
-  // jobs themselves stay alive on the server and can be re-attached by
-  // re-importing or by reading /api/batches/:id/analysis-status directly.
+  // them concurrently. Dismissing the banner clears the local list —
+  // the jobs themselves stay alive on the server and can be re-attached
+  // by re-importing or by reading /api/batches/:id/analysis-status.
+  //
+  // Persistence: the active job list is mirrored to localStorage so it
+  // survives a page refresh while jobs are still running. Server jobs
+  // continue regardless of this state.
   const [activeQualificationJobs, setActiveQualificationJobs] = useState<
     ActiveQualificationJob[]
-  >([]);
+  >(() => {
+    try {
+      const raw = localStorage.getItem(ACTIVE_JOBS_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((j) => typeof j?.jobId === "number")
+        .map((j) => ({
+          jobId: j.jobId as number,
+          batchId: typeof j.batchId === "number" ? j.batchId : undefined,
+          totalPatients:
+            typeof j.totalPatients === "number" ? j.totalPatients : undefined,
+        }));
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      if (activeQualificationJobs.length === 0) {
+        localStorage.removeItem(ACTIVE_JOBS_STORAGE_KEY);
+      } else {
+        localStorage.setItem(
+          ACTIVE_JOBS_STORAGE_KEY,
+          JSON.stringify(activeQualificationJobs),
+        );
+      }
+    } catch {
+      // localStorage unavailable (incognito quota, SSR, etc.); ignore.
+    }
+  }, [activeQualificationJobs]);
 
   const handleClinicalImport = useCallback(
     async (
@@ -399,28 +459,26 @@ export default function PlexusIQPage() {
         // Kick off qualification jobs for every created batch. We poll
         // all of them concurrently in the banner; failed/incomplete
         // patients can be retried per-job from there.
+        //
+        // Starting another import APPENDS the returned jobs to the
+        // active banner — it never replaces previously active jobs.
+        // Dismissing the banner clears the local UI only; server jobs
+        // continue regardless.
         try {
           const job = await startPlexusIqQualificationJob({
             batchIds: result.batchIds,
           });
           if (job.ok && job.jobs.length > 0) {
-            // Dedup by jobId in case the user re-imports overlapping batches.
-            setActiveQualificationJobs(() => {
-              const seen = new Set<number>();
-              const out: ActiveQualificationJob[] = [];
-              for (const j of job.jobs) {
-                if (seen.has(j.jobId)) continue;
-                seen.add(j.jobId);
-                out.push({
-                  jobId: j.jobId,
-                  batchId: j.batchId,
-                  totalPatients: j.totalPatients,
-                });
-              }
-              return out;
-            });
+            const incoming: ActiveQualificationJob[] = job.jobs.map((j) => ({
+              jobId: j.jobId,
+              batchId: j.batchId,
+              totalPatients: j.totalPatients,
+            }));
+            setActiveQualificationJobs((prev) => mergeQualificationJobs(prev, incoming));
           } else if (job.ok && job.jobId != null) {
-            setActiveQualificationJobs([{ jobId: job.jobId }]);
+            setActiveQualificationJobs((prev) =>
+              mergeQualificationJobs(prev, [{ jobId: job.jobId as number }]),
+            );
           }
         } catch (jobErr) {
           toast({

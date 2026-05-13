@@ -110,6 +110,16 @@ async function runAnalysisLoop(
       1,
       Number(process.env.BATCH_ANALYSIS_CONCURRENCY ?? 5),
     );
+    // Dev-only audit logs so per-patient processing can be verified by
+    // tailing the server console. We deliberately keep these out of
+    // production logging to avoid noise; the per-patient persistence
+    // already gives durable proof.
+    const isDev = process.env.NODE_ENV !== "production";
+    if (isDev) {
+      console.log(
+        `[batchAnalysisRunner:${batchId}] starting job ${jobId} with ${patients.length} patients; concurrency=${concurrency}`,
+      );
+    }
 
     await batchProcess(
       patients,
@@ -122,6 +132,11 @@ async function runAnalysisLoop(
           // including MRN / row index / parser warnings) are
           // intentionally forwarded so each patient is evaluated on
           // their own full saved record.
+          if (isDev) {
+            console.log(
+              `[batchAnalysisRunner:${batchId}] starting patient ${patient.id} ${patient.name}`,
+            );
+          }
           const result = await screenSinglePatientWithAI(
             {
               name: patient.name,
@@ -178,10 +193,15 @@ async function runAnalysisLoop(
               commitErr,
             );
           }
+          if (isDev) {
+            console.log(
+              `[batchAnalysisRunner:${batchId}] completed patient ${patient.id} ${patient.name}`,
+            );
+          }
         } catch (err: any) {
           const errMsg = err?.message ?? String(err);
           console.error(
-            `[batchAnalysisRunner:${batchId}] failed to analyze patient ${patient.name}:`,
+            `[batchAnalysisRunner:${batchId}] failed to analyze patient ${patient.id} ${patient.name}:`,
             errMsg,
           );
           // Preserve the failure detail in `reasoning` (JSONB) so the

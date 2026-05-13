@@ -148,6 +148,37 @@ shows the status banner at the top of the workspace.
   affected row in the banner swaps to it automatically while the
   other jobs are untouched.
 
+## Active job tracking
+
+The qualification-jobs banner is **merge-on-import**, not
+replace-on-import:
+
+- Starting another clinical import **appends** the returned jobs to
+  the active banner. Existing running jobs are not hidden.
+- Duplicate `jobId`s are deduplicated; the merged entry preserves
+  the most recent `batchId` / `totalPatients` so the row stays
+  accurate after a retry.
+- Jobs sort by `jobId` descending so the most recent run is at the
+  top.
+- The active job list is mirrored to `localStorage`
+  (`plexusIq.activeQualificationJobs.v1`) so a page refresh while
+  jobs are running does **not** lose the banner. Server jobs continue
+  regardless.
+- Dismissing the banner clears the **local UI only** — it does not
+  cancel any server job. Individual rows expose a *Hide* button with
+  the same semantics: "Hide this job from this page. This does not
+  cancel server processing."
+- The banner does not surface a cancel control. Once a job is queued
+  in `analysis_jobs`, the runner processes every patient until the
+  job reaches a terminal state.
+- Why jobs feel fast: each patient is qualified individually through
+  `screenSinglePatientWithAI`, but `batchProcess` runs a configurable
+  number of patients concurrently (default `BATCH_ANALYSIS_CONCURRENCY = 5`),
+  so multiple patients may complete in the same second. In
+  development the server logs `starting patient …` /
+  `completed patient …` per patient so this can be audited from the
+  console.
+
 ## Multi-job tracking
 
 When a clinical import creates patients across multiple
