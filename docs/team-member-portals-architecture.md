@@ -306,3 +306,55 @@ the surfaces invalidate `team-workspace-ancillary-schedule`,
 `/api/global-schedule-events`, `schedule-patient-day-context`, and
 `schedule-patient-playground-context` so the right panel and Plexus IQ
 both reflect the new event.
+
+## Calendar behavior
+
+Two calendars live inside `PortalShell` and use the canonical calendar
+layer. Neither is bespoke; both reuse the same primitives Plexus IQ
+uses, so calendar logic only lives in one place.
+
+### Main canonical calendar (header `Calendar` button)
+
+- A `CalendarIcon` button in the portal header opens
+  `UniversalCalendarDrawer` — the same right-side drawer Plexus IQ
+  uses for its month overview.
+- The drawer's `profileId` is chosen by workspace role:
+  - **Ancillary Care Specialist** → `technician` profile
+    (procedure-side filters / scope).
+  - **Patient Care Specialist** (and legacy roles) →
+    `patientCareSpecialist` profile.
+- Per-day cells are derived client-side from the workspace's already
+  loaded `clinicSchedule` + `ancillarySchedule` events — no new
+  backend route. The `CanonicalMonthCellSummary` shape matches what
+  Plexus IQ feeds the drawer.
+- Selecting a day in the drawer updates `selectedDate` and closes the
+  drawer (no separate day-modal in the team portal — the right panel
+  already shows the per-day list).
+- Plexus IQ's drawer (`profileId="plexusIq"`) is untouched.
+
+### Right-rail patient mini calendar (`PatientMiniCalendar`)
+
+- Replaces the old `MonthlyMiniCalendar` in the left-rail Calendar
+  card. The card now derives its header + CTA from the active
+  scheduling patient:
+  - No patient selected → header shows the facility + workspace mode;
+    CTA is disabled (`Choose a patient`).
+  - Patient selected → header shows `Scheduling: <name>`, DOB,
+    facility, service type, and qualified-test chips (when available);
+    CTA reads `Schedule <name>`.
+- Clicking the calendar icon on a Clinic Schedule or Ancillary
+  Schedule patient row sets the row's patient as the
+  `selectedPatientForScheduling` context. The same icon also opens
+  the existing `SchedulePatientDialog` for the immediate action, so
+  the user never has to click twice.
+- Selecting a date in the mini calendar updates `selectedDate` for
+  that patient. Clicking `Schedule <name>` re-opens
+  `SchedulePatientDialog` prefilled with patient + date — the dialog
+  performs the canonical write through
+  `POST /api/global-schedule-events/schedule-ancillary` and
+  invalidates the team-workspace queries on success. The mini
+  calendar itself never writes directly.
+- Facility filtering: the month cells use the workspace's active
+  facility, which is constrained by the user's Team Member Profile
+  (`assignedFacilityIds`). PCS and ACS only see the facilities they
+  are allowed to schedule into.

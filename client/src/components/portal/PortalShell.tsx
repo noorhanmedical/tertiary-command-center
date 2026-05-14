@@ -34,6 +34,11 @@ import {
   type SchedulePatientDialogPatient,
 } from "@/components/portal/SchedulePatientDialog";
 import { SchedulePatientPlayground } from "@/components/portal/SchedulePatientPlayground";
+import { PatientMiniCalendar } from "@/components/portal/PatientMiniCalendar";
+import {
+  UniversalCalendarDrawer,
+  type CanonicalMonthCellSummary,
+} from "@/calendar";
 
 // The user-facing workspace role lets us distinguish PCS vs ACS for
 // capability gating (procedure-side actions are ACS-only). Legacy direct
@@ -904,6 +909,16 @@ export function PortalShell({
   const [scheduleDialogPatient, setScheduleDialogPatient] = useState<TodayPatient | null>(null);
   const [schedulePatientDialog, setSchedulePatientDialog] =
     useState<SchedulePatientDialogPatient | null>(null);
+  // Patient context for the left-rail PatientMiniCalendar. Clicking the
+  // calendar icon on a clinic/ancillary patient card sets this so the
+  // mini calendar header switches from "facility month view" to
+  // "Scheduling: <patient name>". The same icon also opens the
+  // SchedulePatientDialog for the immediate action.
+  const [selectedPatientForScheduling, setSelectedPatientForScheduling] =
+    useState<SchedulePatientDialogPatient | null>(null);
+  // Canonical team-portal calendar drawer (mirrors Plexus IQ's header
+  // calendar icon → UniversalCalendarDrawer pattern).
+  const [teamPortalCalendarOpen, setTeamPortalCalendarOpen] = useState(false);
   const [schedulePatientPlaygroundContext, setSchedulePatientPlaygroundContext] =
     useState<{ patient: SchedulePatientDialogPatient; selectedDate: string } | null>(null);
   const [portalTabs, setPortalTabs] = useState<PortalTab[]>([]);
@@ -1039,6 +1054,34 @@ export function PortalShell({
     });
   }, [workspaceAncillarySchedule, allowedServiceTypes]);
 
+  // Cells for the canonical team-portal calendar drawer. We bucket the
+  // workspace's clinic + ancillary events by local date so the month
+  // view shows accurate per-day counts without a new backend route.
+  // Plexus IQ's drawer uses the same `CanonicalMonthCellSummary` shape.
+  const teamPortalCalendarCells = useMemo<Record<string, CanonicalMonthCellSummary>>(() => {
+    const counts = new Map<string, number>();
+    const addDay = (iso: string | null | undefined) => {
+      if (!iso) return;
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    };
+    for (const row of workspaceClinicSchedule) addDay(row.startsAt ?? null);
+    for (const row of filteredAncillarySchedule) addDay(row.startsAt ?? null);
+    const out: Record<string, CanonicalMonthCellSummary> = {};
+    for (const [key, count] of counts) {
+      out[key] = { count, dots: [] };
+    }
+    return out;
+  }, [workspaceClinicSchedule, filteredAncillarySchedule]);
+
+  // Profile id for the canonical team-portal drawer. ACS uses the
+  // `technician` profile (procedure-side filters); PCS + legacy roles
+  // use `patientCareSpecialist`.
+  const teamPortalCalendarProfileId: "technician" | "patientCareSpecialist" =
+    workspaceIsAncillaryCareSpecialist ? "technician" : "patientCareSpecialist";
+
   const { data: scheduleData } = useQuery<{ patients: TodayPatient[] }>({
     queryKey: ["/api/portal/today-schedule", facility, selectedDate],
     queryFn: async () => {
@@ -1159,6 +1202,10 @@ export function PortalShell({
   function openSchedulePatientDialog(input: SchedulePatientDialogPatient) {
     if (input.patientScreeningId != null) setSelectedPatientId(input.patientScreeningId);
     setSchedulePatientDialog(input);
+    // Persist the patient as the active scheduling context so the
+    // left-rail PatientMiniCalendar switches its header to
+    // "Scheduling: <name>" and the date picker is patient-scoped.
+    setSelectedPatientForScheduling(input);
   }
 
   function openSchedulePatientPlayground(payload: {
@@ -1388,6 +1435,16 @@ export function PortalShell({
                 {facilities.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
               </SelectContent>
             </Select>
+            <button
+              type="button"
+              onClick={() => setTeamPortalCalendarOpen(true)}
+              aria-label="Open team portal calendar"
+              title="Open team portal calendar"
+              className="inline-flex items-center justify-center h-9 w-9 rounded-full border border-white/20 bg-white/90 text-slate-900 hover:bg-white transition-colors"
+              data-testid="button-team-portal-main-calendar"
+            >
+              <CalendarIcon className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </header>
@@ -1723,7 +1780,26 @@ export function PortalShell({
                       <ChevronLeft className="h-4 w-4 rotate-180 text-[#4863A0]" />
                     </button>
                   </div>
-                  <MonthlyMiniCalendar facility={facility} selectedDate={selectedDate} onSelect={(d) => { setSelectedDate(d); setCenterMode("patient"); }} />
+                  <PatientMiniCalendar
+                    patient={selectedPatientForScheduling}
+                    facility={facility}
+                    selectedDate={selectedDate}
+                    mode={activeWorkspaceMode}
+                    onSelectDate={(d) => {
+                      setSelectedDate(d);
+                      if (!selectedPatientForScheduling) setCenterMode("patient");
+                    }}
+                    onSchedulePatient={(payload) => {
+                      // Reuse the same canonical dialog path the patient
+                      // card calendar icons already go through. The
+                      // dialog handles the actual write to
+                      // /api/global-schedule-events/schedule-ancillary
+                      // and invalidates the team-workspace queries.
+                      openSchedulePatientDialog({
+                        ...payload.patient,
+                      });
+                    }}
+                  />
                 </Card>
 
                 {selected && selected.patientScreeningId != null && (
@@ -2328,6 +2404,18 @@ export function PortalShell({
         patient={schedulePatientDialog}
         defaultDate={selectedDate}
         onOpenInPlayground={(payload) => openSchedulePatientPlayground(payload)}
+      />
+
+      <UniversalCalendarDrawer
+        profileId={teamPortalCalendarProfileId}
+        open={teamPortalCalendarOpen}
+        onOpenChange={setTeamPortalCalendarOpen}
+        title="Team Portal Calendar"
+        cells={teamPortalCalendarCells}
+        onSelectDate={(d) => {
+          setSelectedDate(d);
+          setTeamPortalCalendarOpen(false);
+        }}
       />
     </div>
   );
