@@ -4,7 +4,7 @@ import {
   Stethoscope, HeartHandshake, Calendar as CalendarIcon, Phone, FileSignature,
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
   Sparkles, Send, Minimize2, Maximize2, FileBarChart, FilePlus, User, Bell, Bot,
-  ClipboardPen, Pill, History, ShieldCheck,
+  ClipboardPen, Pill, History, ShieldCheck, Users, Search, Megaphone,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,11 @@ import {
 } from "@/components/portal/SchedulePatientDialog";
 import { SchedulePatientPlayground } from "@/components/portal/SchedulePatientPlayground";
 import { PatientMiniCalendar } from "@/components/portal/PatientMiniCalendar";
+import { PatientCommandCanvas } from "@/components/portal/PatientCommandCanvas";
+import { PortalMyPatientsTab } from "@/components/portal/PortalMyPatientsTab";
+import { PortalPatientSearchTab } from "@/components/portal/PortalPatientSearchTab";
+import { PortalMarketingTab } from "@/components/portal/PortalMarketingTab";
+import { PortalPlexusTasksTab } from "@/components/portal/PortalPlexusTasksTab";
 import {
   UniversalCalendarDrawer,
   type CanonicalMonthCellSummary,
@@ -83,7 +88,15 @@ type TodayPatient = {
   scheduleUrl: string | null;
 };
 
-type PortalTabKind = "patient" | "schedule" | "tasks" | "documents";
+type PortalTabKind =
+  | "patient"
+  | "schedule"
+  | "tasks"
+  | "documents"
+  | "myPatients"
+  | "patientSearch"
+  | "plexusTasks"
+  | "marketing";
 type PortalTab = {
   id: string;
   kind: PortalTabKind;
@@ -1279,6 +1292,22 @@ export function PortalShell({
       setCenterSrc("");
       setCenterTitle("Documents");
       markDockOpen("documents");
+      return;
+    }
+
+    // New command-center tab kinds. The center routes them all through
+    // the playground/canvas surface; rendering branches on tab.kind in
+    // the playground-home JSX below.
+    if (
+      tab.kind === "myPatients" ||
+      tab.kind === "patientSearch" ||
+      tab.kind === "plexusTasks" ||
+      tab.kind === "marketing"
+    ) {
+      setCenterMode("playground");
+      setCenterSrc("");
+      setCenterTitle(tab.label);
+      setDockActiveApp(null);
     }
   }
 
@@ -1295,7 +1324,15 @@ export function PortalShell({
           ? `Schedule · ${patient?.name ?? "Patient"}`
           : kind === "tasks"
             ? "Tasks"
-            : "Documents";
+            : kind === "myPatients"
+              ? "My Patients"
+              : kind === "patientSearch"
+                ? "Patient Search"
+                : kind === "plexusTasks"
+                  ? "Plexus Tasks"
+                  : kind === "marketing"
+                    ? "Marketing"
+                    : "Documents";
 
     const existing = portalTabs.find((t) => t.id === id);
     if (existing) {
@@ -1317,6 +1354,34 @@ export function PortalShell({
 
     setPortalTabs((prev) => [...prev, tab]);
     focusPortalTab(tab);
+  }
+
+  // Open / focus a Patient Command Canvas tab keyed by patientScreeningId.
+  // Used by Patient Search + My Patients click handlers so we never
+  // duplicate the same patient tab.
+  function openPatientTabById(input: {
+    patientScreeningId: number;
+    name: string;
+    facility?: string | null;
+  }) {
+    const fakeToday: TodayPatient = {
+      patientScreeningId: input.patientScreeningId,
+      name: input.name,
+      dob: null,
+      time: null,
+      facility: input.facility ?? "",
+      clinicianName: null,
+      qualifyingTests: [],
+      appointmentStatus: "",
+      consentByTest: [],
+      consentSigned: false,
+      appointments: [],
+      batchId: null,
+      plexusPdfUrl: null,
+      clinicianPdfUrl: null,
+      scheduleUrl: null,
+    };
+    openPortalTab("patient", fakeToday);
   }
 
   function closePortalTab(id: string) {
@@ -1601,7 +1666,108 @@ export function PortalShell({
                     onClose={() => setSchedulePatientPlaygroundContext(null)}
                   />
                 </div>
-              ) : (
+              ) : (() => {
+                // Command-center tab kinds render their own component
+                // inside the playground area. Patient tabs route to the
+                // canonical PatientCommandCanvas when the active patient
+                // has a real patientScreeningId; legacy demo/Today
+                // patient flow continues below.
+                const activeTab = portalTabs.find((t) => t.id === activePortalTabId);
+                if (activeTab?.kind === "myPatients") {
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-my-patients">
+                      <PortalMyPatientsTab
+                        onSelectPatient={(row) =>
+                          openPatientTabById({
+                            patientScreeningId: row.patientScreeningId,
+                            name: row.name,
+                            facility: row.facility,
+                          })
+                        }
+                      />
+                    </div>
+                  );
+                }
+                if (activeTab?.kind === "patientSearch") {
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-patient-search">
+                      <PortalPatientSearchTab
+                        onSelectPatient={(row) =>
+                          openPatientTabById({
+                            patientScreeningId: row.patientScreeningId,
+                            name: row.name,
+                            facility: row.facility,
+                          })
+                        }
+                      />
+                    </div>
+                  );
+                }
+                if (activeTab?.kind === "marketing") {
+                  const sel = selected
+                    ? {
+                        patientScreeningId: selected.patientScreeningId ?? 0,
+                        name: selected.name,
+                        email: null as string | null,
+                      }
+                    : null;
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-marketing">
+                      <PortalMarketingTab
+                        selectedPatient={
+                          sel && sel.patientScreeningId > 0 ? sel : null
+                        }
+                      />
+                    </div>
+                  );
+                }
+                if (activeTab?.kind === "plexusTasks") {
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-plexus-tasks">
+                      <PortalPlexusTasksTab
+                        patientScreeningId={selected?.patientScreeningId ?? null}
+                      />
+                    </div>
+                  );
+                }
+                // Canonical command canvas for any patient tab whose
+                // patient id maps to a real patientScreeningId. The
+                // demo Ali Boomaye flow above still handles its own
+                // legacy id range, so this is a no-op when the active
+                // tab is the demo patient.
+                if (
+                  activeTab?.kind === "patient" &&
+                  typeof activeTab.patientId === "number" &&
+                  activeTab.patientId > 0 &&
+                  activeTab.patientId !== aliBoomayePatient.patientScreeningId
+                ) {
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-patient-command-canvas">
+                      <PatientCommandCanvas
+                        patientScreeningId={activeTab.patientId}
+                        workspaceRole={workspaceRole}
+                        onSchedulePatient={(p) =>
+                          openSchedulePatientDialog({
+                            patientScreeningId: p.patientScreeningId,
+                            patientName: p.name,
+                            patientDob: p.dob,
+                            facilityId: p.facility,
+                            executionCaseId: p.executionCaseId,
+                            serviceType: null,
+                          })
+                        }
+                        onOpenMarketingForPatient={() =>
+                          openPortalTab("marketing")
+                        }
+                        onOpenTasksForPatient={() =>
+                          openPortalTab("plexusTasks")
+                        }
+                      />
+                    </div>
+                  );
+                }
+                return null;
+              })() || (
                 <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto" data-testid="playground-home">
                   {dockActiveApp === "schedule" ? (
                     <div className="p-6">
@@ -1767,6 +1933,55 @@ export function PortalShell({
 
             {!leftRailCollapsed && (
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                {/* Command-center quick-access icons sit above the
+                    Calendar card. Each opens or focuses the matching
+                    tab in the playground area. */}
+                <div className="flex items-center gap-1.5 justify-around" data-testid="left-rail-command-icons">
+                  <button
+                    type="button"
+                    onClick={() => openPortalTab("myPatients")}
+                    aria-label="My Patients"
+                    title="My Patients"
+                    className="inline-flex flex-col items-center gap-0.5 rounded-full border border-white/15 bg-white/95 px-2.5 py-2 text-slate-900 hover:bg-white transition-colors"
+                    data-testid="button-team-portal-my-patients"
+                  >
+                    <Users className="h-4 w-4" />
+                    <span className="text-[9px]">My Patients</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openPortalTab("patientSearch")}
+                    aria-label="Patient Search"
+                    title="Patient Search"
+                    className="inline-flex flex-col items-center gap-0.5 rounded-full border border-white/15 bg-white/95 px-2.5 py-2 text-slate-900 hover:bg-white transition-colors"
+                    data-testid="button-team-portal-patient-search"
+                  >
+                    <Search className="h-4 w-4" />
+                    <span className="text-[9px]">Search</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openPortalTab("plexusTasks")}
+                    aria-label="Plexus Tasks"
+                    title="Plexus Tasks"
+                    className="inline-flex flex-col items-center gap-0.5 rounded-full border border-white/15 bg-white/95 px-2.5 py-2 text-slate-900 hover:bg-white transition-colors"
+                    data-testid="left-rail-plexus-tasks"
+                  >
+                    <ClipboardList className="h-4 w-4" />
+                    <span className="text-[9px]">Tasks</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openPortalTab("marketing")}
+                    aria-label="Marketing"
+                    title="Marketing"
+                    className="inline-flex flex-col items-center gap-0.5 rounded-full border border-white/15 bg-white/95 px-2.5 py-2 text-slate-900 hover:bg-white transition-colors"
+                    data-testid="left-rail-marketing"
+                  >
+                    <Megaphone className="h-4 w-4" />
+                    <span className="text-[9px]">Marketing</span>
+                  </button>
+                </div>
                 <Card className="relative p-3 bg-white text-slate-900">
                   <div className="mb-2 flex items-center justify-between">
                     <div className="text-sm font-semibold text-slate-900">Calendar</div>

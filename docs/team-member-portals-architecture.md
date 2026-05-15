@@ -358,3 +358,102 @@ uses, so calendar logic only lives in one place.
   facility, which is constrained by the user's Team Member Profile
   (`assignedFacilityIds`). PCS and ACS only see the facilities they
   are allowed to schedule into.
+
+## Patient Command Center architecture
+
+The Patient Care Specialist and Ancillary Care Specialist portals
+share one architecture, one shell, and one canonical read model. The
+portal UI is a **view over canonical tables**, not a separate source
+of truth.
+
+### Left-rail tools (above the Calendar card)
+
+Four circular icons sit above the existing Calendar card in
+`PortalShell`'s left rail. Each opens or focuses a tab in the
+playground (multi-tab) center area:
+
+| Icon | Tab kind | Data source |
+| --- | --- | --- |
+| **My Patients** (`Users`) | `myPatients` | `GET /api/portal/my-patients` — joins `patient_journey_events` / `outreach_calls` / `plexus_tasks` where actor = session user; newest-first |
+| **Patient Search** (`Search`) | `patientSearch` | `GET /api/portal/patient-search?query=…` — name/dob/phone/insurance lookup, facility-scoped |
+| **Plexus Tasks** (`ClipboardList`) | `plexusTasks` | `GET /api/plexus/tasks/by-patient/:id` when a patient is in focus; otherwise `/api/plexus/tasks/my-work` |
+| **Marketing** (`Megaphone`) | `marketing` | `GET /api/outreach/materials` (Document Library `kind=marketing`) + `POST /api/email/send-material` for the send |
+
+### Multi-tab playground
+
+`PortalTabKind` is now: `patient`, `schedule`, `tasks`, `documents`,
+`myPatients`, `patientSearch`, `plexusTasks`, `marketing`. Opening a
+tab is **focus-or-add**:
+
+- Re-opening the same patient (by `patientScreeningId`) focuses the
+  existing tab — no duplicates.
+- Re-opening the same tool focuses its existing tab.
+- Multiple patient tabs can be open at the same time.
+- Clicking a patient name from My Patients, Patient Search, or any
+  history surface routes through `openPatientTabById(...)` so the
+  command canvas always opens the canonical patient by id.
+
+### Patient Command Canvas
+
+`client/src/components/portal/PatientCommandCanvas.tsx` is the
+shared canvas for any patient tab. It reads the canonical command
+center endpoint and renders, top-to-bottom:
+
+1. **Identity header** — name, DOB, age, gender, phone, insurance,
+   facility, patient type, plus status pills for appointment /
+   engagement / commit / lifecycle.
+2. **Clinical Profile** — Dx, Hx/PMH, Rx, previous ancillaries,
+   qualifying tests, notes. **Prominent on purpose**; this is never
+   buried beneath communications.
+3. **Latest activity** — last call, next appointment, last ancillary,
+   last journey event. Text and email rows show empty-state messages
+   referencing the pending `patient_communications` table (TODO).
+4. **Full history folders** — All, Calls, Texts, Emails, Notes,
+   Appointments, Ancillaries, Journey. Each opens an in-canvas
+   history panel sourced from the matching canonical table.
+5. **Action strip** — Schedule (opens `SchedulePatientDialog`),
+   Plexus Tasks, Send Marketing, plus stubs for Call / Text / Email /
+   Consent (queued for the canonical comms table).
+
+### Canonical read model
+
+`GET /api/portal/patient-command-center/:patientScreeningId` returns
+one aggregated JSON document built from these canonical sources:
+
+- `patient_screenings` (identity, clinical profile, status)
+- `screening_batches` (facility / scheduleDate context)
+- `patient_execution_cases` (engagement spine, lifecycle, bucket,
+  qualification status)
+- `patient_journey_events` (audit trail; up to 200 newest)
+- `outreach_calls` (call history)
+- `global_schedule_events` (appointments + blocks)
+- `procedure_events` (ancillary completions + notes)
+- `plexus_tasks` (task list)
+- `patient_test_history` (previous ancillaries + cooldown source)
+- `insurance_eligibility_reviews` (recent eligibility decisions)
+- `documents` (patient-scoped, non-marketing)
+
+Patient lookup respects soft-delete (`deletedAt IS NULL`) and
+facility scope: a non-admin session can only read a patient whose
+facility is among the user's `outreach_schedulers.facility`
+assignments. `403` is returned otherwise.
+
+### Communications + history caveat
+
+There is no canonical `patient_communications` table yet. The
+endpoint returns empty `texts` and `emails` arrays with a TODO. When
+that table lands, it will become the canonical source for both
+arrays and for the per-row send-marketing audit trail.
+
+### No practice patient, no parallel systems
+
+- Patient identity always anchors to `patient_screenings.id`. The
+  legacy demo "Ali Boomaye" id range is the only exception, and it
+  is gated separately — every other patient flows through
+  `PatientCommandCanvas` → canonical endpoint.
+- Plexus tasks read from `plexus_tasks`. Marketing reads from
+  Document Library (`kind=marketing`). Schedules read/write through
+  `global_schedule_events`. No table is duplicated.
+- ACS and PCS share the same shell, the same tabs, the same canvas.
+  Capability flags from the Team Member Profile decide what actions
+  are enabled, not which shell renders.
