@@ -35,7 +35,8 @@
     "test:build-screen-data-entry-model": "tsx script/testBuildScreenDataEntryModel.ts",
     "test:ui-path-api-smoke": "tsx script/uiPathApiSmoke.ts",
     "test:plexus-iq-clinical-parser": "tsx script/testPlexusIqClinicalImportParser.ts",
-    "test:plexus-iq-clinical-import-api": "tsx script/testPlexusIqClinicalImportApi.ts"
+    "test:plexus-iq-clinical-import-api": "tsx script/testPlexusIqClinicalImportApi.ts",
+    "qa:team-portal-command-center": "tsx script/qaTeamPortalCommandCenter.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",

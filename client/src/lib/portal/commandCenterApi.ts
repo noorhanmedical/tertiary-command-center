@@ -39,23 +39,67 @@ export type CommandCenterClinicalProfile = {
   reasoning: unknown;
 };
 
+export type PatientCommunicationType =
+  | "call"
+  | "sms"
+  | "email"
+  | "marketing_email"
+  | "marketing_sms"
+  | "internal_note"
+  | "system_note";
+
+export type CommandCenterCommunication = {
+  id: number;
+  patientScreeningId: number | null;
+  executionCaseId: number | null;
+  communicationType: PatientCommunicationType;
+  direction: "outbound" | "inbound" | "internal";
+  status: string;
+  outcome: string | null;
+  subject: string | null;
+  summary: string;
+  bodyPreview: string | null;
+  bodyFull: string | null;
+  toAddress: string | null;
+  phoneNumber: string | null;
+  actorUserId: string | null;
+  actorNameSnapshot: string | null;
+  facility: string | null;
+  relatedDocumentIds: unknown;
+  metadata: Record<string, unknown> | null;
+  occurredAt: string | null;
+  createdAt: string | null;
+};
+
 export type CommandCenterResponse = {
   patient: CommandCenterPatient;
   clinicalProfile: CommandCenterClinicalProfile;
   latestActivity: {
+    communication: CommandCenterCommunication | null;
     call: any | null;
-    text: null;
-    email: null;
-    note: null;
+    text: CommandCenterCommunication | null;
+    email: CommandCenterCommunication | null;
+    marketing: CommandCenterCommunication | null;
+    note: CommandCenterCommunication | null;
     appointment: any | null;
     ancillary: any | null;
     journeyEvent: any | null;
   };
   histories: {
+    communications: CommandCenterCommunication[];
     calls: any[];
-    texts: any[];
-    emails: any[];
-    notes: Array<{ id: number; source: string; createdAt: string | null; text: string | null; serviceType: string | null }>;
+    texts: CommandCenterCommunication[];
+    emails: CommandCenterCommunication[];
+    marketing: CommandCenterCommunication[];
+    notes: Array<{
+      id: number;
+      source: string;
+      createdAt: string | null;
+      text: string | null;
+      serviceType: string | null;
+      actorUserId?: string | null;
+      actorNameSnapshot?: string | null;
+    }>;
     appointments: any[];
     ancillaries: any[];
     journeyEvents: any[];
@@ -64,6 +108,22 @@ export type CommandCenterResponse = {
   };
   tasks: any[];
   documents: any[];
+};
+
+export type LogCommunicationInput = {
+  patientScreeningId: number;
+  communicationType: PatientCommunicationType;
+  direction?: "outbound" | "inbound" | "internal";
+  status?: "logged" | "sent" | "queued" | "failed" | "completed";
+  outcome?: string;
+  subject?: string;
+  summary: string;
+  bodyPreview?: string;
+  bodyFull?: string;
+  toAddress?: string;
+  phoneNumber?: string;
+  relatedDocumentIds?: Array<string | number>;
+  metadata?: Record<string, unknown>;
 };
 
 export type MyPatientsRow = {
@@ -143,12 +203,34 @@ export async function fetchMarketingMaterials(): Promise<
   return getJson(`/api/outreach/materials`);
 }
 
+export async function logPatientCommunication(
+  input: LogCommunicationInput,
+): Promise<{ ok: boolean; communication: CommandCenterCommunication }> {
+  const res = await fetch(`/api/portal/patient-communications`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const body = await res.json();
+      detail = body?.error ?? "";
+    } catch {
+      /* noop */
+    }
+    throw new Error(`Log failed (${res.status})${detail ? `: ${detail}` : ""}`);
+  }
+  return (await res.json()) as { ok: boolean; communication: CommandCenterCommunication };
+}
+
 export async function sendMarketingMaterial(input: {
   patientScreeningId: number;
   materialId: string | number;
   to?: string;
 }): Promise<{ ok: boolean }> {
-  const res = await fetch(`/api/email/send-material`, {
+  const res = await fetch(`/api/outreach/send-material`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },

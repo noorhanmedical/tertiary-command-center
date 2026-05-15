@@ -19,7 +19,9 @@ import {
 import {
   fetchPatientCommandCenter,
   type CommandCenterResponse,
+  type PatientCommunicationType,
 } from "@/lib/portal/commandCenterApi";
+import { LogCommunicationDialog } from "@/components/portal/LogCommunicationDialog";
 
 // Patient Command Canvas — the centerpiece of the Team Portal patient
 // view. ACS and PCS share this component verbatim.
@@ -144,6 +146,13 @@ export function PatientCommandCanvas({
   onOpenPatientHistory,
 }: PatientCommandCanvasProps) {
   const [activeHistory, setActiveHistory] = useState<HistorySection>("all");
+  const [logDialogOpen, setLogDialogOpen] = useState(false);
+  const [logType, setLogType] = useState<PatientCommunicationType>("call");
+
+  const openLog = (t: PatientCommunicationType) => {
+    setLogType(t);
+    setLogDialogOpen(true);
+  };
 
   const { data, isLoading, isError, error } = useQuery<CommandCenterResponse>({
     queryKey: ["portal-command-center", patientScreeningId],
@@ -277,8 +286,42 @@ export function PatientCommandCanvas({
                 : "No journey events yet."
             }
           />
-          <ActivityRow label="Last text" timestamp={null} summary="No text messages recorded yet." />
-          <ActivityRow label="Last email" timestamp={null} summary="No emails recorded yet." />
+          <ActivityRow
+            label="Last text"
+            timestamp={latestActivity.text?.occurredAt ?? null}
+            summary={
+              latestActivity.text
+                ? `${latestActivity.text.summary}${latestActivity.text.outcome ? ` · ${latestActivity.text.outcome}` : ""}`
+                : "No text messages recorded yet."
+            }
+          />
+          <ActivityRow
+            label="Last email"
+            timestamp={latestActivity.email?.occurredAt ?? null}
+            summary={
+              latestActivity.email
+                ? `${latestActivity.email.summary}`
+                : "No emails recorded yet."
+            }
+          />
+          <ActivityRow
+            label="Last note"
+            timestamp={latestActivity.note?.occurredAt ?? null}
+            summary={
+              latestActivity.note
+                ? latestActivity.note.summary
+                : "No internal notes yet."
+            }
+          />
+          <ActivityRow
+            label="Last marketing"
+            timestamp={latestActivity.marketing?.occurredAt ?? null}
+            summary={
+              latestActivity.marketing
+                ? latestActivity.marketing.summary
+                : "No marketing sends yet."
+            }
+          />
         </div>
       </Card>
 
@@ -417,17 +460,46 @@ export function PatientCommandCanvas({
             <Megaphone className="h-3.5 w-3.5" />
             Send Marketing
           </Button>
-          <Button size="sm" variant="outline" disabled className="gap-1.5" title="Coming soon">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openLog("call")}
+            className="gap-1.5"
+            data-testid="action-log-call"
+          >
             <Phone className="h-3.5 w-3.5" />
             Call
           </Button>
-          <Button size="sm" variant="outline" disabled className="gap-1.5" title="Coming soon">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openLog("sms")}
+            className="gap-1.5"
+            title="Log Text (no SMS backend wired)"
+            data-testid="action-log-text"
+          >
             <MessageSquare className="h-3.5 w-3.5" />
             Text
           </Button>
-          <Button size="sm" variant="outline" disabled className="gap-1.5" title="Coming soon">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openLog("email")}
+            className="gap-1.5"
+            data-testid="action-log-email"
+          >
             <Mail className="h-3.5 w-3.5" />
             Email
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openLog("internal_note")}
+            className="gap-1.5"
+            data-testid="action-log-note"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            Internal Note
           </Button>
           <Button size="sm" variant="outline" disabled className="gap-1.5" title="Coming soon">
             <FileSignature className="h-3.5 w-3.5" />
@@ -441,6 +513,16 @@ export function PatientCommandCanvas({
           )}
         </div>
       </Card>
+
+      <LogCommunicationDialog
+        open={logDialogOpen}
+        onOpenChange={setLogDialogOpen}
+        patientScreeningId={patient.patientScreeningId}
+        patientName={patient.name}
+        patientEmail={patient.email}
+        patientPhone={patient.phone}
+        defaultType={logType}
+      />
     </div>
   );
 }
@@ -512,8 +594,26 @@ function HistoryPanel({
           detail: j.summary ?? null,
         }));
       case "texts":
+        return histories.texts.map((c) => ({
+          key: c.id,
+          when: c.occurredAt,
+          label: `${c.communicationType}${c.outcome ? ` · ${c.outcome}` : ""}`,
+          detail: c.bodyFull ?? c.bodyPreview ?? c.summary,
+        }));
       case "emails":
-        return [];
+        return histories.emails.map((c) => ({
+          key: c.id,
+          when: c.occurredAt,
+          label: c.subject ?? c.communicationType,
+          detail: c.bodyFull ?? c.bodyPreview ?? c.summary,
+        }));
+      case "marketing":
+        return histories.marketing.map((c) => ({
+          key: c.id,
+          when: c.occurredAt,
+          label: c.subject ?? c.summary,
+          detail: c.summary,
+        }));
       case "all":
       default:
         return [
@@ -529,20 +629,6 @@ function HistoryPanel({
     }
   })();
 
-  if (section === "texts") {
-    return (
-      <div className="text-[11px] text-slate-500 italic py-2">
-        No text messages recorded yet. (Pending canonical patient_communications table.)
-      </div>
-    );
-  }
-  if (section === "emails") {
-    return (
-      <div className="text-[11px] text-slate-500 italic py-2">
-        No emails recorded yet. (Pending canonical patient_communications table.)
-      </div>
-    );
-  }
   if (rows.length === 0) {
     return (
       <div className="text-[11px] text-slate-500 italic py-2">

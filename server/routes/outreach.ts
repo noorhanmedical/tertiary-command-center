@@ -241,6 +241,60 @@ export function registerOutreachRoutes(app: Express) {
         console.error("[outreach.calls] ensureCanonicalSpineForScreening failed:", err);
       });
 
+      // Mirror the call into patient_communications so the team-portal
+      // patient command canvas timeline reflects the call without
+      // joining outreach_calls separately. Fire-and-forget; outreach
+      // metrics still use outreach_calls as the system of record.
+      void (async () => {
+        try {
+          const { createPatientCommunication, appendCommunicationJourneyEvent } =
+            await import("../repositories/patientCommunications.repo");
+          const { db } = await import("../db");
+          const { patientExecutionCases } = await import("@shared/schema");
+          const { desc, eq } = await import("drizzle-orm");
+          const [execCase] = await db
+            .select()
+            .from(patientExecutionCases)
+            .where(eq(patientExecutionCases.patientScreeningId, patient.id))
+            .orderBy(desc(patientExecutionCases.id))
+            .limit(1);
+          const row = await createPatientCommunication({
+            patientScreeningId: patient.id,
+            executionCaseId: execCase?.id ?? null,
+            communicationType: "call",
+            direction: "outbound",
+            status: "completed",
+            outcome: call.outcome,
+            summary: `Call: ${call.outcome ?? "logged"}${call.notes ? ` — ${call.notes.slice(0, 120)}` : ""}`,
+            bodyPreview: call.notes ?? null,
+            bodyFull: call.notes ?? null,
+            phoneNumber: patient.phoneNumber ?? null,
+            actorUserId: attributedScheduler,
+            facility: patient.facility ?? null,
+            metadata: {
+              outreachCallId: call.id,
+              attemptNumber: call.attemptNumber,
+              callbackAt: call.callbackAt ?? null,
+            },
+            occurredAt: call.startedAt ?? new Date(),
+          });
+          await appendCommunicationJourneyEvent({
+            patientScreeningId: patient.id,
+            executionCaseId: execCase?.id ?? null,
+            actorUserId: attributedScheduler,
+            patientName: patient.name,
+            patientDob: patient.dob,
+            summary: `Call logged: ${call.outcome ?? "outreach"}`,
+            metadata: { communicationId: row.id, outreachCallId: call.id, source: "outreach_calls" },
+          });
+        } catch (err) {
+          console.error(
+            "[outreach.calls] patient_communications mirror failed:",
+            err instanceof Error ? err.message : err,
+          );
+        }
+      })();
+
       res.status(201).json(call);
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to create call" });

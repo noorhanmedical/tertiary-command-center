@@ -172,6 +172,61 @@ export function registerEmailRoutes(app: Express) {
           },
         ],
       });
+
+      // Auto-log into patient_communications so the patient command
+      // canvas timeline reflects every marketing email send. The
+      // outreach_calls table remains the system of record for calls;
+      // here we just append the unified read-model row.
+      try {
+        const { createPatientCommunication, appendCommunicationJourneyEvent } =
+          await import("../repositories/patientCommunications.repo");
+        const { db } = await import("../db");
+        const { patientExecutionCases } = await import("@shared/schema");
+        const { desc, eq } = await import("drizzle-orm");
+        const [execCase] = await db
+          .select()
+          .from(patientExecutionCases)
+          .where(eq(patientExecutionCases.patientScreeningId, patient.id))
+          .orderBy(desc(patientExecutionCases.id))
+          .limit(1);
+        const row = await createPatientCommunication({
+          patientScreeningId: patient.id,
+          executionCaseId: execCase?.id ?? null,
+          communicationType: "marketing_email",
+          direction: "outbound",
+          status: "sent",
+          subject,
+          summary: `Marketing email sent: ${material.title}`,
+          bodyPreview: body.slice(0, 280),
+          bodyFull: body,
+          toAddress: recipient,
+          actorUserId: sessionUserId(req) ?? null,
+          actorNameSnapshot: (req.session as any)?.username ?? null,
+          facility: patient.facility ?? null,
+          relatedDocumentIds: [String(parsed.data.materialId)],
+          metadata: {
+            materialId: parsed.data.materialId,
+            materialTitle: material.title,
+            filename: material.filename,
+            messageId: result.messageId ?? null,
+          },
+        });
+        await appendCommunicationJourneyEvent({
+          patientScreeningId: patient.id,
+          executionCaseId: execCase?.id ?? null,
+          actorUserId: sessionUserId(req) ?? null,
+          patientName: patient.name,
+          patientDob: patient.dob,
+          summary: `Marketing email sent: ${material.title}`,
+          metadata: { communicationId: row.id, source: "marketing_send" },
+        });
+      } catch (logErr) {
+        console.error(
+          "[email/send-material] communication log failed:",
+          logErr instanceof Error ? logErr.message : logErr,
+        );
+      }
+
       res.json({ ok: true, messageId: result.messageId });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

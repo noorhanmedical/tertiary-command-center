@@ -52,4 +52,5 @@ export * from "./completedBillingPackages";
 export * from "./cashPricing";
 export * from "./projectedInvoices";
 export * from "./ancillaryDocumentTemplates";
+export * from "./patientCommunications";
 export * from "../models/chat";

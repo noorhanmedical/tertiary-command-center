@@ -457,3 +457,79 @@ arrays and for the per-row send-marketing audit trail.
 - ACS and PCS share the same shell, the same tabs, the same canvas.
   Capability flags from the Team Member Profile decide what actions
   are enabled, not which shell renders.
+
+## `patient_communications` canonical table
+
+The unified read-model entry for every team-member touch on a patient
+that isn't already captured elsewhere as a domain row.
+
+Migration: `migrations/0024_add_patient_communications.sql`.
+
+| Column | Purpose |
+| --- | --- |
+| `communication_type` | `call` / `sms` / `email` / `marketing_email` / `marketing_sms` / `internal_note` / `system_note` |
+| `direction` | `outbound` / `inbound` / `internal` |
+| `status` | `draft` / `queued` / `sent` / `delivered` / `failed` / `completed` / `logged` |
+| `outcome`, `subject`, `summary`, `body_preview`, `body_full` | timeline copy |
+| `to_address`, `from_address`, `phone_number` | channel-specific metadata |
+| `actor_user_id`, `actor_name_snapshot` | who logged the touch |
+| `related_document_ids`, `metadata` | document attachments + free-form structured data |
+| `occurred_at`, `created_at` | when the touch happened vs when it was logged |
+
+`outreach_calls` remains the system of record for outreach metrics —
+the canonical call POST now mirrors a row into
+`patient_communications` so the timeline is in one place without
+having to join two tables. `email/send-material` writes a
+`marketing_email` row on success. The Plexus IQ team-portal canvas
+reads all rows through this table.
+
+### Logging flows
+
+- **Call** — `POST /api/outreach/calls` writes both `outreach_calls`
+  and a `call` row in `patient_communications`. The canvas Call
+  action also exposes a "Log Call" dialog that writes the
+  `patient_communications` row directly via
+  `POST /api/portal/patient-communications`.
+- **Marketing send** — `POST /api/outreach/send-material` sends the
+  email and appends a `marketing_email` row + journey event.
+- **Manual log** — the canvas Call / Text / Email / Internal Note
+  buttons open the shared `LogCommunicationDialog`. Text and Email
+  are explicitly **log-only** (no SMS backend wired; the marketing
+  tab is the canonical send path for actual emails).
+- **Journey echo** — every successful canvas-side log also appends a
+  `patient_journey_events` row tagged `communication_logged` so the
+  Journey folder reflects the touch.
+
+### Calendar popup + maximize
+
+The right-rail `PatientMiniCalendar` and the per-patient calendar
+icons on Clinic Schedule / Ancillary Schedule patient rows both open
+`SchedulePatientDialog` prefilled with the patient + selected date.
+The dialog has a Maximize2 control that closes itself and hands the
+same context to `SchedulePatientPlayground` in the center area.
+Scheduling on either surface writes through
+`POST /api/global-schedule-events/schedule-ancillary` and invalidates
+the team-workspace + Plexus IQ calendar queries.
+
+### Real database QA
+
+`npm run qa:team-portal-command-center` exercises the canonical
+contract end-to-end against the DB layer (no live server required):
+
+1. Picks the first active `patient_screening`.
+2. Inserts a `patient_communications` row tagged `is_test=true`.
+3. Lists by patient + verifies it appears.
+4. Reads latest + asserts occurredAt is correct.
+5. Filters by `communicationType` and verifies the filter holds.
+6. Cleans up its test row.
+
+The script skips with a clear message when `DATABASE_URL` is unset.
+
+### Deferred
+
+- Real SMS backend — the schema is ready (`sms` and `marketing_sms`
+  types); the UI explicitly says "log-only" until a provider is
+  wired.
+- Backfilling historical `outreach_calls` into
+  `patient_communications` is out of scope here; new calls mirror
+  forward from this commit on.

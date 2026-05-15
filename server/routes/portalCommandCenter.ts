@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { and, desc, eq, ilike, isNull, ne, or, sql } from "drizzle-orm";
+import { z } from "zod";
 import { db } from "../db";
 import { storage } from "../storage";
 import {
@@ -14,7 +15,18 @@ import {
   patientTestHistory,
   insuranceEligibilityReviews,
   documents,
+  patientCommunications,
+  PATIENT_COMMUNICATION_TYPES,
+  PATIENT_COMMUNICATION_DIRECTIONS,
+  PATIENT_COMMUNICATION_STATUSES,
+  type PatientCommunicationType,
 } from "@shared/schema";
+import {
+  createPatientCommunication,
+  appendCommunicationJourneyEvent,
+  listPatientCommunicationsByPatient,
+  listMyRecentCommunicationPatients,
+} from "../repositories/patientCommunications.repo";
 
 // Patient Command Center read-model endpoints.
 //
@@ -207,15 +219,26 @@ export function registerPortalCommandCenterRoutes(app: Express) {
           .orderBy(desc(documents.id))
           .limit(50);
 
+        // Unified communications (calls / sms / emails / marketing /
+        // notes). Backed by the canonical patient_communications
+        // table. The outreach_calls/email send wirings also append
+        // here, so this is the single source for the timeline.
+        const communications = await listPatientCommunicationsByPatient(pid, {
+          limit: 200,
+        });
+
         // Bucket activity for the "latest" + "histories" sections.
-        // Texts/emails: no canonical patient_communications table exists
-        // yet — return empty arrays with a TODO so the client knows the
-        // shape is canonical but the source is pending.
+        // patient_communications is the unified source for text /
+        // email / marketing / internal-note timelines.
+        const latestComm = (type: PatientCommunicationType) =>
+          communications.find((c) => c.communicationType === type) ?? null;
         const latest = {
-          call: calls[0] ?? null,
-          text: null as null, // TODO: patient_communications table for SMS history
-          email: null as null, // TODO: patient_communications table for email history
-          note: null as null, // notes flow through procedure_events.note + generated_notes
+          communication: communications[0] ?? null,
+          call: latestComm("call") ?? (calls[0] ?? null),
+          text: latestComm("sms"),
+          email: latestComm("email") ?? latestComm("marketing_email"),
+          marketing: latestComm("marketing_email") ?? latestComm("marketing_sms"),
+          note: latestComm("internal_note") ?? latestComm("system_note"),
           appointment:
             scheduleRows.find((s) =>
               ["doctor_visit", "ancillary_appointment", "same_day_add"].includes(
@@ -225,6 +248,11 @@ export function registerPortalCommandCenterRoutes(app: Express) {
           ancillary: procedureRows[0] ?? null,
           journeyEvent: journey[0] ?? null,
         };
+
+        const commsByType = (types: PatientCommunicationType[]) =>
+          communications.filter((c) =>
+            types.includes(c.communicationType as PatientCommunicationType),
+          );
 
         return res.json({
           patient: {
@@ -264,18 +292,33 @@ export function registerPortalCommandCenterRoutes(app: Express) {
           },
           latestActivity: latest,
           histories: {
-            calls,
-            texts: [], // see TODO above
-            emails: [], // see TODO above
-            notes: procedureRows
-              .filter((p) => p.note)
-              .map((p) => ({
-                id: p.id,
-                source: "procedure_event",
-                createdAt: p.completedAt,
-                text: p.note,
-                serviceType: p.serviceType,
+            communications,
+            calls: commsByType(["call"]).length > 0 ? commsByType(["call"]) : calls,
+            texts: commsByType(["sms", "marketing_sms"]),
+            emails: commsByType(["email", "marketing_email"]),
+            marketing: commsByType(["marketing_email", "marketing_sms"]),
+            notes: [
+              ...commsByType(["internal_note", "system_note"]).map((c) => ({
+                id: c.id,
+                source: "communication" as const,
+                createdAt: c.occurredAt,
+                text: c.bodyFull ?? c.bodyPreview ?? c.summary,
+                serviceType: null as string | null,
+                actorUserId: c.actorUserId,
+                actorNameSnapshot: c.actorNameSnapshot,
               })),
+              ...procedureRows
+                .filter((p) => p.note)
+                .map((p) => ({
+                  id: p.id,
+                  source: "procedure_event" as const,
+                  createdAt: p.completedAt,
+                  text: p.note,
+                  serviceType: p.serviceType,
+                  actorUserId: p.completedByUserId,
+                  actorNameSnapshot: null as string | null,
+                })),
+            ],
             appointments: scheduleRows,
             ancillaries: procedureRows,
             journeyEvents: journey,
@@ -366,6 +409,10 @@ export function registerPortalCommandCenterRoutes(app: Express) {
         kind: string;
         summary: string | null;
       };
+      // Fourth source: the unified patient_communications table — any
+      // logged call/text/email/marketing/note by the session user.
+      const communicationTouches = await listMyRecentCommunicationPatients(userId);
+
       const all: Touch[] = [
         ...journeyTouches.map((t) => ({
           patientScreeningId: t.patientScreeningId,
@@ -383,6 +430,12 @@ export function registerPortalCommandCenterRoutes(app: Express) {
           patientScreeningId: t.patientScreeningId,
           when: t.when as Date | null,
           kind: t.kind,
+          summary: t.summary,
+        })),
+        ...communicationTouches.map((t) => ({
+          patientScreeningId: t.patientScreeningId,
+          when: t.occurredAt,
+          kind: "communication",
           summary: t.summary,
         })),
       ];
@@ -548,4 +601,150 @@ export function registerPortalCommandCenterRoutes(app: Express) {
       });
     }
   });
+
+  // ─── List patient communications ────────────────────────────────────
+  app.get(
+    "/api/portal/patient-communications/:patientScreeningId",
+    async (req: Request, res: Response) => {
+      try {
+        const pid = Number.parseInt(String(req.params.patientScreeningId), 10);
+        if (!Number.isFinite(pid)) {
+          return res.status(400).json({ error: "Invalid patientScreeningId" });
+        }
+        const screening = await storage.getPatientScreening(pid);
+        if (!screening) return res.status(404).json({ error: "Patient not found" });
+
+        const facilities = await resolveSessionFacilities(req);
+        if (facilities !== "all" && screening.facility && !facilities.includes(screening.facility)) {
+          return res.status(403).json({ error: "Facility access denied" });
+        }
+
+        const typesParam = typeof req.query.type === "string" ? req.query.type : "";
+        const types = typesParam
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s): s is PatientCommunicationType =>
+            (PATIENT_COMMUNICATION_TYPES as readonly string[]).includes(s),
+          );
+
+        const rows = await listPatientCommunicationsByPatient(pid, {
+          types: types.length > 0 ? types : undefined,
+          limit: 500,
+        });
+        res.json(rows);
+      } catch (error: unknown) {
+        console.error(
+          "[portal/patient-communications:list] error:",
+          error instanceof Error ? error.message : error,
+        );
+        res.status(500).json({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to load communications",
+        });
+      }
+    },
+  );
+
+  // ─── Append patient communication (log) ─────────────────────────────
+  const communicationCreateSchema = z.object({
+    patientScreeningId: z.number().int().positive(),
+    communicationType: z.enum(PATIENT_COMMUNICATION_TYPES),
+    direction: z.enum(PATIENT_COMMUNICATION_DIRECTIONS).optional(),
+    status: z.enum(PATIENT_COMMUNICATION_STATUSES).optional(),
+    outcome: z.string().optional(),
+    subject: z.string().optional(),
+    summary: z.string().min(1, "summary is required"),
+    bodyPreview: z.string().optional(),
+    bodyFull: z.string().optional(),
+    toAddress: z.string().optional(),
+    phoneNumber: z.string().optional(),
+    relatedDocumentIds: z.array(z.union([z.string(), z.number()])).optional(),
+    metadata: z.record(z.unknown()).optional(),
+    occurredAt: z.string().datetime().optional(),
+  });
+
+  app.post(
+    "/api/portal/patient-communications",
+    async (req: Request, res: Response) => {
+      const parsed = communicationCreateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      try {
+        const input = parsed.data;
+        const screening = await storage.getPatientScreening(
+          input.patientScreeningId,
+        );
+        if (!screening) return res.status(404).json({ error: "Patient not found" });
+
+        const facilities = await resolveSessionFacilities(req);
+        if (
+          facilities !== "all" &&
+          screening.facility &&
+          !facilities.includes(screening.facility)
+        ) {
+          return res.status(403).json({ error: "Facility access denied" });
+        }
+
+        const userId: string | null = (req.session as any)?.userId ?? null;
+        const actorName: string | null =
+          (req.session as any)?.username ?? null;
+
+        const [execCase] = await db
+          .select()
+          .from(patientExecutionCases)
+          .where(eq(patientExecutionCases.patientScreeningId, screening.id))
+          .orderBy(desc(patientExecutionCases.id))
+          .limit(1);
+
+        const row = await createPatientCommunication({
+          patientScreeningId: screening.id,
+          executionCaseId: execCase?.id ?? null,
+          communicationType: input.communicationType,
+          direction: input.direction ?? "outbound",
+          status: input.status ?? "logged",
+          outcome: input.outcome ?? null,
+          subject: input.subject ?? null,
+          summary: input.summary,
+          bodyPreview: input.bodyPreview ?? null,
+          bodyFull: input.bodyFull ?? null,
+          toAddress: input.toAddress ?? null,
+          phoneNumber: input.phoneNumber ?? null,
+          actorUserId: userId,
+          actorNameSnapshot: actorName,
+          facility: screening.facility ?? null,
+          relatedDocumentIds: input.relatedDocumentIds ?? [],
+          metadata: input.metadata ?? {},
+          occurredAt: input.occurredAt ? new Date(input.occurredAt) : new Date(),
+        });
+
+        await appendCommunicationJourneyEvent({
+          patientScreeningId: screening.id,
+          executionCaseId: execCase?.id ?? null,
+          actorUserId: userId,
+          patientName: screening.name,
+          patientDob: screening.dob,
+          summary: `${input.communicationType} logged: ${input.summary}`,
+          metadata: { communicationId: row.id, source: "team_portal" },
+        });
+
+        res.json({ ok: true, communication: row });
+      } catch (error: unknown) {
+        console.error(
+          "[portal/patient-communications:create] error:",
+          error instanceof Error ? error.message : error,
+        );
+        res.status(500).json({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to log communication",
+        });
+      }
+    },
+  );
 }
