@@ -221,3 +221,32 @@ link at the top of the legacy view returns to the clinic board.
 
 The Recent Qualification Cards and Recently Deleted shelves
 remain above the workspace in both modes.
+
+## PDF packets in clinic detail
+
+When a clinic detail surface lists more than one batch (because the
+clinic spans multiple `scheduleDate`s), patients are grouped by
+`(facility, scheduleDate)` and each group renders its own packet
+header:
+
+- **Plexus Packet** — calls `generatePlexusPDF` with the group's
+  PDF-eligible patients.
+- **Clinician Packet** — calls `generateClinicianPDF` with the same
+  set.
+
+The new `client/src/lib/pdfPacketGrouping.ts` helper validates the
+single-facility / single-date contract before generation:
+
+```ts
+validateSameFacilityDatePacket(patients, fallbackFacility, fallbackScheduleDate)
+  // → { ok: true, facility, scheduleDate, patients }
+  // | { ok: false, reason, groups }
+```
+
+A multi-clinic or multi-date selection returns `ok: false` with the
+groups exposed, and the UI surfaces a toast: *"PDF packet requires
+one facility and one date. Pick a facility/date group below."*
+
+`isPatientPdfEligible(p)` is the shared predicate gating both
+individual and packet PDFs — it requires `status === "completed"` or
+non-empty `qualifyingTests` / `reasoning`.

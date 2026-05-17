@@ -533,3 +533,45 @@ The script skips with a clear message when `DATABASE_URL` is unset.
 - Backfilling historical `outreach_calls` into
   `patient_communications` is out of scope here; new calls mirror
   forward from this commit on.
+
+## Right-panel calendar refresh
+
+`PatientMiniCalendar` now keeps its cursor in sync with `selectedDate`
+via a `useEffect`. When the parent updates the date (after a
+schedule write, a click on the calendar drawer, or switching
+patients), the visible month re-anchors automatically.
+
+All schedule writes route through
+`invalidateTeamPortalScheduleQueries(queryClient, ctx)`
+(`client/src/lib/portal/scheduleInvalidations.ts`). The helper
+invalidates:
+
+- `/api/portal/month-summary` for the relevant facility (and falls
+  back to a broad predicate when the month can't be inferred)
+- `team-workspace-clinic-schedule`, `team-workspace-ancillary-schedule`,
+  `team-workspace-call-list`
+- `schedule-patient-day-context`, `schedule-patient-playground-context`
+- `/api/global-schedule-events`, `/api/technician-liaison/clinic-visits`,
+  `/api/technician-liaison/ancillary-schedule`
+- `/api/portal/today-schedule`, `/api/portal/outreach-call-list`,
+  `/api/schedule/dashboard`
+- `/api/screening-batches/calendar-summary` (Plexus IQ calendar dots)
+- `portal-command-center` for the affected patient (when supplied)
+
+`SchedulePatientDialog` and `SchedulePatientPlayground` both call the
+helper on success; their previous ad-hoc lists of invalidations are
+replaced. New schedule surfaces should also call this helper so the
+right-panel calendar + Plexus IQ + Team Portal lists stay in sync.
+
+## PDF actions on completed cards
+
+`client/src/components/qualification/PatientPdfActions.tsx` exposes
+Plexus PDF / Clinician PDF buttons for one patient. The component is
+designed to be dropped into any card surface (Plexus IQ clinic
+detail, recent qualification cards, ResultsView, Engagement cards).
+Buttons disable themselves with a clear tooltip when
+`isPatientPdfEligible` is false.
+
+Combined packet generation (multi-patient PDF) is guarded by
+`validateSameFacilityDatePacket` so the operator can never produce a
+PDF that mixes clinics or schedule dates.

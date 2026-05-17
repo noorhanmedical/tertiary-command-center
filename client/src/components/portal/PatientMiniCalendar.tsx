@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -51,6 +51,21 @@ export function PatientMiniCalendar({
     const d = new Date(selectedDate);
     return { y: d.getFullYear(), m: d.getMonth() };
   });
+
+  // Sync the visible month to selectedDate when the parent updates it
+  // (e.g. after scheduling, switching patients, or selecting a date
+  // from the right-panel calendar). Without this the cursor stays on
+  // the original month and the new selection is invisible.
+  useEffect(() => {
+    if (!selectedDate) return;
+    const d = new Date(selectedDate);
+    if (Number.isNaN(d.getTime())) return;
+    setCursor((cur) => {
+      if (cur.y === d.getFullYear() && cur.m === d.getMonth()) return cur;
+      return { y: d.getFullYear(), m: d.getMonth() };
+    });
+  }, [selectedDate]);
+
   const monthIso = `${cursor.y}-${String(cursor.m + 1).padStart(2, "0")}`;
 
   const { data } = useQuery<{ days: { date: string; appointmentCount: number }[] }>({

@@ -1,0 +1,96 @@
+import { Button } from "@/components/ui/button";
+import { FileText, FileBarChart } from "lucide-react";
+import type { PatientScreening } from "@shared/schema";
+import {
+  generateClinicianPDF,
+  generatePlexusPDF,
+} from "@/lib/pdfGeneration";
+import { isPatientPdfEligible } from "@/lib/pdfPacketGrouping";
+
+// Shared per-patient PDF action row.
+//
+// Renders Plexus PDF and Clinician PDF buttons. Buttons are disabled
+// with a tooltip when the patient has no completed qualification —
+// the underlying `generatePlexusPDF` / `generateClinicianPDF` helpers
+// require `qualifyingTests` / `reasoning` to render a meaningful PDF.
+//
+// This component is intentionally lightweight so it can be dropped
+// into any patient card surface (qualification cards, Plexus IQ
+// clinic detail, final schedule rows, recent qualification cards,
+// engagement cards) without restyling.
+
+export type PatientPdfActionsProps = {
+  patient: PatientScreening;
+  facility?: string | null;
+  scheduleDate?: string | null;
+  compact?: boolean;
+};
+
+export function PatientPdfActions({
+  patient,
+  facility,
+  scheduleDate,
+  compact = false,
+}: PatientPdfActionsProps) {
+  const eligible = isPatientPdfEligible(patient);
+  const batchName =
+    [facility, scheduleDate].filter(Boolean).join(" · ") || patient.name;
+  const blockTitle = eligible
+    ? undefined
+    : "Complete qualification before generating PDF";
+  const buttonClass = compact
+    ? "h-6 gap-1 px-2 text-[10px]"
+    : "h-7 gap-1 px-2 text-[11px]";
+
+  return (
+    <div
+      className="inline-flex items-center gap-1.5"
+      data-testid={`patient-pdf-actions-${patient.id}`}
+    >
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={!eligible}
+        title={blockTitle ?? "Plexus PDF for this patient"}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!eligible) return;
+          generatePlexusPDF(
+            batchName,
+            [patient],
+            scheduleDate ?? null,
+            (patient as { createdAt?: string | Date | null }).createdAt ?? null,
+          );
+        }}
+        className={buttonClass}
+        data-testid={`button-patient-plexus-pdf-${patient.id}`}
+      >
+        <FileBarChart className="h-3 w-3" />
+        Plexus PDF
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={!eligible}
+        title={blockTitle ?? "Clinician PDF for this patient"}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!eligible) return;
+          generateClinicianPDF(
+            batchName,
+            [patient],
+            scheduleDate ?? null,
+            (patient as { createdAt?: string | Date | null }).createdAt ?? null,
+          );
+        }}
+        className={buttonClass}
+        data-testid={`button-patient-clinician-pdf-${patient.id}`}
+      >
+        <FileText className="h-3 w-3" />
+        Clinician PDF
+      </Button>
+    </div>
+  );
+}

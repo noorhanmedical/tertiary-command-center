@@ -18,6 +18,7 @@ import {
   schedulePatientAncillary,
   type PatientScheduleDayContext,
 } from "@/lib/workflow/teamMemberWorkspaceApi";
+import { invalidateTeamPortalScheduleQueries } from "@/lib/portal/scheduleInvalidations";
 
 // Patient-specific scheduling popup opened from right-panel patient cards.
 // Separate from Plexus IQ calendar — this surface only writes to
@@ -186,11 +187,11 @@ export function SchedulePatientDialog({
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["team-workspace-ancillary-schedule"] });
-      queryClient.invalidateQueries({ queryKey: ["team-workspace-clinic-schedule"] });
-      queryClient.invalidateQueries({ queryKey: ["team-workspace-call-list"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/global-schedule-events"] });
-      queryClient.invalidateQueries({ queryKey: ["schedule-patient-day-context"] });
+      invalidateTeamPortalScheduleQueries(queryClient, {
+        facility: patient?.facilityId ?? null,
+        selectedDate,
+        patientScreeningId: patient?.patientScreeningId ?? null,
+      });
       toast({
         title: "Scheduled",
         description: `${serviceType.trim()} for ${patient?.patientName ?? "patient"}.`,

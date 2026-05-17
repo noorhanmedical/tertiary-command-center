@@ -12,6 +12,7 @@ import {
   type PatientScheduleDayContext,
 } from "@/lib/workflow/teamMemberWorkspaceApi";
 import type { SchedulePatientDialogPatient } from "@/components/portal/SchedulePatientDialog";
+import { invalidateTeamPortalScheduleQueries } from "@/lib/portal/scheduleInvalidations";
 
 // Expanded center-Playground scheduling view. Same data/write contracts as
 // SchedulePatientDialog — pulls per-day events from global_schedule_events
@@ -143,12 +144,11 @@ export function SchedulePatientPlayground({
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["team-workspace-ancillary-schedule"] });
-      queryClient.invalidateQueries({ queryKey: ["team-workspace-clinic-schedule"] });
-      queryClient.invalidateQueries({ queryKey: ["team-workspace-call-list"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/global-schedule-events"] });
-      queryClient.invalidateQueries({ queryKey: ["schedule-patient-playground-context"] });
-      queryClient.invalidateQueries({ queryKey: ["schedule-patient-day-context"] });
+      invalidateTeamPortalScheduleQueries(queryClient, {
+        facility: patient.facilityId ?? null,
+        selectedDate,
+        patientScreeningId: patient.patientScreeningId ?? null,
+      });
       toast({
         title: "Scheduled",
         description: `${serviceType.trim()} for ${patient.patientName ?? "patient"}.`,

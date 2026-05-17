@@ -17,9 +17,20 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import QualificationPatientCardsPane from "@/components/qualification/QualificationPatientCardsPane";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
+import {
+  generateClinicianPDF,
+  generatePlexusPDF,
+} from "@/lib/pdfGeneration";
+import {
+  isPatientPdfEligible,
+  validateSameFacilityDatePacket,
+  type PdfPacketSourcePatient,
+} from "@/lib/pdfPacketGrouping";
+import { useToast } from "@/hooks/use-toast";
 
 // Plexus IQ interior workspace.
 //
@@ -788,19 +799,16 @@ export function PlexusIQWorkspace({
                 No patients match this status in {selectedClinicFacility}.
               </div>
             ) : (
-              <QualificationPatientCardsPane
-                title={`${selectedClinicFacility} · ${tiles.find((t) => t.id === clinicStatusFilter)?.label ?? ""}`}
+              <ClinicDetailPackets
+                facility={selectedClinicFacility}
                 patients={clinicDetailFiltered}
+                clinicGroups={clinicDetailRollup.clinicGroups}
                 analyzingPatients={analyzingPatients}
-                completedCount={
-                  clinicDetailFiltered.filter((p) => p.status === "completed").length
-                }
                 onUpdatePatient={onUpdatePatient}
                 onDeletePatient={onDeletePatient}
                 onAnalyzeOnePatient={onAnalyzeOnePatient}
-                onOpenScheduleModal={() => { /* Plexus IQ has no per-patient appointment modal */ }}
-                schedulerName={null}
-                batchScheduleDate={clinicDetailScheduleDate}
+                fallbackScheduleDate={clinicDetailScheduleDate}
+                statusLabel={tiles.find((t) => t.id === clinicStatusFilter)?.label ?? ""}
               />
             )}
           </div>
@@ -1181,6 +1189,169 @@ export function PlexusIQWorkspace({
           </Accordion>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// Clinic-detail patient list + per-facility/date packet headers.
+// Patients are grouped by (facility, scheduleDate); each group gets
+// a small header with "Plexus Packet" + "Clinician Packet" buttons.
+// A multi-clinic detail (shouldn't happen here, but the helper stays
+// safe) splits into multiple groups instead of generating a mixed
+// packet.
+function ClinicDetailPackets({
+  facility,
+  patients,
+  clinicGroups,
+  analyzingPatients,
+  onUpdatePatient,
+  onDeletePatient,
+  onAnalyzeOnePatient,
+  fallbackScheduleDate,
+  statusLabel,
+}: {
+  facility: string;
+  patients: PatientScreening[];
+  clinicGroups: PlexusIQWorklistGroup[];
+  analyzingPatients: Set<number>;
+  onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
+  onDeletePatient: (id: number) => void;
+  onAnalyzeOnePatient: (id: number) => void;
+  fallbackScheduleDate: string | null;
+  statusLabel: string;
+}) {
+  const { toast } = useToast();
+
+  // Map patient → schedule date via the originating worklist groups so
+  // packet grouping is always one (facility, scheduleDate) tuple.
+  const patientToScheduleDate = new Map<number, string | null>();
+  for (const g of clinicGroups) {
+    for (const p of g.patients) {
+      patientToScheduleDate.set(p.id, g.scheduleDate);
+    }
+  }
+
+  const groups = new Map<
+    string,
+    { scheduleDate: string | null; patients: PdfPacketSourcePatient[]; eligible: PdfPacketSourcePatient[] }
+  >();
+  for (const p of patients) {
+    const sd = patientToScheduleDate.get(p.id) ?? fallbackScheduleDate ?? null;
+    const key = sd ?? "(no date)";
+    const cur = groups.get(key) ?? { scheduleDate: sd, patients: [], eligible: [] };
+    cur.patients.push(p as PdfPacketSourcePatient);
+    if (isPatientPdfEligible(p)) cur.eligible.push(p as PdfPacketSourcePatient);
+    groups.set(key, cur);
+  }
+
+  const ordered = Array.from(groups.entries()).sort((a, b) => {
+    const ad = a[1].scheduleDate ?? "";
+    const bd = b[1].scheduleDate ?? "";
+    if (!ad && !bd) return 0;
+    if (!ad) return 1;
+    if (!bd) return -1;
+    return bd.localeCompare(ad);
+  });
+
+  return (
+    <div className="space-y-3">
+      {ordered.map(([key, group]) => {
+        const dateLabel = group.scheduleDate
+          ? formatDateLabel(group.scheduleDate)
+          : "Outreach (no date)";
+        const eligibleCount = group.eligible.length;
+        const canPacket = eligibleCount > 0;
+
+        const onPacket = (mode: "plexus" | "clinician") => {
+          const validation = validateSameFacilityDatePacket(
+            group.eligible.map((p) => ({ ...p, facility }) as PdfPacketSourcePatient),
+            facility,
+            group.scheduleDate,
+          );
+          if (!validation.ok) {
+            toast({
+              title: "PDF packet blocked",
+              description: validation.reason,
+              variant: "destructive",
+            });
+            return;
+          }
+          const batchName = `${facility} · ${dateLabel}`;
+          if (mode === "plexus") {
+            generatePlexusPDF(batchName, validation.patients, validation.scheduleDate, null);
+          } else {
+            generateClinicianPDF(batchName, validation.patients, validation.scheduleDate, null);
+          }
+        };
+
+        return (
+          <div
+            key={key}
+            className="rounded-xl border border-slate-100 bg-slate-50/40 p-3"
+            data-testid={`plexus-iq-clinic-packet-group-${key}`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs text-slate-700">
+                <span className="font-semibold text-slate-900">{facility}</span>
+                <span className="text-slate-400"> · </span>
+                <span>{dateLabel}</span>
+                <span className="text-slate-400"> · </span>
+                <span>{group.patients.length} {statusLabel.toLowerCase()}</span>
+                {eligibleCount !== group.patients.length && (
+                  <span className="text-slate-500"> ({eligibleCount} eligible for PDF)</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!canPacket}
+                  onClick={() => onPacket("plexus")}
+                  title={
+                    canPacket
+                      ? "Generate Plexus PDF for this facility/date"
+                      : "No completed patients in this group"
+                  }
+                  className="h-7 gap-1 px-2 text-[11px]"
+                  data-testid={`button-plexus-iq-clinic-packet-plexus-${key}`}
+                >
+                  Plexus Packet
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!canPacket}
+                  onClick={() => onPacket("clinician")}
+                  title={
+                    canPacket
+                      ? "Generate Clinician PDF for this facility/date"
+                      : "No completed patients in this group"
+                  }
+                  className="h-7 gap-1 px-2 text-[11px]"
+                  data-testid={`button-plexus-iq-clinic-packet-clinician-${key}`}
+                >
+                  Clinician Packet
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-2">
+              <QualificationPatientCardsPane
+                title={dateLabel}
+                patients={group.patients}
+                analyzingPatients={analyzingPatients}
+                completedCount={eligibleCount}
+                onUpdatePatient={onUpdatePatient}
+                onDeletePatient={onDeletePatient}
+                onAnalyzeOnePatient={onAnalyzeOnePatient}
+                onOpenScheduleModal={() => { /* no per-patient appointment modal here */ }}
+                schedulerName={null}
+                batchScheduleDate={group.scheduleDate}
+              />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
