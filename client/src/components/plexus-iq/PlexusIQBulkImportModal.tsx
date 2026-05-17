@@ -672,6 +672,13 @@ export function PlexusIQBulkImportModal({
                   : "Unknown"}
               </span>
             </div>
+            {/* Clinic-first import preview: group counts + missing-info
+                counts so the operator sees the routing + completeness
+                shape before confirming. Engagement gate later blocks
+                the canonical send action on missing DOB/phone. */}
+            {preview.format === "clinical-spreadsheet" && preview.clinicalRows.length > 0 && (
+              <ClinicalPreviewBreakdown rows={preview.clinicalRows} />
+            )}
             <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
               {preview.rows.map((row, idx) => (
                 <PreviewCard key={idx} index={idx + 1} row={row} />
@@ -811,6 +818,94 @@ function PreviewCard({ index, row }: { index: number; row: ParsedRow }) {
           <dd className="text-[11px] text-slate-700 whitespace-pre-wrap line-clamp-4">{row.notes}</dd>
         </div>
       )}
+    </div>
+  );
+}
+
+function ClinicalPreviewBreakdown({
+  rows,
+}: {
+  rows: PlexusIqClinicalImportRow[];
+}) {
+  const byClinic = new Map<string, PlexusIqClinicalImportRow[]>();
+  let missingDob = 0;
+  let missingPhone = 0;
+  let missingEmail = 0;
+  let visitCount = 0;
+  let outreachCount = 0;
+  for (const r of rows) {
+    const fac = r.facility ?? "(no clinic)";
+    const arr = byClinic.get(fac);
+    if (arr) arr.push(r);
+    else byClinic.set(fac, [r]);
+    if (!r.dob) missingDob += 1;
+    if (!r.phone) missingPhone += 1;
+    if (!r.email) missingEmail += 1;
+    if ((r.patientType ?? "visit") === "outreach") outreachCount += 1;
+    else visitCount += 1;
+  }
+  const clinics = Array.from(byClinic.entries()).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  return (
+    <div
+      className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] space-y-2"
+      data-testid="plexus-iq-bulk-clinic-breakdown"
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-slate-500 font-medium uppercase tracking-wider text-[10px]">
+          Routing
+        </span>
+        <span className="text-slate-700">
+          <strong>{rows.length}</strong> patients
+        </span>
+        <span className="text-slate-500">·</span>
+        <span className="text-slate-700">
+          <strong>{visitCount}</strong> visit
+        </span>
+        <span className="text-slate-500">·</span>
+        <span className="text-slate-700">
+          <strong>{outreachCount}</strong> outreach
+        </span>
+        <span className="text-slate-500">·</span>
+        <span className="text-slate-700">
+          <strong>{clinics.length}</strong> {clinics.length === 1 ? "clinic" : "clinics"}
+        </span>
+      </div>
+      <ul className="space-y-0.5">
+        {clinics.map(([fac, list]) => (
+          <li key={fac} className="flex items-center justify-between gap-2">
+            <span className="text-slate-800 truncate">{fac}</span>
+            <span className="text-slate-500">
+              {list.length} {list.length === 1 ? "patient" : "patients"}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {(missingDob > 0 || missingPhone > 0) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-200 pt-2 text-slate-700">
+          <span className="text-amber-700 font-medium">Missing Info</span>
+          {missingDob > 0 && (
+            <span>
+              <strong>{missingDob}</strong> missing DOB
+            </span>
+          )}
+          {missingPhone > 0 && (
+            <span>
+              <strong>{missingPhone}</strong> missing phone
+            </span>
+          )}
+          {missingEmail > 0 && (
+            <span className="text-slate-500">
+              <strong>{missingEmail}</strong> missing email
+            </span>
+          )}
+        </div>
+      )}
+      <p className="text-[10px] text-slate-500 leading-snug">
+        Missing DOB or phone will not block qualification, but must be
+        completed before sending to Engagement.
+      </p>
     </div>
   );
 }

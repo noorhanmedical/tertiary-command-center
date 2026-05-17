@@ -7,6 +7,7 @@
 
 import {
   parsePlexusIqClinicalImport,
+  normalizeClinicAlias,
   type PlexusIqClinicalImportRow,
 } from "../client/src/lib/plexusIqClinicalImportParser";
 
@@ -656,6 +657,104 @@ header("Case 20: Start/End still parses after header-driven path lands");
   assert(result.format === "clinical-spreadsheet", "Start/End detected");
   assert(result.rows.length === 1, "row parsed");
   assert(result.rows[0].name === "Start End Survivor", "name picked from Start/End row");
+}
+
+// ─── Case 21: clinic-first new header format ──────────────────────────
+header("Case 21: clinic-first format with Clinic / Clinician / Patient Type");
+{
+  const head = tab([
+    "Clinic", "Clinician", "Patient Type", "Patient Name", "Patient ID",
+    "Date Added", "DOB", "Age", "Sex", "Phone Number", "Email",
+    "Insurance", "Appointment Date", "Appointment Time", "Hx", "Dx", "Rx",
+  ]);
+  const row = tab([
+    "TFP", "Taylor, Jill, DO", "Visit", "Jane Doe", "ABC-123",
+    "05/15/2026", "1950-03-14", "76", "F", "(602) 555-0188",
+    "jane@example.com", "Medicare", "05/19/2026", "8:00 AM",
+    "HTN x 10y", "Hypertension", "Metformin 500mg BID",
+  ]);
+  const result = parsePlexusIqClinicalImport(`${head}\n${row}`, {});
+  assert(result.format === "clinical-spreadsheet", "format detected");
+  assert(result.rows.length === 1, "row parsed");
+  const r = result.rows[0];
+  assert(r.facility === "Taylor Family Practice", "TFP → Taylor Family Practice");
+  assert(r.clinician === "Taylor, Jill, DO", "clinician extracted");
+  assert(r.patientType === "visit", "Visit → visit");
+  assert(r.name === "Jane Doe", "name");
+  assert(r.mrn === "ABC-123", "Patient ID → MRN");
+  assert(r.dob === "1950-03-14", "DOB preserved");
+  assert(r.phone === "(602) 555-0188", "phone preserved");
+  assert(r.email === "jane@example.com", "email preserved");
+  assert(r.scheduleDate === "2026-05-19", "Appointment Date normalized to ISO");
+  assert(r.time === "8:00 AM", "Appointment Time preserved");
+  assert(r.diagnoses === "Hypertension", "Dx");
+  assert(r.history === "HTN x 10y", "Hx");
+  assert(r.medications === "Metformin 500mg BID", "Rx");
+  assert((r.warnings ?? []).length === 0, "no warnings when DOB+phone present");
+}
+
+// ─── Case 22: clinic column overrides default facility ─────────────────
+header("Case 22: per-row Clinic column overrides default facility");
+{
+  const head = tab(["Clinic", "Patient Name", "Dx"]);
+  const r1 = tab(["TFP", "Patient One", "HTN"]);
+  const r2 = tab(["NWPG Spring", "Patient Two", "DM2"]);
+  const result = parsePlexusIqClinicalImport(`${head}\n${r1}\n${r2}`, {
+    facility: "Should be overridden",
+  });
+  assert(result.rows.length === 2, "two rows");
+  assert(result.rows[0].facility === "Taylor Family Practice", "row 1 → TFP canonical");
+  assert(result.rows[1].facility === "NWPG - Spring", "row 2 → NWPG - Spring canonical");
+}
+
+// ─── Case 23: missing DOB is a warning, not a fatal error ─────────────
+header("Case 23: missing DOB warns, row still parses");
+{
+  const head = tab(["Clinic", "Patient Name", "Dx", "DOB"]);
+  const row = tab(["TFP", "No DOB Patient", "Asthma", ""]);
+  const result = parsePlexusIqClinicalImport(`${head}\n${row}`, {});
+  assert(result.rows.length === 1, "row parsed");
+  assert(result.errors.length === 0, "no fatal errors");
+  const r = result.rows[0];
+  assert(r.dob === undefined, "dob undefined");
+  assert((r.warnings ?? []).some((w) => /missing dob/i.test(w)), "missing DOB warning");
+}
+
+// ─── Case 24: missing phone is a warning, not a fatal error ──────────
+header("Case 24: missing phone warns, row still parses");
+{
+  const head = tab(["Clinic", "Patient Name", "Dx", "Phone Number"]);
+  const row = tab(["TFP", "No Phone Patient", "CAD", ""]);
+  const result = parsePlexusIqClinicalImport(`${head}\n${row}`, {});
+  assert(result.rows.length === 1, "row parsed");
+  assert(result.errors.length === 0, "no fatal errors");
+  const r = result.rows[0];
+  assert(r.phone === undefined, "phone undefined");
+  assert((r.warnings ?? []).some((w) => /phone/i.test(w)), "missing phone warning");
+}
+
+// ─── Case 25: missing DOB + phone both warn, row still parses ─────────
+header("Case 25: missing DOB + phone — both warn, no fatal error");
+{
+  const head = tab(["Clinic", "Patient Name", "Dx", "DOB", "Phone Number"]);
+  const row = tab(["TFP", "Missing Both", "AFib", "", ""]);
+  const result = parsePlexusIqClinicalImport(`${head}\n${row}`, {});
+  assert(result.rows.length === 1, "row parsed");
+  assert(result.errors.length === 0, "no fatal errors");
+  assert((result.rows[0].warnings ?? []).length === 2, "two warnings");
+}
+
+// ─── Case 26: normalizeClinicAlias direct ─────────────────────────────
+header("Case 26: normalizeClinicAlias coverage");
+{
+  assert(normalizeClinicAlias("TFP") === "Taylor Family Practice", "TFP");
+  assert(normalizeClinicAlias("tfp") === "Taylor Family Practice", "case-insensitive");
+  assert(normalizeClinicAlias("  taylor  ") === "Taylor Family Practice", "alias whitespace trimmed");
+  assert(normalizeClinicAlias("NWPG Spring") === "NWPG - Spring", "NWPG Spring");
+  assert(normalizeClinicAlias("NWPG - Veterans") === "NWPG - Veterans", "canonical passthrough");
+  assert(normalizeClinicAlias("Unknown Clinic") === "Unknown Clinic", "unknown passes through");
+  assert(normalizeClinicAlias("") === undefined, "empty → undefined");
+  assert(normalizeClinicAlias(null) === undefined, "null → undefined");
 }
 
 function summarize(rows: PlexusIqClinicalImportRow[]): string {

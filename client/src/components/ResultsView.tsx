@@ -641,26 +641,60 @@ export function ResultsView({
                           <Calendar className="w-4 h-4" />
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!sendingPatientIds.has(patient.id)) {
-                            handleSendOneToScheduler(patient);
-                          }
-                        }}
-                        disabled={sendingPatientIds.has(patient.id)}
-                        aria-label="Send to Engagement"
-                        title="Send to Engagement"
-                        className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-white text-slate-900 hover:bg-slate-100 disabled:opacity-50 transition-colors"
-                        data-testid={`final-schedule-patient-send-scheduler-${patient.id}`}
-                      >
-                        {sendingPatientIds.has(patient.id) ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Send className="w-4 h-4" />
-                        )}
-                      </button>
+                      {(() => {
+                        // Engagement gate: backend `commitPatient` requires
+                        // name + dob + phone + facility, so we surface the
+                        // same gate on the button before the user clicks.
+                        // AI qualification + visibility are NOT blocked —
+                        // only the canonical send action is.
+                        const missing: string[] = [];
+                        if (!patient.name?.trim()) missing.push("name");
+                        if (!patient.dob?.trim()) missing.push("DOB");
+                        if (!patient.phoneNumber?.trim()) missing.push("phone");
+                        const patientFacility =
+                          (patient as { facility?: string | null }).facility ?? null;
+                        if (!patientFacility?.trim()) missing.push("facility");
+                        const qt = patient.qualifyingTests;
+                        const hasQualification =
+                          Array.isArray(qt) && qt.length > 0;
+                        if (!hasQualification) missing.push("qualification");
+                        const blocked = missing.length > 0;
+                        return (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (
+                                !sendingPatientIds.has(patient.id) &&
+                                !blocked
+                              ) {
+                                handleSendOneToScheduler(patient);
+                              }
+                            }}
+                            disabled={
+                              sendingPatientIds.has(patient.id) || blocked
+                            }
+                            aria-label={
+                              blocked
+                                ? `Missing required info for Engagement: ${missing.join(", ")}`
+                                : "Send to Engagement"
+                            }
+                            title={
+                              blocked
+                                ? `Missing required info for Engagement: ${missing.join(", ")}`
+                                : "Send to Engagement"
+                            }
+                            className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-white text-slate-900 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            data-testid={`final-schedule-patient-send-scheduler-${patient.id}`}
+                          >
+                            {sendingPatientIds.has(patient.id) ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Send className="w-4 h-4" />
+                            )}
+                          </button>
+                        );
+                      })()}
                     </div>
                   </div>
                 </Card>

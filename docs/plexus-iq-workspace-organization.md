@@ -176,3 +176,48 @@ word "Scheduler" is unchanged.
 | `client/src/components/plexus-iq/PlexusIQWorkspace.tsx` | New tabs + `WorklistGroupCard` + legacy accordion (under All Patients) |
 | `client/src/pages/plexus-iq.tsx` | Unchanged for this batch — same callbacks, same drawer wiring |
 | `docs/plexus-iq-workspace-organization.md` | This document |
+
+## Clinic-first interior
+
+The Plexus IQ interior now opens on a clean **clinic tile board** by
+default. Each tile shows incomplete + completed counts (plus
+missing-info / ready-for-engagement / error counters when > 0). The
+status-first tabs from the prior batch still exist, accessible via a
+small "Legacy full view" link, so power users can browse the full
+facility/date accordion when needed.
+
+### Clinic tiles
+
+- One tile per facility, sorted alphabetically.
+- Each tile shows totals + colored sub-counts: incomplete (amber),
+  completed (emerald), missing info (rose), ready for engagement
+  (sky), errors (rose).
+- Clicking a tile opens the clinic detail.
+
+### Clinic detail
+
+- Header: facility name + back-to-clinics control.
+- Six status tiles: `Needs Completion`, `Completed`, `Missing Info`,
+  `Ready for Engagement`, `Sent to Engagement`, `All Patients`.
+- Each status tile is clickable; selecting one filters the rendered
+  patient cards below to only that subset.
+- Cards render via the existing `QualificationPatientCardsPane` — no
+  new card renderer.
+- Definitions:
+  - **Needs Completion** — `p.status !== "completed"` (draft, error,
+    pending, processing).
+  - **Completed** — `p.status === "completed"`.
+  - **Missing Info** — completed AND missing name/DOB/phone/facility.
+  - **Ready for Engagement** — completed AND has name+DOB+phone+facility AND `commitStatus === "Draft"`.
+  - **Sent to Engagement** — `commitStatus !== "Draft"` (Ready / WithScheduler / Scheduled).
+  - **All Patients** — every active patient in the clinic.
+
+### Legacy full view
+
+A "Legacy full view" link in the clinic board (and the clinic detail
+header) switches to the prior tab-based UI (Needs Completion /
+Finalized / Scheduled / All Patients). A "Back to clinic tiles"
+link at the top of the legacy view returns to the clinic board.
+
+The Recent Qualification Cards and Recently Deleted shelves
+remain above the workspace in both modes.

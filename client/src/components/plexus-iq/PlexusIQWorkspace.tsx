@@ -109,6 +109,50 @@ function isScheduled(p: PatientScreening, batchScheduleDate: string | null): boo
   return false;
 }
 
+// Engagement gate helpers. A patient must be finalized AND have
+// name + dob + phone + facility before Send to Engagement is
+// allowed. AI qualification still runs without these — only the
+// canonical commit path requires them.
+function patientHasEngagementInfo(
+  p: PatientScreening,
+  facilityHint: string | null,
+): boolean {
+  const fac = (p.facility ?? facilityHint ?? "").trim();
+  return Boolean(
+    p.name?.trim() && p.dob?.trim() && p.phoneNumber?.trim() && fac,
+  );
+}
+function isReadyForEngagement(
+  p: PatientScreening,
+  facilityHint: string | null,
+): boolean {
+  if (!isFinalized(p)) return false;
+  if (!patientHasEngagementInfo(p, facilityHint)) return false;
+  return (p.commitStatus ?? "Draft") === "Draft";
+}
+function isMissingEngagementInfo(
+  p: PatientScreening,
+  facilityHint: string | null,
+): boolean {
+  if (!isFinalized(p)) return false;
+  return !patientHasEngagementInfo(p, facilityHint);
+}
+function isSentToEngagement(p: PatientScreening): boolean {
+  return (p.commitStatus ?? "Draft") !== "Draft";
+}
+
+// Per-clinic roll-up used by the new clinic-tile board.
+export type PlexusIQClinicSummary = {
+  facility: string;
+  totalCount: number;
+  incompleteCount: number;
+  finalizedCount: number;
+  missingInfoCount: number;
+  readyForEngagementCount: number;
+  sentToEngagementCount: number;
+  errorCount: number;
+};
+
 function classifyGroup(
   row: CalendarSummaryRow,
   detail: BatchWithPatients | undefined,
@@ -512,6 +556,102 @@ export function PlexusIQWorkspace({
       return next;
     });
 
+  // Clinic-first interior view. "clinics" is the new default tile
+  // board; "all" is the legacy facility/date accordion + status tabs
+  // kept as a fallback so power users can still browse the archive.
+  const [viewMode, setViewMode] = useState<"clinics" | "all">("clinics");
+  const [selectedClinicFacility, setSelectedClinicFacility] = useState<string | null>(null);
+  type ClinicStatusFilter =
+    | "needs"
+    | "completed"
+    | "missingInfo"
+    | "readyForEngagement"
+    | "sentToEngagement"
+    | "all";
+  const [clinicStatusFilter, setClinicStatusFilter] =
+    useState<ClinicStatusFilter>("needs");
+
+  // Per-clinic counts. Each clinic aggregates across every batch
+  // (facility/date group) inside it. Missing-info + ready-for-
+  // engagement counts feed the new clinic tiles and gate the Send
+  // to Engagement button.
+  const clinicSummaries = useMemo<PlexusIQClinicSummary[]>(() => {
+    const byFacility = new Map<string, PlexusIQClinicSummary>();
+    for (const g of allGroups) {
+      const fac = g.facility || "Unassigned";
+      const cur =
+        byFacility.get(fac) ?? {
+          facility: fac,
+          totalCount: 0,
+          incompleteCount: 0,
+          finalizedCount: 0,
+          missingInfoCount: 0,
+          readyForEngagementCount: 0,
+          sentToEngagementCount: 0,
+          errorCount: 0,
+        };
+      cur.totalCount += g.totalCount;
+      cur.incompleteCount += g.incompleteCount;
+      cur.finalizedCount += g.finalizedCount;
+      cur.errorCount += g.errorCount;
+      for (const p of g.patients) {
+        if (isMissingEngagementInfo(p, g.facility)) cur.missingInfoCount += 1;
+        if (isReadyForEngagement(p, g.facility)) cur.readyForEngagementCount += 1;
+        if (isSentToEngagement(p)) cur.sentToEngagementCount += 1;
+      }
+      byFacility.set(fac, cur);
+    }
+    return Array.from(byFacility.values()).sort((a, b) =>
+      a.facility.localeCompare(b.facility),
+    );
+  }, [allGroups]);
+
+  // For the clinic detail view: collect all patients in the
+  // currently selected clinic, then apply the active status filter.
+  const clinicDetailRollup = useMemo(() => {
+    if (!selectedClinicFacility) {
+      return {
+        clinicGroups: [] as PlexusIQWorklistGroup[],
+        patients: [] as PatientScreening[],
+      };
+    }
+    const clinicGroups = allGroups.filter(
+      (g) => (g.facility || "Unassigned") === selectedClinicFacility,
+    );
+    const flatPatients: PatientScreening[] = [];
+    for (const g of clinicGroups) {
+      for (const p of g.patients) flatPatients.push(p);
+    }
+    return { clinicGroups, patients: flatPatients };
+  }, [allGroups, selectedClinicFacility]);
+
+  const clinicDetailFiltered = useMemo(() => {
+    const facilityHint = selectedClinicFacility;
+    const rows = clinicDetailRollup.patients;
+    switch (clinicStatusFilter) {
+      case "needs":
+        return rows.filter(isIncomplete);
+      case "completed":
+        return rows.filter(isFinalized);
+      case "missingInfo":
+        return rows.filter((p) => isMissingEngagementInfo(p, facilityHint));
+      case "readyForEngagement":
+        return rows.filter((p) => isReadyForEngagement(p, facilityHint));
+      case "sentToEngagement":
+        return rows.filter(isSentToEngagement);
+      case "all":
+      default:
+        return rows;
+    }
+  }, [clinicDetailRollup, clinicStatusFilter, selectedClinicFacility]);
+
+  const clinicDetailScheduleDate = useMemo(() => {
+    const dated = clinicDetailRollup.clinicGroups
+      .map((g) => g.scheduleDate)
+      .filter((d): d is string => !!d);
+    return dated[0] ?? null;
+  }, [clinicDetailRollup]);
+
   if (grouped.length === 0) {
     return (
       <div className="w-full px-4 sm:px-6 lg:px-8 py-12">
@@ -528,8 +668,222 @@ export function PlexusIQWorkspace({
     );
   }
 
+  // ─── Clinic-first views ──────────────────────────────────────────
+  // The default surface is a clinic-tile board. Clicking a tile
+  // opens a clinic detail (status tiles → patient cards). The legacy
+  // facility/date accordion + status tabs is still reachable from
+  // the "All view" toggle so power users can browse the archive.
+  if (viewMode === "clinics") {
+    if (selectedClinicFacility) {
+      const summary =
+        clinicSummaries.find((c) => c.facility === selectedClinicFacility) ??
+        null;
+      const tiles: Array<{
+        id: ClinicStatusFilter;
+        label: string;
+        count: number;
+        tone: "amber" | "emerald" | "rose" | "sky" | "slate";
+      }> = [
+        {
+          id: "needs",
+          label: "Needs Completion",
+          count: summary?.incompleteCount ?? 0,
+          tone: "amber",
+        },
+        {
+          id: "completed",
+          label: "Completed",
+          count: summary?.finalizedCount ?? 0,
+          tone: "emerald",
+        },
+        {
+          id: "missingInfo",
+          label: "Missing Info",
+          count: summary?.missingInfoCount ?? 0,
+          tone: "rose",
+        },
+        {
+          id: "readyForEngagement",
+          label: "Ready for Engagement",
+          count: summary?.readyForEngagementCount ?? 0,
+          tone: "sky",
+        },
+        {
+          id: "sentToEngagement",
+          label: "Sent to Engagement",
+          count: summary?.sentToEngagementCount ?? 0,
+          tone: "slate",
+        },
+        {
+          id: "all",
+          label: "All Patients",
+          count: summary?.totalCount ?? 0,
+          tone: "slate",
+        },
+      ];
+      const toneStyles: Record<typeof tiles[number]["tone"], string> = {
+        amber: "bg-amber-50 border-amber-200 text-amber-900",
+        emerald: "bg-emerald-50 border-emerald-200 text-emerald-900",
+        rose: "bg-rose-50 border-rose-200 text-rose-900",
+        sky: "bg-sky-50 border-sky-200 text-sky-900",
+        slate: "bg-slate-50 border-slate-200 text-slate-900",
+      };
+      return (
+        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3">
+          <div className="flex items-center gap-3" data-testid="plexus-iq-clinic-detail-header">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedClinicFacility(null);
+                setClinicStatusFilter("needs");
+              }}
+              className="inline-flex items-center gap-1 rounded-full bg-slate-100 hover:bg-slate-200 px-3 py-1 text-xs font-medium text-slate-800"
+              data-testid="button-plexus-iq-clinic-back"
+            >
+              <ChevronRight className="h-3.5 w-3.5 rotate-180" />
+              Back to clinics
+            </button>
+            <div className="text-base font-semibold text-slate-900">
+              {selectedClinicFacility}
+            </div>
+            <div className="ml-auto">
+              <button
+                type="button"
+                onClick={() => setViewMode("all")}
+                className="text-[11px] text-slate-500 hover:text-slate-700"
+                data-testid="button-plexus-iq-legacy-full-view"
+              >
+                Legacy full view →
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6" data-testid="plexus-iq-clinic-status-tiles">
+            {tiles.map((t) => {
+              const isActive = clinicStatusFilter === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setClinicStatusFilter(t.id)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                    isActive
+                      ? "ring-2 ring-offset-1 ring-slate-900 " + toneStyles[t.tone]
+                      : toneStyles[t.tone] + " hover:opacity-90"
+                  }`}
+                  data-testid={`plexus-iq-clinic-status-tile-${t.id}`}
+                >
+                  <div className="text-[10px] font-semibold uppercase tracking-wider opacity-70">
+                    {t.label}
+                  </div>
+                  <div className="text-xl font-semibold">{t.count}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="rounded-2xl bg-white p-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+            {clinicDetailFiltered.length === 0 ? (
+              <div className="text-xs text-slate-500 italic py-4 text-center">
+                No patients match this status in {selectedClinicFacility}.
+              </div>
+            ) : (
+              <QualificationPatientCardsPane
+                title={`${selectedClinicFacility} · ${tiles.find((t) => t.id === clinicStatusFilter)?.label ?? ""}`}
+                patients={clinicDetailFiltered}
+                analyzingPatients={analyzingPatients}
+                completedCount={
+                  clinicDetailFiltered.filter((p) => p.status === "completed").length
+                }
+                onUpdatePatient={onUpdatePatient}
+                onDeletePatient={onDeletePatient}
+                onAnalyzeOnePatient={onAnalyzeOnePatient}
+                onOpenScheduleModal={() => { /* Plexus IQ has no per-patient appointment modal */ }}
+                schedulerName={null}
+                batchScheduleDate={clinicDetailScheduleDate}
+              />
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // Top-level clinic tile board.
+    return (
+      <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+            Clinics
+          </div>
+          <button
+            type="button"
+            onClick={() => setViewMode("all")}
+            className="text-[11px] text-slate-500 hover:text-slate-700"
+            data-testid="button-plexus-iq-legacy-full-view"
+          >
+            Legacy full view →
+          </button>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3" data-testid="plexus-iq-clinic-tiles">
+          {clinicSummaries.map((c) => (
+            <button
+              key={c.facility}
+              type="button"
+              onClick={() => {
+                setSelectedClinicFacility(c.facility);
+                setClinicStatusFilter(
+                  c.incompleteCount > 0 ? "needs" : "completed",
+                );
+              }}
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-slate-50 transition-colors"
+              data-testid={`plexus-iq-clinic-tile-${c.facility}`}
+            >
+              <div className="text-sm font-semibold text-slate-900 truncate">
+                {c.facility}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                <span className="text-amber-700">
+                  <strong className="text-slate-900">{c.incompleteCount}</strong> incomplete
+                </span>
+                <span className="text-emerald-700">
+                  <strong className="text-slate-900">{c.finalizedCount}</strong> completed
+                </span>
+                {c.missingInfoCount > 0 && (
+                  <span className="text-rose-700">
+                    <strong className="text-slate-900">{c.missingInfoCount}</strong> missing info
+                  </span>
+                )}
+                {c.readyForEngagementCount > 0 && (
+                  <span className="text-sky-700">
+                    <strong className="text-slate-900">{c.readyForEngagementCount}</strong> ready for engagement
+                  </span>
+                )}
+                {c.errorCount > 0 && (
+                  <span className="text-rose-700">
+                    <strong className="text-slate-900">{c.errorCount}</strong> error
+                  </span>
+                )}
+                <span className="text-slate-500">· {c.totalCount} total</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3">
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => setViewMode("clinics")}
+          className="text-[11px] text-slate-500 hover:text-slate-700"
+          data-testid="button-plexus-iq-clinic-view"
+        >
+          ← Back to clinic tiles
+        </button>
+      </div>
       <Tabs defaultValue="needs" className="w-full">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <TabsList className="bg-slate-100" data-testid="plexus-iq-worklist-tabs">

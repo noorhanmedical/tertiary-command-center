@@ -23,6 +23,7 @@
 export type PlexusIqClinicalImportRow = {
   rowIndex: number;
   facility?: string;
+  clinician?: string;
   scheduleDate?: string;
   time?: string;
   name: string;
@@ -30,12 +31,20 @@ export type PlexusIqClinicalImportRow = {
   age?: string;
   sex?: string;
   mrn?: string;
+  phone?: string;
+  email?: string;
   diagnoses?: string;
   history?: string;
   medications?: string;
   previousAncillaries?: string;
   insurance?: string;
   patientType?: "visit" | "outreach";
+  dateAdded?: string;
+  // Non-fatal warnings (e.g. missing DOB / phone). The row is still
+  // accepted into the row list — these populate the import preview's
+  // "Missing Info" counts and the per-row notes so the operator
+  // knows what they need to fix before sending to Engagement.
+  warnings?: string[];
   raw: string;
 };
 
@@ -64,6 +73,10 @@ export type PlexusIqClinicalImportDefaults = {
 };
 
 // Canonical columns (positional fallback when header row is absent).
+// Columns added in the clinic-first batch (`CLINIC`, `CLINICIAN`,
+// `PATIENT_TYPE`, `PHONE`, `EMAIL`, `DATE_ADDED`) are header-only —
+// the Start/End positional layout doesn't include them, so the
+// positional `getCell` switch returns undefined for these keys.
 const CLINICAL_COLUMNS = [
   "Start",
   "DATE",
@@ -79,14 +92,27 @@ const CLINICAL_COLUMNS = [
   "Ancillaries Completed",
   "INSURANCE",
   "End",
+  "CLINIC",
+  "CLINICIAN",
+  "PATIENT_TYPE",
+  "PHONE",
+  "EMAIL",
+  "DATE_ADDED",
 ] as const;
 
 type ClinicalCol = (typeof CLINICAL_COLUMNS)[number];
 
 const HEADER_ALIASES: Record<ClinicalCol, string[]> = {
   Start: ["start"],
-  DATE: ["date", "schedule date", "appointment date", "appt date", "dos"],
-  TIME: ["time", "appointment time", "appt time"],
+  DATE: [
+    "date",
+    "schedule date",
+    "appointment date",
+    "appt date",
+    "dos",
+    "visit date",
+  ],
+  TIME: ["time", "appointment time", "appt time", "visit time"],
   NAME: ["name", "patient", "patient name", "full name"],
   DOB: ["dob", "date of birth"],
   AGE: ["age"],
@@ -98,9 +124,17 @@ const HEADER_ALIASES: Record<ClinicalCol, string[]> = {
     "chart number",
     "patient id",
     "external patient id",
+    "external id",
   ],
   Dx: ["dx", "diagnosis", "diagnoses", "problems", "problem list"],
-  Hx: ["hx", "history", "pmh", "medical history", "past medical history"],
+  Hx: [
+    "hx",
+    "hpi",
+    "history",
+    "pmh",
+    "medical history",
+    "past medical history",
+  ],
   Rx: ["rx", "meds", "medications", "medication list"],
   "Ancillaries Completed": [
     "ancillaries completed",
@@ -115,7 +149,84 @@ const HEADER_ALIASES: Record<ClinicalCol, string[]> = {
   ],
   INSURANCE: ["insurance", "payer", "plan", "primary insurance"],
   End: ["end"],
+  CLINIC: ["clinic", "facility", "location", "office", "practice", "site"],
+  CLINICIAN: [
+    "clinician",
+    "provider",
+    "rendering provider",
+    "ordering provider",
+    "doctor",
+    "physician",
+  ],
+  PATIENT_TYPE: [
+    "patient type",
+    "type",
+    "visit type",
+    "source",
+    "patient source",
+  ],
+  PHONE: ["phone", "phone number", "mobile", "cell", "contact number"],
+  EMAIL: ["email", "email address"],
+  DATE_ADDED: ["date added", "imported date", "added date"],
 };
+
+// Clinic alias normalization. TFP → Taylor Family Practice, etc.
+// Returns the original trimmed value when no alias matches, and
+// `undefined` for blank input.
+const CLINIC_ALIASES: Array<{ canonical: string; aliases: string[] }> = [
+  {
+    canonical: "Taylor Family Practice",
+    aliases: ["tfp", "taylor", "taylor family practice"],
+  },
+  {
+    canonical: "NWPG - Spring",
+    aliases: ["nwpg spring", "nwpg - spring", "nwpg-spring", "nwpg.spring"],
+  },
+  {
+    canonical: "NWPG - Veterans",
+    aliases: [
+      "nwpg veterans",
+      "nwpg - veterans",
+      "nwpg-veterans",
+      "nwpg.veterans",
+    ],
+  },
+];
+
+export function normalizeClinicAlias(
+  value: string | undefined | null,
+): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = String(value).trim();
+  if (!trimmed) return undefined;
+  const norm = trimmed.toLowerCase().replace(/\s+/g, " ").trim();
+  for (const entry of CLINIC_ALIASES) {
+    if (entry.aliases.includes(norm)) return entry.canonical;
+    if (norm === entry.canonical.toLowerCase()) return entry.canonical;
+  }
+  return trimmed;
+}
+
+function normalizePatientTypeFromCell(
+  raw: string | undefined,
+  fallback: "visit" | "outreach" | undefined,
+): "visit" | "outreach" | undefined {
+  if (!raw) return fallback;
+  const v = raw.trim().toLowerCase();
+  if (!v) return fallback;
+  if (
+    v === "visit" ||
+    v === "scheduled" ||
+    v === "schedule" ||
+    v === "in-clinic" ||
+    v === "in clinic" ||
+    v === "clinic"
+  )
+    return "visit";
+  if (v === "outreach" || v === "outbound" || v === "call list" || v === "o")
+    return "outreach";
+  return fallback;
+}
 
 function todayIso(): string {
   const d = new Date();
@@ -251,6 +362,10 @@ function getCell(
     // Positional fallback: rawRow.cells starts at column 1 (DATE) since
     // we already consumed the Start marker. So DATE is index 0, TIME is
     // index 1, ..., INSURANCE is index 11. End is consumed by the regex.
+    // The Start/End positional layout does NOT include the
+    // clinic-first batch's extra columns (CLINIC / CLINICIAN /
+    // PATIENT_TYPE / PHONE / EMAIL / DATE_ADDED). Those are
+    // header-only — positional reads return undefined for them.
     const positional: Record<ClinicalCol, number> = {
       Start: -1,
       DATE: 0,
@@ -266,6 +381,12 @@ function getCell(
       "Ancillaries Completed": 10,
       INSURANCE: 11,
       End: -1,
+      CLINIC: -1,
+      CLINICIAN: -1,
+      PATIENT_TYPE: -1,
+      PHONE: -1,
+      EMAIL: -1,
+      DATE_ADDED: -1,
     };
     idx = positional[col];
     if (idx === -1) idx = fallbackPos;
@@ -537,13 +658,32 @@ function parseHeaderDrivenTable(
       errors.push({ rowIndex: r.rowIndex, reason: "Missing NAME", raw: r.raw });
       continue;
     }
+    // Per-row clinic column overrides the modal/default facility.
+    // TFP, "Taylor", etc. are normalized to their canonical name.
+    const clinicCell = pickCellByHeader(r.cells, headerMap, "CLINIC");
+    const facilityResolved =
+      normalizeClinicAlias(clinicCell) ??
+      (defaults.facility ? normalizeClinicAlias(defaults.facility) : undefined);
+
     const dateRaw = pickCellByHeader(r.cells, headerMap, "DATE");
     const scheduleDate =
       normalizeDate(dateRaw) ?? defaults.scheduleDate ?? undefined;
     const dobRaw = pickCellByHeader(r.cells, headerMap, "DOB");
+    const phone = pickCellByHeader(r.cells, headerMap, "PHONE");
+    const email = pickCellByHeader(r.cells, headerMap, "EMAIL");
+
+    // Non-fatal warnings: missing DOB/phone do not block import or AI
+    // qualification. They populate the row's `warnings[]` so the modal
+    // preview can show "Missing Info" counts and so the send-to-
+    // Engagement action can gate on completeness later.
+    const warnings: string[] = [];
+    if (!dobRaw) warnings.push("Missing DOB");
+    if (!phone) warnings.push("Missing phone number");
+
     out.push({
       rowIndex: r.rowIndex,
-      facility: defaults.facility,
+      facility: facilityResolved,
+      clinician: pickCellByHeader(r.cells, headerMap, "CLINICIAN"),
       scheduleDate,
       time: pickCellByHeader(r.cells, headerMap, "TIME"),
       name,
@@ -551,12 +691,19 @@ function parseHeaderDrivenTable(
       age: pickCellByHeader(r.cells, headerMap, "AGE"),
       sex: pickCellByHeader(r.cells, headerMap, "SEX"),
       mrn: pickCellByHeader(r.cells, headerMap, "MRN"),
+      phone,
+      email,
       diagnoses: pickCellByHeader(r.cells, headerMap, "Dx"),
       history: pickCellByHeader(r.cells, headerMap, "Hx"),
       medications: pickCellByHeader(r.cells, headerMap, "Rx"),
       previousAncillaries: pickCellByHeader(r.cells, headerMap, "Ancillaries Completed"),
       insurance: pickCellByHeader(r.cells, headerMap, "INSURANCE"),
-      patientType: normalizePatientType(undefined, defaults.patientType ?? "visit"),
+      patientType: normalizePatientTypeFromCell(
+        pickCellByHeader(r.cells, headerMap, "PATIENT_TYPE"),
+        defaults.patientType ?? "visit",
+      ),
+      dateAdded: pickCellByHeader(r.cells, headerMap, "DATE_ADDED"),
+      warnings: warnings.length > 0 ? warnings : undefined,
       raw: r.raw,
     });
   }

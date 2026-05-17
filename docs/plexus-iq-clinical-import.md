@@ -297,3 +297,59 @@ adjacent rows.
 | `server/services/batchAnalysisRunner.ts` | Shared analyze runner reused by `/api/batches/:id/analyze` and the new qualification-jobs route |
 | `script/testPlexusIqClinicalImportParser.ts` | Parser regression tests |
 | `script/testPlexusIqClinicalImportApi.ts` | API smoke test |
+
+## Clinic-first import format
+
+The parser also accepts the spreadsheet layout the user pastes from
+their EMR export. The first non-blank line is a header row matched
+against `HEADER_ALIASES` — column order does not matter, additional
+columns are ignored.
+
+Recognised additions in this batch:
+
+| Canonical | Aliases | Notes |
+| --- | --- | --- |
+| `CLINIC` | `clinic`, `facility`, `location`, `office`, `practice`, `site` | Per-row clinic overrides the modal default. Values are normalized via `normalizeClinicAlias` (e.g. `TFP` → `Taylor Family Practice`, `NWPG Spring` → `NWPG - Spring`). |
+| `CLINICIAN` | `clinician`, `provider`, `rendering provider`, `ordering provider`, `doctor`, `physician` | Preserved on the parsed row; surfaced into structured notes by the import route. |
+| `PATIENT_TYPE` | `patient type`, `type`, `visit type`, `source`, `patient source` | Values like `Visit` / `scheduled` / `in-clinic` → `"visit"`; `Outreach` / `outbound` / `call list` → `"outreach"`. |
+| `PHONE` | `phone`, `phone number`, `mobile`, `cell`, `contact number` | Stored on `patient_screenings.phoneNumber`. Missing phone is a non-fatal warning. |
+| `EMAIL` | `email`, `email address` | Stored on `patient_screenings.email`. |
+| `DATE_ADDED` | `date added`, `imported date`, `added date` | Preserved on the parsed row; not currently routed into a dedicated column. |
+
+The parser **does not** require DOB or phone to accept a row. Both
+are surfaced as `warnings[]` on the parsed row instead of an error;
+the modal preview counts them as "Missing Info" and AI qualification
+runs anyway.
+
+`normalizeClinicAlias(value)` lives next to the parser and can be
+imported wherever a clinic-name needs canonicalisation.
+
+## Engagement gate
+
+Sending a finalized patient to Engagement (commit) requires:
+
+- name
+- DOB
+- phone
+- facility
+- at least one qualifying test on file
+
+`ResultsView`'s per-patient Send button now disables itself when any
+of these are missing and surfaces the missing list via `aria-label` +
+`title` (`Missing required info for Engagement: DOB, phone`). The
+backend `commitPatient` validation is unchanged — the UI guard is a
+local pre-check, not a replacement.
+
+AI qualification and patient visibility are **not** blocked by missing
+DOB/phone — only the canonical send action is.
+
+## Import preview clinic breakdown
+
+The bulk-import modal preview now shows a clinic breakdown card when
+the clinical-spreadsheet format is detected:
+
+- Total patients, visit/outreach split, distinct clinic count.
+- Per-clinic patient counts.
+- Missing-info counters (missing DOB, missing phone, missing email).
+- Footer copy: *"Missing DOB or phone will not block qualification,
+  but must be completed before sending to Engagement."*
