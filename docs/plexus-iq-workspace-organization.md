@@ -328,3 +328,61 @@ quiet until they are actually committed.
   cleanly (row or `undefined`) and `outreach_schedulers` reads expose
   a name + facility.
 - `patient_communications` table is queryable.
+
+## Add Patient(s) hub
+
+The Plexus IQ header action is now **Add Patient(s)**. It opens a
+3-tile hub (`PlexusIQAddPatientHub`) so the operator picks the
+intent up-front:
+
+| Tile | Opens | Default `patientType` |
+| --- | --- | --- |
+| **Visit** | `PlexusIQAddPatientModal` | `visit` |
+| **Outreach** | `PlexusIQAddPatientModal` | `outreach` |
+| **Plexus BatchFlow** | `PlexusIQBulkImportModal` | row-driven |
+
+All three write through the canonical `screening_batches` +
+`patient_screenings` path — there is no parallel visit/outreach
+store. The legacy single Import button is gone; bulk import lives
+inside the hub's BatchFlow tile.
+
+`PlexusIQAddPatientModal` gained a `defaultPatientType` prop so the
+Visit tile pre-selects `visit` and the Outreach tile pre-selects
+`outreach` when the modal opens.
+
+## BatchFlow row-level routing
+
+`PlexusIQBulkImportModal` no longer blocks clinical-spreadsheet
+imports when the Step-1 default Clinic + Date are blank. Per-row
+**Clinic** and **Appointment Date** columns are the canonical
+routing source; the modal defaults are fallback only.
+
+`handleConfirm` validates each row individually:
+
+- `facility = row.facility || defFacility` — if both are blank, the
+  row produces a row-specific error (`Row missing Clinic`).
+- `scheduleDate = row.scheduleDate || defDate` — same gate.
+
+The modal's helper copy now reads: *"Fallbacks only — Clinic,
+Appointment Date, and Patient Type columns override these values."*
+
+The `normalizeClinicAlias` helper (TFP → Taylor Family Practice,
+NWPG Spring → NWPG - Spring, etc.) already lives in
+`client/src/lib/plexusIqClinicalImportParser.ts` and applies to
+per-row Clinic cells inside `parseHeaderDrivenTable`.
+
+## Visit / Outreach display rules
+
+PatientCard already calls `derivePatientType` from
+`shared/patientType.ts` for every patient. The shared rules:
+
+- **VISIT** if any qualifying clinic appointment falls within the
+  current 90-day window (batch `scheduleDate` or any scheduled
+  `ancillary_appointments` row).
+- **OUTREACH** otherwise — and only when the stored `patientType` is
+  outreach and there is no in-window appointment.
+
+That means an "outreach"-stored patient whose batch now has a
+scheduled `scheduleDate` displays **VISIT** in the card's blue
+identity bar. No UI changes were needed in this batch — the helper
+was already wired.

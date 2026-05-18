@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { CalendarDays, Check, Loader2, Plus, Upload } from "lucide-react";
+import { CalendarDays, Check, Loader2, Plus } from "lucide-react";
 import {
   useScreeningBatches,
   useCreateBatch,
@@ -26,6 +26,7 @@ import {
   type CanonicalCalendarUnscheduledItem,
 } from "@/calendar";
 import { PlexusIQAddPatientModal } from "@/components/plexus-iq/PlexusIQAddPatientModal";
+import { PlexusIQAddPatientHub } from "@/components/plexus-iq/PlexusIQAddPatientHub";
 import {
   PlexusIQBulkImportModal,
   type ParsedRow,
@@ -274,6 +275,13 @@ export default function PlexusIQPage() {
   // ───── Modals + drawer state ─────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  // 3-tile hub state. `addHubOpen` controls the chooser dialog; the
+  // selected tile then opens either PlexusIQAddPatientModal (with a
+  // pre-set patientType) or PlexusIQBulkImportModal.
+  const [addHubOpen, setAddHubOpen] = useState(false);
+  const [addDefaultPatientType, setAddDefaultPatientType] = useState<
+    "visit" | "outreach"
+  >("visit");
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [openDate, setOpenDate] = useState<string | null>(null);
 
@@ -792,23 +800,13 @@ export default function PlexusIQPage() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Button
-              variant="outline"
               size="sm"
-              onClick={() => setBulkOpen(true)}
-              className="gap-1.5 rounded-xl"
-              data-testid="button-plexus-iq-bulk-import"
-            >
-              <Upload className="w-4 h-4" />
-              Import
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => setAddOpen(true)}
+              onClick={() => setAddHubOpen(true)}
               className="gap-1.5 rounded-xl"
               data-testid="button-plexus-iq-add-patient"
             >
               <Plus className="w-4 h-4" />
-              Add Patient
+              Add Patient(s)
             </Button>
             <button
               type="button"
@@ -884,11 +882,26 @@ export default function PlexusIQPage() {
         onUnscheduledItemAction={handleUnscheduledItemAction}
       />
 
+      <PlexusIQAddPatientHub
+        open={addHubOpen}
+        onClose={() => setAddHubOpen(false)}
+        onPickVisit={() => {
+          setAddDefaultPatientType("visit");
+          setAddOpen(true);
+        }}
+        onPickOutreach={() => {
+          setAddDefaultPatientType("outreach");
+          setAddOpen(true);
+        }}
+        onPickBatchFlow={() => setBulkOpen(true)}
+      />
+
       <PlexusIQAddPatientModal
         open={addOpen}
         onClose={() => setAddOpen(false)}
         onSubmit={handleAddPatient}
         pending={addPatientMut.isPending || createBatchMut.isPending}
+        defaultPatientType={addDefaultPatientType}
       />
 
       <PlexusIQBulkImportModal

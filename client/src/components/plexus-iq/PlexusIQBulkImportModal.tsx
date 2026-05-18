@@ -490,20 +490,39 @@ export function PlexusIQBulkImportModal({
       onClinicalImport &&
       preview.clinicalRows.length > 0
     ) {
-      if (!defFacility || !defDate) {
-        setErrors([
-          {
-            line: 0,
+      // Per-row Clinic + Appointment Date columns override the modal
+      // defaults. We only block when a row has NEITHER row-level value
+      // NOR a default. Rows with row-level values import even when
+      // both modal defaults are blank — defaults are fallback only.
+      const rowProblems: ParsedRowError[] = [];
+      preview.clinicalRows.forEach((r, idx) => {
+        const fac = (r.facility ?? defFacility ?? "").trim();
+        const sd = (r.scheduleDate ?? defDate ?? "").trim();
+        if (!fac) {
+          rowProblems.push({
+            line: r.rowIndex ?? idx + 1,
+            reason: "Row missing Clinic — set a default facility or fix the row.",
+          });
+        }
+        if (!sd) {
+          rowProblems.push({
+            line: r.rowIndex ?? idx + 1,
             reason:
-              "Clinical-spreadsheet import requires a default facility and date in Step 1.",
-          },
-        ]);
+              "Row missing Appointment Date — set a default date or fix the row.",
+          });
+        }
+      });
+      if (rowProblems.length > 0) {
+        setErrors(rowProblems);
         setStep("source");
         return;
       }
       await onClinicalImport(preview.clinicalRows, {
-        facility: defFacility,
-        scheduleDate: defDate,
+        // Defaults are still passed so any row with a blank Clinic /
+        // Appointment Date cell can fall back. The clinical-import
+        // route applies them when row values are missing.
+        facility: defFacility || preview.clinicalRows[0].facility || "",
+        scheduleDate: defDate || preview.clinicalRows[0].scheduleDate || "",
         patientType: defType,
       });
       return;
@@ -603,7 +622,11 @@ export function PlexusIQBulkImportModal({
                 markers are only needed for messy multiline pasted text.
                 Legacy CSV with header{" "}
                 <code className="bg-white px-1 py-0.5 rounded text-[10px]">facility,date,name,type,time</code>{" "}
-                also works.
+                also works.{" "}
+                <span className="font-medium text-slate-800">
+                  Fallbacks only — Clinic, Appointment Date, and Patient Type
+                  columns override these values.
+                </span>
               </p>
             </div>
 

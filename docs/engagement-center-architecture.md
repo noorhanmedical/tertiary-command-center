@@ -112,3 +112,10 @@ invalidates:
 Result: the assignee's call list, the patient command canvas, the
 clinic detail badge, and the schedule dashboard all reflect the
 change without a manual refresh.
+
+## Default tab
+
+The Engagement Center now opens directly on **Assignments**
+(previously it opened on Dashboard). The intent: the manager's first
+question is "who needs an owner right now?", and that answer lives
+on the Assignment Board. The Dashboard tab remains one click away.

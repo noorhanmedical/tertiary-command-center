@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +31,7 @@ export function PlexusIQAddPatientModal({
   onClose,
   onSubmit,
   pending,
+  defaultPatientType,
 }: {
   open: boolean;
   onClose: () => void;
@@ -45,10 +46,21 @@ export function PlexusIQAddPatientModal({
     time?: string;
   }) => Promise<boolean>;
   pending: boolean;
+  // The Add Patient(s) hub passes this so the Visit / Outreach tiles
+  // pre-select the right patient type when the modal opens. Falls back
+  // to "visit" for the legacy direct mount.
+  defaultPatientType?: PatientType;
 }) {
   const [facility, setFacility] = useState<string>("");
   const [scheduleDate, setScheduleDate] = useState<string>(todayIso());
-  const [patientType, setPatientType] = useState<PatientType>("visit");
+  const [patientType, setPatientType] = useState<PatientType>(defaultPatientType ?? "visit");
+
+  // Keep the local patientType in sync with whichever tile opened us.
+  useEffect(() => {
+    if (open) {
+      setPatientType(defaultPatientType ?? "visit");
+    }
+  }, [open, defaultPatientType]);
   const [name, setName] = useState("");
   const [time, setTime] = useState("");
   const [error, setError] = useState<string | null>(null);

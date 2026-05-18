@@ -148,13 +148,13 @@ export default function OutreachPage() {
           </div>
         )}
 
-        <Tabs defaultValue="dashboard" className="w-full">
+        <Tabs defaultValue="assignments" className="w-full">
           <TabsList className="bg-slate-100" data-testid="engagement-center-tabs">
-            <TabsTrigger value="dashboard" data-testid="tab-engagement-center-dashboard">
-              Dashboard
-            </TabsTrigger>
             <TabsTrigger value="assignments" data-testid="tab-engagement-center-assignments">
               Assignments
+            </TabsTrigger>
+            <TabsTrigger value="dashboard" data-testid="tab-engagement-center-dashboard">
+              Dashboard
             </TabsTrigger>
           </TabsList>
           <TabsContent value="assignments" className="mt-4">
