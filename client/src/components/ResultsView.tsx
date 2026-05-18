@@ -9,6 +9,8 @@ import {
   type ReasoningValue,
 } from "@/lib/pdfGeneration";
 import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
+import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
+import { isPatientPdfEligible } from "@/lib/pdfPacketGrouping";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -695,6 +697,14 @@ export function ResultsView({
                           </button>
                         );
                       })()}
+                      {isPatientPdfEligible(patient) && (
+                        <PatientPdfActions
+                          patient={patient}
+                          facility={(patient as { facility?: string | null }).facility ?? batch?.facility ?? null}
+                          scheduleDate={batch?.scheduleDate ?? null}
+                          compact
+                        />
+                      )}
                     </div>
                   </div>
                 </Card>

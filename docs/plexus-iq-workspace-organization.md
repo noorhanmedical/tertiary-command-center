@@ -250,3 +250,32 @@ one facility and one date. Pick a facility/date group below."*
 `isPatientPdfEligible(p)` is the shared predicate gating both
 individual and packet PDFs — it requires `status === "completed"` or
 non-empty `qualifyingTests` / `reasoning`.
+
+## Individual patient PDFs on every card
+
+`PatientPdfActions` is now wired into the shared `PatientCard`
+(`client/src/components/PatientCard.tsx`) so every completed/
+dark-blue card across the app exposes per-patient **Plexus PDF** and
+**Clinician PDF** buttons:
+
+- Plexus IQ clinic detail (via `QualificationPatientCardsPane`)
+- Recent qualification cards (same shared card surface)
+- Home / qualification screens that render `QualificationPatientCardsPane`
+- ResultsView / Final Schedule rows (direct integration)
+- Anywhere else `PatientCard` is reused — Engagement, Outreach, etc.
+
+Visibility is gated by `isPatientPdfEligible(patient)`:
+
+- `status === "completed"`, OR
+- non-empty `qualifyingTests`, OR
+- non-empty `reasoning`
+
+Incomplete cards do not render the PDF action row at all (rather
+than showing disabled buttons) to keep the row visually calm.
+Cards that have qualifying data but a non-`completed` status (e.g.
+mid-error retry with prior reasoning preserved) still expose the
+buttons.
+
+**Packet PDFs remain facility/date-guarded.** The packet headers in
+Plexus IQ clinic detail use `validateSameFacilityDatePacket`; mixed
+clinics or dates cannot produce a combined PDF.

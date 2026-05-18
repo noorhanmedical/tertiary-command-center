@@ -15,6 +15,8 @@ import {
 import { QualificationReasoningDialog } from "@/features/schedule/QualificationReasoningDialog";
 import type { ReasoningValue } from "@/lib/pdfGeneration";
 import { PatientEditDialog } from "@/components/PatientEditDialog";
+import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
+import { isPatientPdfEligible } from "@/lib/pdfPacketGrouping";
 import { derivePatientType } from "@shared/patientType";
 import { getPatientCompleteness } from "@/lib/patientCompleteness";
 
@@ -378,6 +380,17 @@ export function PatientCard({
           </div>
 
           <div className="flex items-center gap-1.5">
+            {/* Individual Plexus / Clinician PDF actions surface on
+                completed/dark-blue cards. Buttons disable themselves
+                with a tooltip when qualification is not yet eligible. */}
+            {isPatientPdfEligible(patient) && (
+              <PatientPdfActions
+                patient={patient}
+                facility={patient.facility ?? null}
+                scheduleDate={batchScheduleDate ?? null}
+                compact
+              />
+            )}
             <button
               type="button"
               onClick={(e) => {
