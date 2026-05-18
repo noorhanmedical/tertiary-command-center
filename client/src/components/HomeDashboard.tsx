@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { PageHeader } from "@/components/PageHeader";
 import {
+  Calendar as CalendarIcon,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
@@ -21,6 +22,10 @@ import {
   Users2,
   CheckSquare,
 } from "lucide-react";
+import {
+  UniversalCalendarDrawer,
+  type CanonicalMonthCellSummary,
+} from "@/calendar";
 
 type DayPatient = { id: number; batchId: number; name: string; time: string | null; ancillaries: string[] };
 type ClinicMonthCell = { isoDate: string; patientCount: number; ancillaryCount: number; patients?: DayPatient[] };
@@ -161,6 +166,15 @@ export function HomeDashboard({
 }: HomeDashboardProps) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
+  // Global canonical calendar drawer state. Uses the same
+  // UniversalCalendarDrawer Plexus IQ + portal use, with `admin` profile
+  // so home can see across clinics. Selecting a date currently surfaces
+  // it in `selectedDate` — the existing dashboard view already drives
+  // off that state.
+  const [homeCalendarOpen, setHomeCalendarOpen] = useState(false);
+  const [homeSelectedCalendarDate, setHomeSelectedCalendarDate] = useState<string | null>(null);
+  void homeSelectedCalendarDate;
+
   const dashboardClinicTabs = dashboardData?.clinicTabs || [];
   const activeDashboardClinic =
     dashboardClinicTabs.find((t) => t.clinicKey === dashboardClinicKey) ||
@@ -180,6 +194,24 @@ export function HomeDashboard({
   }, [effectiveSelectedDate, activeDashboardClinic]);
 
   const selectedDayPatients = useMemo<DayPatient[]>(() => selectedMonthCell?.patients ?? [], [selectedMonthCell]);
+
+  // Per-date cells for the global home calendar drawer. Aggregates
+  // patient counts across every clinic the dashboard knows about so
+  // the drawer reflects platform-wide activity.
+  const homeCalendarCells = useMemo<Record<string, CanonicalMonthCellSummary>>(() => {
+    const counts = new Map<string, number>();
+    for (const tab of dashboardClinicTabs) {
+      for (const cell of tab.monthCells) {
+        if (!cell.isoDate) continue;
+        counts.set(cell.isoDate, (counts.get(cell.isoDate) ?? 0) + cell.patientCount);
+      }
+    }
+    const out: Record<string, CanonicalMonthCellSummary> = {};
+    for (const [date, count] of counts) {
+      if (count > 0) out[date] = { count, dots: [] };
+    }
+    return out;
+  }, [dashboardClinicTabs]);
 
   const selectedDayAncillaryBreakdown = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
@@ -262,8 +294,31 @@ export function HomeDashboard({
       <header className="sticky top-0 z-40 bg-white/85 dark:bg-card/80 backdrop-blur-xl border-b border-slate-200/60 dark:border-border/60">
         <div className="px-8 flex items-center gap-4">
           <SidebarTrigger data-testid="button-sidebar-toggle-home" />
+          <div className="ml-auto">
+            <button
+              type="button"
+              onClick={() => setHomeCalendarOpen(true)}
+              aria-label="Open calendar"
+              title="Calendar"
+              className="inline-flex items-center justify-center h-9 w-9 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors"
+              data-testid="button-home-calendar"
+            >
+              <CalendarIcon className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </header>
+      <UniversalCalendarDrawer
+        profileId="admin"
+        open={homeCalendarOpen}
+        onOpenChange={setHomeCalendarOpen}
+        title="Plexus Calendar"
+        cells={homeCalendarCells}
+        onSelectDate={(d) => {
+          setHomeSelectedCalendarDate(d);
+          setHomeCalendarOpen(false);
+        }}
+      />
 
       <main className="flex-1 overflow-auto">
         <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-10 pb-16">

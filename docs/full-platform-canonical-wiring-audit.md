@@ -219,3 +219,70 @@ batch can lean on so the next pass can move fast without re-discovery.
 - `qa:document-billing-invoice-spine` *(new this batch)* — every document/billing/invoice/team-ops table smoke read.
 - `qa:engagement-assignment-board`, `qa:plexus-final-wiring`, `qa:team-portal-command-center` — domain QAs from prior batches.
 - `test:plexus-iq-clinical-parser` (164/164), `test:plexus-iq-clinical-import-api`, plus the existing operational-flow tests (`test:patient-to-invoice-flow`, `test:billing-payment-invoice-flow`, etc.).
+
+## Max-safe-implementation batch landing
+
+Per the explicit "do NOT fake completion" rule, this batch landed the
+stages that could be implemented safely without product UX decisions
+and explicitly deferred the ones that could not.
+
+### Landed
+
+- **Stage 1 — PatientCard / action rail UX fix.** `PatientPdfActions`
+  now supports an `iconOnly` mode that renders two small circular
+  icon buttons (Plexus PDF / Clinician PDF) instead of full-width
+  text pills. The shared `PatientCard` uses `iconOnly`, so every
+  surface that renders `PatientCard` (Visit, Outreach, Plexus IQ
+  clinic detail, recent qualification cards, ResultsView, Engagement
+  cards) inherits the compact action rail. The diagonal cut and the
+  Engagement assignment badge are preserved. Text mode is still
+  available for clinic-detail packet headers.
+- **Stage 2 — Home calendar drawer.** `HomeDashboard` now exposes a
+  Calendar icon button in the sticky header that opens the canonical
+  `UniversalCalendarDrawer` with `profileId="admin"`. Cells are
+  aggregated client-side from the existing
+  `ScheduleDashboardResponse.clinicTabs[].monthCells` data — no new
+  backend route is introduced. Selecting a date stores
+  `homeSelectedCalendarDate` and closes the drawer; the existing
+  dashboard's `selectedDate` state is untouched so existing
+  read-paths still drive the rest of the home page.
+- **Stage 10 — PTO-aware assignment ranking.** The
+  `GET /api/patients/:id/engagement-assignment/options` route now
+  joins `pto_requests` (status `approved`, `startDate <= today <=
+  endDate`) against `outreach_schedulers.userId`. Schedulers on PTO
+  today are flagged with `onPtoToday: true` and demoted to the
+  bottom of the ranking. The frontend
+  `ChangeEngagementAssignmentDialog` surfaces an "on PTO today"
+  badge next to those schedulers. They are not removed — the operator
+  may still need to assign them — but they sort last.
+
+### Deferred (with reasons)
+
+- **Stage 3 — Procedure staged workflow.** The existing schema's
+  `procedureStatus` enum already supports `not_started / in_progress
+  / complete / cancelled / no_show / reschedule_needed`. The
+  user-facing button still says "Procedure Complete". Exposing the
+  staged states requires UX placement decisions (which surfaces show
+  which transitions, who can advance them, how a status change
+  fans out to readiness) that can't responsibly happen inside a
+  wiring batch.
+- **Stage 4 — Report-upload → readiness side-effect.** A canonical
+  endpoint already exists:
+  `POST /api/case-document-readiness/complete` upserts the readiness
+  row given an `executionCaseId`/`patientScreeningId` +
+  `serviceType` + `documentType`. The frontend Document Library
+  upload route doesn't currently call it after a `kind=report` save.
+  This wire is a small focused integration that needs the upload UX
+  flow described before landing.
+- **Stages 5–9 — missing-doc tasks, readiness panel UI, billing
+  recompute route, package transition route, projected/real invoice
+  variance UI.** Each is real product work that needs the previous
+  stages first.
+- **Stage 11 — technician availability/qualification schema.**
+  Already documented honestly in
+  `docs/technician-central-architecture.md` with recommended shape.
+  Half-baked tables would violate the no-faking rule.
+
+### Verification
+
+`npm run check` ✓, `npm run build` ✓, parser **164/164** ✓.

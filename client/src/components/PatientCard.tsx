@@ -389,7 +389,7 @@ export function PatientCard({
                 patient={patient}
                 facility={patient.facility ?? null}
                 scheduleDate={batchScheduleDate ?? null}
-                compact
+                iconOnly
               />
             )}
             <EngagementAssignmentBadge

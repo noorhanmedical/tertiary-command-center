@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { storage } from "../storage";
@@ -7,6 +7,7 @@ import {
   patientExecutionCases,
   patientJourneyEvents,
   outreachSchedulers,
+  ptoRequests,
 } from "@shared/schema";
 
 // Engagement-assignment routes.
@@ -100,7 +101,35 @@ export function registerEngagementAssignmentRoutes(app: Express) {
         if (!patient) return res.status(404).json({ error: "Patient not found" });
         const schedulers = await storage.getOutreachSchedulers();
         const patientFacility = (patient.facility ?? "").trim();
+
+        // PTO-awareness: any scheduler whose linked userId has an
+        // approved PTO request covering today is flagged + demoted to
+        // the bottom of the ranking. They are not removed — the
+        // operator may still need to assign them — but they sort
+        // last so the default choice is always an available teammate.
+        const today = new Date().toISOString().slice(0, 10);
+        const userIds = schedulers
+          .map((s) => s.userId)
+          .filter((id): id is string => !!id);
+        const ptoSetForToday = new Set<string>();
+        if (userIds.length > 0) {
+          const ptoRows = await db
+            .select({ userId: ptoRequests.userId })
+            .from(ptoRequests)
+            .where(
+              and(
+                eq(ptoRequests.status, "approved"),
+                lte(ptoRequests.startDate, today),
+                gte(ptoRequests.endDate, today),
+              ),
+            );
+          for (const r of ptoRows) ptoSetForToday.add(r.userId);
+        }
+
         const ranked = [...schedulers].sort((a, b) => {
+          const aPto = a.userId && ptoSetForToday.has(a.userId) ? 1 : 0;
+          const bPto = b.userId && ptoSetForToday.has(b.userId) ? 1 : 0;
+          if (aPto !== bPto) return aPto - bPto;
           const aFac = a.facility === patientFacility ? 0 : 1;
           const bFac = b.facility === patientFacility ? 0 : 1;
           if (aFac !== bFac) return aFac - bFac;
@@ -117,6 +146,7 @@ export function registerEngagementAssignmentRoutes(app: Express) {
             facility: s.facility,
             capacityPercent: s.capacityPercent,
             matchesFacility: s.facility === patientFacility,
+            onPtoToday: !!(s.userId && ptoSetForToday.has(s.userId)),
           })),
         });
       } catch (error: unknown) {

@@ -33,6 +33,7 @@ type OptionsResponse = {
     facility: string;
     capacityPercent: number;
     matchesFacility: boolean;
+    onPtoToday?: boolean;
   }>;
 };
 
@@ -160,6 +161,11 @@ export function ChangeEngagementAssignmentDialog({
                             {s.facility}
                             {s.matchesFacility ? " · same clinic" : ""}
                             {" · "}capacity {s.capacityPercent}%
+                            {s.onPtoToday && (
+                              <span className="ml-1.5 inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0 text-amber-800">
+                                on PTO today
+                              </span>
+                            )}
                           </div>
                         </div>
                       </button>
