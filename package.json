@@ -40,7 +40,8 @@
     "qa:plexus-final-wiring": "tsx script/qaPlexusFinalWiring.ts",
     "qa:engagement-assignment-board": "tsx script/qaEngagementAssignmentBoard.ts",
     "qa:full-canonical-spine": "tsx script/qaFullCanonicalSpine.ts",
-    "qa:pre-document-spine": "tsx script/qaPreDocumentSpine.ts"
+    "qa:pre-document-spine": "tsx script/qaPreDocumentSpine.ts",
+    "qa:document-billing-invoice-spine": "tsx script/qaDocumentBillingInvoiceSpine.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",

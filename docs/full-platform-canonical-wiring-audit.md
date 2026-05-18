@@ -180,3 +180,42 @@ that have explicit rules in the batch spec — "do NOT change global
 UI/sidebar/home/theme/colors unless explicitly needed for wiring" and
 "keep diagonal style". Both are visual polish, not canonical
 wiring. They should land in a dedicated UX batch.
+
+## Document-to-invoice batch landing (11–20)
+
+This batch run was a **documentation + QA** pass on the post-procedure
+spine, per the explicit "do NOT fake completion" rule. Code-level
+wiring of Stages 11–19 requires product UX decisions that exceed an
+audit batch's scope. The artefacts that did land:
+
+| Stage | Status | Result |
+| - | - | - |
+| 11. Procedure workflow + report upload | **documented** | `docs/ancillary-documents-architecture.md` names the gap: today there is one `Procedure Complete` button; staged statuses (`scheduled → performed → report uploaded → docs complete → billing ready`) and the side-effects need a focused batch. |
+| 12. Ancillary document readiness | **documented** | Same doc lists the wired side (`case_document_readiness` schema + `GET` route + cascade from `POST /api/procedure-events/complete`) and the missing side (no readiness panel UI, no "report-uploaded → readiness + task" side-effect). |
+| 13. Document generation orchestration | **documented as gap** | `procedure_notes` is read-only today. Generation routes for order note / procedure note / billing document do not exist. Decision needed: AI vs. template-fill vs. hybrid. |
+| 14. Billing readiness | **documented** | `docs/billing-invoicing-architecture.md` lists `billing_readiness_checks` read routes + the missing write/override routes. |
+| 15. Completed billing packages | **partial — documented** | Read + payment writes wired; explicit status-transition endpoint missing. |
+| 16. Invoices + projected invoices | **wired — documented** | Full invoice CRUD already exists. Projected invoices are read-only with `realInvoiceLineItemId` linkage. |
+| 17. Team Ops | **documented** | `docs/team-ops-architecture.md` lists the wired side (PTO routes, scheduler list, admin-settings team profile) and the missing PTO-aware assignment + KPI surfacing. |
+| 18. Technician Central | **documented as biggest gap** | `docs/technician-central-architecture.md` says explicitly: no `technician_availability` or `technician_qualification` tables, no global tech schedule page; gives recommended schema for the next batch. |
+| 19. Admin rules / settings | **documented** | The `admin_settings` read/write routes are in place; the canonical setting domains and the BatchFlow clinic alias path are described. |
+| 20. QA + docs | **landed** | New `script/qaDocumentBillingInvoiceSpine.ts` + `qa:document-billing-invoice-spine` npm script smoke-reads every document/billing/invoice/team-ops canonical table. New architecture docs for ancillary documents, billing/invoicing, team ops, technician central. This audit doc updated. |
+
+### Why Stages 11–19 ship as docs only
+
+Three categories:
+
+1. **UX-design-first** (Stages 11, 12 staged statuses, 14 readiness panel, 17 KPI dashboard): the canonical schema is in place; the gap is product UX, which a wiring batch can't responsibly invent.
+2. **Generation infrastructure** (Stage 13): generating notes / billing documents needs an AI/template strategy decision before writing any code.
+3. **Schema-first gaps** (Stage 18 technician availability/qualification): the missing tables need a real model decision, not a placeholder. The architecture doc records the recommended shape.
+
+Each of the docs above lists the existing tables/routes that a future
+batch can lean on so the next pass can move fast without re-discovery.
+
+### QA inventory (updated)
+
+- `qa:full-canonical-spine` — full spine smoke (15 tables).
+- `qa:pre-document-spine` — parser contract + PDF packet contract + pre-doc canonical reads.
+- `qa:document-billing-invoice-spine` *(new this batch)* — every document/billing/invoice/team-ops table smoke read.
+- `qa:engagement-assignment-board`, `qa:plexus-final-wiring`, `qa:team-portal-command-center` — domain QAs from prior batches.
+- `test:plexus-iq-clinical-parser` (164/164), `test:plexus-iq-clinical-import-api`, plus the existing operational-flow tests (`test:patient-to-invoice-flow`, `test:billing-payment-invoice-flow`, etc.).
