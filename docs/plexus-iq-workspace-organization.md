@@ -279,3 +279,52 @@ buttons.
 **Packet PDFs remain facility/date-guarded.** The packet headers in
 Plexus IQ clinic detail use `validateSameFacilityDatePacket`; mixed
 clinics or dates cannot produce a combined PDF.
+
+## Sent-to-Engagement assignment owner
+
+Cards with `commitStatus !== "Draft"` now render
+`EngagementAssignmentBadge` (next to the per-patient PDF actions in
+the shared `PatientCard`). The badge shows the currently-assigned
+scheduler's name and exposes a **Change** button that opens
+`ChangeEngagementAssignmentDialog`.
+
+Data flow:
+
+- `GET /api/patients/:id/engagement-assignment` reads
+  `patient_execution_cases` for the latest case linked to that
+  `patientScreeningId` and joins to `outreach_schedulers` for the
+  display name + facility.
+- `GET /api/patients/:id/engagement-assignment/options` returns the
+  scheduler list, **facility-match first**, then capacity desc, then
+  name. Each option carries `matchesFacility` so the dialog can call
+  it out.
+- `POST /api/patients/:id/engagement-assignment` writes
+  `assignedTeamMemberId` + `assignedRole = "scheduler"` on the case
+  and bumps `engagementStatus` to `"assigned"` only when the case is
+  in a new/ready/assigned/not_reached state (strong states like
+  `scheduled` or `completed` are preserved). Every change appends a
+  canonical `patient_journey_events` row with
+  `eventType = "engagement_assignment_changed"` and
+  `metadata = { previousSchedulerId, previousSchedulerName,
+  newSchedulerId, newSchedulerName, reason }`.
+
+No new assignment table is introduced — the read + write paths are
+both anchored on `patient_execution_cases` and the existing
+`outreach_schedulers`.
+
+The badge also doubles as a "Sent to Engagement" indicator: when the
+patient is still `Draft`, the badge renders nothing, so cards stay
+quiet until they are actually committed.
+
+## Final-wiring QA
+
+`npm run qa:plexus-final-wiring` verifies (and skips cleanly without
+`DATABASE_URL`):
+
+- `validateSameFacilityDatePacket` accepts same-facility/date and
+  rejects mixed facility, mixed date, and missing-date inputs;
+  exposes the per-group breakdown.
+- Canonical execution-case lookup by `patientScreeningId` returns
+  cleanly (row or `undefined`) and `outreach_schedulers` reads expose
+  a name + facility.
+- `patient_communications` table is queryable.

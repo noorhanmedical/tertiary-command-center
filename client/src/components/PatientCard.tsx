@@ -16,6 +16,7 @@ import { QualificationReasoningDialog } from "@/features/schedule/QualificationR
 import type { ReasoningValue } from "@/lib/pdfGeneration";
 import { PatientEditDialog } from "@/components/PatientEditDialog";
 import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
+import { EngagementAssignmentBadge } from "@/components/qualification/EngagementAssignmentBadge";
 import { isPatientPdfEligible } from "@/lib/pdfPacketGrouping";
 import { derivePatientType } from "@shared/patientType";
 import { getPatientCompleteness } from "@/lib/patientCompleteness";
@@ -391,6 +392,11 @@ export function PatientCard({
                 compact
               />
             )}
+            <EngagementAssignmentBadge
+              patientId={patient.id}
+              commitStatus={patient.commitStatus}
+              compact
+            />
             <button
               type="button"
               onClick={(e) => {
