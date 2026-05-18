@@ -832,7 +832,7 @@ export function PlexusIQWorkspace({
             Legacy full view →
           </button>
         </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3" data-testid="plexus-iq-clinic-tiles">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3" data-testid="plexus-iq-clinic-tiles">
           {clinicSummaries.map((c) => (
             <button
               key={c.facility}
@@ -843,35 +843,48 @@ export function PlexusIQWorkspace({
                   c.incompleteCount > 0 ? "needs" : "completed",
                 );
               }}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-slate-50 transition-colors"
+              className="group flex flex-col overflow-hidden rounded-2xl bg-white text-left shadow-[0_2px_8px_rgba(15,23,42,0.06)] hover:shadow-[0_6px_20px_rgba(15,23,42,0.10)] transition-shadow"
               data-testid={`plexus-iq-clinic-tile-${c.facility}`}
             >
-              <div className="text-sm font-semibold text-slate-900 truncate">
-                {c.facility}
+              {/* Black header strip — clinic name only, no counts. */}
+              <div className="bg-slate-900 group-hover:bg-slate-800 transition-colors px-4 py-3">
+                <div className="text-sm font-semibold tracking-tight text-white truncate">
+                  {c.facility}
+                </div>
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-                <span className="text-amber-700">
-                  <strong className="text-slate-900">{c.incompleteCount}</strong> incomplete
-                </span>
-                <span className="text-emerald-700">
-                  <strong className="text-slate-900">{c.finalizedCount}</strong> completed
-                </span>
+
+              {/* Clean stat rows. Total in the corner; per-status counts
+                  stacked + colored sparingly so the eye lands on the
+                  number first. */}
+              <div className="flex-1 px-4 py-3 space-y-1.5">
+                <StatRow label="Incomplete" value={c.incompleteCount} tone="amber" />
+                <StatRow label="Completed" value={c.finalizedCount} tone="emerald" />
                 {c.missingInfoCount > 0 && (
-                  <span className="text-rose-700">
-                    <strong className="text-slate-900">{c.missingInfoCount}</strong> missing info
-                  </span>
+                  <StatRow label="Missing info" value={c.missingInfoCount} tone="rose" />
                 )}
                 {c.readyForEngagementCount > 0 && (
-                  <span className="text-sky-700">
-                    <strong className="text-slate-900">{c.readyForEngagementCount}</strong> ready for engagement
-                  </span>
+                  <StatRow
+                    label="Ready for Engagement"
+                    value={c.readyForEngagementCount}
+                    tone="sky"
+                  />
+                )}
+                {c.sentToEngagementCount > 0 && (
+                  <StatRow
+                    label="Sent to Engagement"
+                    value={c.sentToEngagementCount}
+                    tone="slate"
+                  />
                 )}
                 {c.errorCount > 0 && (
-                  <span className="text-rose-700">
-                    <strong className="text-slate-900">{c.errorCount}</strong> error
-                  </span>
+                  <StatRow label="Errors" value={c.errorCount} tone="rose" />
                 )}
-                <span className="text-slate-500">· {c.totalCount} total</span>
+              </div>
+
+              {/* Footer: total patients. */}
+              <div className="border-t border-slate-100 px-4 py-2 flex items-center justify-between text-[11px] text-slate-500">
+                <span>Total patients</span>
+                <span className="font-semibold text-slate-900">{c.totalCount}</span>
               </div>
             </button>
           ))}
@@ -1352,6 +1365,35 @@ function ClinicDetailPackets({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Per-status row inside a premium clinic tile. Keeps the visual
+// hierarchy calm: large number, small label, single-color accent dot.
+function StatRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "amber" | "emerald" | "rose" | "sky" | "slate";
+}) {
+  const dotClass: Record<typeof tone, string> = {
+    amber: "bg-amber-500",
+    emerald: "bg-emerald-500",
+    rose: "bg-rose-500",
+    sky: "bg-sky-500",
+    slate: "bg-slate-400",
+  };
+  return (
+    <div className="flex items-center justify-between gap-2 text-[12px]">
+      <span className="inline-flex items-center gap-1.5 text-slate-700">
+        <span className={`h-1.5 w-1.5 rounded-full ${dotClass[tone]}`} aria-hidden />
+        {label}
+      </span>
+      <span className="text-base font-semibold text-slate-900 tabular-nums">{value}</span>
     </div>
   );
 }

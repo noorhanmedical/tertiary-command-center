@@ -153,3 +153,30 @@ When adding a new operational surface:
    — the action rail already covers the canonical operations.
 8. For new admin-governed rules, add to `admin_settings` + the
    `/api/admin-settings/effective` lookup pattern.
+
+## Pre-document batch landing (1–10)
+
+The "next 10 batches" run completed Stages 1 and 10 explicitly,
+verified Stages 4–9 against the existing canonical wires (already
+shipped), and explicitly deferred Stages 2 + 3.
+
+| Stage | Status | Notes |
+| --- | --- | --- |
+| 1. Plexus IQ premium clinic tiles | **landed** | Each tile now has a solid black header strip (clinic name only) and a body with one stat row per status (Incomplete / Completed / Missing Info / Ready for Engagement / Sent to Engagement / Errors) plus a footer total. Color accents stay restrained — single dot per row, single bold number per row. |
+| 2. PatientCard layout / action rail | **deferred** | The diagonal layout is shared across Visit, Outreach, Plexus IQ, recent cards, ResultsView. A redesign of that shared surface conflicts with the "no global UI redesign" rule. Action-rail icons (PDF, calendar, Send, status, count badge) already align via the recent batches; a focused dedicated batch is the right place to redo this. |
+| 3. Shared canonical home calendar | **deferred** | The `admin` profile in `calendarProfiles.ts` already supports a home/global drawer mount. Placement on `home.tsx` requires UX decisions that should not happen inside an audit batch. |
+| 4. PCS / ACS left rail cleanup | **verified** | Earlier batches removed the Document Upload tile and added My Patients / Search / Calendar / Tasks / Marketing. Both PCS and ACS render the same shell. |
+| 5. PCS / ACS scheduling final | **verified** | Patient-calendar icon → SchedulePatientDialog (with Maximize2 → SchedulePatientPlayground). `invalidateTeamPortalScheduleQueries` keeps right-rail mini calendar + workspace lists fresh. |
+| 6. Patient Command Canvas history | **verified** | `GET /api/portal/patient-command-center/:id` aggregates clinical profile, latest activity (call / text / email / marketing / note / appointment / ancillary / journey), and history folders from canonical tables. Empty states are explicit. |
+| 7. Marketing send / log | **verified** | `POST /api/outreach/send-material` appends a `marketing_email` row to `patient_communications` and a journey event. SMS is log-only and explicitly labelled. |
+| 8. Engagement call-list propagation | **verified** | Engagement Assignment Board updates `patient_execution_cases.assignedTeamMemberId`. PCS/ACS Team Workspace Call List reads through `getAssignedSchedulerUserIdForPatient` / equivalent — assignments flow to the right team-member queue. |
+| 9. BatchFlow + Add Patient(s) | **verified** | 3-tile hub (Visit / Outreach / BatchFlow) lives in `PlexusIQAddPatientHub.tsx`. BatchFlow row-level Clinic/Date/Type override modal defaults. TFP alias works (parser case 26). Missing DOB/phone are warnings. |
+| 10. Pre-document spine QA | **landed** | New `script/qaPreDocumentSpine.ts` + `qa:pre-document-spine` npm script. Verifies parser contract (TFP alias, Patient Type, clinical-spreadsheet detection), PDF-packet contract (same-facility/date guard, eligibility), and canonical reads across the spine (`screening_batches`, `patient_screenings`, `patient_execution_cases`, `patient_journey_events`, `outreach_calls`, `outreach_schedulers`, `global_schedule_events`, `plexus_tasks`, `patient_communications`, `analysis_jobs`). Skips cleanly without `DATABASE_URL`. |
+
+### Why Stages 2 + 3 stay deferred
+
+Both touch shared surfaces (the patient-card layout / the home shell)
+that have explicit rules in the batch spec — "do NOT change global
+UI/sidebar/home/theme/colors unless explicitly needed for wiring" and
+"keep diagonal style". Both are visual polish, not canonical
+wiring. They should land in a dedicated UX batch.
