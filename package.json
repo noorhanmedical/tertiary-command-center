@@ -38,7 +38,8 @@
     "test:plexus-iq-clinical-import-api": "tsx script/testPlexusIqClinicalImportApi.ts",
     "qa:team-portal-command-center": "tsx script/qaTeamPortalCommandCenter.ts",
     "qa:plexus-final-wiring": "tsx script/qaPlexusFinalWiring.ts",
-    "qa:engagement-assignment-board": "tsx script/qaEngagementAssignmentBoard.ts"
+    "qa:engagement-assignment-board": "tsx script/qaEngagementAssignmentBoard.ts",
+    "qa:full-canonical-spine": "tsx script/qaFullCanonicalSpine.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
