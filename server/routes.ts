@@ -28,6 +28,7 @@ import { registerDocumentLibraryRoutes } from "./routes/documentLibrary";
 import { registerPortalRoutes } from "./routes/portal";
 import { registerPortalCommandCenterRoutes } from "./routes/portalCommandCenter";
 import { registerEngagementAssignmentRoutes } from "./routes/engagementAssignment";
+import { registerEngagementAssignmentBoardRoutes } from "./routes/engagementAssignmentBoard";
 import { registerExecutionCaseRoutes } from "./routes/executionCases";
 import { registerGlobalScheduleRoutes } from "./routes/globalSchedule";
 import { registerSchedulingTriageRoutes } from "./routes/schedulingTriage";
@@ -237,6 +238,7 @@ export async function registerRoutes(
   registerPortalRoutes(app);
   registerPortalCommandCenterRoutes(app);
   registerEngagementAssignmentRoutes(app);
+  registerEngagementAssignmentBoardRoutes(app);
   registerExecutionCaseRoutes(app);
   registerGlobalScheduleRoutes(app);
   registerSchedulingTriageRoutes(app);

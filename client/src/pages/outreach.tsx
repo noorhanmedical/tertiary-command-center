@@ -15,6 +15,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/PageHeader";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { EngagementAssignmentBoard } from "@/components/engagement/EngagementAssignmentBoard";
 
 type OutreachSchedulerCard = {
   id: string;
@@ -146,6 +148,19 @@ export default function OutreachPage() {
           </div>
         )}
 
+        <Tabs defaultValue="dashboard" className="w-full">
+          <TabsList className="bg-slate-100" data-testid="engagement-center-tabs">
+            <TabsTrigger value="dashboard" data-testid="tab-engagement-center-dashboard">
+              Dashboard
+            </TabsTrigger>
+            <TabsTrigger value="assignments" data-testid="tab-engagement-center-assignments">
+              Assignments
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="assignments" className="mt-4">
+            <EngagementAssignmentBoard />
+          </TabsContent>
+          <TabsContent value="dashboard" className="mt-4">
         <div className="grid gap-5 xl:grid-cols-[1.35fr_1fr]">
           <Card className={`${shellClass()} p-5`} data-testid="outreach-center-manager-inbox">
             <div className="flex items-center justify-between gap-3">
@@ -243,6 +258,8 @@ export default function OutreachPage() {
             ))}
           </div>
         )}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

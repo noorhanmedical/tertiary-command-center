@@ -575,3 +575,25 @@ Buttons disable themselves with a clear tooltip when
 Combined packet generation (multi-patient PDF) is guarded by
 `validateSameFacilityDatePacket` so the operator can never produce a
 PDF that mixes clinics or schedule dates.
+
+## Engagement Center assignment surface
+
+The Engagement Center now has an **Assignments** tab
+(`/engagement-center` → "Assignments"). It reads
+`patient_execution_cases` joined to `outreach_schedulers`,
+`patient_screenings`, and `screening_batches`, and writes through
+`POST /api/engagement/assignment-board/assign` (bulk or single).
+
+Every assignment change appends a canonical
+`patient_journey_events` row tagged
+`eventType = "engagement_assignment_changed"`, so the team-portal
+patient command canvas and the assignment board show the same
+history.
+
+The team-portal **Call List** mode already filters
+`patient_execution_cases.assignedTeamMemberId`, so assignments made
+in the Engagement Center surface immediately in the right person's
+queue once their portal refetches.
+
+See `docs/engagement-center-architecture.md` for the full
+contract (routes, statuses, audit shape, QA).
