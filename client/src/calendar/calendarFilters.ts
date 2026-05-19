@@ -110,9 +110,9 @@ export const CALENDAR_FILTERS: Record<CalendarFilterId, CalendarFilterDefinition
   },
   procedureCompleted: {
     id: "procedureCompleted",
-    label: "Procedure Completed",
+    label: "Procedure Performed",
     description:
-      "Procedures recorded as completed on a date.",
+      "Procedures recorded as performed on a date. Report upload, document completion and billing readiness are separate stages.",
     eventKinds: ["procedure_completed"],
     requiresDateBoundData: true,
   },

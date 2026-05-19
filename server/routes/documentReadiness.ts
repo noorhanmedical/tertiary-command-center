@@ -17,6 +17,11 @@ import {
   getExecutionCaseById,
   getExecutionCaseByScreeningId,
 } from "../repositories/executionCase.repo";
+import { getProcedureEventById } from "../repositories/procedureEvents.repo";
+import {
+  resolveMissingDocumentTask,
+  type MissingDocType,
+} from "../repositories/missingDocumentTasks.repo";
 
 const COMPLETION_DOCUMENT_TYPES = [
   "informed_consent",
@@ -287,6 +292,202 @@ export function registerDocumentReadinessRoutes(app: Express) {
       } catch (err: any) {
         console.error("[case-document-readiness/complete] billing readiness re-evaluation failed:", err.message);
       }
+
+      // Close the matching missing-document task if one was open. The
+      // documentType enum on this route includes only the five
+      // procedure-side docs; billing_document is closed by the
+      // dedicated billing route.
+      void resolveMissingDocumentTask({
+        documentType: data.documentType as MissingDocType,
+        patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+      }).catch((err) => {
+        console.error("[case-document-readiness/complete] resolveMissingDocumentTask failed:", err);
+      });
+
+      return res.json({
+        ok: true,
+        caseDocumentReadiness: row,
+        journeyEvent,
+        billingReadinessCheck,
+      });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/case-document-readiness/report-uploaded
+  // Body: { patientScreeningId?, executionCaseId?, procedureEventId?,
+  //         documentId?, serviceType?, facility? }
+  //
+  // Thin wrapper around the report path of POST /complete. Resolves
+  // executionCase + serviceType from procedureEventId/executionCaseId/
+  // patientScreeningId, upserts the case_document_readiness row for
+  // documentType=report with status `uploaded`, and emits an explicit
+  // `report_uploaded` patient journey event so the workflow stage is
+  // distinct from `procedure_performed`. Re-evaluates billing readiness
+  // afterward (same helper as POST /complete).
+  const reportUploadedSchema = z.object({
+    patientScreeningId: z.number().int().optional().nullable(),
+    executionCaseId: z.number().int().optional().nullable(),
+    procedureEventId: z.number().int().optional().nullable(),
+    documentId: z.number().int().optional().nullable(),
+    serviceType: z.string().min(1).optional().nullable(),
+    facility: z.string().optional().nullable(),
+    storageKey: z.string().optional().nullable(),
+    uploadedByUserId: z.string().optional().nullable(),
+    note: z.string().optional().nullable(),
+    metadata: z.record(z.unknown()).optional(),
+  });
+
+  app.post("/api/case-document-readiness/report-uploaded", async (req, res) => {
+    try {
+      const parsed = reportUploadedSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      const data = parsed.data;
+      const actorUserId = sessionUserIdFromDocs(req);
+
+      // Resolve execution case + serviceType. Priority:
+      //   1. procedureEventId — the canonical anchor when present.
+      //   2. executionCaseId / patientScreeningId.
+      let executionCaseId: number | null = data.executionCaseId ?? null;
+      let patientScreeningId: number | null = data.patientScreeningId ?? null;
+      let serviceType: string | null = data.serviceType ?? null;
+      let executionCase: Awaited<ReturnType<typeof getExecutionCaseById>> | null = null;
+      let procedureEventResolved: Awaited<ReturnType<typeof getProcedureEventById>> | null = null;
+
+      if (data.procedureEventId != null) {
+        procedureEventResolved = await getProcedureEventById(data.procedureEventId);
+        if (procedureEventResolved) {
+          if (executionCaseId === null) executionCaseId = procedureEventResolved.executionCaseId ?? null;
+          if (patientScreeningId === null) patientScreeningId = procedureEventResolved.patientScreeningId ?? null;
+          if (!serviceType) serviceType = procedureEventResolved.serviceType ?? null;
+        }
+      }
+      if (executionCaseId !== null) {
+        const ec = await getExecutionCaseById(executionCaseId);
+        if (ec) {
+          executionCase = ec;
+          if (patientScreeningId === null) patientScreeningId = ec.patientScreeningId ?? null;
+        }
+      }
+      if (executionCase === null && patientScreeningId !== null) {
+        const ec = await getExecutionCaseByScreeningId(patientScreeningId);
+        if (ec) {
+          executionCase = ec;
+          executionCaseId = ec.id;
+        }
+      }
+      if (!executionCase) {
+        return res.status(404).json({
+          error: "Could not resolve an execution case from procedureEventId, executionCaseId, or patientScreeningId",
+        });
+      }
+      if (!serviceType) {
+        return res.status(400).json({
+          error: "serviceType is required when no procedureEventId is provided",
+        });
+      }
+
+      const dedupConditions = [
+        eq(caseDocumentReadiness.serviceType, serviceType),
+        eq(caseDocumentReadiness.documentType, "report"),
+      ];
+      if (patientScreeningId !== null) {
+        dedupConditions.push(eq(caseDocumentReadiness.patientScreeningId, patientScreeningId));
+      } else {
+        dedupConditions.push(eq(caseDocumentReadiness.executionCaseId, executionCase.id));
+      }
+      const [existing] = await db
+        .select()
+        .from(caseDocumentReadiness)
+        .where(and(...dedupConditions))
+        .limit(1);
+
+      const completedAt = new Date();
+      const mergedMetadata = {
+        ...((existing?.metadata as Record<string, unknown> | null) ?? {}),
+        ...(data.metadata ?? {}),
+        note: data.note ?? null,
+        completionSource: "report_uploaded_action",
+        procedureEventId: data.procedureEventId ?? procedureEventResolved?.id ?? null,
+        facility: data.facility ?? executionCase.facilityId ?? null,
+      };
+
+      let row: Awaited<ReturnType<typeof updateCaseDocumentReadiness>> | undefined;
+      if (existing) {
+        row = await updateCaseDocumentReadiness(existing.id, {
+          documentStatus: "uploaded",
+          documentId: data.documentId ?? existing.documentId ?? undefined,
+          storageKey: data.storageKey ?? existing.storageKey ?? undefined,
+          uploadedByUserId: data.uploadedByUserId ?? existing.uploadedByUserId ?? undefined,
+          completedAt,
+          metadata: mergedMetadata,
+        });
+      } else {
+        row = await createCaseDocumentReadiness({
+          executionCaseId: executionCase.id,
+          patientScreeningId: patientScreeningId ?? undefined,
+          patientName: executionCase.patientName,
+          patientDob: executionCase.patientDob ?? undefined,
+          facilityId: executionCase.facilityId ?? undefined,
+          serviceType,
+          documentType: "report",
+          documentStatus: "uploaded",
+          documentId: data.documentId ?? undefined,
+          storageKey: data.storageKey ?? undefined,
+          uploadedByUserId: data.uploadedByUserId ?? undefined,
+          completedAt,
+          metadata: mergedMetadata,
+        });
+      }
+
+      let journeyEvent: Awaited<ReturnType<typeof appendPatientJourneyEvent>> | null = null;
+      try {
+        journeyEvent = await appendPatientJourneyEvent({
+          patientName: executionCase.patientName,
+          patientDob: executionCase.patientDob ?? undefined,
+          patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? undefined,
+          executionCaseId: executionCase.id,
+          eventType: "report_uploaded",
+          eventSource: "document_readiness",
+          actorUserId,
+          summary: `Report uploaded for ${serviceType}`,
+          metadata: {
+            serviceType,
+            caseDocumentReadinessId: row?.id ?? null,
+            documentId: data.documentId ?? null,
+            procedureEventId: data.procedureEventId ?? procedureEventResolved?.id ?? null,
+            storageKey: data.storageKey ?? null,
+            note: data.note ?? null,
+            ...(data.metadata ?? {}),
+          },
+        });
+      } catch (err: any) {
+        console.error("[case-document-readiness/report-uploaded] journey event append failed:", err.message);
+      }
+
+      let billingReadinessCheck: Awaited<ReturnType<typeof evaluateBillingReadinessForProcedure>> | null = null;
+      try {
+        billingReadinessCheck = await evaluateBillingReadinessForProcedure({
+          executionCaseId: executionCase.id,
+          patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+          patientName: executionCase.patientName,
+          patientDob: executionCase.patientDob ?? null,
+          facilityId: executionCase.facilityId ?? null,
+          serviceType,
+        });
+      } catch (err: any) {
+        console.error("[case-document-readiness/report-uploaded] billing readiness re-evaluation failed:", err.message);
+      }
+
+      void resolveMissingDocumentTask({
+        documentType: "report",
+        patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? null,
+      }).catch((err) => {
+        console.error("[case-document-readiness/report-uploaded] resolveMissingDocumentTask failed:", err);
+      });
 
       return res.json({
         ok: true,

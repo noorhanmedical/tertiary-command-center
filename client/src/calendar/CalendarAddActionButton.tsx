@@ -40,7 +40,7 @@ const ADD_ACTION_LABELS: Record<CalendarAddActionId, string> = {
   addCallback: "Add Callback",
   addAncillaryAppointment: "Add Ancillary Appointment",
   addSameDayAncillary: "Add Same-Day Ancillary",
-  markProcedureCompleted: "Mark Procedure Completed",
+  markProcedureCompleted: "Mark Procedure Performed",
   addTeamAvailabilityBlock: "Add Team Availability Block",
 };
 

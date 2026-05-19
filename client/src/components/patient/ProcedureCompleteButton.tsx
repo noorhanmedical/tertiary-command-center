@@ -36,8 +36,8 @@ export function ProcedureCompleteButton({
     mutationFn: (input) => markProcedureCompleteApi(input),
     onSuccess: (data) => {
       toast({
-        title: "Procedure complete",
-        description: `${serviceType} marked complete · ${data.documentReadinessRows.length} readiness rows updated`,
+        title: "Procedure performed",
+        description: `${serviceType} marked performed · ${data.documentReadinessRows.length} readiness rows updated. Report upload and document completion are separate steps.`,
       });
       // Invalidate any canonical-spine query. The query cache keys all start
       // with `/api/...`, so a partial-match invalidation is the cheapest way
@@ -52,7 +52,7 @@ export function ProcedureCompleteButton({
     },
     onError: (err) => {
       toast({
-        title: "Failed to mark procedure complete",
+        title: "Failed to mark procedure performed",
         description: err.message,
         variant: "destructive",
       });
@@ -77,6 +77,7 @@ export function ProcedureCompleteButton({
           facilityId: facilityId ?? null,
         })
       }
+      title="Procedure Performed — marks the procedure as performed. Report upload, document completion and billing readiness are separate stages."
       data-testid={`button-procedure-complete-${serviceType}`}
     >
       {mutation.isPending ? (
@@ -84,7 +85,7 @@ export function ProcedureCompleteButton({
       ) : (
         <CheckCircle2 className="h-3.5 w-3.5" />
       )}
-      <span className="ml-1.5">Procedure Complete</span>
+      <span className="ml-1.5">Procedure Performed</span>
     </Button>
   );
 }

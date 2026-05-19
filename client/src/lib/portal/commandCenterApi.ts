@@ -108,6 +108,39 @@ export type CommandCenterResponse = {
   };
   tasks: any[];
   documents: any[];
+  documentReadiness?: CommandCenterDocumentReadinessRow[];
+  billingReadinessChecks?: CommandCenterBillingReadinessCheck[];
+};
+
+export type CommandCenterDocumentReadinessRow = {
+  id: number;
+  executionCaseId: number | null;
+  patientScreeningId: number | null;
+  serviceType: string;
+  documentType: string;
+  documentStatus: string | null;
+  documentId: number | null;
+  storageKey: string | null;
+  generatedByAi: boolean | null;
+  uploadedByUserId: string | null;
+  completedAt: string | null;
+  blocksBilling?: boolean | null;
+  patientName?: string | null;
+  patientDob?: string | null;
+  facilityId?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+export type CommandCenterBillingReadinessCheck = {
+  id: number;
+  executionCaseId: number | null;
+  patientScreeningId: number | null;
+  procedureEventId: number | null;
+  serviceType: string | null;
+  readinessStatus: string;
+  missingDocuments?: unknown;
+  metadata?: Record<string, unknown> | null;
+  evaluatedAt: string | null;
 };
 
 export type LogCommunicationInput = {

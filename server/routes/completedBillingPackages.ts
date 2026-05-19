@@ -2,7 +2,11 @@ import type { Express, Request } from "express";
 import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
-import { completedBillingPackages } from "@shared/schema/completedBillingPackages";
+import {
+  completedBillingPackages,
+  PACKAGE_STATUSES,
+  type PackageStatus,
+} from "@shared/schema/completedBillingPackages";
 import { invoiceLineItems, invoices } from "@shared/schema/invoices";
 import {
   listCompletedBillingPackages,
@@ -399,6 +403,143 @@ export function registerCompletedBillingPackageRoutes(app: Express) {
       });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/completed-billing-packages/:id/transition
+  // Body: { packageStatus: PackageStatus, reason?, adminOverride? }
+  //
+  // Explicit package-status transition. Status values come from the
+  // existing PACKAGE_STATUSES enum
+  // (pending_payment | payment_updated | completed_package |
+  //  added_to_invoice | invoiced | closed). The shorthand `draft` /
+  // `ready` / `completed` is accepted and mapped to the canonical
+  // value for callers using the simpler vocabulary.
+  //
+  // Guard: moving to `completed_package` (or higher) requires
+  // billing readiness `ready_to_generate`, unless `adminOverride=true`.
+  // Payment recording stays on the existing /payment route; this route
+  // does NOT touch fullAmountPaid / paymentDate / paymentStatus.
+  const STATUS_ALIAS: Record<string, PackageStatus> = {
+    draft: "pending_payment",
+    ready: "payment_updated",
+    completed: "completed_package",
+  };
+  const TERMINAL_STATUSES: ReadonlyArray<PackageStatus> = [
+    "completed_package",
+    "added_to_invoice",
+    "invoiced",
+    "closed",
+  ];
+
+  const transitionSchema = z.object({
+    packageStatus: z.string().min(1),
+    reason: z.string().optional().nullable(),
+    adminOverride: z.boolean().optional(),
+  });
+
+  app.post("/api/completed-billing-packages/:id/transition", async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id), 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+
+      const parsed = transitionSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+
+      const raw = parsed.data.packageStatus.trim();
+      const targetStatus: PackageStatus | null =
+        (PACKAGE_STATUSES as readonly string[]).includes(raw)
+          ? (raw as PackageStatus)
+          : (STATUS_ALIAS[raw] ?? null);
+      if (!targetStatus) {
+        return res.status(400).json({
+          error: `Invalid packageStatus. Expected one of: ${PACKAGE_STATUSES.join(", ")} (or alias draft|ready|completed).`,
+        });
+      }
+
+      const pkg = await getCompletedBillingPackageById(id);
+      if (!pkg) return res.status(404).json({ error: "Completed billing package not found" });
+
+      const adminOverride = parsed.data.adminOverride === true;
+
+      // Block move-to-terminal-status when readiness isn't satisfied
+      if (TERMINAL_STATUSES.includes(targetStatus) && !adminOverride) {
+        const readinessRows = pkg.patientScreeningId != null
+          ? await listBillingReadinessChecks(
+              { patientScreeningId: pkg.patientScreeningId, serviceType: pkg.serviceType },
+              1,
+            )
+          : pkg.executionCaseId != null
+            ? await listBillingReadinessChecks(
+                { executionCaseId: pkg.executionCaseId, serviceType: pkg.serviceType },
+                1,
+              )
+            : [];
+        const readiness = readinessRows[0] ?? null;
+        if (!readiness) {
+          return res.status(409).json({
+            error: "Cannot transition to a completed status without a billing_readiness_check. Pass adminOverride=true to bypass.",
+          });
+        }
+        if (
+          readiness.readinessStatus !== "ready_to_generate" &&
+          readiness.readinessStatus !== "billing_document_generated" &&
+          readiness.readinessStatus !== "sent_to_billing"
+        ) {
+          return res.status(409).json({
+            error: `Cannot transition to ${targetStatus} while readiness is "${readiness.readinessStatus}". Pass adminOverride=true to bypass.`,
+            readiness,
+          });
+        }
+      }
+
+      const previousStatus = pkg.packageStatus;
+      const updated = await updateCompletedBillingPackage(id, {
+        packageStatus: targetStatus,
+        metadata: {
+          ...(typeof pkg.metadata === "object" && pkg.metadata !== null
+            ? (pkg.metadata as Record<string, unknown>)
+            : {}),
+          lastTransitionAt: new Date().toISOString(),
+          lastTransitionReason: parsed.data.reason ?? null,
+          lastTransitionFrom: previousStatus,
+          lastTransitionAdminOverride: adminOverride ? true : undefined,
+        },
+      });
+      const finalPkg = updated ?? pkg;
+
+      // Best-effort journey event
+      if (finalPkg.patientScreeningId != null || finalPkg.executionCaseId != null) {
+        try {
+          await appendPatientJourneyEvent({
+            patientScreeningId: finalPkg.patientScreeningId ?? undefined,
+            executionCaseId: finalPkg.executionCaseId ?? undefined,
+            patientName: finalPkg.patientName ?? "Unknown patient",
+            patientDob: finalPkg.patientDob ?? undefined,
+            eventType: "billing_package_transitioned",
+            eventSource: "completed_billing_package_transition",
+            actorUserId: sessionUserIdFromBilling(req),
+            summary: `Package #${finalPkg.id} ${previousStatus} → ${targetStatus}`,
+            metadata: {
+              packageId: finalPkg.id,
+              serviceType: finalPkg.serviceType,
+              from: previousStatus,
+              to: targetStatus,
+              reason: parsed.data.reason ?? null,
+              adminOverride,
+            },
+          });
+        } catch (err: any) {
+          console.error("[completed-billing-package/transition] journey event failed:", err.message);
+        }
+      }
+
+      return res.json({ ok: true, package: finalPkg });
+    } catch (error: any) {
+      console.error("[completed-billing-package/transition] failed:", error);
+      return res.status(500).json({ error: error.message ?? "Failed to transition" });
     }
   });
 }

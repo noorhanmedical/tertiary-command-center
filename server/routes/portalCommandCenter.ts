@@ -21,6 +21,8 @@ import {
   PATIENT_COMMUNICATION_STATUSES,
   type PatientCommunicationType,
 } from "@shared/schema";
+import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
+import { billingReadinessChecks } from "@shared/schema/billingReadiness";
 import {
   createPatientCommunication,
   appendCommunicationJourneyEvent,
@@ -219,6 +221,48 @@ export function registerPortalCommandCenterRoutes(app: Express) {
           .orderBy(desc(documents.id))
           .limit(50);
 
+        // Document readiness (one row per required documentType per
+        // serviceType). Shown as a checklist on the canvas.
+        const readinessRows = execCase
+          ? await db
+              .select()
+              .from(caseDocumentReadiness)
+              .where(
+                or(
+                  eq(caseDocumentReadiness.patientScreeningId, pid),
+                  eq(caseDocumentReadiness.executionCaseId, execCase.id),
+                ),
+              )
+              .orderBy(desc(caseDocumentReadiness.id))
+              .limit(50)
+          : await db
+              .select()
+              .from(caseDocumentReadiness)
+              .where(eq(caseDocumentReadiness.patientScreeningId, pid))
+              .orderBy(desc(caseDocumentReadiness.id))
+              .limit(50);
+
+        // Most-recent billing readiness check — drives the
+        // "Blocks Billing" indicator on the readiness panel.
+        const billingChecks = execCase
+          ? await db
+              .select()
+              .from(billingReadinessChecks)
+              .where(
+                or(
+                  eq(billingReadinessChecks.patientScreeningId, pid),
+                  eq(billingReadinessChecks.executionCaseId, execCase.id),
+                ),
+              )
+              .orderBy(desc(billingReadinessChecks.id))
+              .limit(10)
+          : await db
+              .select()
+              .from(billingReadinessChecks)
+              .where(eq(billingReadinessChecks.patientScreeningId, pid))
+              .orderBy(desc(billingReadinessChecks.id))
+              .limit(10);
+
         // Unified communications (calls / sms / emails / marketing /
         // notes). Backed by the canonical patient_communications
         // table. The outreach_calls/email send wirings also append
@@ -327,6 +371,8 @@ export function registerPortalCommandCenterRoutes(app: Express) {
           },
           tasks,
           documents: docs,
+          documentReadiness: readinessRows,
+          billingReadinessChecks: billingChecks,
         });
       } catch (error: unknown) {
         console.error(

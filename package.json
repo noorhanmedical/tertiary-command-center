@@ -42,7 +42,8 @@
     "qa:full-canonical-spine": "tsx script/qaFullCanonicalSpine.ts",
     "qa:pre-document-spine": "tsx script/qaPreDocumentSpine.ts",
     "qa:document-billing-invoice-spine": "tsx script/qaDocumentBillingInvoiceSpine.ts",
-    "qa:admin-approval-engagement-gate": "tsx script/qaAdminApprovalEngagementGate.ts"
+    "qa:admin-approval-engagement-gate": "tsx script/qaAdminApprovalEngagementGate.ts",
+    "qa:procedure-readiness-spine": "tsx script/qaProcedureReadinessSpine.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",

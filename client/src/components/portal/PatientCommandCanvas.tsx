@@ -19,9 +19,131 @@ import {
 import {
   fetchPatientCommandCenter,
   type CommandCenterResponse,
+  type CommandCenterDocumentReadinessRow,
+  type CommandCenterBillingReadinessCheck,
   type PatientCommunicationType,
 } from "@/lib/portal/commandCenterApi";
 import { LogCommunicationDialog } from "@/components/portal/LogCommunicationDialog";
+
+// Canonical document checklist for the readiness panel. Keys must
+// match `documentType` values written by the document-readiness
+// routes — keep this list in sync with REQUIRED_DOC_RULES on the
+// billingReadiness repo.
+const DOCUMENT_CHECKLIST = [
+  { key: "informed_consent", label: "Consent" },
+  { key: "screening_form", label: "Screening Form" },
+  { key: "report", label: "Report" },
+  { key: "order_note", label: "Order Note" },
+  { key: "post_procedure_note", label: "Procedure Note" },
+  { key: "billing_document", label: "Billing Document" },
+] as const;
+
+// Document statuses we consider "present" — readers should look at
+// the canonical default-status-by-type map on the readiness route for
+// the matching write side.
+const PRESENT_STATUSES = new Set([
+  "completed",
+  "complete",
+  "uploaded",
+  "generated",
+  "ready",
+  "ready_to_generate",
+]);
+
+function readinessRowFor(
+  rows: CommandCenterDocumentReadinessRow[] | undefined,
+  key: (typeof DOCUMENT_CHECKLIST)[number]["key"],
+): CommandCenterDocumentReadinessRow | null {
+  if (!rows) return null;
+  for (const row of rows) {
+    if (row.documentType === key) return row;
+  }
+  return null;
+}
+
+function DocumentReadinessPanel({
+  readiness,
+  billingChecks,
+  tasks,
+}: {
+  readiness: CommandCenterDocumentReadinessRow[] | undefined;
+  billingChecks: CommandCenterBillingReadinessCheck[] | undefined;
+  tasks: any[] | undefined;
+}) {
+  const latestCheck = billingChecks?.[0] ?? null;
+  const checkStatus = latestCheck?.readinessStatus ?? null;
+  // We render the panel even when there's no readiness row yet so the
+  // checklist is discoverable for any patient post-procedure.
+  return (
+    <Card className="p-4 bg-white" data-testid="patient-command-canvas-readiness">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold text-slate-900">Document readiness</div>
+          <div className="text-[11px] text-slate-500">
+            Canonical readiness from case_document_readiness · re-evaluates billing on each write.
+          </div>
+        </div>
+        {checkStatus && (
+          <StatusPill
+            label={`Billing: ${checkStatus.replace(/_/g, " ")}`}
+            tone={
+              checkStatus === "ready_for_billing"
+                ? "emerald"
+                : checkStatus === "missing_documents"
+                  ? "amber"
+                  : "sky"
+            }
+          />
+        )}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {DOCUMENT_CHECKLIST.map((item) => {
+          const row = readinessRowFor(readiness, item.key);
+          const present = row && row.documentStatus
+            ? PRESENT_STATUSES.has(row.documentStatus)
+            : false;
+          const blocks = row?.blocksBilling ?? !present;
+          const taskMatch = tasks?.find((t) =>
+            typeof t?.title === "string" &&
+            t.title.toLowerCase().startsWith(`missing ${item.label.toLowerCase()}`) &&
+            t.status !== "closed" && t.status !== "done",
+          );
+          return (
+            <div
+              key={item.key}
+              className={`flex items-center justify-between rounded-md border px-3 py-2 text-[11px] ${
+                present
+                  ? "border-emerald-200 bg-emerald-50/60"
+                  : "border-amber-200 bg-amber-50/60"
+              }`}
+              data-testid={`readiness-row-${item.key}`}
+            >
+              <div className="flex flex-col">
+                <span className="font-semibold text-slate-900">{item.label}</span>
+                <span className="text-[10px] text-slate-600">
+                  {present
+                    ? `Present · ${row?.documentStatus ?? ""}`
+                    : "Missing"}
+                  {blocks ? " · Blocks billing" : ""}
+                </span>
+              </div>
+              <div className="flex flex-col items-end gap-0.5">
+                {row?.documentId ? (
+                  <span className="text-[10px] text-slate-600">Doc #{row.documentId}</span>
+                ) : null}
+                {taskMatch ? (
+                  <span className="text-[10px] text-amber-800">
+                    Task #{taskMatch.id} open
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
 
 // Patient Command Canvas — the centerpiece of the Team Portal patient
 // view. ACS and PCS share this component verbatim.
@@ -177,7 +299,15 @@ export function PatientCommandCanvas({
     );
   }
 
-  const { patient, clinicalProfile, latestActivity, histories, tasks } = data;
+  const {
+    patient,
+    clinicalProfile,
+    latestActivity,
+    histories,
+    tasks,
+    documentReadiness,
+    billingReadinessChecks,
+  } = data;
   const isAcs = workspaceRole === "ancillaryCareSpecialist" || workspaceRole === "technician";
 
   return (
@@ -324,6 +454,13 @@ export function PatientCommandCanvas({
           />
         </div>
       </Card>
+
+      {/* ─── Document readiness checklist ──────────────────────────── */}
+      <DocumentReadinessPanel
+        readiness={documentReadiness}
+        billingChecks={billingReadinessChecks}
+        tasks={tasks}
+      />
 
       {/* ─── Full history folders ──────────────────────────────────── */}
       <Card className="p-4 bg-white" data-testid="patient-command-canvas-history">
@@ -506,9 +643,9 @@ export function PatientCommandCanvas({
             Consent / Screening
           </Button>
           {isAcs && (
-            <Button size="sm" variant="outline" disabled className="gap-1.5" title="Procedure Complete is wired from the right-panel ancillary row">
+            <Button size="sm" variant="outline" disabled className="gap-1.5" title="Procedure Performed is wired from the right-panel ancillary row. Report upload, document completion and billing readiness are separate stages.">
               <ClipboardList className="h-3.5 w-3.5" />
-              Procedure Complete
+              Procedure Performed
             </Button>
           )}
         </div>

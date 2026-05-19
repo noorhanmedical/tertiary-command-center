@@ -315,6 +315,47 @@ function JourneyBody({ packet }: { packet: PatientPacket }) {
             value={`${readField(latestPackage, "packageStatus") ?? "—"} · ${readField(latestPackage, "paymentStatus") ?? "—"}`}
           />
         )}
+        {projected.length > 0 && (
+          <ul className="mt-1.5 flex flex-col gap-1 text-[11px]">
+            {projected.slice(0, 5).map((row, i) => {
+              const realId = readField(row, "realInvoiceLineItemId");
+              const variance = readField(row, "varianceAmount");
+              const projectedAmt = readField(row, "projectedOurPortionAmount") ?? readField(row, "projectedFullAmount");
+              const status = readField(row, "projectedStatus");
+              return (
+                <li
+                  key={i}
+                  className="flex items-center justify-between gap-2 rounded border border-slate-200 bg-slate-50 px-2 py-1"
+                  data-testid={`projected-row-${i}`}
+                >
+                  <div className="flex flex-col">
+                    <span className="truncate font-medium text-slate-700">
+                      {readField(row, "serviceType") ?? "—"}
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      {status ?? "—"}
+                      {realId ? ` · → invoice line #${realId}` : " · not yet linked"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="font-semibold text-slate-700">${projectedAmt ?? "—"}</span>
+                    {variance != null && variance !== "" && (
+                      <span
+                        className={`text-[10px] font-medium ${
+                          String(variance).startsWith("-")
+                            ? "text-rose-600"
+                            : "text-emerald-600"
+                        }`}
+                      >
+                        Variance: {String(variance)}
+                      </span>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </Section>
 
       <Section title="Recent Journey Events" count={recentJourney.length}>

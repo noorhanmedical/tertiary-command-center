@@ -3,12 +3,19 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
-import { Loader2, Sparkles, Trash2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Loader2, Sparkles, MoreHorizontal, Trash2 } from "lucide-react";
 import { PatientSilhouette } from "@/components/PatientSilhouette";
 import type { AncillaryAppointment, PatientScreening, ScreeningBatch } from "@shared/schema";
 import {
   categoryIcons,
   categoryLabels,
+  categoryStyles,
   getAncillaryCategory,
   type AncillaryCategory,
 } from "@/features/schedule/ancillaryMeta";
@@ -25,13 +32,6 @@ import { getPatientCompleteness } from "@/lib/patientCompleteness";
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
 const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound"];
-
-const ANCILLARY_STROKE: Record<AncillaryCategory, string> = {
-  brainwave: "text-violet-600",
-  vitalwave: "text-red-600",
-  ultrasound: "text-emerald-600",
-  other: "text-slate-500",
-};
 
 interface PatientCardProps {
   patient: PatientScreening;
@@ -312,7 +312,8 @@ export function PatientCard({
         </div>
       </div>
 
-      <div className="px-5 pt-4 pb-4">
+      <div className="px-5 pt-4 pb-4 space-y-3">
+        {/* Identity meta line — DOB · age · insurance · phone */}
         <div
           className="text-xs text-slate-700 truncate"
           data-testid={`text-patient-meta-${patient.id}`}
@@ -330,24 +331,19 @@ export function PatientCard({
           {typeLabel}
         </span>
 
-        {!infoComplete && (
+        {/* Qualification chips — text + count, no overlapping count badge */}
+        {ANCILLARY_ORDER.some((cat) => testsByCategory[cat].length > 0) && (
           <div
-            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 text-[10px] font-medium"
-            data-testid={`text-patient-missing-${patient.id}`}
+            className="flex flex-wrap items-center gap-1.5"
+            data-testid={`qualification-chips-${patient.id}`}
           >
-            <span className="uppercase tracking-wider text-[9px] opacity-70">Missing</span>
-            <span>{missing.join(" · ")}</span>
-          </div>
-        )}
-
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
             {ANCILLARY_ORDER.map((cat) => {
               const catTests = testsByCategory[cat];
               if (catTests.length === 0) return null;
               const Icon = categoryIcons[cat];
               const label = categoryLabels[cat];
               const count = catTests.length;
+              const style = categoryStyles[cat];
               return (
                 <button
                   key={cat}
@@ -361,87 +357,121 @@ export function PatientCard({
                       reasoning,
                     });
                   }}
-                  aria-label={`${label}${count > 1 ? ` (${count})` : ""}`}
-                  title={`${label}${count > 1 ? ` (${count})` : ""}`}
-                  className="relative inline-flex items-center justify-center -mx-0.5 transition-transform hover:scale-110"
+                  aria-label={`${label} (${count})`}
+                  title={`${label} (${count})`}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${style.bg} ${style.border} ${style.accent} hover:opacity-90 transition-opacity`}
                   data-testid={`button-ancillary-${cat}-${patient.id}`}
                 >
-                  <Icon
-                    className={`w-6 h-6 ${ANCILLARY_STROKE[cat]}`}
-                    strokeWidth={2}
-                    fill="none"
-                  />
-                  {count > 1 && (
-                    <span className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center min-w-[14px] h-3.5 px-1 rounded-full bg-slate-900 text-white text-[9px] font-semibold">
-                      {count}
-                    </span>
-                  )}
+                  <Icon className={`h-3 w-3 ${style.icon}`} strokeWidth={2} fill="none" />
+                  <span>{label}</span>
+                  <span className="font-semibold tabular-nums">{count}</span>
                 </button>
               );
             })}
           </div>
+        )}
 
-          <div className="flex items-center gap-1.5">
-            {/* Individual Plexus / Clinician PDF actions surface on
-                completed/dark-blue cards. Buttons disable themselves
-                with a tooltip when qualification is not yet eligible. */}
+        {/* Status row — missing info, admin approval, engagement assignment */}
+        {(
+          !infoComplete ||
+          isPatientPdfEligible(patient) ||
+          (patient.commitStatus ?? "Draft") !== "Draft"
+        ) && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {!infoComplete && (
+              <div
+                className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 text-[10px] font-medium"
+                data-testid={`text-patient-missing-${patient.id}`}
+              >
+                <span className="uppercase tracking-wider text-[9px] opacity-70">Missing</span>
+                <span>{missing.join(" · ")}</span>
+              </div>
+            )}
             {isPatientPdfEligible(patient) && (
-              <>
-                <AdminApprovalControl
-                  patientId={patient.id}
-                  status={(patient as { adminApprovalStatus?: string | null }).adminApprovalStatus ?? "pending"}
-                  compact
-                />
-                <PatientPdfActions
-                  patient={patient}
-                  facility={patient.facility ?? null}
-                  scheduleDate={batchScheduleDate ?? null}
-                  iconOnly
-                />
-              </>
+              <AdminApprovalControl
+                patientId={patient.id}
+                status={
+                  (patient as { adminApprovalStatus?: string | null })
+                    .adminApprovalStatus ?? "pending"
+                }
+                compact
+              />
             )}
             <EngagementAssignmentBadge
               patientId={patient.id}
               commitStatus={patient.commitStatus}
               compact
             />
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (confirm("Remove this patient?")) onDelete();
-              }}
-              aria-label="Remove patient"
-              title="Remove patient"
-              className="inline-flex items-center justify-center h-8 w-8 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-              data-testid={`button-delete-patient-${patient.id}`}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!infoComplete) return;
-                onAnalyze();
-              }}
-              disabled={generateDisabled}
-              aria-label={generateTitle}
-              title={generateTitle}
-              className={`inline-flex items-center justify-center h-9 w-9 rounded-full shadow-sm transition-colors ${
-                infoComplete
-                  ? "bg-slate-900 text-white hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
-                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
-              }`}
-              data-testid={`button-generate-${patient.id}`}
-            >
-              {isAnalyzing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Sparkles className="w-4 h-4" />
-              )}
-            </button>
           </div>
+        )}
+
+        {/* Action row — utility actions (left) + primary Generate (right) */}
+        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+          <div className="inline-flex items-center gap-1">
+            {isPatientPdfEligible(patient) && (
+              <PatientPdfActions
+                patient={patient}
+                facility={patient.facility ?? null}
+                scheduleDate={batchScheduleDate ?? null}
+                iconOnly
+              />
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label="More patient actions"
+                  title="More"
+                  className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-500 hover:text-slate-900 hover:bg-slate-50 transition-colors"
+                  data-testid={`button-patient-more-${patient.id}`}
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm("Remove this patient?")) onDelete();
+                  }}
+                  className="text-rose-600 focus:text-rose-700 focus:bg-rose-50"
+                  data-testid={`button-delete-patient-${patient.id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-2" />
+                  Remove patient
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!infoComplete) return;
+              onAnalyze();
+            }}
+            disabled={generateDisabled}
+            aria-label={generateTitle}
+            title={generateTitle}
+            className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-medium shadow-sm transition-colors ${
+              infoComplete
+                ? "bg-slate-900 text-white hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
+                : "bg-slate-200 text-slate-400 cursor-not-allowed"
+            }`}
+            data-testid={`button-generate-${patient.id}`}
+          >
+            {isAnalyzing ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5" />
+            )}
+            {generateLabel}
+          </button>
         </div>
       </div>
 

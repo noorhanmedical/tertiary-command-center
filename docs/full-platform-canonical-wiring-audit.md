@@ -345,3 +345,176 @@ exists in front of the canonical commit / Send to Engagement path.
 `npm run check` ✓, `npm run build` ✓, parser **164/164** ✓, `qa:admin-approval-engagement-gate` **9/9** ✓.
 
 Apply migration `0025_add_patient_screening_admin_approval.sql` before exercising the new endpoint.
+
+## Operational platform batches landing (post-admin-approval)
+
+### Clean patient card layout
+
+`PatientCard` is now split into four logical bands separated by clear
+spacing instead of one jammed action row:
+
+1. **Identity banner** — name + VISIT/OUTREACH + time + status pill (unchanged).
+2. **Meta line** — DOB · age · insurance · phone (unchanged).
+3. **Qualification chips** — readable text+count chips
+   (`BrainWave · 2` / `VitalWave · 1` / `Ultrasound · 2`) using the
+   shared `categoryStyles` palette. No more overlapping icons with
+   floating count badges.
+4. **Status chips row** — missing-info chip + admin approval chip +
+   engagement assignment badge, dedicated to *state*.
+5. **Action row** (separated by a hairline rule) — left: PDFs (icon-only)
+   + a `More` dropdown that hides the destructive Remove patient
+   action; right: the primary Generate / Re-generate pill.
+
+Visit appointment time still renders in the banner and does not
+push the layout. Same component is rendered by Visit + Outreach
+builders, recent-qualifications cards, and Plexus IQ surfaces.
+
+### Procedure staged workflow (copy distinction)
+
+The user-facing action is now **"Procedure Performed"**. The action
+only marks performance of the procedure and explicitly does **not**
+imply report-uploaded / documents-complete / billing-ready. Backend
+route name and `procedureEvents.procedureStatus = "complete"` enum
+value stay — only the UI copy changed:
+
+- `ProcedureCompleteButton` label + toast + tooltip.
+- `PatientCommandCanvas` disabled-button copy + tooltip.
+- `CalendarAddActionButton` and `calendarFilters.procedureCompleted`
+  label updated to "Procedure Performed".
+
+### Report-uploaded readiness endpoint
+
+`POST /api/case-document-readiness/report-uploaded` (in
+`server/routes/documentReadiness.ts`) is a thin wrapper around the
+report-side path of `/complete`. It:
+
+- Resolves the execution case + serviceType from
+  `procedureEventId | executionCaseId | patientScreeningId`.
+- Upserts the `case_document_readiness` row for
+  `documentType = report` with status `uploaded`.
+- Appends `patient_journey_events.eventType = "report_uploaded"`
+  (`eventSource = "document_readiness"`) — explicitly distinct from
+  the `procedure_performed` event.
+- Re-evaluates billing readiness via the existing
+  `evaluateBillingReadinessForProcedure` helper.
+- Closes the matching open `Missing Report for …` Plexus task if one
+  exists.
+
+### Missing-document tasks
+
+New helper module `server/repositories/missingDocumentTasks.repo.ts`
+exposes `ensureMissingDocumentTask` + `resolveMissingDocumentTask`
+keyed by `(patientScreeningId, documentType)` with title prefix
+`Missing <Label>` so re-firing is idempotent. Plexus task statuses
+use the existing `open` / `done` / `closed` convention.
+
+Wires:
+
+- `markProcedureComplete` (procedureEvents repo) opens an idempotent
+  task per blocking doc type when a procedure is performed.
+- `/complete` and `/report-uploaded` routes call
+  `resolveMissingDocumentTask` for the doc they just satisfied.
+
+The full doc-type set the helper covers is:
+`informed_consent`, `screening_form`, `report`, `order_note`,
+`post_procedure_note`, `billing_document`.
+
+### Patient document readiness panel
+
+`portalCommandCenter` now returns `documentReadiness[]` and
+`billingReadinessChecks[]` alongside the existing read model. The
+`PatientCommandCanvas` renders a new `DocumentReadinessPanel` card
+between *Latest activity* and *Full history* with a 6-row checklist
+(Consent / Screening Form / Report / Order Note / Procedure Note /
+Billing Document). Each row shows Present/Missing, blocks-billing
+flag, the linked document id when present, and a matching open
+Plexus task id when one exists.
+
+### Document generation routes
+
+New route file `server/routes/ancillaryDocumentRequests.ts` with:
+
+- `POST /api/ancillary-documents/:patientScreeningId/generate-order-note`
+- `POST /api/ancillary-documents/:patientScreeningId/generate-procedure-note`
+- `POST /api/ancillary-documents/:patientScreeningId/generate-billing-document`
+
+Each route resolves the patient + execution case + serviceType,
+upserts a `procedure_notes` row (`generationStatus: "pending"`) for
+the note variants or a `billing_document_requests` row
+(`requestStatus: "pending"`) for the billing variant. There is **no
+fake generated document** — the route returns `{ requestStatus:
+"pending" }` until a real generator pipeline lands. A
+`document_generation_requested` patient journey event is appended.
+
+### Billing readiness recompute
+
+`POST /api/billing-readiness-checks/recompute` (added in
+`billingReadiness.ts`) accepts
+`{ patientScreeningId?, executionCaseId?, procedureEventId?, serviceType? }`,
+resolves the execution case + serviceType (falling back to the most
+recent procedure event for the patient), calls the existing
+`evaluateBillingReadinessForProcedure` evaluator, and appends a
+`billing_readiness_recomputed` journey event. Uses only existing
+`BILLING_READINESS_STATUSES` enum values — never invents a new
+status.
+
+### Completed package transition
+
+`POST /api/completed-billing-packages/:id/transition` accepts
+`{ packageStatus, reason?, adminOverride? }` where `packageStatus`
+is a canonical `PACKAGE_STATUSES` value
+(`pending_payment | payment_updated | completed_package | added_to_invoice | invoiced | closed`)
+or one of the shorthand aliases (`draft | ready | completed`).
+
+Guard: moving to a terminal status
+(`completed_package`/`added_to_invoice`/`invoiced`/`closed`) requires
+the matching `billing_readiness_check` to be at
+`ready_to_generate` / `billing_document_generated` / `sent_to_billing`,
+unless `adminOverride=true`. Payment recording stays on the existing
+`/payment` and `/api/billing/complete-package-payment` routes —
+this route does not touch fullAmountPaid / paymentDate /
+paymentStatus.
+
+A `billing_package_transitioned` journey event is appended when the
+patient/case is linked.
+
+### Invoice projected/variance visibility
+
+`PatientJourneyDrawer` now renders projected invoice rows inline in
+the Invoices section: per-row `serviceType`, `projectedStatus`,
+`realInvoiceLineItemId` (linkage), `projectedOurPortionAmount`, and
+`varianceAmount` (colored green/red based on sign). When
+`realInvoiceLineItemId` is null the row shows `not yet linked`.
+
+### Technician central schema (deferred — exact blocker)
+
+**Not landed in this batch.** Spec asked for new
+`technician_availability` + `technician_qualifications` tables plus
+enforcement on the scheduling routes. The deferral is intentional:
+
+- `global_schedule_events` already carries `team_availability` event
+  rows (used by `calendarFilters.ts` and the PTO routes).
+- `outreach_schedulers` already maps users → facilities.
+- Adding new dedicated tables without a product decision on how they
+  coexist with or supersede the existing event-based availability
+  + scheduler mapping would create the kind of parallel canonical
+  system the platform spec explicitly forbids.
+
+Next batch dedicated to this should answer: should
+`team_availability` events stay as the source-of-truth, with new
+qualifications joined by user id; or should the new tables replace
+the event-based shape and the events become a derived view? Until
+that decision, no half-baked schema lands.
+
+### QA + verification
+
+- New `script/qaProcedureReadinessSpine.ts` (`qa:procedure-readiness-spine`).
+  Verifies the canonical enums the new routes rely on
+  (`PROCEDURE_STATUSES`, `BILLING_READINESS_STATUSES`,
+  `PACKAGE_STATUSES`) plus the transition route's shorthand alias map,
+  and exercises the idempotent ensure/resolve helpers when
+  `DATABASE_URL` is set on an `isTest=true` patient (then deletes the
+  smoke task). 26/26 assertions passing without DB.
+- `npm run check` ✓ · `npm run build` ✓ · parser **164/164** ✓ ·
+  `qa:admin-approval-engagement-gate` **9/9** ✓ ·
+  `qa:procedure-readiness-spine` **26/26** ✓.

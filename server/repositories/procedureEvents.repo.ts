@@ -8,6 +8,11 @@ import {
 import { upsertCaseDocumentReadinessForProcedureComplete } from "./documentReadiness.repo";
 import { createPendingProcedureNotes } from "./generatedNotes.repo";
 import { evaluateBillingReadinessForProcedure } from "./billingReadiness.repo";
+import {
+  ensureMissingDocumentTask,
+  MISSING_DOC_TYPES,
+  type MissingDocType,
+} from "./missingDocumentTasks.repo";
 
 export type ListProcedureEventsFilters = {
   executionCaseId?: number;
@@ -222,6 +227,30 @@ export async function markProcedureComplete(
   }).catch((err) => {
     console.error("[procedureEvents.repo] evaluateBillingReadinessForProcedure failed:", err);
   });
+
+  // Procedure performance is the moment the standard set of required
+  // documents becomes outstanding. Create idempotent open Plexus tasks
+  // for each blocking doc type so the team has a real worklist.
+  // resolveMissingDocumentTask closes these when readiness flips to
+  // satisfied via the document-readiness routes.
+  if (input.patientScreeningId != null) {
+    void (async () => {
+      for (const docType of MISSING_DOC_TYPES as readonly MissingDocType[]) {
+        await ensureMissingDocumentTask({
+          documentType: docType,
+          patientScreeningId: input.patientScreeningId ?? null,
+          patientName: input.patientName ?? null,
+          serviceType: input.serviceType,
+          facility: input.facilityId ?? null,
+        }).catch((err) => {
+          console.error(
+            `[procedureEvents.repo] ensureMissingDocumentTask(${docType}) failed:`,
+            err,
+          );
+        });
+      }
+    })();
+  }
 
   return { procedureEvent, documentRows };
 }
