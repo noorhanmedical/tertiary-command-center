@@ -17,6 +17,7 @@ import type { ReasoningValue } from "@/lib/pdfGeneration";
 import { PatientEditDialog } from "@/components/PatientEditDialog";
 import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
 import { EngagementAssignmentBadge } from "@/components/qualification/EngagementAssignmentBadge";
+import { AdminApprovalControl } from "@/components/qualification/AdminApprovalControl";
 import { isPatientPdfEligible } from "@/lib/pdfPacketGrouping";
 import { derivePatientType } from "@shared/patientType";
 import { getPatientCompleteness } from "@/lib/patientCompleteness";
@@ -385,12 +386,19 @@ export function PatientCard({
                 completed/dark-blue cards. Buttons disable themselves
                 with a tooltip when qualification is not yet eligible. */}
             {isPatientPdfEligible(patient) && (
-              <PatientPdfActions
-                patient={patient}
-                facility={patient.facility ?? null}
-                scheduleDate={batchScheduleDate ?? null}
-                iconOnly
-              />
+              <>
+                <AdminApprovalControl
+                  patientId={patient.id}
+                  status={(patient as { adminApprovalStatus?: string | null }).adminApprovalStatus ?? "pending"}
+                  compact
+                />
+                <PatientPdfActions
+                  patient={patient}
+                  facility={patient.facility ?? null}
+                  scheduleDate={batchScheduleDate ?? null}
+                  iconOnly
+                />
+              </>
             )}
             <EngagementAssignmentBadge
               patientId={patient.id}

@@ -286,3 +286,62 @@ and explicitly deferred the ones that could not.
 ### Verification
 
 `npm run check` ✓, `npm run build` ✓, parser **164/164** ✓.
+
+## Admin Approval gate batch landing
+
+Migration `0025_add_patient_screening_admin_approval.sql` adds:
+
+- `admin_approval_status text NOT NULL DEFAULT 'pending'`
+- `admin_approved_at timestamp`
+- `admin_approved_by_user_id varchar REFERENCES users(id)`
+- `admin_approval_note text`
+- `idx_patient_screenings_admin_approval_status`
+
+### Canonical gate (now)
+
+Send to Engagement requires **all** of:
+
+1. `name`
+2. `dob`
+3. `phoneNumber`
+4. `facility`
+5. Non-empty `qualifyingTests` (qualification complete)
+6. `adminApprovalStatus === "approved"` *(new gate)*
+
+Backend enforces 1-3 + 6 in `commitPatient(..., { auto: false })`.
+Auto-commits from AI batch analysis still skip the gate — the batch
+is the implicit approval path.
+
+### Routes added
+
+- `POST /api/patient-screenings/:id/admin-approval` — sets
+  `adminApprovalStatus` + `adminApprovedAt` + `adminApprovedByUserId`
+  + `adminApprovalNote`. Appends a `patient_journey_events` row
+  tagged `eventType = "admin_approval_updated"`.
+
+### Frontend wires
+
+- New `AdminApprovalControl` chip + dialog (`client/src/components/qualification/AdminApprovalControl.tsx`). Shows current status (`Pending review` / `Approved` / `Needs info` / `Rejected`) with status-specific tone. Clicking opens a 4-option dialog + optional note.
+- Wired into the shared `PatientCard` next to the existing PDF / assignment badges. Only renders when the patient is PDF-eligible (qualification has run).
+- `ResultsView` Send to Engagement gate now includes `admin approval` in its `missing[]` reason list.
+
+### Qualification is NOT gated by contact info
+
+The AI analyze button + batch analysis runner do not consult
+`adminApprovalStatus` or missing DOB / phone. Qualification can run
+on every patient that has enough clinical data — the gate only
+exists in front of the canonical commit / Send to Engagement path.
+
+### QA
+
+- New `script/qaAdminApprovalEngagementGate.ts` + `qa:admin-approval-engagement-gate`. Verifies:
+  - Parser still accepts rows with missing DOB / phone as warnings.
+  - The mirrored gate predicate blocks every missing piece and unblocks when complete + approved.
+  - With `DATABASE_URL`, performs a safe write on an `isTest=true` patient and appends a journey event tagged `qa_admin_approval_engagement_gate`, then restores the previous status.
+- Currently passing **9/9** assertions (without DB).
+
+### Verification
+
+`npm run check` ✓, `npm run build` ✓, parser **164/164** ✓, `qa:admin-approval-engagement-gate` **9/9** ✓.
+
+Apply migration `0025_add_patient_screening_admin_approval.sql` before exercising the new endpoint.

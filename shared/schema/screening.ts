@@ -65,6 +65,15 @@ export const patientScreenings = pgTable("patient_screenings", {
   deletedByUserId: varchar("deleted_by_user_id").references(() => users.id, { onDelete: "set null" }),
   deleteExpiresAt: timestamp("delete_expires_at"),
   deleteReason: text("delete_reason"),
+  // Admin approval gate before Send to Engagement. Default `pending`
+  // so newly imported patients require explicit admin sign-off
+  // before they can be sent to the engagement spine. Backend
+  // `commitPatient` honors this in addition to its existing
+  // name/dob/phone validation.
+  adminApprovalStatus: text("admin_approval_status").notNull().default("pending"),
+  adminApprovedAt: timestamp("admin_approved_at"),
+  adminApprovedByUserId: varchar("admin_approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  adminApprovalNote: text("admin_approval_note"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   isTest: boolean("is_test").notNull().default(false),
 }, (table) => [
@@ -76,7 +85,16 @@ export const patientScreenings = pgTable("patient_screenings", {
   index("idx_patient_screenings_committed_at").on(table.committedAt),
   index("idx_patient_screenings_deleted_at").on(table.deletedAt),
   index("idx_patient_screenings_delete_expires_at").on(table.deleteExpiresAt),
+  index("idx_patient_screenings_admin_approval_status").on(table.adminApprovalStatus),
 ]);
+
+export const ADMIN_APPROVAL_STATUSES = [
+  "pending",
+  "approved",
+  "needs_info",
+  "rejected",
+] as const;
+export type AdminApprovalStatus = (typeof ADMIN_APPROVAL_STATUSES)[number];
 
 export const COMMIT_STATUSES = ["Draft", "Ready", "WithScheduler", "Scheduled"] as const;
 export type CommitStatus = typeof COMMIT_STATUSES[number];

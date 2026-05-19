@@ -660,6 +660,12 @@ export function ResultsView({
                         const hasQualification =
                           Array.isArray(qt) && qt.length > 0;
                         if (!hasQualification) missing.push("qualification");
+                        const adminApproval =
+                          (patient as { adminApprovalStatus?: string | null })
+                            .adminApprovalStatus ?? "pending";
+                        if (adminApproval !== "approved") {
+                          missing.push("admin approval");
+                        }
                         const blocked = missing.length > 0;
                         return (
                           <button

@@ -24,6 +24,7 @@ export type CommitOutcome = {
 export type CommitError =
   | { code: "not_found" }
   | { code: "validation"; missing: string[] }
+  | { code: "admin_approval_required"; status: string }
   | { code: "already_committed" };
 
 export type RecallError =
@@ -82,6 +83,16 @@ export async function commitPatient(
     const missing = missingRequiredFields(patient);
     if (missing.length > 0) {
       return { ok: false, error: { code: "validation", missing } };
+    }
+    // Manual commits also require admin approval. Auto-commits from
+    // batch analysis bypass this — the batch is the implicit approval
+    // path.
+    const approvalStatus = (patient as { adminApprovalStatus?: string }).adminApprovalStatus ?? "pending";
+    if (approvalStatus !== "approved") {
+      return {
+        ok: false,
+        error: { code: "admin_approval_required", status: approvalStatus },
+      };
     }
   }
 
