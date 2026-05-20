@@ -518,3 +518,101 @@ that decision, no half-baked schema lands.
 - `npm run check` ✓ · `npm run build` ✓ · parser **164/164** ✓ ·
   `qa:admin-approval-engagement-gate` **9/9** ✓ ·
   `qa:procedure-readiness-spine` **26/26** ✓.
+
+## Premium Admin Review card workflow
+
+The admin approval surface is now a first-class, premium experience —
+no more chasing a tiny "Pending review" chip to make a decision.
+
+### Lavender = ready for admin review
+
+`client/src/lib/adminReviewStatus.ts` exposes `computeAdminReview()`
+as the single source of truth used by both the card and the dialog.
+A patient is **ready for admin review** when:
+
+1. `name`, `dob`, `phoneNumber`, `facility` are present.
+2. `qualifyingTests` has at least one entry (qualification ran).
+3. `adminApprovalStatus` is `pending` or `needs_info`.
+4. `commitStatus === "Draft"` (not yet sent to Engagement).
+
+When all four hold, the `PatientCard` banner shifts from sky/navy to
+a soft lavender gradient (`from-violet-50 via-violet-100 to-indigo-50`)
+with a matching status pill reading **Ready for Admin Review**. The
+old chip-as-primary-click-target is gone — the *banner itself* is
+the signal.
+
+Send to Engagement is unchanged: it still requires
+`adminApprovalStatus === "approved"` regardless of lavender state.
+Qualification generation is unchanged: missing DOB / phone still
+parses as warnings only and never blocks the AI run.
+
+### Premium category icons + tiles
+
+The card front shows BrainWave / VitalWave / Ultrasound as small
+rounded tiles (icon-in-circle + ALL-CAPS label + count) using the
+shared `categoryStyles` palette. No overlapping count badges, no
+plain text chips. Clicking any tile opens the unified
+`AdminReviewDialog` — not three separate per-category popups.
+
+### One unified Admin Review dialog
+
+`client/src/components/qualification/AdminReviewDialog.tsx` is a wide
+(`max-w-6xl`) dialog with three side-by-side columns
+(BrainWave / VitalWave / Ultrasound). For each qualifying test the
+column shows the canonical AI reasoning (clinician understanding,
+patient talking points, qualifying factors, ICD-10, pearls — same
+content the previous per-category popup displayed) plus a per-test
+**Admin Justification** block with Add / Edit / Save.
+
+- Per-test justification persists through the canonical
+  `patient_screenings.reasoning` jsonb column under the existing
+  `testReasoningSchema` shape — two new optional fields
+  `admin_justification` + `admin_justification_updated_at` extend the
+  schema additively. No parallel justification store, no DB
+  migration required.
+- Delete buttons next to each test call the same `onRemoveTest`
+  bridge `PatientEditDialog` already uses; the helper falls back to
+  a canonical `qualifyingTests` filter+update when no removal
+  callback is provided. The matching reasoning entry is dropped at
+  the same time so future re-generations don't inherit an orphan
+  admin justification.
+- The footer is the *primary* approval surface:
+  **Approve · Needs Info · Reject · Reset to Pending · Close**.
+  All flow through the existing
+  `POST /api/patient-screenings/:id/admin-approval` endpoint added
+  in the prior admin-approval batch.
+- Save invalidates `/api/screening-batches` and the matching
+  command-center query so the card lavender state updates instantly.
+
+### PatientEditDialog "Admin Review" section
+
+Inside the existing patient edit modal, immediately below the
+**Qualifying Tests** chip row, a new **Admin Review** section
+renders a single premium button. The button label + tone reflect
+the current `computeAdminReview()` state:
+
+- Pending + ready → violet "Ready for Admin Review" CTA.
+- `approved` → emerald "Approved · Open Admin Review".
+- `rejected` → rose "Rejected · Open Admin Review".
+- `needs_info` → "Needs Info · Open Admin Review".
+
+Clicking opens the same `AdminReviewDialog`. PatientEditDialog
+otherwise keeps every existing affordance.
+
+### QA
+
+- New `script/qaAdminReviewCardFlow.ts` (`qa:admin-review-card-flow`)
+  covers:
+  - `computeAdminReview()` ready / incomplete / approved / rejected /
+    needs_info / sent-to-engagement transitions.
+  - Parser still accepts missing-DOB / missing-phone rows as warnings
+    (qualification stays unblocked).
+  - `getAncillaryCategory` grouping matches the card-front tile row.
+  - Canonical delete flow shrinks `qualifyingTests` correctly.
+  - 31/31 assertions passing without DB.
+
+### Verification
+
+`npm run check` ✓ · `npm run build` ✓ · parser **164/164** ✓ ·
+`qa:admin-approval-engagement-gate` **9/9** ✓ ·
+`qa:admin-review-card-flow` **31/31** ✓.

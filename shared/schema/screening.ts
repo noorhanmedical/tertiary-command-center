@@ -119,6 +119,11 @@ export const testReasoningSchema = z.object({
   icd10_codes: z.array(z.string()).optional(),
   pearls: z.array(z.string()).optional(),
   approvalRequired: z.boolean().optional(),
+  // Admin-authored justification for *this specific* qualifying test.
+  // Free-form string, optional. Persists through the canonical
+  // patient_screenings.reasoning jsonb column — no separate store.
+  admin_justification: z.string().optional(),
+  admin_justification_updated_at: z.string().optional(),
 });
 
 export const patientScreeningResultSchema = z.object({

@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Loader2, Sparkles, MoreHorizontal, Trash2 } from "lucide-react";
+import { Loader2, Sparkles, MoreHorizontal, Trash2, ShieldCheck } from "lucide-react";
 import { PatientSilhouette } from "@/components/PatientSilhouette";
 import type { AncillaryAppointment, PatientScreening, ScreeningBatch } from "@shared/schema";
 import {
@@ -19,15 +19,14 @@ import {
   getAncillaryCategory,
   type AncillaryCategory,
 } from "@/features/schedule/ancillaryMeta";
-import { QualificationReasoningDialog } from "@/features/schedule/QualificationReasoningDialog";
-import type { ReasoningValue } from "@/lib/pdfGeneration";
 import { PatientEditDialog } from "@/components/PatientEditDialog";
 import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
 import { EngagementAssignmentBadge } from "@/components/qualification/EngagementAssignmentBadge";
-import { AdminApprovalControl } from "@/components/qualification/AdminApprovalControl";
+import { AdminReviewDialog } from "@/components/qualification/AdminReviewDialog";
 import { isPatientPdfEligible } from "@/lib/pdfPacketGrouping";
 import { derivePatientType } from "@shared/patientType";
 import { getPatientCompleteness } from "@/lib/patientCompleteness";
+import { computeAdminReview } from "@/lib/adminReviewStatus";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
@@ -36,7 +35,13 @@ const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultraso
 interface PatientCardProps {
   patient: PatientScreening;
   isAnalyzing: boolean;
-  onUpdate: (field: string, value: string | string[] | boolean) => void;
+  // Field-level update bridge to the canonical patient_screenings row.
+  // Accepts arbitrary jsonb shapes (e.g. the `reasoning` map) in
+  // addition to the simpler scalar/array fields.
+  onUpdate: (
+    field: string,
+    value: string | string[] | boolean | Record<string, unknown>,
+  ) => void;
   onDelete: () => void;
   onAnalyze: () => void;
   onOpenScheduleModal?: (patient: PatientScreening) => void;
@@ -62,12 +67,7 @@ export function PatientCard({
   const [localTests, setLocalTests] = useState<string[]>(serverTests);
   const [generatingTests, setGeneratingTests] = useState<Set<string>>(new Set());
   const [editOpen, setEditOpen] = useState(false);
-  const [selectedTestDetail, setSelectedTestDetail] = useState<{
-    patientId: number;
-    category: string;
-    tests: string[];
-    reasoning: Record<string, ReasoningValue>;
-  } | null>(null);
+  const [adminReviewOpen, setAdminReviewOpen] = useState(false);
   const cardQueryClient = useQueryClient();
   const { toast: cardToast } = useToast();
 
@@ -138,14 +138,25 @@ export function PatientCard({
   }, [localTests, onUpdate]);
 
   const tests = localTests;
-  const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
 
-  // Group qualifying tests by ancillary category — used to render the small
-  // circular icons on the card. Only categories with tests render.
+  // Group qualifying tests by ancillary category — drives the premium
+  // icon tile row on the card front.
   const testsByCategory = ANCILLARY_ORDER.reduce<Record<AncillaryCategory, string[]>>((acc, cat) => {
     acc[cat] = tests.filter((t) => getAncillaryCategory(t) === cat);
     return acc;
   }, { brainwave: [], vitalwave: [], ultrasound: [], other: [] });
+
+  // Centralized review state (lavender lights up when this is true).
+  const review = computeAdminReview({
+    name: patient.name,
+    dob: patient.dob,
+    phoneNumber: patient.phoneNumber,
+    facility: patient.facility,
+    qualifyingTests: tests,
+    commitStatus: patient.commitStatus,
+    adminApprovalStatus:
+      (patient as { adminApprovalStatus?: string | null }).adminApprovalStatus ?? null,
+  });
 
   const ageDisplay = ((): string => {
     if (patient.age != null) return String(patient.age);
@@ -190,25 +201,49 @@ export function PatientCard({
   const showAsFinal = infoComplete && generatedFinal;
   const statusLabel = !infoComplete ? "Pending" : generatedFinal ? "Final" : "Ready";
 
-  const banner = infoComplete
+  // Three banner states:
+  //   1. Lavender — `readyForAdminReview` (premium soft violet gradient,
+  //      surfaced as the dominant signal so reviewers spot the queue).
+  //   2. Navy — info complete + qualified + already decided (final).
+  //   3. Sky — incomplete intake / draft.
+  const banner = review.readyForAdminReview
     ? {
-        bar: "bg-plexus-navy-800 text-white",
-        avatarRing: "bg-white/10 ring-1 ring-white/20 text-white",
-        title: "text-white",
-        subLabel: "text-white/60",
-        time: "text-white",
-        statusPill: showAsFinal
-          ? "bg-emerald-400/15 text-emerald-200 border border-emerald-300/30"
-          : "bg-white/15 text-white border border-white/25",
-      }
-    : {
-        bar: "bg-sky-100 text-slate-900",
-        avatarRing: "bg-white ring-1 ring-sky-200 text-plexus-navy-800",
+        bar: "bg-gradient-to-br from-violet-50 via-violet-100 to-indigo-50 text-slate-900 ring-1 ring-violet-200/60",
+        avatarRing: "bg-white ring-1 ring-violet-200 text-violet-900",
         title: "text-slate-900",
-        subLabel: "text-slate-500",
+        subLabel: "text-violet-700/80",
         time: "text-slate-900",
-        statusPill: "bg-white text-sky-800 border border-sky-200",
-      };
+        statusPill: "bg-violet-200/80 text-violet-900 border border-violet-300",
+      }
+    : infoComplete
+      ? {
+          bar: "bg-plexus-navy-800 text-white",
+          avatarRing: "bg-white/10 ring-1 ring-white/20 text-white",
+          title: "text-white",
+          subLabel: "text-white/60",
+          time: "text-white",
+          statusPill: showAsFinal
+            ? "bg-emerald-400/15 text-emerald-200 border border-emerald-300/30"
+            : "bg-white/15 text-white border border-white/25",
+        }
+      : {
+          bar: "bg-sky-100 text-slate-900",
+          avatarRing: "bg-white ring-1 ring-sky-200 text-plexus-navy-800",
+          title: "text-slate-900",
+          subLabel: "text-slate-500",
+          time: "text-slate-900",
+          statusPill: "bg-white text-sky-800 border border-sky-200",
+        };
+
+  const reviewPillLabel = review.readyForAdminReview
+    ? "Ready for Admin Review"
+    : review.approval === "approved"
+      ? "Approved"
+      : review.approval === "rejected"
+        ? "Rejected"
+        : review.approval === "needs_info"
+          ? "Needs Info"
+          : statusLabel;
 
   const generateLabel = generatedFinal ? "Re-generate" : "Generate";
   const generateDisabled = isAnalyzing || !infoComplete;
@@ -304,10 +339,10 @@ export function PatientCard({
           </div>
           <span
             className={`shrink-0 inline-flex items-center text-[10px] font-semibold uppercase tracking-wide rounded-full px-2.5 py-0.5 ${banner.statusPill}`}
-            title={!infoComplete ? `Missing: ${missing.join(", ")}` : statusLabel}
+            title={!infoComplete ? `Missing: ${missing.join(", ")}` : reviewPillLabel}
             data-testid={`pill-patient-status-${patient.id}`}
           >
-            {statusLabel}
+            {reviewPillLabel}
           </span>
         </div>
       </div>
@@ -331,11 +366,14 @@ export function PatientCard({
           {typeLabel}
         </span>
 
-        {/* Qualification chips — text + count, no overlapping count badge */}
+        {/* Premium ancillary icon tiles — small rounded tiles with the
+            canonical Brain/Heart/Scan icon + count. Clicking any tile
+            opens the unified Admin Review dialog (the three-column
+            premium popup) — there is no longer one popup per category. */}
         {ANCILLARY_ORDER.some((cat) => testsByCategory[cat].length > 0) && (
           <div
-            className="flex flex-wrap items-center gap-1.5"
-            data-testid={`qualification-chips-${patient.id}`}
+            className="flex flex-wrap items-center gap-2"
+            data-testid={`qualification-tiles-${patient.id}`}
           >
             {ANCILLARY_ORDER.map((cat) => {
               const catTests = testsByCategory[cat];
@@ -350,31 +388,37 @@ export function PatientCard({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setSelectedTestDetail({
-                      patientId: patient.id,
-                      category: cat,
-                      tests: catTests,
-                      reasoning,
-                    });
+                    setAdminReviewOpen(true);
                   }}
-                  aria-label={`${label} (${count})`}
-                  title={`${label} (${count})`}
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${style.bg} ${style.border} ${style.accent} hover:opacity-90 transition-opacity`}
+                  aria-label={`${label} (${count}) — open Admin Review`}
+                  title={`${label} (${count}) — open Admin Review`}
+                  className={`group inline-flex items-center gap-2 rounded-xl border ${style.border} ${style.bg} px-2.5 py-1.5 hover:shadow-sm transition-shadow`}
                   data-testid={`button-ancillary-${cat}-${patient.id}`}
                 >
-                  <Icon className={`h-3 w-3 ${style.icon}`} strokeWidth={2} fill="none" />
-                  <span>{label}</span>
-                  <span className="font-semibold tabular-nums">{count}</span>
+                  <span
+                    className={`inline-flex items-center justify-center h-7 w-7 rounded-full bg-white shadow-inner ring-1 ${style.border}`}
+                  >
+                    <Icon className={`h-4 w-4 ${style.icon}`} strokeWidth={2} fill="none" />
+                  </span>
+                  <div className="flex flex-col leading-tight items-start">
+                    <span className={`text-[10px] font-semibold uppercase tracking-wider ${style.accent}`}>
+                      {label}
+                    </span>
+                    <span className={`text-[13px] font-semibold tabular-nums ${style.accent}`}>
+                      {count}
+                    </span>
+                  </div>
                 </button>
               );
             })}
           </div>
         )}
 
-        {/* Status row — missing info, admin approval, engagement assignment */}
+        {/* Status row — missing info + engagement assignment (admin
+            approval state is surfaced in the banner pill + primary
+            Admin Review button below; no more tiny click-target chip). */}
         {(
           !infoComplete ||
-          isPatientPdfEligible(patient) ||
           (patient.commitStatus ?? "Draft") !== "Draft"
         ) && (
           <div className="flex flex-wrap items-center gap-1.5">
@@ -387,16 +431,6 @@ export function PatientCard({
                 <span>{missing.join(" · ")}</span>
               </div>
             )}
-            {isPatientPdfEligible(patient) && (
-              <AdminApprovalControl
-                patientId={patient.id}
-                status={
-                  (patient as { adminApprovalStatus?: string | null })
-                    .adminApprovalStatus ?? "pending"
-                }
-                compact
-              />
-            )}
             <EngagementAssignmentBadge
               patientId={patient.id}
               commitStatus={patient.commitStatus}
@@ -405,7 +439,7 @@ export function PatientCard({
           </div>
         )}
 
-        {/* Action row — utility actions (left) + primary Generate (right) */}
+        {/* Action row — utility actions (left) + Admin Review / Generate (right) */}
         <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
           <div className="inline-flex items-center gap-1">
             {isPatientPdfEligible(patient) && (
@@ -448,30 +482,61 @@ export function PatientCard({
             </DropdownMenu>
           </div>
 
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!infoComplete) return;
-              onAnalyze();
-            }}
-            disabled={generateDisabled}
-            aria-label={generateTitle}
-            title={generateTitle}
-            className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-medium shadow-sm transition-colors ${
-              infoComplete
-                ? "bg-slate-900 text-white hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
-                : "bg-slate-200 text-slate-400 cursor-not-allowed"
-            }`}
-            data-testid={`button-generate-${patient.id}`}
-          >
-            {isAnalyzing ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="w-3.5 h-3.5" />
+          <div className="inline-flex items-center gap-1.5">
+            {/* Admin Review is the primary right-hand action whenever a
+                review is meaningful (ready, needs_info, approved, or
+                rejected). When intake is incomplete, the Generate
+                affordance still wins. */}
+            {isPatientPdfEligible(patient) && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAdminReviewOpen(true);
+                }}
+                aria-label="Open Admin Review"
+                title="Open Admin Review"
+                className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-medium shadow-sm transition-colors ${
+                  review.readyForAdminReview
+                    ? "bg-violet-600 text-white hover:bg-violet-700"
+                    : review.approval === "approved"
+                      ? "bg-emerald-100 text-emerald-900 border border-emerald-200 hover:bg-emerald-200"
+                      : review.approval === "rejected"
+                        ? "bg-rose-100 text-rose-900 border border-rose-200 hover:bg-rose-200"
+                        : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50"
+                }`}
+                data-testid={`button-admin-review-${patient.id}`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                Admin Review
+              </button>
             )}
-            {generateLabel}
-          </button>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!infoComplete) return;
+                onAnalyze();
+              }}
+              disabled={generateDisabled}
+              aria-label={generateTitle}
+              title={generateTitle}
+              className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-medium shadow-sm transition-colors ${
+                infoComplete
+                  ? "bg-slate-900 text-white hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
+                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
+              }`}
+              data-testid={`button-generate-${patient.id}`}
+            >
+              {isAnalyzing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5" />
+              )}
+              {generateLabel}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -491,11 +556,18 @@ export function PatientCard({
       onAnalyze={onAnalyze}
       isAnalyzing={isAnalyzing}
       isCompleted={generatedFinal}
+      onOpenAdminReview={() => setAdminReviewOpen(true)}
     />
 
-    <QualificationReasoningDialog
-      selectedTestDetail={selectedTestDetail}
-      setSelectedTestDetail={setSelectedTestDetail}
+    <AdminReviewDialog
+      open={adminReviewOpen}
+      onOpenChange={setAdminReviewOpen}
+      patient={patient}
+      facility={patient.facility ?? null}
+      scheduleDate={batchScheduleDate ?? null}
+      onUpdate={onUpdate}
+      onAddTest={handleAddTest}
+      onRemoveTest={handleRemoveTest}
     />
     </>
   );
