@@ -9,7 +9,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Loader2, Sparkles, MoreHorizontal, Trash2, ShieldCheck } from "lucide-react";
+import {
+  Loader2,
+  Sparkles,
+  MoreHorizontal,
+  Trash2,
+  ShieldCheck,
+  Pencil,
+} from "lucide-react";
 import { PatientSilhouette } from "@/components/PatientSilhouette";
 import type { AncillaryAppointment, PatientScreening, ScreeningBatch } from "@shared/schema";
 import {
@@ -369,7 +376,7 @@ export function PatientCard({
             dedicated Admin Review button. */}
         {ANCILLARY_ORDER.some((cat) => testsByCategory[cat].length > 0) && (
           <div
-            className="flex items-center gap-3"
+            className="flex items-center justify-center gap-6 py-1"
             data-testid={`qualification-icons-${patient.id}`}
           >
             {ANCILLARY_ORDER.map((cat) => {
@@ -441,7 +448,10 @@ export function PatientCard({
           </div>
         )}
 
-        {/* Action row — utility actions (left) + Admin Review / Generate (right) */}
+        {/* Action row — icon-only utility actions (left) + Admin Review (right).
+            Schedule is owned by the schedule bar elsewhere — no calendar
+            affordance lives on the card itself. Re-generate moves into the
+            More dropdown so the front stays icon-only and uncluttered. */}
         <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
           <div className="inline-flex items-center gap-1">
             {isPatientPdfEligible(patient) && (
@@ -452,6 +462,19 @@ export function PatientCard({
                 iconOnly
               />
             )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (confirm("Remove this patient?")) onDelete();
+              }}
+              aria-label="Remove patient"
+              title="Remove patient"
+              className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors"
+              data-testid={`button-delete-patient-${patient.id}`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -472,23 +495,63 @@ export function PatientCard({
                 <DropdownMenuItem
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm("Remove this patient?")) onDelete();
+                    setEditOpen(true);
                   }}
-                  className="text-rose-600 focus:text-rose-700 focus:bg-rose-50"
-                  data-testid={`button-delete-patient-${patient.id}`}
+                  data-testid={`menu-edit-patient-${patient.id}`}
                 >
-                  <Trash2 className="w-3.5 h-3.5 mr-2" />
-                  Remove patient
+                  <Pencil className="w-3.5 h-3.5 mr-2" />
+                  Edit patient
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={generateDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!infoComplete) return;
+                    onAnalyze();
+                  }}
+                  data-testid={`menu-generate-${patient.id}`}
+                >
+                  {isAnalyzing ? (
+                    <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5 mr-2" />
+                  )}
+                  {generateLabel}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
 
           <div className="inline-flex items-center gap-1.5">
-            {/* Admin Review is the primary right-hand action whenever a
-                review is meaningful (ready, needs_info, approved, or
-                rejected). When intake is incomplete, the Generate
-                affordance still wins. */}
+            {/* When no qualifying tests exist yet we still expose a
+                subtle icon-only Generate on the front so the card has
+                a primary CTA. Once tests exist, Generate disappears
+                from the front (Re-generate is in the More menu). */}
+            {tests.length === 0 && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!infoComplete) return;
+                  onAnalyze();
+                }}
+                disabled={generateDisabled}
+                aria-label={generateTitle}
+                title={generateTitle}
+                className={`inline-flex items-center justify-center h-8 w-8 rounded-full shadow-sm transition-colors ${
+                  infoComplete
+                    ? "bg-slate-900 text-white hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
+                    : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                }`}
+                data-testid={`button-generate-${patient.id}`}
+              >
+                {isAnalyzing ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
             {isPatientPdfEligible(patient) && (
               <button
                 type="button"
@@ -497,8 +560,8 @@ export function PatientCard({
                   setAdminReviewOpen(true);
                 }}
                 aria-label="Open Admin Review"
-                title="Open Admin Review"
-                className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-medium shadow-sm transition-colors ${
+                title={`Admin Review · ${reviewPillLabel}`}
+                className={`inline-flex items-center justify-center h-8 w-8 rounded-full shadow-sm transition-colors ${
                   review.readyForAdminReview
                     ? "bg-violet-600 text-white hover:bg-violet-700"
                     : review.approval === "approved"
@@ -509,35 +572,9 @@ export function PatientCard({
                 }`}
                 data-testid={`button-admin-review-${patient.id}`}
               >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Admin Review
+                <ShieldCheck className="h-4 w-4" />
               </button>
             )}
-
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!infoComplete) return;
-                onAnalyze();
-              }}
-              disabled={generateDisabled}
-              aria-label={generateTitle}
-              title={generateTitle}
-              className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-medium shadow-sm transition-colors ${
-                infoComplete
-                  ? "bg-slate-900 text-white hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
-                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
-              }`}
-              data-testid={`button-generate-${patient.id}`}
-            >
-              {isAnalyzing ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Sparkles className="w-3.5 h-3.5" />
-              )}
-              {generateLabel}
-            </button>
           </div>
         </div>
       </div>
