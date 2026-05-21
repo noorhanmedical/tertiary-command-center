@@ -23,6 +23,8 @@ import { PatientEditDialog } from "@/components/PatientEditDialog";
 import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
 import { EngagementAssignmentBadge } from "@/components/qualification/EngagementAssignmentBadge";
 import { AdminReviewDialog } from "@/components/qualification/AdminReviewDialog";
+import { QualificationReasoningDialog } from "@/features/schedule/QualificationReasoningDialog";
+import type { ReasoningValue } from "@/lib/pdfGeneration";
 import { isPatientPdfEligible } from "@/lib/pdfPacketGrouping";
 import { derivePatientType } from "@shared/patientType";
 import { getPatientCompleteness } from "@/lib/patientCompleteness";
@@ -68,6 +70,16 @@ export function PatientCard({
   const [generatingTests, setGeneratingTests] = useState<Set<string>>(new Set());
   const [editOpen, setEditOpen] = useState(false);
   const [adminReviewOpen, setAdminReviewOpen] = useState(false);
+  // Per-category reasoning popup — restored to its prior behavior so
+  // clicking a category icon opens that category's detail dialog
+  // (BrainWave / VitalWave / Ultrasound). Admin Review lives behind
+  // the dedicated Admin Review button.
+  const [selectedTestDetail, setSelectedTestDetail] = useState<{
+    patientId: number;
+    category: string;
+    tests: string[];
+    reasoning: Record<string, ReasoningValue>;
+  } | null>(null);
   const cardQueryClient = useQueryClient();
   const { toast: cardToast } = useToast();
 
@@ -138,9 +150,10 @@ export function PatientCard({
   }, [localTests, onUpdate]);
 
   const tests = localTests;
+  const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
 
-  // Group qualifying tests by ancillary category — drives the premium
-  // icon tile row on the card front.
+  // Group qualifying tests by ancillary category — drives the
+  // standalone premium icon row on the card front.
   const testsByCategory = ANCILLARY_ORDER.reduce<Record<AncillaryCategory, string[]>>((acc, cat) => {
     acc[cat] = tests.filter((t) => getAncillaryCategory(t) === cat);
     return acc;
@@ -287,54 +300,36 @@ export function PatientCard({
               <PatientSilhouette gender={patient.gender} className="w-6 h-6" />
             </div>
 
-            <div className="min-w-0 flex-1 flex flex-col justify-center">
-              {typeLabel === "Visit" ? (
-                showTimeInBanner ? (
-                  <div className="grid grid-cols-[auto_1fr] gap-x-4 items-center">
-                    <div className="flex flex-col leading-tight">
-                      <span
-                        className={`text-sm font-semibold tabular-nums ${banner.time}`}
-                        data-testid={`text-patient-time-${patient.id}`}
-                      >
-                        {patient.time}
-                      </span>
-                      <span className={`text-[10px] uppercase tracking-[0.14em] ${banner.subLabel} font-medium`}>
-                        Visit Appointment
-                      </span>
-                    </div>
-                    <h3
-                      className={`min-w-0 text-lg font-light tracking-tight truncate self-center ${banner.title}`}
-                      data-testid={`text-patient-name-${patient.id}`}
+            <div className="min-w-0 flex-1 flex flex-col justify-center leading-tight">
+              {/* Patient name is always the primary header. */}
+              <h3
+                className={`min-w-0 text-lg font-light tracking-tight ${banner.title} break-words`}
+                title={displayName}
+                data-testid={`text-patient-name-${patient.id}`}
+              >
+                {displayName}
+              </h3>
+              {/* Subline carries the type label + (for Visit) the
+                  appointment time as secondary metadata. Time is
+                  never allowed to outrank the name. */}
+              <div
+                className={`mt-0.5 flex items-center gap-x-2 text-[10px] uppercase tracking-[0.14em] font-medium ${banner.subLabel}`}
+              >
+                <span>
+                  {typeLabel === "Visit" ? "Visit Appointment" : "Outreach"}
+                </span>
+                {typeLabel === "Visit" && showTimeInBanner && (
+                  <>
+                    <span aria-hidden className="opacity-60">·</span>
+                    <span
+                      className={`tabular-nums ${banner.time}`}
+                      data-testid={`text-patient-time-${patient.id}`}
                     >
-                      {displayName}
-                    </h3>
-                  </div>
-                ) : (
-                  <div className="leading-tight">
-                    <h3
-                      className={`min-w-0 text-lg font-light tracking-tight truncate ${banner.title}`}
-                      data-testid={`text-patient-name-${patient.id}`}
-                    >
-                      {displayName}
-                    </h3>
-                    <span className={`text-[10px] uppercase tracking-[0.14em] ${banner.subLabel} font-medium`}>
-                      Visit Appointment
+                      {patient.time}
                     </span>
-                  </div>
-                )
-              ) : (
-                <div className="leading-tight">
-                  <h3
-                    className={`min-w-0 text-lg font-light tracking-tight truncate ${banner.title}`}
-                    data-testid={`text-patient-name-${patient.id}`}
-                  >
-                    {displayName}
-                  </h3>
-                  <span className={`text-[10px] uppercase tracking-[0.14em] ${banner.subLabel} font-medium`}>
-                    Outreach
-                  </span>
-                </div>
-              )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
           <span
@@ -366,14 +361,16 @@ export function PatientCard({
           {typeLabel}
         </span>
 
-        {/* Premium ancillary icon tiles — small rounded tiles with the
-            canonical Brain/Heart/Scan icon + count. Clicking any tile
-            opens the unified Admin Review dialog (the three-column
-            premium popup) — there is no longer one popup per category. */}
+        {/* Standalone premium category icons. Each icon is a transparent
+            button — no rectangle, no chip background, no boxed wrapper.
+            Clicking a category opens the *category-specific* reasoning
+            popup (BrainWave / VitalWave / Ultrasound), restored to the
+            pre-3-column-modal behavior. Admin Review lives behind the
+            dedicated Admin Review button. */}
         {ANCILLARY_ORDER.some((cat) => testsByCategory[cat].length > 0) && (
           <div
-            className="flex flex-wrap items-center gap-2"
-            data-testid={`qualification-tiles-${patient.id}`}
+            className="flex items-center gap-3"
+            data-testid={`qualification-icons-${patient.id}`}
           >
             {ANCILLARY_ORDER.map((cat) => {
               const catTests = testsByCategory[cat];
@@ -388,26 +385,31 @@ export function PatientCard({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setAdminReviewOpen(true);
+                    setSelectedTestDetail({
+                      patientId: patient.id,
+                      category: cat,
+                      tests: catTests,
+                      reasoning,
+                    });
                   }}
-                  aria-label={`${label} (${count}) — open Admin Review`}
-                  title={`${label} (${count}) — open Admin Review`}
-                  className={`group inline-flex items-center gap-2 rounded-xl border ${style.border} ${style.bg} px-2.5 py-1.5 hover:shadow-sm transition-shadow`}
+                  aria-label={`${label}${count > 1 ? ` (${count})` : ""}`}
+                  title={`${label}${count > 1 ? ` (${count})` : ""}`}
+                  className="relative inline-flex items-center justify-center bg-transparent border-0 p-0 transition-transform hover:scale-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 rounded-full"
                   data-testid={`button-ancillary-${cat}-${patient.id}`}
                 >
-                  <span
-                    className={`inline-flex items-center justify-center h-7 w-7 rounded-full bg-white shadow-inner ring-1 ${style.border}`}
-                  >
-                    <Icon className={`h-4 w-4 ${style.icon}`} strokeWidth={2} fill="none" />
-                  </span>
-                  <div className="flex flex-col leading-tight items-start">
-                    <span className={`text-[10px] font-semibold uppercase tracking-wider ${style.accent}`}>
-                      {label}
-                    </span>
-                    <span className={`text-[13px] font-semibold tabular-nums ${style.accent}`}>
+                  <Icon
+                    className={`h-7 w-7 ${style.icon}`}
+                    strokeWidth={2}
+                    fill="none"
+                  />
+                  {count > 1 && (
+                    <span
+                      className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-slate-900 text-white text-[9px] font-semibold leading-none shadow-sm"
+                      aria-hidden
+                    >
                       {count}
                     </span>
-                  </div>
+                  )}
                 </button>
               );
             })}
@@ -568,6 +570,11 @@ export function PatientCard({
       onUpdate={onUpdate}
       onAddTest={handleAddTest}
       onRemoveTest={handleRemoveTest}
+    />
+
+    <QualificationReasoningDialog
+      selectedTestDetail={selectedTestDetail}
+      setSelectedTestDetail={setSelectedTestDetail}
     />
     </>
   );
