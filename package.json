@@ -12,6 +12,7 @@
     "seed:admin-settings": "tsx script/seedAdminSettings.ts",
     "check:canonical-tables": "tsx script/checkCanonicalTables.ts",
     "smoke:canonical-apis": "tsx script/smokeCanonicalApis.ts",
+    "smoke:tertiary-spine": "tsx script/smokeTertiaryCommandCenterSpine.ts",
     "seed:testguy-flow": "tsx script/seedTestGuyFlow.ts",
     "reconcile:testguy": "tsx script/reconcileTestGuy.ts",
     "seed:visit-flow": "tsx script/seedVisitPatientFlow.ts",
