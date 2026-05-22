@@ -49,7 +49,8 @@
     "qa:calendar-profile-wiring": "tsx script/qaCalendarProfileWiring.ts",
     "qa:calendar-data-shape": "tsx script/qaCalendarDataShape.ts",
     "qa:calendar-profile-overrides": "tsx script/qaCalendarProfileOverrides.ts",
-    "qa:pcs-acs-portal-actions": "tsx script/qaPcsAcsPortalActions.ts"
+    "qa:pcs-acs-portal-actions": "tsx script/qaPcsAcsPortalActions.ts",
+    "qa:pcs-acs-capabilities": "tsx script/qaPcsAcsCapabilities.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
