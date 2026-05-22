@@ -126,7 +126,40 @@ function main() {
     "PatientMiniCalendar selects ACS vs PCS profile based on mode",
   );
 
-  // ─── 5. ACS-typed capability flags exist on the shell ────────────
+  // ─── 5. Capability resolver is wired into PortalShell ───────────
+  console.log("\n--- capability resolver is wired into PortalShell ---");
+  assert(
+    portalShell.includes(
+      'import { resolvePortalCapabilities }',
+    ),
+    "PortalShell imports resolvePortalCapabilities",
+  );
+  assert(
+    /const portalCapabilities = resolvePortalCapabilities\(/.test(portalShell),
+    "PortalShell calls resolvePortalCapabilities(...) to derive flags",
+  );
+  assert(
+    /portalCapabilities\.canMarkProcedureCompleted/.test(portalShell),
+    "PortalShell uses canMarkProcedureCompleted from resolver",
+  );
+
+  // ─── 6. Default safety: ACS not assumed when workspaceRole undefined ──
+  console.log("\n--- default safety: ACS not assumed when role is undefined ---");
+  assert(
+    !portalShell.includes("workspaceRole === undefined"),
+    "PortalShell no longer treats undefined workspaceRole as ACS",
+  );
+  // The remaining role-string compares are intentional and safe:
+  // they explicitly opt legacy `technician` / `liaison` mounts into
+  // ACS classification.
+  assert(
+    portalShell.includes('workspaceRole === "ancillaryCareSpecialist"') &&
+      portalShell.includes('workspaceRole === "technician"') &&
+      portalShell.includes('workspaceRole === "liaison"'),
+    "PortalShell still classifies legacy technician/liaison mounts as ACS",
+  );
+
+  // ─── 7. ACS-typed capability flags exist on the shell ────────────
   console.log("\n--- ACS capability flags exist on PortalShell ---");
   assert(
     portalShell.includes("workspaceCanCompleteProcedure"),
