@@ -45,7 +45,8 @@
     "qa:document-billing-invoice-spine": "tsx script/qaDocumentBillingInvoiceSpine.ts",
     "qa:admin-approval-engagement-gate": "tsx script/qaAdminApprovalEngagementGate.ts",
     "qa:procedure-readiness-spine": "tsx script/qaProcedureReadinessSpine.ts",
-    "qa:admin-review-card-flow": "tsx script/qaAdminReviewCardFlow.ts"
+    "qa:admin-review-card-flow": "tsx script/qaAdminReviewCardFlow.ts",
+    "qa:calendar-profile-wiring": "tsx script/qaCalendarProfileWiring.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
