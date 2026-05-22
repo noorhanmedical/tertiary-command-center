@@ -1087,11 +1087,11 @@ export function PortalShell({
     return out;
   }, [workspaceClinicSchedule, filteredAncillarySchedule]);
 
-  // Profile id for the canonical team-portal drawer. ACS uses the
-  // `technician` profile (procedure-side filters); PCS + legacy roles
-  // use `patientCareSpecialist`.
-  const teamPortalCalendarProfileId: "technician" | "patientCareSpecialist" =
-    workspaceIsAncillaryCareSpecialist ? "technician" : "patientCareSpecialist";
+  // Profile id for the canonical team-portal drawer.
+  //   ACS → ancillaryCareSpecialist (procedure-side + outreach filters)
+  //   PCS + legacy roles → patientCareSpecialist
+  const teamPortalCalendarProfileId: "ancillaryCareSpecialist" | "patientCareSpecialist" =
+    workspaceIsAncillaryCareSpecialist ? "ancillaryCareSpecialist" : "patientCareSpecialist";
 
   const { data: scheduleData } = useQuery<{ patients: TodayPatient[] }>({
     queryKey: ["/api/portal/today-schedule", facility, selectedDate],

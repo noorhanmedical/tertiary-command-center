@@ -166,7 +166,7 @@ export function PatientMiniCalendar({
         <CanonicalCommandCalendar
           key={`${cursor.y}-${cursor.m}`}
           mode="inline"
-          profileId={mode === "ancillarySchedule" ? "technician" : "patientCareSpecialist"}
+          profileId={mode === "ancillarySchedule" ? "ancillaryCareSpecialist" : "patientCareSpecialist"}
           cells={canonicalCells}
           initialMonth={new Date(cursor.y, cursor.m, 1)}
           onSelectDate={(iso) => {
