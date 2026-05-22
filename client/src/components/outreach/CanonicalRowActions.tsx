@@ -77,6 +77,24 @@ function defaultCallbackIso(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// Local-now formatted for the `<input type="datetime-local">` min
+// attribute. Browsers honour the attribute and block past values
+// in the picker — server-side validation is still authoritative.
+function localNowDatetimeLocal(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function userTimezoneLabel(): string {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return tz || "local time";
+  } catch {
+    return "local time";
+  }
+}
+
 export function CanonicalRowActions({
   executionCaseId,
   patientScreeningId,
@@ -249,10 +267,14 @@ function CanonicalLogCallDialog({
               <Input
                 type="datetime-local"
                 value={nextActionAt}
+                min={localNowDatetimeLocal()}
                 onChange={(e) => setNextActionAt(e.target.value)}
                 className="mt-1.5 rounded-xl text-sm"
                 data-testid="canonical-log-call-nextActionAt"
               />
+              <p className="mt-1 text-[10px] text-slate-500" data-testid="canonical-log-call-tz">
+                Scheduling for {userTimezoneLabel()}
+              </p>
             </div>
           )}
           <div>
@@ -276,14 +298,26 @@ function CanonicalLogCallDialog({
             >
               Cancel
             </Button>
-            <Button
-              type="button"
-              disabled={submit.isPending}
-              onClick={() => submit.mutate()}
-              data-testid="canonical-log-call-submit"
-            >
-              {submit.isPending ? "Logging…" : "Log call"}
-            </Button>
+            {(() => {
+              // Block submit when callback time is in the past — the
+              // server still validates, but the client surface should
+              // never queue an obviously-invalid callback.
+              const callbackInPast =
+                callResult === "callback" &&
+                !!nextActionAt &&
+                new Date(nextActionAt).getTime() < Date.now();
+              return (
+                <Button
+                  type="button"
+                  disabled={submit.isPending || callbackInPast}
+                  onClick={() => submit.mutate()}
+                  title={callbackInPast ? "Callback time is in the past" : undefined}
+                  data-testid="canonical-log-call-submit"
+                >
+                  {submit.isPending ? "Logging…" : "Log call"}
+                </Button>
+              );
+            })()}
           </div>
         </div>
       </DialogContent>
@@ -369,6 +403,7 @@ function CanonicalScheduleDialog({
             <Input
               type="datetime-local"
               value={startsAt}
+              min={localNowDatetimeLocal()}
               onChange={(e) => setStartsAt(e.target.value)}
               className="mt-1.5 rounded-xl text-sm"
               data-testid="canonical-schedule-startsAt"
