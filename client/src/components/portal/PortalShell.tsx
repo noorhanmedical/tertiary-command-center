@@ -41,6 +41,7 @@ import { PortalPatientSearchTab } from "@/components/portal/PortalPatientSearchT
 import { PortalMarketingTab } from "@/components/portal/PortalMarketingTab";
 import { PortalPlexusTasksTab } from "@/components/portal/PortalPlexusTasksTab";
 import { CanonicalCommandCalendar } from "@/components/calendar/CanonicalCommandCalendar";
+import { resolvePortalCapabilities } from "@/lib/portal/portalCapabilities";
 import { type CanonicalMonthCellSummary } from "@/calendar";
 
 // The user-facing workspace role lets us distinguish PCS vs ACS for
@@ -835,19 +836,22 @@ export function PortalShell({
   const profileAssignedFacilities = workspaceProfile?.assignedFacilityIds ?? [];
 
   // Profile capability overrides — driven purely by the stored profile so
-  // the workspace name (PCS vs ACS) does not gate behavior. Once the
-  // profile resolves, its capability bits are authoritative. Admins
-  // control who can do what by editing the Team Member Profile dialog.
-  if (workspaceProfile) {
-    workspaceCanCallAndSchedule =
-      workspaceProfile.capabilities?.callAndSchedule !== false;
-    workspaceCanCompleteProcedure =
-      workspaceProfile.capabilities?.completeProcedure === true;
-    workspaceCanPrimaryConsentScreening =
-      workspaceProfile.capabilities?.primaryConsentScreening === true;
-    workspaceCanUploadProcedureReport =
-      workspaceProfile.capabilities?.uploadProcedureReport === true;
-  }
+  // the workspace name (PCS vs ACS) does not gate behavior. The
+  // resolver below ensures procedure-side capability ALWAYS requires
+  // an ACS-typed workspace at runtime (defense-in-depth).
+  const portalCapabilities = resolvePortalCapabilities({
+    workspaceType: workspaceIsAncillaryCareSpecialist
+      ? "ancillaryCareSpecialist"
+      : "patientCareSpecialist",
+    profile: workspaceProfile ?? null,
+  });
+  workspaceCanCallAndSchedule =
+    portalCapabilities.canScheduleClinicVisit ||
+    portalCapabilities.canScheduleAncillary ||
+    portalCapabilities.canUseCallList;
+  workspaceCanCompleteProcedure = portalCapabilities.canMarkProcedureCompleted;
+  workspaceCanPrimaryConsentScreening = portalCapabilities.canPrimaryConsentScreening;
+  workspaceCanUploadProcedureReport = portalCapabilities.canUploadProcedureReport;
   const allowedServiceTypes = workspaceProfile?.allowedServiceTypes ?? [];
   // No-facility-assigned hint surfaced inside the right-panel body when
   // the profile restricts to a closed set but lists nothing.
