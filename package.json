@@ -52,7 +52,8 @@
     "qa:pcs-acs-portal-actions": "tsx script/qaPcsAcsPortalActions.ts",
     "qa:pcs-acs-capabilities": "tsx script/qaPcsAcsCapabilities.ts",
     "qa:pcs-acs-mini-calendar": "tsx script/qaPcsAcsMiniCalendar.ts",
-    "smoke:pcs-acs-portal": "tsx script/smokePcsAcsPortal.ts"
+    "smoke:pcs-acs-portal": "tsx script/smokePcsAcsPortal.ts",
+    "qa:pcs-acs-role-isolation": "tsx script/qaPcsAcsLegacyRoleIsolation.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
