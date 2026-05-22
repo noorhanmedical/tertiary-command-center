@@ -40,10 +40,8 @@ import { PortalMyPatientsTab } from "@/components/portal/PortalMyPatientsTab";
 import { PortalPatientSearchTab } from "@/components/portal/PortalPatientSearchTab";
 import { PortalMarketingTab } from "@/components/portal/PortalMarketingTab";
 import { PortalPlexusTasksTab } from "@/components/portal/PortalPlexusTasksTab";
-import {
-  UniversalCalendarDrawer,
-  type CanonicalMonthCellSummary,
-} from "@/calendar";
+import { CanonicalCommandCalendar } from "@/components/calendar/CanonicalCommandCalendar";
+import { type CanonicalMonthCellSummary } from "@/calendar";
 
 // The user-facing workspace role lets us distinguish PCS vs ACS for
 // capability gating (procedure-side actions are ACS-only). Legacy direct
@@ -2621,7 +2619,9 @@ export function PortalShell({
         onOpenInPlayground={(payload) => openSchedulePatientPlayground(payload)}
       />
 
-      <UniversalCalendarDrawer
+      {/* Canonical calendar shared by PCS, ACS, Plexus IQ, and Dashboard. */}
+      <CanonicalCommandCalendar
+        mode="drawer"
         profileId={teamPortalCalendarProfileId}
         open={teamPortalCalendarOpen}
         onOpenChange={setTeamPortalCalendarOpen}

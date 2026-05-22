@@ -20,8 +20,8 @@ import type { GlobalScheduleEvent } from "@shared/schema/globalSchedule";
 import { qk } from "@/hooks/api/keys";
 import { apiRequest } from "@/lib/queryClient";
 import { type CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
+import { CanonicalCommandCalendar } from "@/components/calendar/CanonicalCommandCalendar";
 import {
-  UniversalCalendarDrawer,
   type CanonicalMonthCellSummary,
   type CanonicalCalendarUnscheduledItem,
 } from "@/calendar";
@@ -868,7 +868,9 @@ export default function PlexusIQPage() {
         />
       </main>
 
-      <UniversalCalendarDrawer
+      {/* Canonical calendar shared by PCS, ACS, Plexus IQ, and Dashboard. */}
+      <CanonicalCommandCalendar
+        mode="drawer"
         profileId="plexusIq"
         open={calendarOpen}
         onOpenChange={setCalendarOpen}

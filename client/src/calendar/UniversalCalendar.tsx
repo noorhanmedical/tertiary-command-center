@@ -21,7 +21,7 @@ import {
   type CanonicalMonthCellSummary,
   type CanonicalCalendarUnscheduledItem,
 } from "./views/CanonicalMonthCalendar";
-import { CALENDAR_FILTERS, type CalendarFilterId } from "./calendarFilters";
+import { type CalendarFilterId } from "./calendarFilters";
 import { type CalendarProfileId } from "./calendarProfiles";
 import {
   resolveCalendarProfileSettings,
@@ -44,6 +44,10 @@ export type UniversalCalendarProps = {
   // Optional unscheduled-items panel rendered alongside the month grid.
   unscheduledItems?: CanonicalCalendarUnscheduledItem[];
   onUnscheduledItemAction?: (item: CanonicalCalendarUnscheduledItem) => void;
+  // Initial month displayed; defaults to today. Useful when the
+  // calendar is being shown in a patient-scoped context that pre-loads
+  // the patient's appointment month.
+  initialMonth?: Date;
 };
 
 export function UniversalCalendar({
@@ -57,6 +61,7 @@ export function UniversalCalendar({
   onSelectDate,
   unscheduledItems,
   onUnscheduledItemAction,
+  initialMonth,
 }: UniversalCalendarProps) {
   const profile = useMemo(
     () => resolveCalendarProfileSettings(profileId, context, settings),
@@ -67,42 +72,19 @@ export function UniversalCalendar({
     () => profile.defaultFilters,
   );
 
-  const renderBody = () => {
-    if (profileId === "plexusIq") {
-      return (
-        <CanonicalMonthCalendar
-          cells={cells}
-          onSelectDate={onSelectDate}
-          unscheduledItems={unscheduledItems}
-          onUnscheduledItemAction={onUnscheduledItemAction}
-        />
-      );
-    }
-    return (
-      <div
-        className="rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-600 space-y-2"
-        data-testid="canonical-universal-calendar-placeholder"
-      >
-        <p className="font-medium text-slate-900">Calendar surface</p>
-        <p>
-          The universal calendar primitive is registered. Active filters
-          ({activeFilters.length}):
-        </p>
-        <ul className="list-disc pl-5 space-y-0.5">
-          {activeFilters.map((id) => (
-            <li key={id}>{CALENDAR_FILTERS[id]?.label ?? id}</li>
-          ))}
-          {activeFilters.length === 0 && (
-            <li className="italic text-slate-400">No filters active.</li>
-          )}
-        </ul>
-        <p className="text-slate-400 italic">
-          Month / week / day / agenda views and event hydration land in a
-          later batch.
-        </p>
-      </div>
-    );
-  };
+  // The month grid is profile-agnostic: each profile supplies its own
+  // `cells` data and the canonical view renders consistently across
+  // Plexus IQ, PCS, ACS, manager, admin, and facility surfaces. Filter
+  // bar + add-action button above the grid are profile-driven.
+  const renderBody = () => (
+    <CanonicalMonthCalendar
+      cells={cells}
+      onSelectDate={onSelectDate}
+      unscheduledItems={unscheduledItems}
+      onUnscheduledItemAction={onUnscheduledItemAction}
+      initialMonth={initialMonth}
+    />
+  );
 
   return (
     <div

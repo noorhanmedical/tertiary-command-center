@@ -2,20 +2,24 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar as CalendarIcon } from "lucide-react";
 import type { SchedulePatientDialogPatient } from "@/components/portal/SchedulePatientDialog";
+import {
+  CanonicalCommandCalendar,
+  type CanonicalMonthCellSummary,
+} from "@/components/calendar/CanonicalCommandCalendar";
 
-// Patient-specific mini calendar for the team portal right/left rail.
+// Patient-specific mini calendar for the team portal left rail.
 //
-// Wraps the existing facility-month-count behaviour but adds:
-//   - patient header (name, DOB, facility, qualified tests if known)
-//   - a clearly patient-scoped Schedule CTA that bubbles up via
-//     onSchedulePatient — the parent then opens the existing
-//     SchedulePatientDialog with the patient + date prefilled.
+// The grid itself is the canonical calendar shared by PCS, ACS,
+// Plexus IQ, and Dashboard — rendered via CanonicalCommandCalendar
+// (inline mode). This wrapper keeps the surrounding patient-scoped
+// affordances: patient header (name, DOB, facility, qualifying tests),
+// mode label, and the Schedule CTA that bubbles via onSchedulePatient.
 //
-// When no patient is selected for scheduling, the calendar still works
-// as a facility month view (same data shape it used before) — the
-// header just shows the facility context instead of a patient name.
+// When no patient is selected the calendar still works as a facility
+// month view (same data shape it used before); the header just shows
+// the facility context instead of a patient name.
 
 const POLL_MS = 30_000;
 
@@ -81,25 +85,27 @@ export function PatientMiniCalendar({
     enabled: !!facility,
   });
 
-  const cells = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const d of data?.days ?? []) counts.set(d.date, d.appointmentCount);
-    const first = new Date(cursor.y, cursor.m, 1);
-    const startOffset = first.getDay();
-    const lastDate = new Date(cursor.y, cursor.m + 1, 0).getDate();
-    const out: Array<{ date: string | null; count: number }> = [];
-    for (let i = 0; i < startOffset; i++) out.push({ date: null, count: 0 });
-    for (let day = 1; day <= lastDate; day++) {
-      const ds = `${cursor.y}-${String(cursor.m + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      out.push({ date: ds, count: counts.get(ds) ?? 0 });
+  // Build the per-date cell map the CanonicalMonthCalendar consumes.
+  // The facility month-summary endpoint returns one row per date with
+  // an appointment count; we surface that as the canonical cell count
+  // plus a single dot so the grid lights up where work exists.
+  const canonicalCells = useMemo<Record<string, CanonicalMonthCellSummary>>(() => {
+    const out: Record<string, CanonicalMonthCellSummary> = {};
+    for (const d of data?.days ?? []) {
+      const count = d.appointmentCount ?? 0;
+      if (count <= 0) continue;
+      out[d.date] = {
+        count,
+        dots: [
+          {
+            className: "bg-indigo-500",
+            title: `${count} appointment${count === 1 ? "" : "s"}`,
+          },
+        ],
+      };
     }
     return out;
-  }, [data, cursor]);
-
-  const monthLabel = new Date(cursor.y, cursor.m, 1).toLocaleString("default", {
-    month: "long",
-    year: "numeric",
-  });
+  }, [data]);
 
   const patientName = patient?.patientName ?? null;
   const patientDob = patient?.patientDob ?? null;
@@ -147,66 +153,30 @@ export function PatientMiniCalendar({
         </div>
       </div>
 
-      <div className="flex items-center justify-between mb-2">
-        <button
-          type="button"
-          onClick={() =>
-            setCursor((c) => (c.m === 0 ? { y: c.y - 1, m: 11 } : { ...c, m: c.m - 1 }))
-          }
-          className="p-1 hover:bg-slate-100 rounded"
-          data-testid="button-patient-mini-calendar-prev"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <span
-          className="text-sm font-semibold"
-          data-testid="patient-mini-calendar-month"
-        >
-          {monthLabel}
-        </span>
-        <button
-          type="button"
-          onClick={() =>
-            setCursor((c) => (c.m === 11 ? { y: c.y + 1, m: 0 } : { ...c, m: c.m + 1 }))
-          }
-          className="p-1 hover:bg-slate-100 rounded"
-          data-testid="button-patient-mini-calendar-next"
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="grid grid-cols-7 gap-0.5 text-[10px] text-slate-400 mb-1">
-        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-          <div key={i} className="text-center">
-            {d}
-          </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-7 gap-0.5">
-        {cells.map((c, i) => (
-          <button
-            key={i}
-            type="button"
-            disabled={!c.date}
-            onClick={() => c.date && onSelectDate(c.date)}
-            className={`aspect-square flex flex-col items-center justify-center rounded text-xs ${
-              !c.date
-                ? ""
-                : c.date === selectedDate
-                ? "bg-indigo-600 text-white"
-                : c.count > 0
-                ? "bg-indigo-50 text-indigo-900 hover:bg-indigo-100"
-                : "hover:bg-slate-100"
-            }`}
-            data-testid={c.date ? `patient-mini-calendar-day-${c.date}` : undefined}
-          >
-            {c.date && <span>{parseInt(c.date.slice(-2), 10)}</span>}
-            {c.date && c.count > 0 && (
-              <span className="text-[8px] opacity-80">{c.count}</span>
-            )}
-          </button>
-        ))}
+      {/* Canonical calendar shared by PCS, ACS, Plexus IQ, and Dashboard.
+          The patient header above + Schedule CTA below stay; only the
+          month grid renders through the canonical primitive. */}
+      {/* Re-key the canonical calendar on month change so the
+          uncontrolled cursor inside CanonicalMonthCalendar resets to
+          the selected month when the parent updates selectedDate. */}
+      {/* Re-key the canonical calendar on month change so the
+          uncontrolled cursor inside the view honours the parent's
+          selectedDate when scheduling switches patients/months. */}
+      <div data-testid="patient-mini-calendar-month-grid">
+        <CanonicalCommandCalendar
+          key={`${cursor.y}-${cursor.m}`}
+          mode="inline"
+          profileId={mode === "ancillarySchedule" ? "technician" : "patientCareSpecialist"}
+          cells={canonicalCells}
+          initialMonth={new Date(cursor.y, cursor.m, 1)}
+          onSelectDate={(iso) => {
+            const d = new Date(iso);
+            if (!Number.isNaN(d.getTime())) {
+              setCursor({ y: d.getFullYear(), m: d.getMonth() });
+            }
+            onSelectDate(iso);
+          }}
+        />
       </div>
 
       <div className="mt-3 flex items-center justify-end">

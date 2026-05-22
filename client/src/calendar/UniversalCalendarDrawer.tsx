@@ -40,6 +40,7 @@ export type UniversalCalendarDrawerProps = {
   onSelectDate?: (isoDate: string) => void;
   unscheduledItems?: CanonicalCalendarUnscheduledItem[];
   onUnscheduledItemAction?: (item: CanonicalCalendarUnscheduledItem) => void;
+  initialMonth?: Date;
 };
 
 export function UniversalCalendarDrawer({
@@ -54,6 +55,7 @@ export function UniversalCalendarDrawer({
   onSelectDate,
   unscheduledItems,
   onUnscheduledItemAction,
+  initialMonth,
 }: UniversalCalendarDrawerProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = open !== undefined;
@@ -89,6 +91,7 @@ export function UniversalCalendarDrawer({
             onSelectDate={onSelectDate}
             unscheduledItems={unscheduledItems}
             onUnscheduledItemAction={onUnscheduledItemAction}
+            initialMonth={initialMonth}
           />
         </div>
       </SheetContent>

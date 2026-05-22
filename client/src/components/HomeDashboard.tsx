@@ -22,10 +22,8 @@ import {
   Users2,
   CheckSquare,
 } from "lucide-react";
-import {
-  UniversalCalendarDrawer,
-  type CanonicalMonthCellSummary,
-} from "@/calendar";
+import { type CanonicalMonthCellSummary } from "@/calendar";
+import { CanonicalCommandCalendar } from "@/components/calendar/CanonicalCommandCalendar";
 
 type DayPatient = { id: number; batchId: number; name: string; time: string | null; ancillaries: string[] };
 type ClinicMonthCell = { isoDate: string; patientCount: number; ancillaryCount: number; patients?: DayPatient[] };
@@ -308,7 +306,9 @@ export function HomeDashboard({
           </div>
         </div>
       </header>
-      <UniversalCalendarDrawer
+      {/* Canonical calendar shared by PCS, ACS, Plexus IQ, and Dashboard. */}
+      <CanonicalCommandCalendar
+        mode="drawer"
         profileId="admin"
         open={homeCalendarOpen}
         onOpenChange={setHomeCalendarOpen}
