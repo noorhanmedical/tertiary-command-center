@@ -45,14 +45,28 @@ import { resolvePortalCapabilities } from "@/lib/portal/portalCapabilities";
 import { type CanonicalMonthCellSummary } from "@/calendar";
 
 // The user-facing workspace role lets us distinguish PCS vs ACS for
-// capability gating (procedure-side actions are ACS-only). Legacy direct
-// mounts (technician / liaison) pass through unchanged.
-type WorkspaceRole =
-  | "technician"
-  | "liaison"
+// capability gating (procedure-side actions are ACS-only). Legacy
+// direct mounts (technician / liaison) pass through unchanged via
+// the compatibility classifier on `workspaceIsAncillaryCareSpecialist`
+// below. New code should reference the public role names
+// (patientCareSpecialist / ancillaryCareSpecialist).
+type PublicWorkspaceRole =
   | "patientCareSpecialist"
   | "ancillaryCareSpecialist";
 
+// Compatibility alias — the public role plus the two legacy strings
+// still accepted by historical callers. The legacy names are
+// translated through `INTERNAL_ROLE` in
+// `client/src/components/workflow/ClinicWorkflowPortal.tsx`.
+type WorkspaceRole =
+  | PublicWorkspaceRole
+  | "technician"
+  | "liaison";
+
+// Internal-only role split. Kept for legacy back-compat in the
+// PortalShell `role` prop (used by Plexus IQ-era direct mounts).
+// New code should NOT extend this; use `WorkspaceRole` /
+// `PublicWorkspaceRole` and let the capability resolver drive gating.
 type Role = "technician" | "liaison";
 type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart";
 
