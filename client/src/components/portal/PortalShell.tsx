@@ -780,11 +780,14 @@ export function PortalShell({
   // capabilities take precedence (set below). Avoid using this for
   // permanent gating — admins drive workspace behavior through the Team
   // Member Profile.
+  // Safest default for an unmounted-role context is PCS (read +
+  // call/schedule), NOT ACS — ACS owns procedure-side actions that
+  // must be granted explicitly. Routes that mean ACS always pass
+  // `role="ancillaryCareSpecialist"` (or legacy technician/liaison).
   const workspaceIsAncillaryCareSpecialist =
     workspaceRole === "ancillaryCareSpecialist" ||
     workspaceRole === "technician" ||
-    workspaceRole === "liaison" ||
-    workspaceRole === undefined;
+    workspaceRole === "liaison";
   // Capability flags come from the resolved Team Member Profile. Workspace
   // name (PCS vs ACS) is no longer the gate — what the user can do is
   // determined by their profile's capabilities map. Fallbacks before the
