@@ -1998,6 +1998,8 @@ export function PortalShell({
                     facility={facility}
                     selectedDate={selectedDate}
                     mode={activeWorkspaceMode}
+                    assignedFacilityIds={profileAssignedFacilities}
+                    viewAllFacilities={profileViewAllFacilities}
                     onSelectDate={(d) => {
                       setSelectedDate(d);
                       if (!selectedPatientForScheduling) setCenterMode("patient");

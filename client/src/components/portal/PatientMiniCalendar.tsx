@@ -34,6 +34,12 @@ export type PatientMiniCalendarProps = {
     patient: SchedulePatientDialogPatient;
     selectedDate: string;
   }) => void;
+  // Profile-driven facility scope. When the selected facility isn't
+  // in `assignedFacilityIds` and `viewAllFacilities` is false, the
+  // calendar renders a soft access hint above the grid so the user
+  // sees why counts may be empty. The calendar itself stays visible.
+  assignedFacilityIds?: string[];
+  viewAllFacilities?: boolean;
 };
 
 function modeLabel(m: PatientMiniCalendarProps["mode"]): string {
@@ -50,6 +56,8 @@ export function PatientMiniCalendar({
   mode,
   onSelectDate,
   onSchedulePatient,
+  assignedFacilityIds,
+  viewAllFacilities,
 }: PatientMiniCalendarProps) {
   const [cursor, setCursor] = useState(() => {
     const d = new Date(selectedDate);
@@ -153,15 +161,34 @@ export function PatientMiniCalendar({
         </div>
       </div>
 
+      {/* Facility-access hint. The calendar stays visible, but when
+          the selected facility is outside the user's assigned scope
+          a soft note explains why counts may read zero. Falls back
+          to silent when the profile permits all facilities or no
+          assignment list was passed (e.g. legacy callers). */}
+      {(() => {
+        if (viewAllFacilities) return null;
+        if (!assignedFacilityIds || assignedFacilityIds.length === 0) return null;
+        if (!facility) return null;
+        if (assignedFacilityIds.includes(facility)) return null;
+        return (
+          <div
+            className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-4 text-amber-900"
+            data-testid="patient-mini-calendar-access-hint"
+          >
+            <span className="font-semibold uppercase tracking-wider">Heads up · </span>
+            <span>
+              "{facility}" is outside your assigned facilities — counts may
+              read zero or omit rows you can't access.
+            </span>
+          </div>
+        );
+      })()}
+
       {/* Canonical calendar shared by PCS, ACS, Plexus IQ, and Dashboard.
-          The patient header above + Schedule CTA below stay; only the
-          month grid renders through the canonical primitive. */}
-      {/* Re-key the canonical calendar on month change so the
-          uncontrolled cursor inside CanonicalMonthCalendar resets to
-          the selected month when the parent updates selectedDate. */}
-      {/* Re-key the canonical calendar on month change so the
-          uncontrolled cursor inside the view honours the parent's
-          selectedDate when scheduling switches patients/months. */}
+          Re-key on month change so the uncontrolled cursor inside the
+          view honours the parent's selectedDate when scheduling
+          switches patients/months. */}
       <div data-testid="patient-mini-calendar-month-grid">
         <CanonicalCommandCalendar
           key={`${cursor.y}-${cursor.m}`}
