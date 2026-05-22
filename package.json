@@ -51,7 +51,8 @@
     "qa:calendar-profile-overrides": "tsx script/qaCalendarProfileOverrides.ts",
     "qa:pcs-acs-portal-actions": "tsx script/qaPcsAcsPortalActions.ts",
     "qa:pcs-acs-capabilities": "tsx script/qaPcsAcsCapabilities.ts",
-    "qa:pcs-acs-mini-calendar": "tsx script/qaPcsAcsMiniCalendar.ts"
+    "qa:pcs-acs-mini-calendar": "tsx script/qaPcsAcsMiniCalendar.ts",
+    "smoke:pcs-acs-portal": "tsx script/smokePcsAcsPortal.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
