@@ -2428,12 +2428,26 @@ export function PortalShell({
                               </Badge>
                             )}
                           </div>
-                          {workspaceCanCallAndSchedule && (
+                          {workspaceCanCallAndSchedule && (() => {
+                            // Client-side service prevalidation: when the
+                            // team-member profile carries an allowedServiceTypes
+                            // list, disable the row schedule button for any
+                            // service the user can't book. The server gate is
+                            // still authoritative; this only prevents a
+                            // disallowed click from reaching the dialog.
+                            const rowServiceType = row.serviceType ?? null;
+                            const serviceDisallowed =
+                              allowedServiceTypes.length > 0 &&
+                              !!rowServiceType &&
+                              !allowedServiceTypes.includes(rowServiceType);
+                            return (
                             <div className="mt-2 flex items-center justify-end gap-1">
                               <div className="inline-flex rounded-full border border-slate-200 bg-white overflow-hidden">
                                 <button
                                   type="button"
-                                  onClick={() =>
+                                  disabled={serviceDisallowed}
+                                  onClick={() => {
+                                    if (serviceDisallowed) return;
                                     openSchedulePatientDialog({
                                       patientName: row.patientName ?? null,
                                       patientDob: row.patientDob ?? null,
@@ -2441,11 +2455,15 @@ export function PortalShell({
                                       patientScreeningId: row.patientScreeningId ?? null,
                                       executionCaseId: row.executionCaseId ?? null,
                                       serviceType: row.serviceType ?? null,
-                                    })
-                                  }
-                                  className="inline-flex h-7 w-7 items-center justify-center hover:bg-slate-50"
+                                    });
+                                  }}
+                                  className="inline-flex h-7 w-7 items-center justify-center hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                                   data-testid={`button-ancillary-calendar-${row.id ?? idx}`}
-                                  title="Schedule patient"
+                                  title={
+                                    serviceDisallowed
+                                      ? `Your profile doesn't include "${rowServiceType}" — ask an admin if you need access.`
+                                      : "Schedule patient"
+                                  }
                                 >
                                   <CalendarIcon className="h-3.5 w-3.5 text-[#4863A0]" />
                                 </button>
@@ -2472,7 +2490,8 @@ export function PortalShell({
                                 </button>
                               </div>
                             </div>
-                          )}
+                            );
+                          })()}
                           {workspaceCanCompleteProcedure &&
                             row.patientScreeningId != null &&
                             row.serviceType && (
