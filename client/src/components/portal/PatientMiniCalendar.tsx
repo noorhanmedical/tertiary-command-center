@@ -8,18 +8,22 @@ import {
   CanonicalCommandCalendar,
   type CanonicalMonthCellSummary,
 } from "@/components/calendar/CanonicalCommandCalendar";
+import {
+  buildCommandCalendarCells,
+  defaultCommandCalendarEventWindow,
+  type CommandCalendarSummaryRow,
+} from "@/lib/calendar/commandCalendarViewModel";
+import type { GlobalScheduleEvent } from "@shared/schema";
 
 // Patient-specific mini calendar for the team portal left rail.
 //
 // The grid itself is the canonical calendar shared by PCS, ACS,
 // Plexus IQ, and Dashboard — rendered via CanonicalCommandCalendar
-// (inline mode). This wrapper keeps the surrounding patient-scoped
-// affordances: patient header (name, DOB, facility, qualifying tests),
-// mode label, and the Schedule CTA that bubbles via onSchedulePatient.
-//
-// When no patient is selected the calendar still works as a facility
-// month view (same data shape it used before); the header just shows
-// the facility context instead of a patient name.
+// (inline mode) AND fed by the same `buildCommandCalendarCells`
+// helper. So PCS/ACS no longer show a simplified count-only
+// calendar — they show the same per-date ancillary-category dots
+// and procedure-complete badge Plexus IQ shows, scoped to the
+// current facility.
 
 const POLL_MS = 30_000;
 
@@ -78,42 +82,72 @@ export function PatientMiniCalendar({
     });
   }, [selectedDate]);
 
-  const monthIso = `${cursor.y}-${String(cursor.m + 1).padStart(2, "0")}`;
-
-  const { data } = useQuery<{ days: { date: string; appointmentCount: number }[] }>({
-    queryKey: ["/api/portal/month-summary", facility, monthIso],
+  // Canonical calendar-summary feed (one row per screening_batch).
+  // Same data Plexus IQ uses. We filter to the current facility on
+  // the client via buildCommandCalendarCells so the left-rail
+  // calendar shows the right slice of work.
+  const { data: summary = [] } = useQuery<CommandCalendarSummaryRow[]>({
+    queryKey: ["/api/screening-batches/calendar-summary"],
     queryFn: async () => {
-      const u = new URL("/api/portal/month-summary", window.location.origin);
-      u.searchParams.set("facility", facility);
-      u.searchParams.set("month", monthIso);
-      const res = await fetch(u.pathname + u.search, { credentials: "include" });
+      const res = await fetch("/api/screening-batches/calendar-summary", {
+        credentials: "include",
+      });
+      if (!res.ok) {
+        throw new Error(`Calendar summary fetch failed (${res.status})`);
+      }
       return res.json();
     },
+    staleTime: 15_000,
     refetchInterval: POLL_MS,
-    enabled: !!facility,
   });
 
-  // Build the per-date cell map the CanonicalMonthCalendar consumes.
-  // The facility month-summary endpoint returns one row per date with
-  // an appointment count; we surface that as the canonical cell count
-  // plus a single dot so the grid lights up where work exists.
-  const canonicalCells = useMemo<Record<string, CanonicalMonthCellSummary>>(() => {
-    const out: Record<string, CanonicalMonthCellSummary> = {};
-    for (const d of data?.days ?? []) {
-      const count = d.appointmentCount ?? 0;
-      if (count <= 0) continue;
-      out[d.date] = {
-        count,
-        dots: [
-          {
-            className: "bg-indigo-500",
-            title: `${count} appointment${count === 1 ? "" : "s"}`,
-          },
-        ],
-      };
-    }
-    return out;
-  }, [data]);
+  // Procedure-complete events drive the calendar's ✓ badge so a date
+  // with a completed procedure is visually distinct, matching the
+  // Plexus IQ surface.
+  const completedEventRange = useMemo(
+    () => defaultCommandCalendarEventWindow(),
+    [],
+  );
+  const { data: completedEvents = [] } = useQuery<GlobalScheduleEvent[]>({
+    queryKey: [
+      "/api/global-schedule-events",
+      {
+        eventType: "procedure_complete",
+        startDate: completedEventRange.start,
+        endDate: completedEventRange.end,
+      },
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("eventType", "procedure_complete");
+      params.set("startDate", completedEventRange.start);
+      params.set("endDate", completedEventRange.end);
+      params.set("limit", "500");
+      const res = await fetch(
+        `/api/global-schedule-events?${params.toString()}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) {
+        throw new Error(`Calendar events fetch failed (${res.status})`);
+      }
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  // Shared canonical builder — same call PCS, ACS, Plexus IQ, and
+  // Dashboard use. `facility` scopes the rows so the left rail
+  // shows the current clinic's per-date work. Legacy
+  // `/api/portal/month-summary` is no longer used here.
+  const canonicalCells = useMemo<Record<string, CanonicalMonthCellSummary>>(
+    () =>
+      buildCommandCalendarCells({
+        summary,
+        facility: facility ?? null,
+        completedEvents,
+      }),
+    [summary, facility, completedEvents],
+  );
 
   const patientName = patient?.patientName ?? null;
   const patientDob = patient?.patientDob ?? null;
