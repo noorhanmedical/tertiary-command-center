@@ -542,4 +542,68 @@ export function registerCompletedBillingPackageRoutes(app: Express) {
       return res.status(500).json({ error: error.message ?? "Failed to transition" });
     }
   });
+
+  // GET /api/invoice-candidates
+  // Read-only candidate join sourced from completed_billing_packages
+  // at terminal status, with the line-item / invoice linkage derived
+  // from the package metadata written by addCompletedPackageToInvoice.
+  // Filters: facilityId, serviceType, packageStatus, limit.
+  //
+  // This route never writes — UI surfaces show "linked" vs "not yet
+  // linked" without mutating the spine.
+  app.get("/api/invoice-candidates", async (req, res) => {
+    try {
+      const q = req.query as Record<string, string | undefined>;
+      const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
+      const filters: Parameters<typeof listCompletedBillingPackages>[0] = {};
+
+      if (q.facilityId) filters.facilityId = q.facilityId;
+      if (q.serviceType) filters.serviceType = q.serviceType;
+      if (q.packageStatus) filters.packageStatus = q.packageStatus;
+
+      const packages = await listCompletedBillingPackages(filters, limit);
+
+      const candidates = packages.map((pkg) => {
+        const meta =
+          typeof pkg.metadata === "object" && pkg.metadata !== null
+            ? (pkg.metadata as Record<string, unknown>)
+            : {};
+        const invoiceLineItemId =
+          typeof meta.invoiceLineItemId === "number" ? meta.invoiceLineItemId : null;
+        const invoiceId =
+          typeof meta.invoiceId === "number" ? meta.invoiceId : null;
+        const ourPortionPercentage =
+          typeof meta.ourPortionPercentage === "number"
+            ? meta.ourPortionPercentage
+            : null;
+
+        return {
+          completedBillingPackageId: pkg.id,
+          patientScreeningId: pkg.patientScreeningId,
+          executionCaseId: pkg.executionCaseId,
+          procedureEventId: pkg.procedureEventId,
+          patientName: pkg.patientName,
+          patientInitials: pkg.patientInitials,
+          patientDob: pkg.patientDob,
+          facilityId: pkg.facilityId,
+          serviceType: pkg.serviceType,
+          dos: pkg.dos,
+          packageStatus: pkg.packageStatus,
+          paymentStatus: pkg.paymentStatus,
+          fullAmountPaid: pkg.fullAmountPaid,
+          paymentDate: pkg.paymentDate,
+          ourPortionPercentage,
+          invoiceLineItemId,
+          invoiceId,
+          createdAt: pkg.createdAt,
+          updatedAt: pkg.updatedAt,
+        };
+      });
+
+      return res.json(candidates);
+    } catch (error: any) {
+      console.error("[invoice-candidates] failed:", error);
+      return res.status(500).json({ error: error.message ?? "Failed to list candidates" });
+    }
+  });
 }
