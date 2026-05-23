@@ -6,6 +6,7 @@ import {
   upsertAdminSetting,
   getAdminSettingValue,
 } from "../repositories/adminSettings.repo";
+import { logAudit } from "../services/auditService";
 
 const upsertBodySchema = z.object({
   settingDomain: z.string().trim().min(1),
@@ -98,6 +99,16 @@ export function registerAdminSettingsRoutes(app: Express) {
         userId: parsed.data.userId ?? null,
         active: parsed.data.active ?? true,
         description: parsed.data.description ?? null,
+      });
+      // Audit every admin_settings upsert. High-trust surface: the
+      // resolver consults these rows on every read, so every change
+      // belongs in the system-wide actor + action log.
+      void logAudit(req, "upsert", "admin_setting", saved.id, {
+        settingDomain: parsed.data.settingDomain,
+        settingKey: parsed.data.settingKey,
+        facilityId: parsed.data.facilityId ?? null,
+        userId: parsed.data.userId ?? null,
+        active: parsed.data.active ?? true,
       });
       res.json(saved);
     } catch (error: any) {
