@@ -55,7 +55,8 @@
     "smoke:pcs-acs-portal": "tsx script/smokePcsAcsPortal.ts",
     "qa:pcs-acs-role-isolation": "tsx script/qaPcsAcsLegacyRoleIsolation.ts",
     "qa:acs-capability-onboarding": "tsx script/qaAcsCapabilityOnboarding.ts",
-    "smoke:pcs-acs-portal-live": "tsx script/smokePcsAcsPortalLive.ts"
+    "smoke:pcs-acs-portal-live": "tsx script/smokePcsAcsPortalLive.ts",
+    "qa:scheduling-triage": "tsx script/qaSchedulingTriage.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
