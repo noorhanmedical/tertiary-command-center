@@ -4,6 +4,7 @@ import { storage } from "../storage";
 import { VALID_FACILITIES } from "./helpers";
 import { logAudit } from "../services/auditService";
 import { ensureCanonicalSpineForScreening } from "../services/patientCommitService";
+import { appendPatientJourneyEvent } from "../repositories/executionCase.repo";
 
 export function registerAppointmentRoutes(app: Express) {
   app.get("/api/appointments", async (req, res) => {
@@ -82,6 +83,27 @@ export function registerAppointmentRoutes(app: Express) {
         });
       }
       void logAudit(req, "create", "appointment", appt.id, { patientName, facility, scheduledDate, scheduledTime, testType });
+      // Per-patient journey event so the patient timeline reflects
+      // appointment creation alongside the schedule + audit log.
+      if (patientScreeningId != null) {
+        void appendPatientJourneyEvent({
+          patientScreeningId,
+          patientName: patientName ?? "Unknown patient",
+          eventType: "appointment_created",
+          eventSource: "appointments_book",
+          actorUserId: req.session?.userId ?? null,
+          summary: `Appointment booked: ${testType} @ ${facility} on ${scheduledDate} ${scheduledTime}`,
+          metadata: {
+            appointmentId: appt.id,
+            facility,
+            scheduledDate,
+            scheduledTime,
+            testType,
+          },
+        }).catch((err) => {
+          console.error("[appointments.book] journey event append failed:", err.message);
+        });
+      }
       res.json(appt);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -99,6 +121,19 @@ export function registerAppointmentRoutes(app: Express) {
         const appt = await storage.cancelAppointment(id);
         if (!appt) return res.status(404).json({ error: "Appointment not found" });
         void logAudit(req, "cancel", "appointment", id, { status: "cancelled" });
+        if (appt.patientScreeningId != null) {
+          void appendPatientJourneyEvent({
+            patientScreeningId: appt.patientScreeningId,
+            patientName: appt.patientName ?? "Unknown patient",
+            eventType: "appointment_cancelled",
+            eventSource: "appointments_patch",
+            actorUserId: req.session?.userId ?? null,
+            summary: `Appointment ${id} cancelled`,
+            metadata: { appointmentId: id, status: "cancelled" },
+          }).catch((err) => {
+            console.error("[appointments.patch] journey event append failed:", err.message);
+          });
+        }
         return res.json(appt);
       }
       res.status(400).json({ error: "Only cancellation is supported via PATCH" });
