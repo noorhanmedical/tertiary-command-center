@@ -65,7 +65,8 @@
     "qa:calendar-complete": "tsx script/qaCalendarComplete.ts",
     "qa:pcs-acs-complete": "tsx script/qaPcsAcsComplete.ts",
     "qa:tertiary-command-center": "tsx script/qaTertiaryCommandCenter.ts",
-    "smoke:tertiary-command-center": "tsx script/smokeTertiaryCommandCenter.ts"
+    "smoke:tertiary-command-center": "tsx script/smokeTertiaryCommandCenter.ts",
+    "qa:calendar-true-parity": "tsx script/qaCalendarTrueParity.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",

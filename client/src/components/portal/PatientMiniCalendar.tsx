@@ -137,8 +137,8 @@ export function PatientMiniCalendar({
 
   // Shared canonical builder — same call PCS, ACS, Plexus IQ, and
   // Dashboard use. `facility` scopes the rows so the left rail
-  // shows the current clinic's per-date work. Legacy
-  // `/api/portal/month-summary` is no longer used here.
+  // shows the current clinic's per-date work. The legacy
+  // count-only month-summary feed is no longer used here.
   const canonicalCells = useMemo<Record<string, CanonicalMonthCellSummary>>(
     () =>
       buildCommandCalendarCells({
