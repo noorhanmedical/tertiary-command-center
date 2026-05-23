@@ -60,7 +60,8 @@
     "qa:acs-execution-readiness": "tsx script/qaAcsExecutionReadiness.ts",
     "qa:projected-invoice-reconciliation": "tsx script/qaProjectedInvoiceReconciliation.ts",
     "smoke:billing-invoice-spine": "tsx script/smokeBillingInvoiceSpine.ts",
-    "qa:audit-coverage": "tsx script/qaAuditCoverage.ts"
+    "qa:audit-coverage": "tsx script/qaAuditCoverage.ts",
+    "qa:outbox-coverage": "tsx script/qaOutboxCoverage.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
