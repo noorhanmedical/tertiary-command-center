@@ -11,9 +11,16 @@ import {
 import {
   buildCommandCalendarCells,
   defaultCommandCalendarEventWindow,
+  ANCILLARY_DOT_CLASS,
   type CommandCalendarSummaryRow,
 } from "@/lib/calendar/commandCalendarViewModel";
 import type { GlobalScheduleEvent } from "@shared/schema";
+import { PromoteToPlaygroundButton } from "@/components/playground/PromoteToPlaygroundButton";
+import {
+  buildCalendarDatePlaygroundContext,
+  type PanelPlaygroundContext,
+  type PanelPlaygroundSource,
+} from "@/lib/playground/panelPlaygroundContext";
 
 // Patient-specific mini calendar for the team portal left rail.
 //
@@ -44,6 +51,13 @@ export type PatientMiniCalendarProps = {
   // sees why counts may be empty. The calendar itself stays visible.
   assignedFacilityIds?: string[];
   viewAllFacilities?: boolean;
+  // Source surface tag passed into the canonical
+  // PanelPlaygroundContext when the user expands a date popup.
+  // Defaults to "unknown" — callers in PCS / ACS pass "pcs" / "acs".
+  panelSourceSurface?: PanelPlaygroundSource;
+  // Optional promote handler. When present, the selected-date
+  // popup shows the canonical promote-to-Playground button.
+  onPromoteToPlayground?: (context: PanelPlaygroundContext) => void;
 };
 
 function modeLabel(m: PatientMiniCalendarProps["mode"]): string {
@@ -62,6 +76,8 @@ export function PatientMiniCalendar({
   onSchedulePatient,
   assignedFacilityIds,
   viewAllFacilities,
+  panelSourceSurface = "unknown",
+  onPromoteToPlayground,
 }: PatientMiniCalendarProps) {
   const [cursor, setCursor] = useState(() => {
     const d = new Date(selectedDate);
@@ -239,6 +255,92 @@ export function PatientMiniCalendar({
           }}
         />
       </div>
+
+      {/* Selected-date popup. Compact inline summary of the cell the
+          parent has flagged as `selectedDate`. Surfaces the same
+          ancillary-category dots + total count + procedure-complete
+          badge the grid shows, plus the canonical promote-to-Playground
+          arrow when a handler is wired. */}
+      {(() => {
+        const cell = selectedDate ? canonicalCells[selectedDate] : undefined;
+        if (!selectedDate) return null;
+        const count = cell?.count ?? 0;
+        const dots = cell?.dots ?? [];
+        const procedureCompleted = !!cell?.badge;
+        const categoryLabels = dots
+          .map((d) => d.title)
+          .filter((t): t is string => !!t);
+        const categoryKeys = Object.keys(ANCILLARY_DOT_CLASS).filter((k) =>
+          dots.some((d) => d.className === ANCILLARY_DOT_CLASS[k]?.className),
+        );
+        const promoteContext = onPromoteToPlayground
+          ? buildCalendarDatePlaygroundContext({
+              sourceSurface: panelSourceSurface,
+              selectedDate,
+              facilityId: facility || null,
+              count,
+              categories: categoryKeys,
+              procedureCompleted,
+            })
+          : null;
+        return (
+          <div
+            className="mt-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[11px]"
+            data-testid="patient-mini-calendar-date-popup"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  {selectedDate}
+                  {facility ? ` · ${facility}` : ""}
+                </div>
+                <div className="text-slate-900 leading-tight">
+                  {count > 0 ? (
+                    <>
+                      <span className="font-semibold tabular-nums">{count}</span>
+                      <span className="ml-1 text-slate-600">
+                        qualifying patient{count === 1 ? "" : "s"}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-slate-500 italic">No qualifying batches on this date.</span>
+                  )}
+                </div>
+                {(categoryLabels.length > 0 || procedureCompleted) && (
+                  <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                    {dots.map((d, i) => (
+                      <span
+                        key={i}
+                        className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0 text-[9px] font-medium border border-slate-200 bg-white text-slate-700`}
+                        title={d.title}
+                        data-testid={`patient-mini-calendar-date-popup-dot-${i}`}
+                      >
+                        <span className={`inline-block h-1.5 w-1.5 rounded-full ${d.className}`} />
+                        {d.title ?? ""}
+                      </span>
+                    ))}
+                    {procedureCompleted && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full px-1.5 py-0 text-[9px] font-medium border border-emerald-200 bg-emerald-50 text-emerald-800"
+                        data-testid="patient-mini-calendar-date-popup-procedure-complete"
+                      >
+                        ✓ Procedure complete
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              {promoteContext && onPromoteToPlayground ? (
+                <PromoteToPlaygroundButton
+                  context={promoteContext}
+                  onPromote={onPromoteToPlayground}
+                  title={`Expand ${selectedDate} in Playground`}
+                />
+              ) : null}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="mt-3 flex items-center justify-end">
         <Button

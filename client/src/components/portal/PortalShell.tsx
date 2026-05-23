@@ -2021,6 +2021,20 @@ export function PortalShell({
                     mode={activeWorkspaceMode}
                     assignedFacilityIds={profileAssignedFacilities}
                     viewAllFacilities={profileViewAllFacilities}
+                    panelSourceSurface={
+                      workspaceIsAncillaryCareSpecialist ? "acs" : "pcs"
+                    }
+                    onPromoteToPlayground={(ctx) => {
+                      // Canonical panel → Playground promote handler.
+                      // Stages the selected date through the existing
+                      // centerMode pipeline so the Playground body
+                      // re-renders with the canonical context.
+                      if (ctx.selectedDate) setSelectedDate(ctx.selectedDate);
+                      setCenterMode("playground");
+                      setCenterTitle(
+                        `Calendar — ${ctx.facilityId ? `${ctx.facilityId} · ` : ""}${ctx.selectedDate ?? ""}`,
+                      );
+                    }}
                     onSelectDate={(d) => {
                       setSelectedDate(d);
                       if (!selectedPatientForScheduling) setCenterMode("patient");
