@@ -58,7 +58,8 @@
     "smoke:pcs-acs-portal-live": "tsx script/smokePcsAcsPortalLive.ts",
     "qa:scheduling-triage": "tsx script/qaSchedulingTriage.ts",
     "qa:acs-execution-readiness": "tsx script/qaAcsExecutionReadiness.ts",
-    "qa:projected-invoice-reconciliation": "tsx script/qaProjectedInvoiceReconciliation.ts"
+    "qa:projected-invoice-reconciliation": "tsx script/qaProjectedInvoiceReconciliation.ts",
+    "smoke:billing-invoice-spine": "tsx script/smokeBillingInvoiceSpine.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
