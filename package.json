@@ -57,7 +57,8 @@
     "qa:acs-capability-onboarding": "tsx script/qaAcsCapabilityOnboarding.ts",
     "smoke:pcs-acs-portal-live": "tsx script/smokePcsAcsPortalLive.ts",
     "qa:scheduling-triage": "tsx script/qaSchedulingTriage.ts",
-    "qa:acs-execution-readiness": "tsx script/qaAcsExecutionReadiness.ts"
+    "qa:acs-execution-readiness": "tsx script/qaAcsExecutionReadiness.ts",
+    "qa:projected-invoice-reconciliation": "tsx script/qaProjectedInvoiceReconciliation.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
