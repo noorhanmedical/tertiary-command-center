@@ -61,7 +61,11 @@
     "qa:projected-invoice-reconciliation": "tsx script/qaProjectedInvoiceReconciliation.ts",
     "smoke:billing-invoice-spine": "tsx script/smokeBillingInvoiceSpine.ts",
     "qa:audit-coverage": "tsx script/qaAuditCoverage.ts",
-    "qa:outbox-coverage": "tsx script/qaOutboxCoverage.ts"
+    "qa:outbox-coverage": "tsx script/qaOutboxCoverage.ts",
+    "qa:calendar-complete": "tsx script/qaCalendarComplete.ts",
+    "qa:pcs-acs-complete": "tsx script/qaPcsAcsComplete.ts",
+    "qa:tertiary-command-center": "tsx script/qaTertiaryCommandCenter.ts",
+    "smoke:tertiary-command-center": "tsx script/smokeTertiaryCommandCenter.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
