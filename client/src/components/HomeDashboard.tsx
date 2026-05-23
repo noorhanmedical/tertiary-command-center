@@ -24,6 +24,13 @@ import {
 } from "lucide-react";
 import { type CanonicalMonthCellSummary } from "@/calendar";
 import { CanonicalCommandCalendar } from "@/components/calendar/CanonicalCommandCalendar";
+import {
+  buildCommandCalendarCells,
+  defaultCommandCalendarEventWindow,
+  type CommandCalendarSummaryRow,
+} from "@/lib/calendar/commandCalendarViewModel";
+import { useQuery as useCalendarQuery } from "@tanstack/react-query";
+import type { GlobalScheduleEvent } from "@shared/schema";
 
 type DayPatient = { id: number; batchId: number; name: string; time: string | null; ancillaries: string[] };
 type ClinicMonthCell = { isoDate: string; patientCount: number; ancillaryCount: number; patients?: DayPatient[] };
@@ -193,23 +200,67 @@ export function HomeDashboard({
 
   const selectedDayPatients = useMemo<DayPatient[]>(() => selectedMonthCell?.patients ?? [], [selectedMonthCell]);
 
-  // Per-date cells for the global home calendar drawer. Aggregates
-  // patient counts across every clinic the dashboard knows about so
-  // the drawer reflects platform-wide activity.
-  const homeCalendarCells = useMemo<Record<string, CanonicalMonthCellSummary>>(() => {
-    const counts = new Map<string, number>();
-    for (const tab of dashboardClinicTabs) {
-      for (const cell of tab.monthCells) {
-        if (!cell.isoDate) continue;
-        counts.set(cell.isoDate, (counts.get(cell.isoDate) ?? 0) + cell.patientCount);
+  // Canonical calendar-summary feed (one row per screening_batch) +
+  // procedure-complete events. Same source Plexus IQ + PCS/ACS use,
+  // so the drawer calendar shows the same ancillary-category dots
+  // and procedure-complete badge.
+  const { data: homeCalendarSummary = [] } = useCalendarQuery<
+    CommandCalendarSummaryRow[]
+  >({
+    queryKey: ["/api/screening-batches/calendar-summary", "home-dashboard"],
+    queryFn: async () => {
+      const res = await fetch("/api/screening-batches/calendar-summary", {
+        credentials: "include",
+      });
+      if (!res.ok) {
+        throw new Error(`Calendar summary fetch failed (${res.status})`);
       }
-    }
-    const out: Record<string, CanonicalMonthCellSummary> = {};
-    for (const [date, count] of counts) {
-      if (count > 0) out[date] = { count, dots: [] };
-    }
-    return out;
-  }, [dashboardClinicTabs]);
+      return res.json();
+    },
+    staleTime: 15_000,
+  });
+  const homeCompletedEventRange = useMemo(
+    () => defaultCommandCalendarEventWindow(),
+    [],
+  );
+  const { data: homeCompletedEvents = [] } = useCalendarQuery<
+    GlobalScheduleEvent[]
+  >({
+    queryKey: [
+      "/api/global-schedule-events",
+      {
+        eventType: "procedure_complete",
+        startDate: homeCompletedEventRange.start,
+        endDate: homeCompletedEventRange.end,
+        surface: "home-dashboard",
+      },
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("eventType", "procedure_complete");
+      params.set("startDate", homeCompletedEventRange.start);
+      params.set("endDate", homeCompletedEventRange.end);
+      params.set("limit", "500");
+      const res = await fetch(
+        `/api/global-schedule-events?${params.toString()}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) {
+        throw new Error(`Calendar events fetch failed (${res.status})`);
+      }
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+  // Per-date cells for the global home calendar drawer.
+  const homeCalendarCells = useMemo<Record<string, CanonicalMonthCellSummary>>(
+    () =>
+      buildCommandCalendarCells({
+        summary: homeCalendarSummary,
+        completedEvents: homeCompletedEvents,
+      }),
+    [homeCalendarSummary, homeCompletedEvents],
+  );
 
   const selectedDayAncillaryBreakdown = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
