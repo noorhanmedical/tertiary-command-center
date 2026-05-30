@@ -60,10 +60,7 @@ export type SelectedCommandContext = {
   context: PanelPlaygroundContext | null;
 };
 
-export type PlaygroundWorkspaceType =
-  | CommandComponentType
-  | "call"
-  | "empty";
+export type PlaygroundWorkspaceType = CommandComponentType | "call" | "empty";
 
 export type CommandPermission =
   | "viewCalendar"

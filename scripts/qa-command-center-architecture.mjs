@@ -4,19 +4,19 @@ import path from "node:path";
 const root = process.cwd();
 
 const requiredFiles = [
-  "src/features/command-center/types/commandCenterTypes.ts",
-  "src/features/command-center/context/CommandCenterContext.tsx",
-  "src/features/command-center/components/CommandLeftRail.tsx",
-  "src/features/command-center/components/PanelPopupCard.tsx",
-  "src/features/command-center/playground/CommandPlayground.tsx",
-  "src/features/command-center/components/CommandRightContextPanel.tsx",
-  "src/features/command-center/providers/phoneProviderTypes.ts",
-  "src/features/command-center/providers/ringCentralProvider.ts",
-  "src/features/command-center/providers/manualPhoneProvider.ts",
+  "client/src/features/command-center/types/commandCenterTypes.ts",
+  "client/src/features/command-center/context/CommandCenterContext.tsx",
+  "client/src/features/command-center/components/CommandLeftRail.tsx",
+  "client/src/features/command-center/components/PanelPopupCard.tsx",
+  "client/src/features/command-center/playground/CommandPlayground.tsx",
+  "client/src/features/command-center/components/CommandRightContextPanel.tsx",
+  "client/src/features/command-center/providers/phoneProviderTypes.ts",
+  "client/src/features/command-center/providers/ringCentralProvider.ts",
+  "client/src/features/command-center/providers/manualPhoneProvider.ts",
 ];
 
 const requiredText = {
-  "src/features/command-center/components/CommandLeftRail.tsx": [
+  "client/src/features/command-center/components/CommandLeftRail.tsx": [
     "calendar",
     "phone",
     "marketing",
@@ -25,12 +25,12 @@ const requiredText = {
     "scratchpad",
     "left-[96px]",
   ],
-  "src/features/command-center/components/PanelPopupCard.tsx": [
+  "client/src/features/command-center/components/PanelPopupCard.tsx": [
     "promoteToPlayground",
     "setSelectedContext",
     "SquareArrowOutUpRight",
   ],
-  "src/features/command-center/providers/phoneProviderTypes.ts": [
+  "client/src/features/command-center/providers/phoneProviderTypes.ts": [
     "PhoneProviderAdapter",
     "ringcentral",
     "dialpad",
@@ -39,7 +39,7 @@ const requiredText = {
     "goto",
     "manual",
   ],
-  "src/features/command-center/playground/CommandPlayground.tsx": [
+  "client/src/features/command-center/playground/CommandPlayground.tsx": [
     "CalendarDateWorkspace",
     "PhoneWorkspace",
     "MarketingWorkspace",
