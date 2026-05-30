@@ -1,7 +1,11 @@
 import type { LucideIcon } from "lucide-react";
 import { Activity, Brain, HeartPulse, Scan } from "lucide-react";
+import {
+  getAncillaryCategory as sharedGetAncillaryCategory,
+  type AncillaryCategory as SharedAncillaryCategory,
+} from "@shared/ancillaryCategory";
 
-export type AncillaryCategory = "brainwave" | "vitalwave" | "ultrasound" | "other";
+export type AncillaryCategory = SharedAncillaryCategory;
 
 export const categoryLabels: Record<AncillaryCategory, string> = {
   brainwave: "BrainWave",
@@ -47,38 +51,7 @@ export const categoryStyles: Record<
   },
 };
 
-const ULTRASOUND_KEYWORDS = [
-  "ultrasound",
-  "carotid",
-  "arterial",
-  "venous",
-  "aorta",
-  "abdomen",
-  "renal",
-  "thyroid",
-  "pelvic",
-  "echo",
-  "echocardiogram",
-  "doppler",
-] as const;
-
-export function getAncillaryCategory(testName: string): AncillaryCategory {
-  const t = String(testName || "").toLowerCase();
-
-  if (t.includes("brainwave") || t.includes("eeg") || t.includes("neuro")) {
-    return "brainwave";
-  }
-
-  if (t.includes("vitalwave") || t.includes("ekg") || t.includes("ecg") || t.includes("cardiac")) {
-    return "vitalwave";
-  }
-
-  if (ULTRASOUND_KEYWORDS.some((k) => t.includes(k))) {
-    return "ultrasound";
-  }
-
-  return "other";
-}
+export const getAncillaryCategory = sharedGetAncillaryCategory;
 
 export function isImagingTest(testName: string): boolean {
   return getAncillaryCategory(testName) === "ultrasound";

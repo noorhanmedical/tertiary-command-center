@@ -38,6 +38,7 @@ import { TopBanner } from "@/components/TopBanner";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
+import PlexusIQPage from "@/pages/plexus-iq";
 
 const SIDEBAR_STYLE = {
   "--sidebar-width": "18rem",
@@ -134,6 +135,11 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
         </Route>
         <Route path="/outreach-qualification">
           <Redirect to="/outreach-patients" />
+        </Route>
+        <Route path="/plexus-iq">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <PlexusIQPage />
+          </SidebarProvider>
         </Route>
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">

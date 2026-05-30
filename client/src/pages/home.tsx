@@ -48,7 +48,6 @@ import { PatientDirectoryView } from "@/components/PatientDirectoryView";
 import { ResultsView } from "@/components/ResultsView";
 import { PatientCard } from "@/components/PatientCard";
 import { AppointmentModal } from "@/components/AppointmentModal";
-import { BatchHeader } from "@/components/BatchHeader";
 import VisitBuildPane from "@/components/qualification/VisitBuildPane";
 
 export type ScreeningBatchWithPatients = ScreeningBatchWithPatientsHook;

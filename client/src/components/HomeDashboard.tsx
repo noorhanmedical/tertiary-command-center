@@ -14,6 +14,7 @@ import {
   Phone,
   Plus,
   Radio,
+  Sparkles,
   Stethoscope,
   Upload,
   Users,
@@ -409,6 +410,26 @@ export function HomeDashboard({
                   label="Outreach Patients"
                   icon={<Radio className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
                 />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Link href="/plexus-iq">
+                  <Card className="glass-tile glass-tile-interactive group cursor-pointer md:col-span-3" data-testid="tile-plexus-iq">
+                    <div className="flex items-center gap-4 px-6 py-5">
+                      <div className="shrink-0 w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 flex items-center justify-center">
+                        <Sparkles className="w-6 h-6 text-indigo-700" strokeWidth={1.75} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[18px] font-semibold text-slate-900 dark:text-foreground tracking-tight">
+                          Plexus IQ
+                        </span>
+                        <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-0.5 leading-snug">
+                          Build, qualify, and review Visit and Outreach schedules across dates and facilities.
+                        </p>
+                      </div>
+                    </div>
+                  </Card>
+                </Link>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

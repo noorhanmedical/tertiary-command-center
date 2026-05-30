@@ -13,6 +13,7 @@ import {
   extractDateFromPrevTests,
   getQualificationMode,
 } from "./helpers";
+import { getAncillaryCategory } from "@shared/ancillaryCategory";
 import {
   parseWithAI,
   parseExcelFile,
@@ -478,6 +479,61 @@ export function registerBatchRoutes(app: Express) {
     }
   });
 
+  // Aggregated summary used by Plexus IQ's calendar. Returns one row per
+  // batch with a precomputed patientCount and the unique set of ancillary
+  // categories represented across that batch's qualifyingTests. Two DB
+  // round-trips total (batches + all patient_screenings) instead of the
+  // N+1 the client used to do via useQueries on each batch detail.
+  app.get("/api/screening-batches/calendar-summary", async (_req, res) => {
+    try {
+      const [batches, allPatients] = await Promise.all([
+        storage.getAllScreeningBatches(),
+        storage.getAllPatientScreenings(),
+      ]);
+
+      type Acc = { count: number; cats: Set<string>; byCategory: Record<string, number> };
+      const perBatch = new Map<number, Acc>();
+      for (const p of allPatients) {
+        let bucket = perBatch.get(p.batchId);
+        if (!bucket) {
+          bucket = { count: 0, cats: new Set<string>(), byCategory: { brainwave: 0, vitalwave: 0, ultrasound: 0 } };
+          perBatch.set(p.batchId, bucket);
+        }
+        bucket.count += 1;
+        const patientCats = new Set<string>();
+        for (const t of p.qualifyingTests || []) {
+          const cat = getAncillaryCategory(t);
+          if (cat !== "other") {
+            bucket.cats.add(cat);
+            patientCats.add(cat);
+          }
+        }
+        // Per-patient unique category counts so a patient with two BrainWave
+        // tests still counts as 1 BrainWave patient on the dashboard.
+        for (const cat of patientCats) {
+          bucket.byCategory[cat] = (bucket.byCategory[cat] ?? 0) + 1;
+        }
+      }
+
+      const summary = batches.map((b) => {
+        const acc = perBatch.get(b.id);
+        return {
+          id: b.id,
+          name: b.name,
+          facility: b.facility,
+          scheduleDate: b.scheduleDate,
+          status: b.status,
+          patientCount: acc?.count ?? 0,
+          categories: acc ? Array.from(acc.cats) : [],
+          byCategory: acc?.byCategory ?? { brainwave: 0, vitalwave: 0, ultrasound: 0 },
+        };
+      });
+      res.json(summary);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/screening-batches/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -499,10 +555,23 @@ export function registerBatchRoutes(app: Express) {
   app.patch("/api/screening-batches/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const { clinicianName, facility } = req.body;
-      const batchUpdates: Partial<{ clinicianName: string | null; facility: string | null }> = {};
+      const { clinicianName, facility, scheduleDate } = req.body;
+      const batchUpdates: Partial<{
+        clinicianName: string | null;
+        facility: string | null;
+        scheduleDate: string | null;
+      }> = {};
       if (clinicianName !== undefined) batchUpdates.clinicianName = clinicianName ?? null;
       if (facility !== undefined) batchUpdates.facility = facility ?? null;
+      if (scheduleDate !== undefined) {
+        if (scheduleDate === null || scheduleDate === "") {
+          batchUpdates.scheduleDate = null;
+        } else if (typeof scheduleDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(scheduleDate)) {
+          batchUpdates.scheduleDate = scheduleDate;
+        } else {
+          return res.status(400).json({ error: "scheduleDate must be YYYY-MM-DD" });
+        }
+      }
       const updated = await storage.updateScreeningBatch(id, batchUpdates);
       if (!updated) return res.status(404).json({ error: "Batch not found" });
       invalidatePatientDatabase();

@@ -3,105 +3,12 @@ import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import QualificationIntakePane from "./QualificationIntakePane";
 import QualificationPatientCardsPane from "./QualificationPatientCardsPane";
-import { Loader2, Upload, FileText, Plus, Lock, AlertTriangle, User, Trash2, Calendar, Building2, Users, Phone, Sparkles } from "lucide-react";
-import { BatchHeader } from "@/components/BatchHeader";
+import { Loader2, Trash2, Sparkles } from "lucide-react";
 import { StepTimeline } from "@/components/StepTimeline";
-import { PatientCard } from "@/components/PatientCard";
 import type { OutreachScheduler } from "@shared/schema";
 import type { ScreeningBatchWithPatients } from "@/pages/home";
 
 type BuildSourceMode = "visit" | "outreach";
-
-function formatSourceDate(dateStr: string | null | undefined): string {
-  if (!dateStr) return "—";
-  const parts = dateStr.split("-").map(Number);
-  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return dateStr;
-  const [yyyy, mm, dd] = parts;
-  return new Date(yyyy, mm - 1, dd).toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function SourceSummary({
-  mode,
-  facility,
-  scheduleDate,
-  patientCount,
-}: {
-  mode: BuildSourceMode;
-  facility: string | null | undefined;
-  scheduleDate: string | null | undefined;
-  patientCount: number;
-}) {
-  const isVisit = mode === "visit";
-  const sourceLabel = isVisit ? "Clinic appointment schedule" : "Outreach patient pool";
-  const criteriaLabel = isVisit
-    ? "Appointment date"
-    : "Criteria";
-  const criteriaValue = isVisit ? formatSourceDate(scheduleDate) : "Outreach patient pool";
-
-  return (
-    <section className="finance-card p-4" data-testid={`build-source-summary-${mode}`}>
-      <div className="flex items-center gap-2 mb-3">
-        {isVisit ? (
-          <Calendar className="h-4 w-4 text-finance-cta-blue" />
-        ) : (
-          <Phone className="h-4 w-4 text-finance-cta-lavender" />
-        )}
-        <span className="finance-section-title text-base">Build source</span>
-      </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <SourceField
-          icon={<Building2 className="h-3.5 w-3.5 text-finance-text-muted" />}
-          label="Facility"
-          value={facility ?? "—"}
-        />
-        <SourceField
-          icon={isVisit
-            ? <Calendar className="h-3.5 w-3.5 text-finance-text-muted" />
-            : <FileText className="h-3.5 w-3.5 text-finance-text-muted" />}
-          label={criteriaLabel}
-          value={criteriaValue}
-        />
-        <SourceField
-          icon={<FileText className="h-3.5 w-3.5 text-finance-text-muted" />}
-          label="Source"
-          value={sourceLabel}
-        />
-        <SourceField
-          icon={<Users className="h-3.5 w-3.5 text-finance-text-muted" />}
-          label="Patients"
-          value={String(patientCount)}
-        />
-      </div>
-    </section>
-  );
-}
-
-function SourceField({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div>
-      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-finance-text-muted">
-        {icon}
-        <span>{label}</span>
-      </div>
-      <div className="mt-1 truncate text-sm font-medium text-finance-text">{value}</div>
-    </div>
-  );
-}
-
-const IMPORT_ACCESS_CODE = "1234";
 
 interface VisitBuildPaneProps {
   selectedBatch: ScreeningBatchWithPatients | undefined;
@@ -141,6 +48,9 @@ interface VisitBuildPaneProps {
   importFilePending: boolean;
   importTextPending: boolean;
   addPatientPending: boolean;
+  // Legacy props kept for callsite compatibility — no longer rendered as
+  // separate copy. The compact header derives its title from sourceMode +
+  // facility, and explanatory subtitle text has been removed.
   simpleHeaderMode?: boolean;
   simpleTitle?: string;
   simpleSubtitle?: string;
@@ -152,19 +62,15 @@ interface VisitBuildPaneProps {
   sourceFacility?: string | null;
 }
 
-
-
 export default function VisitBuildPane(props: VisitBuildPaneProps) {
   const {
     selectedBatch,
-    selectedBatchId,
     patients,
     isProcessing,
     analysisProgress,
     completedCount,
     clinicianInput,
     setClinicianInput,
-    outreachSchedulers,
     pasteText,
     setPasteText,
     dragOver,
@@ -180,7 +86,6 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
     onDeleteAll,
     onGenerateAll,
     onUpdateClinician,
-    onAssignScheduler,
     onHandleDrop,
     onHandleFileUpload,
     onImportText,
@@ -192,9 +97,6 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
     importFilePending,
     importTextPending,
     addPatientPending,
-    simpleHeaderMode = false,
-    simpleTitle = "Visit Patients",
-    simpleSubtitle = "Build patients and generate visit workflow outputs.",
     intakeTitle = "Add Patients",
     cardsTitle = "Schedule Generator",
     simpleBuildStepLabel = "Build Schedule",
@@ -203,118 +105,73 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
     sourceFacility,
   } = props;
 
-  const summaryFacility = sourceFacility ?? selectedBatch?.facility ?? null;
-  const summaryScheduleDate = selectedBatch?.scheduleDate ?? null;
+  const facility = sourceFacility ?? selectedBatch?.facility ?? null;
+  const headerLabel = sourceMode === "outreach" ? "Outreach" : "Visit";
+  const headerTitle = facility ? `${headerLabel} · ${facility}` : headerLabel;
 
   return (
     <div className="flex flex-col h-full relative z-10">
-      {simpleHeaderMode ? (
-        <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50">
-          <StepTimeline
-            current="build"
-            onNavigate={onNavigate}
-            canGoToResults={completedCount > 0}
-            buildLabel={simpleBuildStepLabel}
-            resultsLabel={simpleResultsStepLabel}
-          />
-          <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger data-testid="button-sidebar-toggle-outreach" />
-              <div>
-                <h1
-                  className="text-[28px] leading-tight font-bold tracking-tight"
-                  data-testid="text-simple-title"
-                >
-                  {simpleTitle}
-                </h1>
-                <div className="flex items-center gap-1 mt-0.5">
-                  <input
-                    type="text"
-                    placeholder="Clinician / Provider"
-                    value={clinicianInput}
-                    onChange={(e) => setClinicianInput(e.target.value)}
-                    onBlur={() => onUpdateClinician(clinicianInput)}
-                    className="text-xs text-muted-foreground bg-transparent border-0 border-b border-dashed border-muted-foreground/40 focus:border-primary focus:outline-none px-0 py-0.5 w-44 placeholder:text-muted-foreground/50"
-                    data-testid="input-simple-clinician"
-                  />
-                </div>
-                {selectedBatch?.facility && (
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <Building2 className="w-3 h-3 text-muted-foreground" />
-                    <span
-                      className="text-xs text-muted-foreground"
-                      data-testid="text-facility-simple"
-                    >
-                      {selectedBatch.facility}
-                    </span>
-                  </div>
-                )}
-                {simpleSubtitle && (
-                  <div
-                    className="text-xs text-muted-foreground mt-0.5 max-w-[480px]"
-                    data-testid="text-simple-subtitle"
-                  >
-                    {simpleSubtitle}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              {patients.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onDeleteAll}
-                  disabled={isProcessing}
-                  className="gap-1.5"
-                  data-testid="button-simple-delete-all"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Delete All
-                </Button>
-              )}
-              <Button
-                onClick={onGenerateAll}
-                disabled={isProcessing || patients.length === 0}
-                className="gap-1.5"
-                data-testid="button-simple-generate-all"
+      <header className="bg-white/85 dark:bg-card/85 backdrop-blur-md sticky top-0 z-50 border-b border-slate-200/60">
+        <StepTimeline
+          current="build"
+          onNavigate={onNavigate}
+          canGoToResults={completedCount > 0}
+          buildLabel={simpleBuildStepLabel}
+          resultsLabel={simpleResultsStepLabel}
+        />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <SidebarTrigger data-testid="button-sidebar-toggle-build" />
+            <div className="min-w-0">
+              <h1
+                className="text-xl font-semibold tracking-tight text-slate-900 truncate"
+                data-testid="text-build-header-title"
               >
-                {isProcessing ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Sparkles className="w-4 h-4" />
-                )}
-                Generate All
-              </Button>
+                {headerTitle}
+              </h1>
+              <input
+                type="text"
+                placeholder="Clinician / Provider"
+                value={clinicianInput}
+                onChange={(e) => setClinicianInput(e.target.value)}
+                onBlur={() => onUpdateClinician(clinicianInput)}
+                className="mt-0.5 text-xs text-slate-500 bg-transparent border-0 focus:outline-none px-0 py-0 w-44 placeholder:text-slate-400"
+                data-testid="input-build-clinician"
+              />
             </div>
           </div>
-        </header>
-      ) : (
-        <BatchHeader
-          selectedBatch={selectedBatch}
-          selectedBatchId={selectedBatchId}
-          clinicianInput={clinicianInput}
-          setClinicianInput={setClinicianInput}
-          patients={patients}
-          isProcessing={isProcessing}
-          analysisProgress={analysisProgress}
-          completedCount={completedCount}
-          onNavigate={onNavigate}
-          onDeleteAll={onDeleteAll}
-          onGenerateAll={onGenerateAll}
-          onUpdateClinician={onUpdateClinician}
-          schedulers={outreachSchedulers}
-          onAssignScheduler={onAssignScheduler}
-        />
-      )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {patients.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onDeleteAll}
+                disabled={isProcessing}
+                className="gap-1.5 rounded-xl"
+                data-testid="button-build-delete-all"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete All
+              </Button>
+            )}
+            <Button
+              onClick={onGenerateAll}
+              disabled={isProcessing || patients.length === 0}
+              className="gap-1.5 rounded-xl"
+              data-testid="button-build-generate-all"
+            >
+              {isProcessing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              Generate All
+            </Button>
+          </div>
+        </div>
+      </header>
       <main className="flex-1 overflow-auto bg-finance-bg">
-        <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-          <SourceSummary
-            mode={sourceMode}
-            facility={summaryFacility}
-            scheduleDate={summaryScheduleDate}
-            patientCount={patients.length}
-          />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
           {isProcessing && (
             <Card className="p-6">
               <div className="flex flex-col items-center gap-3">
@@ -377,6 +234,7 @@ export default function VisitBuildPane(props: VisitBuildPaneProps) {
             onOpenScheduleModal={onOpenScheduleModal}
             schedulerName={selectedBatch?.assignedScheduler?.name ?? null}
             batchScheduleDate={selectedBatch?.scheduleDate ?? null}
+            sourceMode={sourceMode}
           />
         </div>
       </main>
