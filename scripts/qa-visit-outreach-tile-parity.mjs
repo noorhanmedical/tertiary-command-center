@@ -47,9 +47,12 @@ const tileProfiles = "client/src/features/command-center/tiles/commandTileProfil
 const tileBase = "client/src/features/command-center/tiles/CommandTile.tsx";
 const visitTile = "client/src/features/command-center/tiles/VisitCommandTile.tsx";
 const outreachTile = "client/src/features/command-center/tiles/OutreachCommandTile.tsx";
+const kindToggle = "client/src/features/command-center/tiles/VisitOutreachKindToggle.tsx";
 const tileIndex = "client/src/features/command-center/tiles/index.ts";
 const playground = "client/src/features/command-center/playground/CommandPlayground.tsx";
 const qualification = "client/src/pages/qualification.tsx";
+const plexusIqAddPatientModal =
+  "client/src/components/plexus-iq/PlexusIQAddPatientModal.tsx";
 
 requireFile(tileBase);
 requireFile(tileIndex);
@@ -122,6 +125,38 @@ requireText(playground, [
   "VisitWorkspace",
   "OutreachWorkspace",
 ]);
+
+requireText(kindToggle, [
+  "VisitOutreachKindToggle",
+  "CommandTileSurface",
+  "CommandTileKind",
+  '"visit"',
+  '"outreach"',
+  "value",
+  "onChange",
+  "surface",
+]);
+
+requireText(tileIndex, [
+  "VisitOutreachKindToggle",
+]);
+
+requireText(plexusIqAddPatientModal, [
+  "VisitOutreachKindToggle",
+  '@/features/command-center/tiles',
+  '<VisitOutreachKindToggle',
+  'surface="plexusIq"',
+]);
+
+requireNotText(
+  plexusIqAddPatientModal,
+  [
+    '`button-plexus-iq-add-type-${t}`',
+    '(["visit", "outreach"] as const).map',
+    '{t === "visit" ? "Visit" : "Outreach"}',
+  ],
+  "Inline Visit/Outreach segmented toggle still present (must use canonical VisitOutreachKindToggle)"
+);
 
 // Verify canonical testIds live in the shared profile, not duplicated elsewhere.
 const profilesContent = read(tileProfiles) ?? "";

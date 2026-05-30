@@ -18,11 +18,12 @@ export type {
 } from "./providers/phoneProviderTypes";
 export { manualPhoneProvider } from "./providers/manualPhoneProvider";
 export { ringCentralProvider } from "./providers/ringCentralProvider";
-export { CommandTile, VisitCommandTile, OutreachCommandTile, commandTileProfiles } from "./tiles";
+export { CommandTile, VisitCommandTile, OutreachCommandTile, VisitOutreachKindToggle, commandTileProfiles } from "./tiles";
 export type {
   CommandTileProps,
   VisitCommandTileProps,
   OutreachCommandTileProps,
+  VisitOutreachKindToggleProps,
   CommandTileKind,
   CommandTileSurface,
   CommandTileContext,

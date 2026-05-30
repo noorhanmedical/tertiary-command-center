@@ -18,8 +18,10 @@ import {
 } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
 import { VALID_FACILITIES } from "@shared/plexus";
+import { VisitOutreachKindToggle } from "@/features/command-center/tiles";
+import type { CommandTileKind } from "@/features/command-center/tiles";
 
-type PatientType = "visit" | "outreach";
+type PatientType = CommandTileKind;
 
 function todayIso(): string {
   const d = new Date();
@@ -142,23 +144,13 @@ export function PlexusIQAddPatientModal({
             <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
               Type
             </Label>
-            <div className="mt-1 inline-flex rounded-lg border border-slate-200 overflow-hidden">
-              {(["visit", "outreach"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setPatientType(t)}
-                  className={`px-3 h-9 text-xs font-medium ${
-                    patientType === t
-                      ? "bg-plexus-navy-800 text-white"
-                      : "bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                  data-testid={`button-plexus-iq-add-type-${t}`}
-                >
-                  {t === "visit" ? "Visit" : "Outreach"}
-                </button>
-              ))}
-            </div>
+            <VisitOutreachKindToggle
+              surface="plexusIq"
+              value={patientType}
+              onChange={setPatientType}
+              className="mt-1"
+              testIdPrefix="button-plexus-iq-add-type"
+            />
           </div>
 
           <div>
