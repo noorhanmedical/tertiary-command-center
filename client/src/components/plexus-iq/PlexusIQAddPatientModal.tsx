@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -33,6 +33,7 @@ export function PlexusIQAddPatientModal({
   onClose,
   onSubmit,
   pending,
+  defaultPatientType,
 }: {
   open: boolean;
   onClose: () => void;
@@ -47,18 +48,26 @@ export function PlexusIQAddPatientModal({
     time?: string;
   }) => Promise<boolean>;
   pending: boolean;
+  defaultPatientType?: PatientType;
 }) {
   const [facility, setFacility] = useState<string>("");
   const [scheduleDate, setScheduleDate] = useState<string>(todayIso());
-  const [patientType, setPatientType] = useState<PatientType>("visit");
+  const [patientType, setPatientType] = useState<PatientType>(defaultPatientType ?? "visit");
   const [name, setName] = useState("");
   const [time, setTime] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Keep the local patientType in sync with whichever tile opened us.
+  useEffect(() => {
+    if (open) {
+      setPatientType(defaultPatientType ?? "visit");
+    }
+  }, [open, defaultPatientType]);
+
   function reset() {
     setFacility("");
     setScheduleDate(todayIso());
-    setPatientType("visit");
+    setPatientType(defaultPatientType ?? "visit");
     setName("");
     setTime("");
     setError(null);
