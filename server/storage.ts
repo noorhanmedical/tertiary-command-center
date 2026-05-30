@@ -128,7 +128,10 @@ export interface IStorage {
   getPatientScreeningsByBatch(batchId: number): Promise<PatientScreening[]>;
   getPatientScreening(id: number): Promise<PatientScreening | undefined>;
   updatePatientScreening(id: number, updates: Partial<InsertPatientScreening>): Promise<PatientScreening | undefined>;
-  deletePatientScreening(id: number): Promise<void>;
+  deletePatientScreening(id: number, options?: { userId?: string | null; reason?: string | null }): Promise<void>;
+  getPatientScreeningIncludingDeleted(id: number): Promise<PatientScreening | undefined>;
+  restorePatientScreening(id: number): Promise<PatientScreening | undefined>;
+  listRecentlyDeletedPatientScreenings(limit?: number): Promise<PatientScreening[]>;
 
   createTestHistory(record: InsertTestHistory): Promise<PatientTestHistory>;
   createTestHistoryBulk(records: InsertTestHistory[]): Promise<PatientTestHistory[]>;
@@ -331,7 +334,10 @@ export class DatabaseStorage implements IStorage {
   getPatientScreeningsByBatch(batchId: number) { return screeningRepository.listScreeningsByBatch(batchId); }
   getPatientScreening(id: number) { return screeningRepository.getScreening(id); }
   updatePatientScreening(id: number, updates: Partial<InsertPatientScreening>) { return screeningRepository.updateScreening(id, updates); }
-  deletePatientScreening(id: number) { return screeningRepository.deleteScreening(id); }
+  deletePatientScreening(id: number, options?: { userId?: string | null; reason?: string | null }) { return screeningRepository.deleteScreening(id, options); }
+  getPatientScreeningIncludingDeleted(id: number) { return screeningRepository.getScreeningIncludingDeleted(id); }
+  restorePatientScreening(id: number) { return screeningRepository.restoreScreening(id); }
+  listRecentlyDeletedPatientScreenings(limit?: number) { return screeningRepository.listRecentlyDeletedScreenings(limit); }
 
   searchPatientsByName(query: string) { return screeningRepository.searchPatientsByName(query); }
   getPatientById(id: number) { return screeningRepository.getScreening(id); }

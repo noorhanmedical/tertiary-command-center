@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { and, asc, desc, eq, ilike, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, sql } from "drizzle-orm";
 import {
   screeningBatches,
   patientScreenings,
@@ -9,6 +9,24 @@ import {
   type InsertPatientScreening,
 } from "@shared/schema/screening";
 import { patientTestHistory } from "@shared/schema/patientHistory";
+
+// Soft-delete contract:
+//   - `deletedAt IS NULL`  ⇒ patient is active (normal workspace).
+//   - `deletedAt` set + `deleteExpiresAt > now` ⇒ patient is in the
+//     14-day restore window; surfaced in the Recently Deleted UI.
+//   - `deletedAt` set + `deleteExpiresAt <= now` ⇒ patient is expired;
+//     not surfaced for restore, not surfaced for normal workspace.
+// Every read query in this repository filters `deletedAt IS NULL` by
+// default so callers don't have to remember.
+const ACTIVE = isNull(patientScreenings.deletedAt);
+
+const SOFT_DELETE_RESTORE_WINDOW_DAYS = 14;
+
+function softDeleteExpiresAt(): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + SOFT_DELETE_RESTORE_WINDOW_DAYS);
+  return d;
+}
 
 export type PatientRosterAggregateRow = {
   representativeId: number;
@@ -104,8 +122,14 @@ export interface IScreeningRepository {
   listAllScreenings(): Promise<PatientScreening[]>;
   listScreeningsByBatch(batchId: number): Promise<PatientScreening[]>;
   getScreening(id: number): Promise<PatientScreening | undefined>;
+  getScreeningIncludingDeleted(id: number): Promise<PatientScreening | undefined>;
   updateScreening(id: number, updates: Partial<InsertPatientScreening>): Promise<PatientScreening | undefined>;
-  deleteScreening(id: number): Promise<void>;
+  deleteScreening(
+    id: number,
+    options?: { userId?: string | null; reason?: string | null },
+  ): Promise<void>;
+  restoreScreening(id: number): Promise<PatientScreening | undefined>;
+  listRecentlyDeletedScreenings(limit?: number): Promise<PatientScreening[]>;
 
   searchPatientsByName(query: string): Promise<PatientScreening[]>;
 
@@ -146,16 +170,25 @@ export class DbScreeningRepository implements IScreeningRepository {
   }
 
   async listScreeningsByBatch(batchId: number): Promise<PatientScreening[]> {
-    const rows = await db.select().from(patientScreenings).where(eq(patientScreenings.batchId, batchId));
+    const rows = await db.select().from(patientScreenings)
+      .where(and(eq(patientScreenings.batchId, batchId), ACTIVE));
     return rows.sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
   }
 
   async listAllScreenings(): Promise<PatientScreening[]> {
-    return db.select().from(patientScreenings);
+    return db.select().from(patientScreenings).where(ACTIVE);
   }
 
   async getScreening(id: number): Promise<PatientScreening | undefined> {
-    const [result] = await db.select().from(patientScreenings).where(eq(patientScreenings.id, id));
+    const [result] = await db.select().from(patientScreenings)
+      .where(and(eq(patientScreenings.id, id), ACTIVE));
+    return result;
+  }
+
+  // Restore + audit paths need to read the row even when it's soft-deleted.
+  async getScreeningIncludingDeleted(id: number): Promise<PatientScreening | undefined> {
+    const [result] = await db.select().from(patientScreenings)
+      .where(eq(patientScreenings.id, id));
     return result;
   }
 
@@ -164,13 +197,62 @@ export class DbScreeningRepository implements IScreeningRepository {
     return result;
   }
 
-  async deleteScreening(id: number): Promise<void> {
-    await db.delete(patientScreenings).where(eq(patientScreenings.id, id));
+  // Soft-delete: marks the patient as deleted with a 14-day restore
+  // window. The row stays in patient_screenings so analysis_jobs,
+  // execution_cases, journey events, and other references survive
+  // unbroken. Recently Deleted UI reads via listRecentlyDeleted.
+  async deleteScreening(
+    id: number,
+    options: { userId?: string | null; reason?: string | null } = {},
+  ): Promise<void> {
+    await db
+      .update(patientScreenings)
+      .set({
+        deletedAt: new Date(),
+        deletedByUserId: options.userId ?? null,
+        deleteExpiresAt: softDeleteExpiresAt(),
+        deleteReason: options.reason ?? null,
+      })
+      .where(and(eq(patientScreenings.id, id), ACTIVE));
+  }
+
+  async restoreScreening(id: number): Promise<PatientScreening | undefined> {
+    const [result] = await db
+      .update(patientScreenings)
+      .set({
+        deletedAt: null,
+        deletedByUserId: null,
+        deleteExpiresAt: null,
+        deleteReason: null,
+      })
+      .where(eq(patientScreenings.id, id))
+      .returning();
+    return result;
+  }
+
+  async listRecentlyDeletedScreenings(
+    limit: number = 100,
+  ): Promise<PatientScreening[]> {
+    const now = new Date();
+    return db
+      .select()
+      .from(patientScreenings)
+      .where(
+        and(
+          sql`${patientScreenings.deletedAt} IS NOT NULL`,
+          gte(patientScreenings.deleteExpiresAt, now),
+        ),
+      )
+      .orderBy(desc(patientScreenings.deletedAt))
+      .limit(limit);
   }
 
   async searchPatientsByName(query: string): Promise<PatientScreening[]> {
     return db.select().from(patientScreenings)
-      .where(sql`LOWER(${patientScreenings.name}) LIKE LOWER(${'%' + query + '%'})`)
+      .where(and(
+        sql`LOWER(${patientScreenings.name}) LIKE LOWER(${'%' + query + '%'})`,
+        ACTIVE,
+      ))
       .limit(20);
   }
 
@@ -197,6 +279,7 @@ export class DbScreeningRepository implements IScreeningRepository {
       WITH groups AS (
         SELECT name, dob, COUNT(*)::int AS screening_count
         FROM patient_screenings
+        WHERE deleted_at IS NULL
         GROUP BY name, dob
       ),
       repr AS (
@@ -206,12 +289,14 @@ export class DbScreeningRepository implements IScreeningRepository {
           sb.facility AS batch_facility, sb.schedule_date AS batch_schedule_date
         FROM patient_screenings ps
         LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
+        WHERE ps.deleted_at IS NULL
         ORDER BY ps.name, ps.dob, ps.created_at DESC
       ),
       notes AS (
         SELECT ps.name, ps.dob, COUNT(gn.id)::int AS note_count
         FROM patient_screenings ps
         LEFT JOIN generated_notes gn ON gn.patient_id = ps.id
+        WHERE ps.deleted_at IS NULL
         GROUP BY ps.name, ps.dob
       ),
       history AS (
@@ -227,6 +312,7 @@ export class DbScreeningRepository implements IScreeningRepository {
           ), '')) AS last_visit
         FROM patient_screenings ps
         LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
+        WHERE ps.deleted_at IS NULL
         GROUP BY ps.name, ps.dob
       ),
       latest_test AS (
@@ -351,6 +437,7 @@ export class DbScreeningRepository implements IScreeningRepository {
           COALESCE(NULLIF(ps.facility, ''), NULLIF(sb.facility, ''), 'Unassigned') AS clinic
         FROM patient_screenings ps
         LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
+        WHERE ps.deleted_at IS NULL
         ORDER BY ps.name, ps.dob, ps.created_at DESC
       ),
       latest_test AS (
@@ -439,7 +526,7 @@ export class DbScreeningRepository implements IScreeningRepository {
         (SELECT COUNT(*)::int FROM patient_test_history h
            WHERE NOT EXISTS (
              SELECT 1 FROM patient_screenings ps
-             WHERE ps.name = h.patient_name AND ps.dob IS NOT DISTINCT FROM h.dob
+             WHERE ps.name = h.patient_name AND ps.dob IS NOT DISTINCT FROM h.dob AND ps.deleted_at IS NULL
            )) AS unmatched_rows
     `);
     const totals: any = (totalsRes.rows as any[])[0] ?? {};
@@ -449,7 +536,7 @@ export class DbScreeningRepository implements IScreeningRepository {
       FROM patient_test_history h
       WHERE NOT EXISTS (
         SELECT 1 FROM patient_screenings ps
-        WHERE ps.name = h.patient_name AND ps.dob IS NOT DISTINCT FROM h.dob
+        WHERE ps.name = h.patient_name AND ps.dob IS NOT DISTINCT FROM h.dob AND ps.deleted_at IS NULL
       )
       ORDER BY h.id DESC
       LIMIT ${sampleLimit}
@@ -474,6 +561,7 @@ export class DbScreeningRepository implements IScreeningRepository {
       dob === null
         ? sql`${patientScreenings.dob} IS NULL`
         : eq(patientScreenings.dob, dob),
+      ACTIVE,
     ));
   }
 }

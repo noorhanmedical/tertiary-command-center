@@ -56,6 +56,15 @@ export const patientScreenings = pgTable("patient_screenings", {
   commitStatus: text("commit_status").notNull().default("Draft"),
   committedAt: timestamp("committed_at"),
   committedByUserId: varchar("committed_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  // Soft-delete fields. A patient with `deletedAt IS NOT NULL` is hidden
+  // from every normal workspace/calendar/analysis query. `deleteExpiresAt`
+  // is the cutoff after which restore is no longer offered (default 14
+  // days from delete time). All four fields are populated together by
+  // the soft-delete repository method and cleared together by restore.
+  deletedAt: timestamp("deleted_at"),
+  deletedByUserId: varchar("deleted_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  deleteExpiresAt: timestamp("delete_expires_at"),
+  deleteReason: text("delete_reason"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   isTest: boolean("is_test").notNull().default(false),
 }, (table) => [
@@ -65,6 +74,8 @@ export const patientScreenings = pgTable("patient_screenings", {
   index("idx_patient_screenings_name_dob").on(table.name, table.dob),
   index("idx_patient_screenings_commit_status").on(table.commitStatus),
   index("idx_patient_screenings_committed_at").on(table.committedAt),
+  index("idx_patient_screenings_deleted_at").on(table.deletedAt),
+  index("idx_patient_screenings_delete_expires_at").on(table.deleteExpiresAt),
 ]);
 
 export const COMMIT_STATUSES = ["Draft", "Ready", "WithScheduler", "Scheduled"] as const;

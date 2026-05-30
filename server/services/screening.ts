@@ -98,6 +98,12 @@ export interface ScreeningPatientInput {
   history?: string | null;
   medications?: string | null;
   notes?: string | null;
+  // Optional clinical fields forwarded by the clinical-import flow so
+  // every patient is qualified on their full record. The model treats
+  // these the same as any other narrative input.
+  dob?: string | null;
+  insurance?: string | null;
+  previousTests?: string | null;
 }
 
 const USER_PROMPT_SUFFIX: Record<QualificationMode, string> = {
