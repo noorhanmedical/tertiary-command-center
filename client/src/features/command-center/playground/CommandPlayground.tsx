@@ -53,6 +53,10 @@ export function CommandPlayground() {
         <ScratchpadWorkspace />
       ) : playgroundContext.componentType === "searchResult" ? (
         <SearchWorkspace />
+      ) : playgroundContext.componentType === "visit" ? (
+        <VisitWorkspace surface={playgroundContext.sourceSurface} actions={(playgroundContext.metadata?.actions as string[]) ?? []} />
+      ) : playgroundContext.componentType === "outreach" ? (
+        <OutreachWorkspace surface={playgroundContext.sourceSurface} actions={(playgroundContext.metadata?.actions as string[]) ?? []} />
       ) : (
         <GenericWorkspace />
       )}
@@ -212,5 +216,75 @@ function GenericWorkspace() {
       <h2 className="text-lg font-bold text-slate-950">Workspace</h2>
       <p className="mt-2 text-sm text-slate-500">This context is ready for a full detail implementation.</p>
     </WorkspaceCard>
+  );
+}
+
+function VisitWorkspace({ surface, actions }: { surface: string; actions: string[] }) {
+  return (
+    <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+      <WorkspaceCard>
+        <div className="mb-4 flex items-center gap-3">
+          <CalendarDays className="h-6 w-6 text-blue-700" />
+          <h2 className="text-lg font-bold text-slate-950">Visit Patients Workspace</h2>
+        </div>
+        <div className="grid gap-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm font-semibold text-slate-700">
+            Committed clinic-day patients · driven by surface profile <span className="text-blue-700">{surface}</span>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+            Same parser, patient bars, qualification outputs, PDFs, and share path.
+          </div>
+        </div>
+      </WorkspaceCard>
+      <WorkspaceCard>
+        <h2 className="mb-3 text-lg font-bold text-slate-950">Surface Actions</h2>
+        <div className="space-y-2 text-sm text-slate-600">
+          {actions.length === 0 ? (
+            <div className="rounded-2xl bg-white p-4 text-slate-400">No surface-specific actions configured.</div>
+          ) : (
+            actions.map((action) => (
+              <div key={action} className="rounded-2xl bg-white p-3 text-sm font-semibold text-slate-700">
+                {action}
+              </div>
+            ))
+          )}
+        </div>
+      </WorkspaceCard>
+    </div>
+  );
+}
+
+function OutreachWorkspace({ surface, actions }: { surface: string; actions: string[] }) {
+  return (
+    <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+      <WorkspaceCard>
+        <div className="mb-4 flex items-center gap-3">
+          <Phone className="h-6 w-6 text-violet-700" />
+          <h2 className="text-lg font-bold text-slate-950">Outreach Patients Workspace</h2>
+        </div>
+        <div className="grid gap-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm font-semibold text-slate-700">
+            Standalone outreach pool · driven by surface profile <span className="text-violet-700">{surface}</span>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+            Same parser, patient bars, and generation path as Visit Patients, without requiring a committed visit schedule.
+          </div>
+        </div>
+      </WorkspaceCard>
+      <WorkspaceCard>
+        <h2 className="mb-3 text-lg font-bold text-slate-950">Surface Actions</h2>
+        <div className="space-y-2 text-sm text-slate-600">
+          {actions.length === 0 ? (
+            <div className="rounded-2xl bg-white p-4 text-slate-400">No surface-specific actions configured.</div>
+          ) : (
+            actions.map((action) => (
+              <div key={action} className="rounded-2xl bg-white p-3 text-sm font-semibold text-slate-700">
+                {action}
+              </div>
+            ))
+          )}
+        </div>
+      </WorkspaceCard>
+    </div>
   );
 }

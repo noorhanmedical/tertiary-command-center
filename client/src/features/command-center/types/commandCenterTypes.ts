@@ -11,7 +11,9 @@ export type CommandComponentType =
   | "marketing"
   | "email"
   | "scratchpad"
-  | "searchResult";
+  | "searchResult"
+  | "visit"
+  | "outreach";
 
 export type AncillaryType = "brainwave" | "vitalwave" | "ultrasound" | "other";
 
@@ -56,6 +58,8 @@ export type SelectedCommandContext = {
     | "marketing"
     | "email"
     | "scratchpad"
+    | "visit"
+    | "outreach"
     | "none";
   context: PanelPlaygroundContext | null;
 };

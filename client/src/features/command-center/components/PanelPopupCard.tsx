@@ -25,6 +25,10 @@ function toSelectedType(context: PanelPlaygroundContext) {
       return "ancillary";
     case "patient":
       return "patient";
+    case "visit":
+      return "visit";
+    case "outreach":
+      return "outreach";
     default:
       return "none";
   }
