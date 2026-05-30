@@ -1,10 +1,11 @@
 import { Card } from "@/components/ui/card";
-import { Users, CalendarDays, Phone } from "lucide-react";
-import { useLocation } from "wouter";
+import { Users } from "lucide-react";
+import {
+  VisitCommandTile,
+  OutreachCommandTile,
+} from "@/features/command-center/tiles";
 
 export default function QualificationPage() {
-  const [, setLocation] = useLocation();
-
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-10 pb-16">
@@ -22,37 +23,8 @@ export default function QualificationPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <Card
-              className="glass-tile glass-tile-interactive group cursor-pointer"
-              onClick={() => setLocation("/visit-patients")}
-              data-testid="tile-qualification-visit"
-            >
-              <div className="aspect-[1.2/1] flex flex-col items-center justify-center gap-4 p-8">
-                <CalendarDays className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                <div className="text-center">
-                  <div className="text-[18px] font-semibold text-slate-900">Visit Patients</div>
-                  <div className="text-[13px] text-slate-500 mt-1">
-                    Use the existing visit workflow for committed clinic-day patients.
-                  </div>
-                </div>
-              </div>
-            </Card>
-
-            <Card
-              className="glass-tile glass-tile-interactive group cursor-pointer"
-              onClick={() => setLocation("/outreach-patients")}
-              data-testid="tile-qualification-outreach"
-            >
-              <div className="aspect-[1.2/1] flex flex-col items-center justify-center gap-4 p-8">
-                <Phone className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />
-                <div className="text-center">
-                  <div className="text-[18px] font-semibold text-slate-900">Outreach Patients</div>
-                  <div className="text-[13px] text-slate-500 mt-1">
-                    Launch standalone outreach workflow without requiring a committed visit schedule.
-                  </div>
-                </div>
-              </div>
-            </Card>
+            <VisitCommandTile surface="plexusIq" />
+            <OutreachCommandTile surface="plexusIq" />
           </div>
           <Card className="glass-tile mt-6">
             <div className="p-6 flex items-start gap-4">
