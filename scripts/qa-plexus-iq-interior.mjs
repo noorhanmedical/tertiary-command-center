@@ -52,17 +52,29 @@ requireText(page, [
 ]);
 
 // 3. The 3 choices must be on the hub: Visit, Outreach, Plexus BatchFlow.
+// Labels may be inlined as `>Visit<` or passed via a `label="Visit"`
+// prop into an internal HubTile helper. Both patterns are accepted.
 requireText(hub, [
-  ">Visit<",
-  ">Outreach<",
-  "Plexus BatchFlow",
   "onPickVisit",
   "onPickOutreach",
   "onPickBatchFlow",
   "button-plexus-iq-add-patient-tile-visit",
   "button-plexus-iq-add-patient-tile-outreach",
   "button-plexus-iq-add-patient-tile-batchflow",
+  "Plexus BatchFlow",
 ]);
+const hubLabelContent = read(hub) ?? "";
+const visitLabelPresent =
+  hubLabelContent.includes(">Visit<") || hubLabelContent.includes('label="Visit"');
+const outreachLabelPresent =
+  hubLabelContent.includes(">Outreach<") ||
+  hubLabelContent.includes('label="Outreach"');
+if (!visitLabelPresent) {
+  failures.push(`Missing "Visit" tile label in ${hub}`);
+}
+if (!outreachLabelPresent) {
+  failures.push(`Missing "Outreach" tile label in ${hub}`);
+}
 
 // 4. BatchFlow must reach the canonical bulk-import modal.
 requireText(page, [
@@ -74,12 +86,17 @@ requireText(page, [
 requireFile(bulkModal);
 
 // 4b. Page must wire the hub state to the modal's defaultPatientType:
-// each tile picks a kind, closes the hub, and opens the single modal
-// with the right default.
+// each tile picks a kind, closes the hub explicitly, and opens the
+// single modal with the right default. Plexus BatchFlow does the same
+// for the bulk-import modal.
 requireText(page, [
   "defaultPatientType",
   'setDefaultPatientType("visit")',
   'setDefaultPatientType("outreach")',
+  "setAddHubOpen(false)",
+  "setAddOpen(true)",
+  "setBulkOpen(true)",
+  "defaultPatientType={defaultPatientType}",
 ]);
 
 // 4c. Hub itself must NOT be wired into the command-center popup /
@@ -90,14 +107,20 @@ const forbiddenInHub = [
   "PanelPopupCard",
   "CommandPlayground",
   "promoteToPlayground",
+  "setSelectedContext",
   "popup={true}",
+  "popupPreview",
   'componentType: "visit"',
   'componentType: "outreach"',
+  'href="/visit-patients"',
+  'href="/outreach-patients"',
+  'setLocation("/visit-patients")',
+  'setLocation("/outreach-patients")',
 ];
 for (const needle of forbiddenInHub) {
   if (hubContent.includes(needle)) {
     failures.push(
-      `Hub must not use popup/panel behavior: "${needle}" present in ${hub}`,
+      `Hub must not use popup/panel/navigation behavior: "${needle}" present in ${hub}`,
     );
   }
 }
@@ -114,6 +137,8 @@ const forbiddenOnHome = [
   'label="Outreach Patients"',
   'testId="tile-visit-patients"',
   'testId="tile-outreach-patients"',
+  'href="/visit-patients"',
+  'href="/outreach-patients"',
 ];
 for (const needle of forbiddenOnHome) {
   if (homeContent.includes(needle)) {
@@ -136,12 +161,15 @@ requireText(workspace, [
   "facility",
 ]);
 
-// 6. Visit/Outreach must stay canonical inside the add-patient modal.
+// 6. Visit/Outreach must stay canonical inside the add-patient modal,
+// and the modal must sync patientType when the parent re-opens it with
+// a different defaultPatientType.
 requireText(addModal, [
   "VisitOutreachKindToggle",
   "@/features/command-center/tiles",
   'surface="plexusIq"',
   "defaultPatientType",
+  "useEffect",
 ]);
 
 // 7. No Plexus-only Visit/Outreach tile/card files anywhere in the repo.

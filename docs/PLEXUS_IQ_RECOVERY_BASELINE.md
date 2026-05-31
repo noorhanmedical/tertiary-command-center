@@ -113,6 +113,54 @@ Tile wiring:
    ALTER ... DROP COLUMN / RENAME) involving unrelated tables. The
    recovery migration is strictly additive.
 
+## Add Patient(s) Hub Runtime Contract
+
+Static QA can confirm the file shape but cannot confirm the click
+behaviour. Before declaring this surface healthy, all of the points
+below must be verified by clicking through the running app — Replit
+preview or `npm run dev`. Static QA alone is **not** sufficient.
+
+1. **Home page** renders the Plexus IQ launcher tile (`tile-plexus-iq`)
+   and does **not** render Visit Patients or Outreach Patients as
+   standalone tiles. `tile-visit-patients` and `tile-outreach-patients`
+   must be absent from the home DOM.
+2. **`/plexus-iq`** loads the facility-card interior (header + dashboard
+   row + workspace + drawer-mounted CanonicalCommandCalendar).
+3. **Clicking "Add Patient(s)"** opens `PlexusIQAddPatientHub` as a
+   centered `Dialog` overlay containing exactly three large tile
+   buttons.
+4. **Visit tile click** closes the hub and opens
+   `PlexusIQAddPatientModal` with the Visit/Outreach toggle showing
+   `visit` selected. The hub's `onPickVisit` callback is the only thing
+   that fires; no side panel, command playground, or popup-preview
+   surface appears.
+5. **Outreach tile click** behaves identically except the toggle shows
+   `outreach`.
+6. **Plexus BatchFlow tile click** closes the hub and opens
+   `PlexusIQBulkImportModal`. The single-patient modal does NOT open
+   first.
+7. **Browser console** is clean (no React errors, no unhandled
+   promises, no missing-key warnings tied to the hub).
+8. **Network tab** shows no 404s for the Plexus IQ runtime routes when
+   the page loads or when each tile is exercised.
+
+Rules:
+
+- Visit and Outreach are direct modal actions inside the hub. They are
+  not panels, popups, or playground previews — ever.
+- The hub does not navigate (`useLocation`, `href`) anywhere. Picking a
+  tile flips local React state on the page that owns the modals.
+- The hub does not import `PanelPopupCard`, `CommandPlayground`,
+  `promoteToPlayground`, `popupPreview`, or anything from the
+  command-center playground layer.
+- Home does not host Visit/Outreach standalone tiles. The Plexus IQ
+  Add Patient(s) hub is the canonical entry point.
+
+If a regression is suspected, run the click-through above before
+trusting static QA. A green `qa-plexus-iq-interior` is necessary but
+not sufficient — it can only catch the *shape* of the wiring, not its
+runtime semantics.
+
 ## QA commands
 
 The following must all pass before declaring the page healthy. Each

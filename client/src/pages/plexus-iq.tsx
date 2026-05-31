@@ -840,13 +840,18 @@ export default function PlexusIQPage() {
         onClose={() => setAddHubOpen(false)}
         onPickVisit={() => {
           setDefaultPatientType("visit");
+          setAddHubOpen(false);
           setAddOpen(true);
         }}
         onPickOutreach={() => {
           setDefaultPatientType("outreach");
+          setAddHubOpen(false);
           setAddOpen(true);
         }}
-        onPickBatchFlow={() => setBulkOpen(true)}
+        onPickBatchFlow={() => {
+          setAddHubOpen(false);
+          setBulkOpen(true);
+        }}
       />
 
       <PlexusIQAddPatientModal
