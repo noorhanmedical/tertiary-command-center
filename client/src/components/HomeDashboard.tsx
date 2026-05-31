@@ -420,6 +420,12 @@ export function HomeDashboard({
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <SecondaryTile
+                  href="/team-member-portals"
+                  testId="tile-team-member-portals"
+                  label="Team Member Portals"
+                  icon={<Users2 className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
                   href="/liaison-technician-portal"
                   testId="tile-liaison-technician-portal"
                   label="Liaison Technician Portal"
