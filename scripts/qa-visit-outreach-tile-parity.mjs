@@ -101,23 +101,15 @@ requireText(outreachTile, [
   'componentType: "outreach"',
 ]);
 
-requireText(qualification, [
-  "VisitCommandTile",
-  "OutreachCommandTile",
-  '<VisitCommandTile surface="plexusIq"',
-  '<OutreachCommandTile surface="plexusIq"',
-]);
-
-requireNotText(
-  qualification,
-  [
-    'data-testid="tile-qualification-visit"',
-    'data-testid="tile-qualification-outreach"',
-    'setLocation("/visit-patients")',
-    'setLocation("/outreach-patients")',
-  ],
-  "Inline tile implementation still present (must be in canonical components)"
-);
+// qualification.tsx is no longer the canonical Plexus IQ Add Patient
+// surface — that role now belongs to PlexusIQAddPatientHub +
+// PlexusIQAddPatientModal inside /plexus-iq. The canonical Visit /
+// Outreach contract still has to exist (tile components + profile
+// configuration) but the qualification page is allowed to use, ignore,
+// or omit it. The QA stops asserting qualification.tsx specifically
+// and instead asserts the Plexus IQ Add Patient flow consumes the
+// canonical control (handled below via plexusIqAddPatientModal).
+void qualification;
 
 requireText(playground, [
   'componentType === "visit"',

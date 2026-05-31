@@ -73,6 +73,61 @@ requireText(page, [
 
 requireFile(bulkModal);
 
+// 4b. Page must wire the hub state to the modal's defaultPatientType:
+// each tile picks a kind, closes the hub, and opens the single modal
+// with the right default.
+requireText(page, [
+  "defaultPatientType",
+  'setDefaultPatientType("visit")',
+  'setDefaultPatientType("outreach")',
+]);
+
+// 4c. Hub itself must NOT be wired into the command-center popup /
+// playground layer. Visit / Outreach inside the hub are direct
+// actions, not panel previews.
+const hubContent = read(hub) ?? "";
+const forbiddenInHub = [
+  "PanelPopupCard",
+  "CommandPlayground",
+  "promoteToPlayground",
+  "popup={true}",
+  'componentType: "visit"',
+  'componentType: "outreach"',
+];
+for (const needle of forbiddenInHub) {
+  if (hubContent.includes(needle)) {
+    failures.push(
+      `Hub must not use popup/panel behavior: "${needle}" present in ${hub}`,
+    );
+  }
+}
+
+// 4d. Home / dashboard must not advertise Visit/Outreach as standalone
+// tiles anymore — those live inside the Plexus IQ Add Patient(s)
+// hub. Plexus IQ launcher tile stays.
+const homeDashboard = "client/src/components/HomeDashboard.tsx";
+const homeContent = read(homeDashboard) ?? "";
+const forbiddenOnHome = [
+  "<VisitCommandTile",
+  "<OutreachCommandTile",
+  'label="Visit Patients"',
+  'label="Outreach Patients"',
+  'testId="tile-visit-patients"',
+  'testId="tile-outreach-patients"',
+];
+for (const needle of forbiddenOnHome) {
+  if (homeContent.includes(needle)) {
+    failures.push(
+      `Home dashboard must not render Visit/Outreach standalone tiles: "${needle}" present in ${homeDashboard}`,
+    );
+  }
+}
+if (homeContent && !homeContent.includes('data-testid="tile-plexus-iq"')) {
+  failures.push(
+    `Home dashboard must keep the Plexus IQ launcher tile (data-testid="tile-plexus-iq") in ${homeDashboard}`,
+  );
+}
+
 // 5. Facility-card / worklist group test IDs must exist on the workspace.
 requireText(workspace, [
   "plexus-iq-worklist-group-",

@@ -12,8 +12,6 @@ import {
   FileText,
   FolderOpen,
   Phone,
-  Plus,
-  Radio,
   Sparkles,
   Stethoscope,
   Upload,
@@ -391,24 +389,12 @@ export function HomeDashboard({
                 </div>
               </Card>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4">
                 <PrimaryTile
                   href="/patient-directory"
                   testId="tile-patient-directory"
                   label="Patient Directory"
                   icon={<Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <PrimaryTile
-                  href="/visit-patients"
-                  testId="tile-visit-patients"
-                  label="Visit Patients"
-                  icon={<Plus className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <PrimaryTile
-                  href="/outreach-patients"
-                  testId="tile-outreach-patients"
-                  label="Outreach Patients"
-                  icon={<Radio className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
                 />
               </div>
 

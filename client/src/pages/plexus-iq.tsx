@@ -230,7 +230,7 @@ export default function PlexusIQPage() {
   // selected tile then opens either PlexusIQAddPatientModal (with a
   // pre-set patientType) or PlexusIQBulkImportModal.
   const [addHubOpen, setAddHubOpen] = useState(false);
-  const [addDefaultPatientType, setAddDefaultPatientType] = useState<
+  const [defaultPatientType, setDefaultPatientType] = useState<
     "visit" | "outreach"
   >("visit");
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -839,11 +839,11 @@ export default function PlexusIQPage() {
         open={addHubOpen}
         onClose={() => setAddHubOpen(false)}
         onPickVisit={() => {
-          setAddDefaultPatientType("visit");
+          setDefaultPatientType("visit");
           setAddOpen(true);
         }}
         onPickOutreach={() => {
-          setAddDefaultPatientType("outreach");
+          setDefaultPatientType("outreach");
           setAddOpen(true);
         }}
         onPickBatchFlow={() => setBulkOpen(true)}
@@ -854,7 +854,7 @@ export default function PlexusIQPage() {
         onClose={() => setAddOpen(false)}
         onSubmit={handleAddPatient}
         pending={addPatientMut.isPending || createBatchMut.isPending}
-        defaultPatientType={addDefaultPatientType}
+        defaultPatientType={defaultPatientType}
       />
 
       <PlexusIQBulkImportModal
