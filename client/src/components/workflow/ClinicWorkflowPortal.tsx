@@ -1,23 +1,30 @@
 import { PortalShell } from "@/components/portal/PortalShell";
+import { TeamPortalShell } from "@/components/portal/TeamPortalShell";
 import type { TeamMemberWorkspaceMode } from "@/components/portal/WorkspaceModeSwitcher";
 
-// Visible workspace role accepted by the unified team-member shell.
-// `technician` and `liaison` remain accepted for legacy direct mounts.
-// New surfaces should pass `patientCareSpecialist` or
-// `ancillaryCareSpecialist` — these are the user-facing workspace
-// concepts.
+// Visible workspace role accepted by the team-member shell adapter.
+//
+// Legacy direct mounts (`technician`, `liaison`) keep their existing
+// experience by routing through the legacy PortalShell.tsx so
+// /scheduler-portal, /technician-portal, /liaison-technician-portal
+// behave exactly as before.
+//
+// New surfaces (`patientCareSpecialist`, `ancillaryCareSpecialist`)
+// route through TeamPortalShell — the expanded shell with the
+// WorkspaceModeSwitcher tab strip, PatientCommandCanvas,
+// PatientMiniCalendar, schedule dialogs, the four Portal*Tab files,
+// and the CanonicalCommandCalendar drawer.
 type WorkspaceRole =
   | "technician"
   | "liaison"
   | "patientCareSpecialist"
   | "ancillaryCareSpecialist";
 
-// Internal data role consumed by PortalShell's existing branching (clinic-
-// day workflow vs. outreach-style call list). The user-facing workspace
-// is mapped to the closest existing internal role so PortalShell's
-// internals stay untouched in this batch:
-//   ancillaryCareSpecialist → technician  (clinic-day flow)
-//   patientCareSpecialist   → liaison     (call-oriented flow)
+// Both shells consume the same internal Role union ("technician" |
+// "liaison"). PCS is call-oriented (maps to liaison internals);
+// ACS is clinic-day-oriented (maps to technician internals). The
+// adapter passes the public role through via `workspaceRole` so the
+// shell can gate UI by PCS vs. ACS regardless of internal mapping.
 const INTERNAL_ROLE: Record<WorkspaceRole, "technician" | "liaison"> = {
   technician: "technician",
   liaison: "liaison",
@@ -39,11 +46,25 @@ const DEFAULT_MODE: Record<WorkspaceRole, TeamMemberWorkspaceMode> = {
   patientCareSpecialist: "callList",
 };
 
+function isTeamMemberWorkspace(role: WorkspaceRole): boolean {
+  return role === "patientCareSpecialist" || role === "ancillaryCareSpecialist";
+}
+
 export default function ClinicWorkflowPortal({
   role,
 }: {
   role: WorkspaceRole;
 }) {
+  if (isTeamMemberWorkspace(role)) {
+    return (
+      <TeamPortalShell
+        role={INTERNAL_ROLE[role]}
+        workspaceLabel={WORKSPACE_LABEL[role]}
+        defaultMode={DEFAULT_MODE[role]}
+        workspaceRole={role}
+      />
+    );
+  }
   return (
     <PortalShell
       role={INTERNAL_ROLE[role]}
