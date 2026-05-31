@@ -40,6 +40,8 @@ import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
 import PlexusIQPage from "@/pages/plexus-iq";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
+import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
+import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
 
 const SIDEBAR_STYLE = {
   "--sidebar-width": "18rem",
@@ -145,6 +147,16 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
         <Route path="/team-member-portals">
           <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
             <TeamMemberPortalsPage />
+          </SidebarProvider>
+        </Route>
+        <Route path="/patient-care-specialist-portal">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <PatientCareSpecialistPortalPage />
+          </SidebarProvider>
+        </Route>
+        <Route path="/ancillary-care-specialist-portal">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <AncillaryCareSpecialistPortalPage />
           </SidebarProvider>
         </Route>
                 <Route path="/team-ops" component={TeamOpsPage} />

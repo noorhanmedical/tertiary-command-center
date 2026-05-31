@@ -689,7 +689,33 @@ function AiBar({ context }: { context: string }) {
   );
 }
 
-export function PortalShell({ role }: { role: Role }) {
+// Optional workspace-level metadata supplied by ClinicWorkflowPortal so the
+// shell can render PCS / ACS labels without a new internal role. The shell
+// still branches on the existing two-value `Role` ("technician" | "liaison"),
+// so legacy direct mounts at /technician-portal and /liaison-technician-portal
+// keep their behavior. PCS / ACS adapters pass `workspaceLabel` and the new
+// roles via these props — the additional fields are accepted-but-unused in
+// this batch and reserved for the Phase 4 workspace expansion.
+type WorkspaceModeHint = "clinicSchedule" | "ancillarySchedule" | "callList";
+type WorkspaceRoleHint =
+  | "technician"
+  | "liaison"
+  | "patientCareSpecialist"
+  | "ancillaryCareSpecialist";
+
+export function PortalShell({
+  role,
+  workspaceLabel,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  defaultMode: _defaultMode,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  workspaceRole: _workspaceRole,
+}: {
+  role: Role;
+  workspaceLabel?: string;
+  defaultMode?: WorkspaceModeHint;
+  workspaceRole?: WorkspaceRoleHint;
+}) {
   const { toast } = useToast();
   const { data: facData } = useQuery<{ facilities: string[] }>({
     queryKey: ["/api/portal/my-facilities"],
@@ -829,7 +855,8 @@ export function PortalShell({ role }: { role: Role }) {
   }, [patients, selectedPatientId]);
 
   const RoleIcon = role === "technician" ? Stethoscope : HeartHandshake;
-  const title = role === "technician" ? "Technician Portal" : "Liaison Technician Portal";
+  const baseTitle = role === "technician" ? "Technician Portal" : "Liaison Technician Portal";
+  const title = workspaceLabel ?? baseTitle;
   const subtitle = role === "technician"
     ? "Run today's tests · sign consents · upload chart docs"
     : "";
