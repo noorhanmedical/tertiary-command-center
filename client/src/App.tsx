@@ -160,7 +160,11 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
             <AncillaryCareSpecialistPortalPage />
           </SidebarProvider>
         </Route>
-        <Route path="/engagement-center" component={EngagementCenterPage} />
+        <Route path="/engagement-center">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <EngagementCenterPage />
+          </SidebarProvider>
+        </Route>
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">
                   <Redirect to="/plexus-tasks" />
