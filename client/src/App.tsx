@@ -42,6 +42,7 @@ import PlexusIQPage from "@/pages/plexus-iq";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
+import EngagementCenterPage from "@/pages/engagement-center";
 
 const SIDEBAR_STYLE = {
   "--sidebar-width": "18rem",
@@ -159,6 +160,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
             <AncillaryCareSpecialistPortalPage />
           </SidebarProvider>
         </Route>
+        <Route path="/engagement-center" component={EngagementCenterPage} />
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">
                   <Redirect to="/plexus-tasks" />

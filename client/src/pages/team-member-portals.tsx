@@ -1,15 +1,18 @@
 // Team Member Portals landing page.
 //
-// Two — and only two — team-member portals:
+// Two team-member portal workspaces:
 //   1. Patient Care Specialist Portal
 //   2. Ancillary Care Specialist Portal
+//
+// Plus the Outreach / Engagement Center — the command-center surface that
+// owns engagement assignments, follow-up queues, and the outreach pipeline.
 //
 // Scheduler Portal is the legacy name for Patient Care Specialist Portal.
 // Technician / Liaison capabilities are consolidated under Ancillary Care
 // Specialist Portal. Liaison is not a separate portal.
 
 import { Link } from "wouter";
-import { ArrowRight, Headphones, Stethoscope } from "lucide-react";
+import { ArrowRight, Headphones, Megaphone, Stethoscope } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 
 type PortalCard = {
@@ -37,6 +40,14 @@ const PORTALS: PortalCard[] = [
     icon: <Stethoscope className="w-7 h-7" strokeWidth={1.75} />,
     testId: "card-ancillary-care-specialist-workspace",
   },
+  {
+    title: "Outreach / Engagement Center",
+    subtitle:
+      "Engagement assignments, follow-up queue, outreach pipeline, and team-member coordination across PCS and ACS.",
+    href: "/engagement-center",
+    icon: <Megaphone className="w-7 h-7" strokeWidth={1.75} />,
+    testId: "card-engagement-center",
+  },
 ];
 
 export default function TeamMemberPortalsPage() {
@@ -61,7 +72,7 @@ export default function TeamMemberPortalsPage() {
 
       <main className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-5xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-6xl mx-auto">
             {PORTALS.map((portal) => (
               <Link key={portal.href} href={portal.href}>
                 <div
