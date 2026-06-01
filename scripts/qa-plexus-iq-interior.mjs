@@ -409,19 +409,44 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "admin-review-assign-evidence",
   "admin-review-ancillary-card",
   "admin-review-ancillary-expanded",
-  "admin-review-regenerate-clinician",
-  "admin-review-regenerate-patient",
-  "admin-review-regenerate-all",
+  // Canonical reasoning binding.
+  "admin-review-canonical-reasoning-card",
+  "buildCanonicalReasoningByAncillary",
+  "getAncillaryCategory",
+  "clinician_understanding",
+  "patient_talking_points",
+  "qualifying_factors",
+  "icd10_codes",
+  "pearls",
+  // ICD search/manual add/remove controls.
+  "admin-review-icd-search",
+  "admin-review-icd-manual-code",
+  "admin-review-icd-manual-label",
+  "admin-review-icd-add",
+  "admin-review-icd-remove",
+  // Single global regenerate button.
+  "admin-review-global-regenerate",
+  // Under-16 + ancillary labels.
   "admin-review-under-16-rule",
   "badge-admin-review-under-16",
   "PatientPdfActions",
-  // Fallback evidence helper so popup never renders empty.
   "buildLocalEvidenceFallback",
-  // All three ancillaries must always render.
   "BrainWave",
   "VitalWave",
   "Ultrasound Studies",
 ]);
+
+// Old per-mode regenerate buttons must be gone — a single global
+// "Regenerate" drives canonical regeneration now.
+requireNotText(
+  "client/src/components/qualification/AdminReviewDialog.tsx",
+  [
+    "admin-review-regenerate-clinician",
+    "admin-review-regenerate-patient",
+    "admin-review-regenerate-all",
+  ],
+  "AdminReviewDialog must use one global regenerate button",
+);
 
 requireText("client/src/components/PatientCard.tsx", [
   "badge-patient-under-16",
