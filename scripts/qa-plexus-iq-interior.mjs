@@ -16,6 +16,19 @@ function requireFile(rel) {
   return content;
 }
 
+function requireNotText(rel, needles, label) {
+  const content = read(rel);
+  if (content === null) {
+    failures.push(`Missing file: ${rel}`);
+    return;
+  }
+  for (const needle of needles) {
+    if (content.includes(needle)) {
+      failures.push(`${label}: ${rel} contains "${needle}"`);
+    }
+  }
+}
+
 function requireText(rel, needles) {
   const content = read(rel);
   if (content === null) {
@@ -236,6 +249,84 @@ if (pageContent.includes("PlexusIQDayPanel")) {
     `Page still references PlexusIQDayPanel — the canonical replacement is PlexusIQDayModal`,
   );
 }
+
+// 9. Patient Card frontend recovery (Batch 3 — frontend-only).
+const pdfActions = "client/src/components/qualification/PatientPdfActions.tsx";
+const completeness = "client/src/lib/patientCompleteness.ts";
+const patientCard = "client/src/components/PatientCard.tsx";
+const patientEditDialog = "client/src/components/PatientEditDialog.tsx";
+
+requireFile(pdfActions);
+requireFile(completeness);
+requireText(pdfActions, [
+  "PatientPdfActions",
+  "button-patient-plexus-pdf",
+  "button-patient-clinician-pdf",
+  "generatePlexusPDF",
+  "generateClinicianPDF",
+  "isPatientPdfEligible",
+]);
+requireText(completeness, [
+  "getPatientCompleteness",
+  "BASE_FIELDS",
+  "VISIT_EXTRA",
+]);
+
+requireText(patientCard, [
+  // PDF actions wiring.
+  'import { PatientPdfActions }',
+  "<PatientPdfActions",
+  "iconOnly",
+  // Engagement badge is allowed (already on main).
+  "EngagementAssignmentBadge",
+  // Completeness gating.
+  "getPatientCompleteness",
+  "infoComplete",
+  "missing",
+  // More dropdown + Edit/Generate menu.
+  "DropdownMenu",
+  "menu-edit-patient",
+  "menu-generate",
+  "button-patient-more",
+  // Status pill states.
+  '"Pending"',
+  '"Ready"',
+  '"Final"',
+  // Pencil + MoreHorizontal lucide imports.
+  "MoreHorizontal",
+  "Pencil",
+]);
+
+// PatientCard must NOT pull in AdminReviewDialog / AdminApprovalControl
+// / adminApprovalStatus / adminReviewStatus in this batch — those land
+// in Batch 4 with migration 0025 + schema additions.
+requireNotText(
+  patientCard,
+  [
+    "AdminReviewDialog",
+    "AdminApprovalControl",
+    "adminReviewStatus",
+    "computeAdminReview",
+    "adminApprovalStatus",
+    "ShieldCheck",
+    "readyForAdminReview",
+  ],
+  "PatientCard must defer Admin Review wiring to Batch 4",
+);
+
+// Edit dialog gets completeness + missing pill, but not the admin review section.
+requireText(patientEditDialog, [
+  "getPatientCompleteness",
+  "dialog-missing-",
+  "Required before generation",
+  "isVisit",
+  "generateDisabled",
+]);
+requireNotText(
+  patientEditDialog,
+  ["computeAdminReview", "onOpenAdminReview", "ShieldCheck"],
+  "PatientEditDialog must defer Admin Review wiring to Batch 4",
+);
 
 if (failures.length) {
   console.error("Plexus IQ interior QA failed:");

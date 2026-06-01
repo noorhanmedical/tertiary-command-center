@@ -14,6 +14,7 @@ import type { PatientScreening } from "@shared/schema";
 import { ClinicalDataEditor } from "@/components/ClinicalDataEditor";
 import { ANCILLARY_TESTS } from "@shared/plexus";
 import { getAncillaryCategory, getBadgeColor } from "@/features/schedule/ancillaryMeta";
+import { getPatientCompleteness } from "@/lib/patientCompleteness";
 
 const ALL_AVAILABLE_TESTS: string[] = [...ANCILLARY_TESTS];
 
@@ -54,6 +55,7 @@ interface PatientEditDialogProps {
   onClose: () => void;
   onUpdate: (field: string, value: string | string[] | boolean) => void;
   showTime?: boolean;
+  isVisit?: boolean;
   qualifyingTests: string[];
   generatingTests: Set<string>;
   onAddTest: (test: string) => void;
@@ -69,6 +71,7 @@ export function PatientEditDialog({
   onClose,
   onUpdate,
   showTime = true,
+  isVisit,
   qualifyingTests,
   generatingTests,
   onAddTest,
@@ -77,6 +80,7 @@ export function PatientEditDialog({
   isAnalyzing = false,
   isCompleted = false,
 }: PatientEditDialogProps) {
+  const visitContext = isVisit ?? showTime;
   const [localName, setLocalName] = useState(patient.name || "");
   const [localTime, setLocalTime] = useState(patient.time || "");
   const [localDob, setLocalDob] = useState(patient.dob || "");
@@ -124,6 +128,26 @@ export function PatientEditDialog({
     if (age < 0 || age > 130) return "";
     return String(age);
   })();
+
+  const completeness = getPatientCompleteness(
+    {
+      name: localName,
+      dob: localDob,
+      phoneNumber: localPhone,
+      insurance: localInsurance,
+      diagnoses: localDx,
+      history: localHx,
+      medications: localRx,
+      time: localTime,
+    },
+    { isVisit: visitContext },
+  );
+  const generateDisabled = isAnalyzing || !completeness.isComplete;
+  const generateTitle = !completeness.isComplete
+    ? `Complete required info before generating · Missing: ${completeness.missing.join(", ")}`
+    : isCompleted
+      ? "Re-generate"
+      : "Generate";
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -337,12 +361,31 @@ export function PatientEditDialog({
           </section>
         </div>
 
+        {!completeness.isComplete && (
+          <div
+            className="px-5 pt-2 pb-1"
+            data-testid={`dialog-missing-${patient.id}`}
+          >
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 text-[10px] font-medium">
+              <span className="uppercase tracking-wider text-[9px] opacity-70">
+                Required before generation
+              </span>
+              <span>{completeness.missing.join(" · ")}</span>
+            </div>
+          </div>
+        )}
+
         <DialogFooter className="px-5 pb-5 pt-3 border-t sm:justify-between gap-2">
           {onAnalyze ? (
             <Button
               variant="outline"
-              onClick={onAnalyze}
-              disabled={isAnalyzing}
+              onClick={() => {
+                if (generateDisabled) return;
+                onAnalyze();
+              }}
+              disabled={generateDisabled}
+              title={generateTitle}
+              aria-label={generateTitle}
               className="gap-1.5"
               data-testid={`dialog-button-generate-${patient.id}`}
             >

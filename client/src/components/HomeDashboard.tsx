@@ -399,44 +399,32 @@ export function HomeDashboard({
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 auto-rows-fr">
                 <SecondaryTile
-                  href="/patient-directory"
-                  testId="tile-patient-directory"
-                  label="Patient Directory"
-                  icon={<Users className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
                   href="/team-member-portals"
                   testId="tile-team-member-portals"
                   label="Team Member Portals"
                   icon={<Users2 className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
-                  href="/liaison-technician-portal"
-                  testId="tile-liaison-technician-portal"
-                  label="Liaison Technician Portal"
-                  icon={<Stethoscope className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/scheduler-portal"
-                  testId="tile-scheduler-portal"
-                  label="Scheduler Portal"
-                  icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/outreach-center"
-                  testId="tile-outreach-center"
-                  label="Outreach Center"
+                  href="/engagement-center"
+                  testId="tile-engagement-center"
+                  label="Outreach / Engagement Center"
                   icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/team-ops"
                   testId="tile-team-ops"
                   label="Team Ops"
-                  icon={<Users2 className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                  icon={<Stethoscope className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 auto-rows-fr">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 auto-rows-fr">
+                <SecondaryTile
+                  href="/patient-directory"
+                  testId="tile-patient-directory"
+                  label="Patient Directory"
+                  icon={<Users className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
                 <SecondaryTile
                   href="/document-upload"
                   testId="tile-document-upload"
