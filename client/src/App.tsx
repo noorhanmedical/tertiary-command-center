@@ -35,6 +35,8 @@ import DocumentLibraryPage from "@/pages/document-library";
 import LoginPage from "@/pages/login";
 import { GlobalNav } from "@/components/GlobalNav";
 import { TopBanner } from "@/components/TopBanner";
+import { GlobalFloatingDock } from "@/components/navigation/GlobalFloatingDock";
+import { shouldShowGlobalNav } from "@/lib/navigation/navigationRegistry";
 import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
@@ -66,14 +68,17 @@ function RoleGuard({ user, roles, children }: { user: AuthUser; roles: string[];
 }
 
 function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
+  const [currentPath] = useLocation();
+  const showGlobalNav = shouldShowGlobalNav(currentPath);
   return (
     <Switch>
       <Route path="/schedule/:id" component={SharedSchedule} />
       <Route>
         <div className="flex flex-col h-screen w-full overflow-hidden">
           <TopBanner user={user} onLogout={onLogout} />
+          <GlobalFloatingDock />
           <div className="flex flex-1 min-h-0 min-w-0">
-            <GlobalNav user={user} onLogout={onLogout} />
+            {showGlobalNav && <GlobalNav user={user} onLogout={onLogout} />}
             <div className="flex flex-col flex-1 min-w-0 min-h-0">
               <div className="flex-1 min-h-0 overflow-auto">
               <Switch>
