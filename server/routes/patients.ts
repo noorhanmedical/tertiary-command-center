@@ -253,34 +253,40 @@ export function registerPatientRoutes(
           ? { ...(patient.reasoning as Record<string, unknown>) }
           : {};
 
-      const evidenceText = assignedEvidence
-        .map((item: any) => {
-          const label = item?.label ?? "";
-          const icd = item?.icdCode ? ` (${item.icdCode})` : "";
-          return `${label}${icd}`.trim();
-        })
-        .filter(Boolean)
-        .join(", ");
-
       const key = `adminReview:${ancillaryId || "unknown"}`;
       const prior = (existingReasoning as Record<string, any>)[key] ?? {};
+      const normalizedMode =
+        mode === "clinician" || mode === "patient" || mode === "all" ? mode : "all";
+
+      const { regenerateAdminReviewReasoning } = await import(
+        "../services/plexusIq/adminReviewAiRegeneration"
+      );
+
+      const regenerated = await regenerateAdminReviewReasoning({
+        patient,
+        ancillaryId,
+        mode: normalizedMode,
+        assignedEvidence,
+        ancillaryNote,
+        previousClinicianReasoning: prior.clinicianReasoning,
+        previousPatientExplanation: prior.patientExplanation,
+      });
 
       const timestamp = new Date().toISOString();
-      const generatedClinician =
-        `Clinician rationale generated from selected evidence for ${ancillaryId || "ancillary"}: ${evidenceText || "no selected evidence"}.` +
-        (ancillaryNote ? ` Note: ${ancillaryNote}` : "");
-      const generatedPatient = `Patient explanation generated in plain language using selected evidence: ${evidenceText || "no selected evidence"}.`;
-
       const nextEntry = {
         ancillaryId,
         assignedEvidence,
-        ancillaryNote,
+        ancillaryNote: regenerated.ancillaryNote || ancillaryNote,
         clinicianReasoning:
-          mode === "patient" ? prior.clinicianReasoning ?? generatedClinician : generatedClinician,
+          normalizedMode === "patient"
+            ? prior.clinicianReasoning ?? regenerated.clinicianReasoning
+            : regenerated.clinicianReasoning,
         patientExplanation:
-          mode === "clinician" ? prior.patientExplanation ?? generatedPatient : generatedPatient,
+          normalizedMode === "clinician"
+            ? prior.patientExplanation ?? regenerated.patientExplanation
+            : regenerated.patientExplanation,
         regeneratedAt: timestamp,
-        regeneratedMode: mode,
+        regeneratedMode: normalizedMode,
       };
 
       const nextReasoning = {

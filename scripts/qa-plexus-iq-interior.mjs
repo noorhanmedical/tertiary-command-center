@@ -425,6 +425,36 @@ requireNotText(
   "AdminReviewDialog must not contain tutorial/rule-engine UI copy",
 );
 
+// Admin Review true OpenAI regeneration guardrails.
+requireText("server/services/plexusIq/adminReviewAiRegeneration.ts", [
+  "regenerateAdminReviewReasoning",
+  "OPENAI_API_KEY",
+  "client.responses.create",
+  "json_schema",
+  "clinicianReasoning",
+  "patientExplanation",
+]);
+
+requireText("server/routes/patients.ts", [
+  "regenerateAdminReviewReasoning",
+  "../services/plexusIq/adminReviewAiRegeneration",
+]);
+
+requireNotText(
+  "server/routes/patients.ts",
+  [
+    "Clinician rationale generated from selected evidence",
+    "Patient explanation generated in plain language using selected evidence",
+  ],
+  "Admin Review regenerate route must call OpenAI helper instead of canned server text",
+);
+
+requireNotText(
+  "client/src/components/qualification/AdminReviewDialog.tsx",
+  ["OPENAI_API_KEY", "AI_INTEGRATIONS_OPENAI_API_KEY"],
+  "OpenAI API key must never appear in client code",
+);
+
 if (failures.length) {
   console.error("Plexus IQ interior QA failed:");
   for (const failure of failures) console.error(`- ${failure}`);
