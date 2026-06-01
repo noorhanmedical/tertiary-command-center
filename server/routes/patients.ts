@@ -314,6 +314,126 @@ export function registerPatientRoutes(
     }
   });
 
+  // Canonical regenerate-all: writes patient.reasoning[testName] so the
+  // ancillary icon popup, QualificationReasoningDialog, PDFs, and Admin
+  // Review all read from the same layer. Also stores supplemental
+  // adminReview:<ancillary> metadata for the assignment audit trail.
+  app.post("/api/patient-screenings/:id/admin-review/regenerate-all", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (Number.isNaN(id)) {
+        return res.status(400).json({ error: "Invalid patient id" });
+      }
+      const patient = await storage.getPatientScreening(id);
+      if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      const assignedEvidenceByAncillary = {
+        brainwave: Array.isArray(req.body?.assignedEvidenceByAncillary?.brainwave)
+          ? req.body.assignedEvidenceByAncillary.brainwave
+          : [],
+        vitalwave: Array.isArray(req.body?.assignedEvidenceByAncillary?.vitalwave)
+          ? req.body.assignedEvidenceByAncillary.vitalwave
+          : [],
+        ultrasound: Array.isArray(req.body?.assignedEvidenceByAncillary?.ultrasound)
+          ? req.body.assignedEvidenceByAncillary.ultrasound
+          : [],
+      };
+      const ancillaryNotes = {
+        brainwave:
+          typeof req.body?.ancillaryNotes?.brainwave === "string"
+            ? req.body.ancillaryNotes.brainwave
+            : "",
+        vitalwave:
+          typeof req.body?.ancillaryNotes?.vitalwave === "string"
+            ? req.body.ancillaryNotes.vitalwave
+            : "",
+        ultrasound:
+          typeof req.body?.ancillaryNotes?.ultrasound === "string"
+            ? req.body.ancillaryNotes.ultrasound
+            : "",
+      };
+      const adminNote =
+        typeof req.body?.adminNote === "string" ? req.body.adminNote : "";
+      const icdCodes: Array<{ code: string; label: string }> = Array.isArray(req.body?.icdCodes)
+        ? req.body.icdCodes
+            .map((c: any) => ({
+              code: String(c?.code ?? "").trim(),
+              label: String(c?.label ?? "").trim(),
+            }))
+            .filter((c: { code: string }) => c.code.length > 0)
+        : [];
+      const updatedDiagnoses =
+        typeof req.body?.diagnoses === "string" ? req.body.diagnoses : patient.diagnoses;
+      const updatedMedications =
+        typeof req.body?.medications === "string" ? req.body.medications : patient.medications;
+      const updatedHistory =
+        typeof req.body?.history === "string" ? req.body.history : patient.history;
+
+      const qualifyingTests = Array.isArray(patient.qualifyingTests)
+        ? patient.qualifyingTests
+        : [];
+
+      const { regenerateCanonicalReasoning } = await import(
+        "../services/plexusIq/adminReviewAiRegeneration"
+      );
+
+      const ai = await regenerateCanonicalReasoning({
+        patient: {
+          ...patient,
+          history: updatedHistory ?? null,
+          diagnoses: updatedDiagnoses ?? null,
+          medications: updatedMedications ?? null,
+        } as typeof patient,
+        qualifyingTests,
+        assignedEvidenceByAncillary,
+        ancillaryNotes,
+        adminNote,
+        icdCodes,
+      });
+
+      const existingReasoning =
+        patient.reasoning &&
+        typeof patient.reasoning === "object" &&
+        !Array.isArray(patient.reasoning)
+          ? { ...(patient.reasoning as Record<string, unknown>) }
+          : {};
+
+      // Merge canonical regenerated entries onto patient.reasoning[testName].
+      for (const [testName, entry] of Object.entries(ai.reasoningByTest)) {
+        existingReasoning[testName] = entry;
+      }
+
+      // Supplemental adminReview metadata per ancillary (audit only).
+      const timestamp = new Date().toISOString();
+      for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
+        existingReasoning[`adminReview:${id}`] = {
+          ancillaryId: id,
+          assignedEvidence: assignedEvidenceByAncillary[id],
+          ancillaryNote: ancillaryNotes[id],
+          regeneratedAt: timestamp,
+          regeneratedMode: "all",
+        };
+      }
+
+      const updatePayload: Record<string, unknown> = {
+        reasoning: existingReasoning,
+      };
+      if (updatedDiagnoses !== patient.diagnoses) updatePayload.diagnoses = updatedDiagnoses;
+      if (updatedMedications !== patient.medications) updatePayload.medications = updatedMedications;
+      if (updatedHistory !== patient.history) updatePayload.history = updatedHistory;
+
+      const updated = await storage.updatePatientScreening(id, updatePayload);
+
+      invalidatePatientDatabase();
+      res.json({ ok: true, patient: updated });
+    } catch (error: any) {
+      console.error("[admin-review/regenerate-all] error:", error?.message ?? error);
+      res.status(500).json({
+        error: error?.message ?? "Failed to regenerate canonical reasoning",
+      });
+    }
+  });
+
   // Sets the admin approval state on a patient_screenings row.
   // Backs the Admin Review modal on Plexus IQ patient cards.
   // Journey-event append is best-effort; if patient_journey_events /

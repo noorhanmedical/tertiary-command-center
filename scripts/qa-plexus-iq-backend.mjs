@@ -67,6 +67,14 @@ requireText(patientsRoute, [
   "listRecentlyDeletedPatientScreenings",
   "getPatientScreeningIncludingDeleted",
   "restorePatientScreening",
+  // Canonical Admin Review regeneration must write patient.reasoning[testName]
+  // and use storage.updatePatientScreening; supplemental adminReview metadata
+  // may also be set, but is not the sole output.
+  "/api/patient-screenings/:id/admin-review/regenerate-all",
+  "regenerateCanonicalReasoning",
+  "reasoning",
+  "updatePatientScreening",
+  "adminReview:",
 ]);
 
 // 3. Schema must declare the soft-delete fields. Drizzle column names

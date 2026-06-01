@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -25,7 +26,6 @@ import {
   ChevronDown,
   ChevronRight,
   Plus,
-  RefreshCw,
   Sparkles,
   X,
 } from "lucide-react";
@@ -34,6 +34,7 @@ import { apiRequest } from "@/lib/queryClient";
 import type { PatientScreening } from "@shared/schema";
 import { computeAdminReview, type AdminApprovalStatus } from "@/lib/adminReviewStatus";
 import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
+import { getAncillaryCategory } from "@/features/schedule/ancillaryMeta";
 import {
   COMMON_ICD_SUGGESTIONS,
   type AdminEvidenceChip,
@@ -99,14 +100,16 @@ const SOURCE_TONE: Record<string, string> = {
   "Prior Test": "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
 };
 
+const CONFIDENCE_TONE: Record<string, string> = {
+  high: "bg-emerald-50 text-emerald-800 border-emerald-200",
+  medium: "bg-amber-50 text-amber-800 border-amber-200",
+  low: "bg-rose-50 text-rose-800 border-rose-200",
+};
+
 type EvidencePayload = AdminReviewRuleResult & { ok?: boolean; patientId?: number };
 
 type AncillaryAssignmentMap = Record<AdminReviewAncillaryId, AdminEvidenceChip[]>;
 type AncillaryNoteMap = Record<AdminReviewAncillaryId, string>;
-type AncillaryReasoningMap = Record<
-  AdminReviewAncillaryId,
-  { clinicianReasoning?: string; patientExplanation?: string }
->;
 
 function emptyAncillaryMap<T>(value: () => T): Record<AdminReviewAncillaryId, T> {
   return {
@@ -121,17 +124,12 @@ function reasoningAsObject(value: unknown): Record<string, any> {
   return value as Record<string, any>;
 }
 
-function seedFromReasoning(reasoning: Record<string, any>): {
+function seedFromAdminMetadata(reasoning: Record<string, any>): {
   assignments: AncillaryAssignmentMap;
   notes: AncillaryNoteMap;
-  reasoningOut: AncillaryReasoningMap;
 } {
   const assignments = emptyAncillaryMap<AdminEvidenceChip[]>(() => []);
   const notes = emptyAncillaryMap<string>(() => "");
-  const reasoningOut = emptyAncillaryMap<{
-    clinicianReasoning?: string;
-    patientExplanation?: string;
-  }>(() => ({}));
   for (const id of ["brainwave", "vitalwave", "ultrasound"] as AdminReviewAncillaryId[]) {
     const entry = reasoning[`adminReview:${id}`];
     if (entry && typeof entry === "object") {
@@ -139,15 +137,9 @@ function seedFromReasoning(reasoning: Record<string, any>): {
         assignments[id] = entry.assignedEvidence as AdminEvidenceChip[];
       }
       if (typeof entry.ancillaryNote === "string") notes[id] = entry.ancillaryNote;
-      reasoningOut[id] = {
-        clinicianReasoning:
-          typeof entry.clinicianReasoning === "string" ? entry.clinicianReasoning : undefined,
-        patientExplanation:
-          typeof entry.patientExplanation === "string" ? entry.patientExplanation : undefined,
-      };
     }
   }
-  return { assignments, notes, reasoningOut };
+  return { assignments, notes };
 }
 
 function chipKey(chip: AdminEvidenceChip): string {
@@ -162,10 +154,8 @@ function localStableId(parts: string[]): string {
     .replace(/(^-|-$)/g, "");
 }
 
-// Fallback evidence builder — runs entirely on the patient object so the
-// dialog always has chips to show even when /admin-review/evidence is
-// loading, errored, or returns empty. Mirrors the rule engine's heuristics
-// but in a smaller surface focused on what the popup needs to render.
+// Local fallback evidence — keeps the popup non-empty when
+// /admin-review/evidence is loading, errored, or returns nothing.
 export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvidenceChip[] {
   const hx = (patient.history ?? "").toLowerCase();
   const dxText = (patient.diagnoses ?? "").toLowerCase();
@@ -188,7 +178,6 @@ export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvid
   const matches = (terms: string[]) => terms.some((t) => blob.includes(t));
   const icdInText = (code: string) => blob.includes(code.toLowerCase());
 
-  // Diabetes
   if (matches(["diabetes", "dm2", "metformin", "insulin", "glp-1", "semaglutide", "jardiance", "farxiga"])) {
     const code = ["E11.9", "E11.40"].find(icdInText) ?? null;
     push({
@@ -204,8 +193,6 @@ export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvid
       detail: "Local match on Hx/Dx/Rx",
     });
   }
-
-  // Hypertension
   if (matches(["hypertension", "htn", "amlodipine", "lisinopril", "losartan", "hctz", "hydrochlorothiazide", "metoprolol"])) {
     const code = icdInText("I10") ? "I10" : null;
     push({
@@ -218,11 +205,8 @@ export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvid
       requiresIcd: !code,
       suggestedIcds: code ? [] : COMMON_ICD_SUGGESTIONS.hypertension,
       confidence: "high",
-      detail: "Local match on Hx/Dx/Rx",
     });
   }
-
-  // Hyperlipidemia
   if (matches(["hyperlipidemia", "hld", "atorvastatin", "rosuvastatin", "pravastatin", "simvastatin", "statin"])) {
     const code = icdInText("E78.5") ? "E78.5" : null;
     push({
@@ -235,11 +219,8 @@ export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvid
       requiresIcd: !code,
       suggestedIcds: code ? [] : COMMON_ICD_SUGGESTIONS.hyperlipidemia,
       confidence: "high",
-      detail: "Local match on Hx/Dx/Rx",
     });
   }
-
-  // Vascular / PVD
   if (matches(["claudication", "pad", "pvd", "leg pain"])) {
     const code = icdInText("I73.9") ? "I73.9" : null;
     push({
@@ -253,8 +234,6 @@ export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvid
       confidence: "medium",
     });
   }
-
-  // Edema
   if (matches(["edema", "swelling"])) {
     const code = icdInText("R60.0") ? "R60.0" : null;
     push({
@@ -268,8 +247,6 @@ export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvid
       confidence: "medium",
     });
   }
-
-  // Dizziness / syncope / bruit
   if (matches(["dizziness", "syncope", "bruit"])) {
     const code = icdInText("R42") ? "R42" : null;
     push({
@@ -283,8 +260,6 @@ export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvid
       confidence: "medium",
     });
   }
-
-  // Dyspnea
   if (matches(["dyspnea", "shortness of breath", "sob"])) {
     const code = icdInText("R06.02") ? "R06.02" : null;
     push({
@@ -298,8 +273,6 @@ export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvid
       confidence: "medium",
     });
   }
-
-  // Antiplatelet / aspirin
   if (matches(["aspirin", "antiplatelet", "clopidogrel", "plavix"])) {
     push({
       id: localStableId(["medication", "antiplatelet"]),
@@ -309,8 +282,6 @@ export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvid
       confidence: "medium",
     });
   }
-
-  // Common meds
   const meds: Array<[string, string[]]> = [
     ["Metformin", ["metformin"]],
     ["Insulin", ["insulin"]],
@@ -332,20 +303,111 @@ export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvid
       });
     }
   }
-
-  // Prior testing
   if (prior.trim() || reasoningStr.includes("prior test") || reasoningStr.includes("previoustests")) {
     push({
       id: localStableId(["prior-test", "prior"]),
       kind: "prior_test",
       label: "Prior testing",
       source: "Prior Test",
-      detail:
-        (patient as { previousTests?: string | null }).previousTests ?? null,
+      detail: (patient as { previousTests?: string | null }).previousTests ?? null,
       confidence: "medium",
     });
   }
+  return out;
+}
 
+// Canonical reasoning helper: pulls patient.reasoning[testName] for every
+// qualifying test, groups by ancillary category, and shapes for display.
+// Same source the patient-card icon popup, QualificationReasoningDialog,
+// and PDF generation read from.
+export type CanonicalReasoningCard = {
+  testName: string;
+  clinicianReasoning: string;
+  patientExplanation: string;
+  qualifyingFactors: string[];
+  icd10Codes: string[];
+  pearls: string[];
+  confidence: "high" | "medium" | "low" | null;
+  approvalRequired: boolean;
+};
+
+export function buildCanonicalReasoningByAncillary(
+  patient: PatientScreening,
+): Record<AdminReviewAncillaryId, CanonicalReasoningCard[]> {
+  const reasoning = reasoningAsObject(patient.reasoning);
+  const tests = Array.isArray(patient.qualifyingTests) ? patient.qualifyingTests : [];
+
+  const grouped: Record<AdminReviewAncillaryId, CanonicalReasoningCard[]> = {
+    brainwave: [],
+    vitalwave: [],
+    ultrasound: [],
+  };
+
+  for (const test of tests) {
+    const category = getAncillaryCategory(test);
+    if (category !== "brainwave" && category !== "vitalwave" && category !== "ultrasound") continue;
+
+    const value = reasoning[test];
+    if (value == null) continue;
+
+    if (typeof value === "string") {
+      grouped[category].push({
+        testName: test,
+        clinicianReasoning: value,
+        patientExplanation: "",
+        qualifyingFactors: [],
+        icd10Codes: [],
+        pearls: [],
+        confidence: null,
+        approvalRequired: false,
+      });
+      continue;
+    }
+
+    if (typeof value === "object" && !Array.isArray(value)) {
+      grouped[category].push({
+        testName: test,
+        clinicianReasoning:
+          typeof value.clinician_understanding === "string"
+            ? value.clinician_understanding
+            : "",
+        patientExplanation:
+          typeof value.patient_talking_points === "string"
+            ? value.patient_talking_points
+            : "",
+        qualifyingFactors: Array.isArray(value.qualifying_factors)
+          ? value.qualifying_factors
+          : [],
+        icd10Codes: Array.isArray(value.icd10_codes) ? value.icd10_codes : [],
+        pearls: Array.isArray(value.pearls) ? value.pearls : [],
+        confidence:
+          value.confidence === "high" ||
+          value.confidence === "medium" ||
+          value.confidence === "low"
+            ? value.confidence
+            : null,
+        approvalRequired: !!value.approvalRequired,
+      });
+    }
+  }
+
+  return grouped;
+}
+
+type IcdEntry = { code: string; label: string };
+
+function extractIcdsFromDiagnoses(diagnoses: string | null | undefined): IcdEntry[] {
+  if (!diagnoses) return [];
+  const out: IcdEntry[] = [];
+  const seen = new Set<string>();
+  const lineRe = /([A-TV-Z][0-9][0-9A-Z]{0,2}(?:\.[0-9A-Z]{1,4})?)\s*[-:]?\s*(.*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = lineRe.exec(diagnoses)) !== null) {
+    const code = m[1].toUpperCase();
+    if (seen.has(code)) continue;
+    seen.add(code);
+    out.push({ code, label: (m[2] ?? "").trim() });
+  }
   return out;
 }
 
@@ -378,26 +440,33 @@ export function AdminReviewDialog({
     () => reasoningAsObject(patient.reasoning),
     [patient.reasoning],
   );
-  const initialSeed = useMemo(() => seedFromReasoning(reasoningObject), [reasoningObject]);
+  const initialSeed = useMemo(() => seedFromAdminMetadata(reasoningObject), [reasoningObject]);
 
   const [assignments, setAssignments] = useState<AncillaryAssignmentMap>(initialSeed.assignments);
   const [notes, setNotes] = useState<AncillaryNoteMap>(initialSeed.notes);
-  const [reasoningOut, setReasoningOut] = useState<AncillaryReasoningMap>(initialSeed.reasoningOut);
   const [expanded, setExpanded] = useState<Record<AdminReviewAncillaryId, boolean>>({
     brainwave: false,
     vitalwave: false,
     ultrasound: false,
   });
-  const [regenInFlight, setRegenInFlight] = useState<Record<string, boolean>>({});
   const [adminNote, setAdminNote] = useState<string>("");
+  const [icdSearch, setIcdSearch] = useState("");
+  const [manualIcdCode, setManualIcdCode] = useState("");
+  const [manualIcdLabel, setManualIcdLabel] = useState("");
+  const [pendingIcds, setPendingIcds] = useState<IcdEntry[]>([]);
+  const [removedIcds, setRemovedIcds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!open) return;
-    const seeded = seedFromReasoning(reasoningAsObject(patient.reasoning));
+    const seeded = seedFromAdminMetadata(reasoningAsObject(patient.reasoning));
     setAssignments(seeded.assignments);
     setNotes(seeded.notes);
-    setReasoningOut(seeded.reasoningOut);
     setAdminNote("");
+    setIcdSearch("");
+    setManualIcdCode("");
+    setManualIcdLabel("");
+    setPendingIcds([]);
+    setRemovedIcds(new Set());
   }, [open, patient.id, patient.reasoning]);
 
   const apiEvidence: AdminEvidenceChip[] = evidenceQuery.data?.evidence ?? [];
@@ -438,23 +507,75 @@ export function AdminReviewDialog({
     [patient],
   );
 
-  // Pull every ICD chip referenced by current evidence — used for the
-  // dedicated ICD section in the left column.
-  const icdChips = useMemo(() => {
-    const seen = new Set<string>();
-    const out: { code: string; label: string; source: string }[] = [];
-    for (const e of evidence) {
-      if (e.icdCode && !seen.has(e.icdCode)) {
-        seen.add(e.icdCode);
-        out.push({
-          code: e.icdCode,
-          label: e.icdLabel ?? e.label,
-          source: e.source ?? "Manual",
-        });
-      }
+  const canonicalReasoningByAncillary = useMemo(
+    () => buildCanonicalReasoningByAncillary(patient),
+    [patient],
+  );
+
+  // ICDs already attached on patient (parsed from diagnoses), minus user removals.
+  const existingIcds = useMemo(() => {
+    const parsed = extractIcdsFromDiagnoses(patient.diagnoses);
+    return parsed.filter((c) => !removedIcds.has(c.code));
+  }, [patient.diagnoses, removedIcds]);
+
+  const allActiveIcds = useMemo(() => {
+    const map = new Map<string, IcdEntry>();
+    for (const c of existingIcds) map.set(c.code, c);
+    for (const c of pendingIcds) if (!map.has(c.code)) map.set(c.code, c);
+    return Array.from(map.values());
+  }, [existingIcds, pendingIcds]);
+
+  const icdSearchResults = useMemo(() => {
+    const q = icdSearch.trim().toLowerCase();
+    const all: IcdEntry[] = Object.values(COMMON_ICD_SUGGESTIONS).flat();
+    if (!q) return all.slice(0, 6);
+    return all
+      .filter((s) => s.code.toLowerCase().includes(q) || s.label.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [icdSearch]);
+
+  function addIcdEntry(entry: IcdEntry) {
+    if (!entry.code) return;
+    setRemovedIcds((prev) => {
+      const next = new Set(prev);
+      next.delete(entry.code);
+      return next;
+    });
+    setPendingIcds((prev) => {
+      if (prev.some((c) => c.code === entry.code)) return prev;
+      const exists = extractIcdsFromDiagnoses(patient.diagnoses).some((c) => c.code === entry.code);
+      if (exists) return prev;
+      return [...prev, entry];
+    });
+  }
+
+  function removeIcdEntry(code: string) {
+    setPendingIcds((prev) => prev.filter((c) => c.code !== code));
+    setRemovedIcds((prev) => {
+      const next = new Set(prev);
+      next.add(code);
+      return next;
+    });
+  }
+
+  // Compose the diagnoses string that will be sent on regenerate-all so
+  // the canonical patient_screenings row gets the same ICDs the dialog shows.
+  function composeUpdatedDiagnoses(): string {
+    const original = (patient.diagnoses ?? "").trim();
+    const lines = original ? original.split(/\r?\n/) : [];
+    // Strip lines whose code is in removedIcds.
+    const filtered = lines.filter((line) => {
+      const m = /^([A-TV-Z][0-9][0-9A-Z]{0,2}(?:\.[0-9A-Z]{1,4})?)/i.exec(line.trim());
+      if (!m) return true;
+      return !removedIcds.has(m[1].toUpperCase());
+    });
+    // Append pending new ICDs that aren't already represented.
+    for (const c of pendingIcds) {
+      const already = filtered.some((line) => line.includes(c.code));
+      if (!already) filtered.push(c.label ? `${c.code} - ${c.label}` : c.code);
     }
-    return out;
-  }, [evidence]);
+    return filtered.join("\n");
+  }
 
   function assignEvidence(ancillary: AdminReviewAncillaryId | "all", chip: AdminEvidenceChip) {
     if (chip.requiresIcd) {
@@ -495,12 +616,7 @@ export function AdminReviewDialog({
       suggestedIcds: [],
       source: chip.source === "AI" ? "Manual" : chip.source,
     };
-    const existingDx = (patient.diagnoses ?? "").trim();
-    const codeLine = `${code} - ${label}`;
-    if (!existingDx.includes(code)) {
-      const nextDx = existingDx ? `${existingDx}\n${codeLine}` : codeLine;
-      onUpdate("diagnoses", nextDx);
-    }
+    addIcdEntry({ code, label });
     queryClient.setQueryData<EvidencePayload>(
       ["admin-review-evidence", patient.id],
       (old) => {
@@ -513,52 +629,48 @@ export function AdminReviewDialog({
     );
   }
 
-  const regenerateMutation = useMutation<
-    {
-      ok: boolean;
-      ancillaryId: string;
-      clinicianReasoning: string;
-      patientExplanation: string;
-    },
+  const regenerateAllMutation = useMutation<
+    { ok: boolean; patient: PatientScreening },
     Error,
-    { ancillary: AdminReviewAncillaryId; mode: "clinician" | "patient" | "all" }
+    void
   >({
-    mutationFn: async ({ ancillary, mode }) => {
-      setRegenInFlight((prev) => ({ ...prev, [`${ancillary}:${mode}`]: true }));
+    mutationFn: async () => {
       const res = await apiRequest(
         "POST",
-        `/api/patient-screenings/${patient.id}/admin-review/regenerate`,
+        `/api/patient-screenings/${patient.id}/admin-review/regenerate-all`,
         {
-          ancillaryId: ancillary,
-          mode,
-          assignedEvidence: assignments[ancillary] ?? [],
-          ancillaryNote: notes[ancillary] ?? "",
+          assignedEvidenceByAncillary: assignments,
+          ancillaryNotes: notes,
+          adminNote,
+          diagnoses: composeUpdatedDiagnoses(),
+          medications: patient.medications ?? "",
+          history: patient.history ?? "",
+          icdCodes: allActiveIcds,
         },
       );
       return res.json();
     },
-    onSuccess: (data, vars) => {
-      setReasoningOut((prev) => ({
-        ...prev,
-        [vars.ancillary]: {
-          clinicianReasoning: data.clinicianReasoning,
-          patientExplanation: data.patientExplanation,
-        },
-      }));
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
-    },
-    onError: (err, vars) => {
+    onSuccess: (data) => {
       toast({
-        title: `Could not regenerate ${vars.ancillary}`,
+        title: "Regenerated",
+        description: "Canonical reasoning updated for all qualifying tests.",
+      });
+      if (data.patient) {
+        onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
+        if (typeof data.patient.diagnoses === "string") {
+          onUpdate("diagnoses", data.patient.diagnoses);
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+      queryClient.invalidateQueries({ queryKey: ["admin-review-evidence", patient.id] });
+      setPendingIcds([]);
+      setRemovedIcds(new Set());
+    },
+    onError: (err) => {
+      toast({
+        title: "Could not regenerate",
         description: err?.message ?? "Unknown error",
         variant: "destructive",
-      });
-    },
-    onSettled: (_data, _err, vars) => {
-      setRegenInFlight((prev) => {
-        const next = { ...prev };
-        delete next[`${vars.ancillary}:${vars.mode}`];
-        return next;
       });
     },
   });
@@ -629,9 +741,7 @@ export function AdminReviewDialog({
                     Under 16 · Admin approval required
                   </span>
                 )}
-                {patient.facility && (
-                  <span className="text-slate-500">{patient.facility}</span>
-                )}
+                {patient.facility && <span className="text-slate-500">{patient.facility}</span>}
                 {scheduleDate && <span className="text-slate-500">· {scheduleDate}</span>}
                 {evidenceQuery.isFetching && (
                   <span className="text-slate-400 inline-flex items-center gap-1">
@@ -660,14 +770,8 @@ export function AdminReviewDialog({
             data-testid="admin-review-three-column-layout"
           >
             {/* ─── Column 1 — Clinical Data + ICD ─── */}
-            <div
-              className="space-y-4"
-              data-testid="admin-review-left-column"
-            >
-              <section
-                className="space-y-2"
-                data-testid="admin-review-clinical-data"
-              >
+            <div className="space-y-4" data-testid="admin-review-left-column">
+              <section className="space-y-2" data-testid="admin-review-clinical-data">
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   Clinical Data
                 </div>
@@ -676,56 +780,111 @@ export function AdminReviewDialog({
                 <ClinicalField label="Rx" value={patient.medications} />
               </section>
 
-              <section
-                className="space-y-2"
-                data-testid="admin-review-icd-section"
-              >
+              <section className="space-y-2" data-testid="admin-review-icd-section">
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   ICD
                 </div>
-                {icdChips.length === 0 ? (
-                  <div className="text-xs text-slate-400 italic">
-                    No ICD codes attached.
-                  </div>
+
+                <div className="space-y-1.5">
+                  <Input
+                    type="search"
+                    placeholder="Search ICD…"
+                    value={icdSearch}
+                    onChange={(e) => setIcdSearch(e.target.value)}
+                    className="h-8 text-xs"
+                    data-testid="admin-review-icd-search"
+                  />
+                  {icdSearchResults.length > 0 && (
+                    <div className="flex flex-col gap-0.5 max-h-40 overflow-auto rounded-md border border-slate-200 bg-white">
+                      {icdSearchResults.map((s) => (
+                        <button
+                          key={s.code}
+                          type="button"
+                          onClick={() => addIcdEntry(s)}
+                          className="text-left text-xs px-2 py-1 hover:bg-slate-100 inline-flex items-center gap-2"
+                        >
+                          <span className="font-mono text-slate-700">{s.code}</span>
+                          <span className="text-slate-500 truncate">{s.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-[80px_minmax(0,1fr)_auto] gap-1.5 items-center">
+                  <Input
+                    placeholder="CODE"
+                    value={manualIcdCode}
+                    onChange={(e) => setManualIcdCode(e.target.value.toUpperCase())}
+                    className="h-8 text-xs font-mono"
+                    data-testid="admin-review-icd-manual-code"
+                  />
+                  <Input
+                    placeholder="Label"
+                    value={manualIcdLabel}
+                    onChange={(e) => setManualIcdLabel(e.target.value)}
+                    className="h-8 text-xs"
+                    data-testid="admin-review-icd-manual-label"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      if (!manualIcdCode.trim()) return;
+                      addIcdEntry({ code: manualIcdCode.trim(), label: manualIcdLabel.trim() });
+                      setManualIcdCode("");
+                      setManualIcdLabel("");
+                    }}
+                    data-testid="admin-review-icd-add"
+                    className="h-8 px-2"
+                  >
+                    <Plus className="w-3 h-3" />
+                  </Button>
+                </div>
+
+                {allActiveIcds.length === 0 ? (
+                  <div className="text-xs text-slate-400 italic">No ICD codes attached.</div>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
-                    {icdChips.map((c) => (
+                    {allActiveIcds.map((c) => (
                       <span
                         key={c.code}
                         className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-800 px-2 py-0.5 text-[11px]"
                       >
                         <span className="font-mono">{c.code}</span>
-                        <span className="truncate max-w-[160px]">{c.label}</span>
+                        <span className="truncate max-w-[140px]">{c.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeIcdEntry(c.code)}
+                          aria-label={`Remove ICD ${c.code}`}
+                          data-testid="admin-review-icd-remove"
+                          className="hover:text-rose-600"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
                       </span>
                     ))}
                   </div>
                 )}
+
                 {totalMissingIcds > 0 && (
                   <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 inline-flex items-center gap-1">
                     <AlertTriangle className="w-3 h-3" />
-                    {totalMissingIcds} ICD needed
+                    {totalMissingIcds} diagnosis ICD needed
                   </div>
                 )}
               </section>
             </div>
 
             {/* ─── Column 2 — Evidence + Ancillary Cards ─── */}
-            <div
-              className="space-y-4"
-              data-testid="admin-review-middle-column"
-            >
-              <section
-                className="space-y-2"
-                data-testid="admin-review-evidence"
-              >
+            <div className="space-y-4" data-testid="admin-review-middle-column">
+              <section className="space-y-2" data-testid="admin-review-evidence">
                 <div className="flex items-baseline justify-between">
                   <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                     Evidence
                   </div>
                   {evidenceSource === "local" && (
-                    <span className="text-[10px] text-slate-400">
-                      Local fallback
-                    </span>
+                    <span className="text-[10px] text-slate-400">Local fallback</span>
                   )}
                 </div>
                 {evidence.length === 0 ? (
@@ -760,7 +919,7 @@ export function AdminReviewDialog({
                     const candidate = candidateById.get(row.id);
                     const assigned = assignments[row.id] ?? [];
                     const note = notes[row.id] ?? "";
-                    const reasoningEntry = reasoningOut[row.id] ?? {};
+                    const canonicalCards = canonicalReasoningByAncillary[row.id] ?? [];
                     const isOpen = expanded[row.id];
                     const candidateMissingIcds = candidate?.missing.length ?? 0;
                     const candidateStatusLabel = candidate
@@ -771,7 +930,9 @@ export function AdminReviewDialog({
                           : "Admin approval required"
                       : isUnder16
                         ? "Admin approval required"
-                        : "Needs Info";
+                        : canonicalCards.length > 0
+                          ? "Generated"
+                          : "Needs Info";
                     return (
                       <div
                         key={row.id}
@@ -799,6 +960,9 @@ export function AdminReviewDialog({
                           </div>
                           <div className="flex items-center gap-2 text-[11px] text-slate-600">
                             <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5">
+                              {canonicalCards.length} test{canonicalCards.length === 1 ? "" : "s"}
+                            </span>
+                            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5">
                               {assigned.length} evidence
                             </span>
                             {candidateMissingIcds > 0 && (
@@ -825,14 +989,25 @@ export function AdminReviewDialog({
                               </div>
                             )}
 
+                            {/* Canonical reasoning per qualifying test, sourced from patient.reasoning[testName]. */}
+                            {canonicalCards.length === 0 ? (
+                              <div className="text-xs text-slate-400 italic">
+                                No qualifying tests in this ancillary yet.
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                {canonicalCards.map((card) => (
+                                  <CanonicalReasoningCardView key={card.testName} card={card} />
+                                ))}
+                              </div>
+                            )}
+
                             <div className="space-y-1">
                               <Label className="text-[11px] uppercase tracking-wider text-slate-500">
                                 Assigned Evidence
                               </Label>
                               {assigned.length === 0 ? (
-                                <div className="text-xs text-slate-400">
-                                  No evidence assigned yet.
-                                </div>
+                                <div className="text-xs text-slate-400">No evidence assigned yet.</div>
                               ) : (
                                 <div className="flex flex-wrap gap-1.5">
                                   {assigned.map((chip) => (
@@ -874,70 +1049,7 @@ export function AdminReviewDialog({
                               />
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              <ReasoningPanel
-                                title="Clinician Reasoning"
-                                value={reasoningEntry.clinicianReasoning}
-                              />
-                              <ReasoningPanel
-                                title="Patient Explanation"
-                                value={reasoningEntry.patientExplanation}
-                              />
-                            </div>
-
-                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                              <div className="flex flex-wrap gap-2">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={!!regenInFlight[`${row.id}:clinician`]}
-                                  onClick={() =>
-                                    regenerateMutation.mutate({ ancillary: row.id, mode: "clinician" })
-                                  }
-                                  data-testid="admin-review-regenerate-clinician"
-                                >
-                                  {regenInFlight[`${row.id}:clinician`] ? (
-                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                  ) : (
-                                    <RefreshCw className="w-3 h-3 mr-1" />
-                                  )}
-                                  Regenerate clinician
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={!!regenInFlight[`${row.id}:patient`]}
-                                  onClick={() =>
-                                    regenerateMutation.mutate({ ancillary: row.id, mode: "patient" })
-                                  }
-                                  data-testid="admin-review-regenerate-patient"
-                                >
-                                  {regenInFlight[`${row.id}:patient`] ? (
-                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                  ) : (
-                                    <RefreshCw className="w-3 h-3 mr-1" />
-                                  )}
-                                  Regenerate patient
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  disabled={!!regenInFlight[`${row.id}:all`]}
-                                  onClick={() =>
-                                    regenerateMutation.mutate({ ancillary: row.id, mode: "all" })
-                                  }
-                                  data-testid="admin-review-regenerate-all"
-                                >
-                                  {regenInFlight[`${row.id}:all`] ? (
-                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                  ) : (
-                                    <Sparkles className="w-3 h-3 mr-1" />
-                                  )}
-                                  Regenerate all
-                                </Button>
-                              </div>
+                            <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
                               <PatientPdfActions
                                 patient={patient}
                                 facility={facility ?? patient.facility ?? null}
@@ -954,11 +1066,8 @@ export function AdminReviewDialog({
               </section>
             </div>
 
-            {/* ─── Column 3 — Approval / Blocking Rules / PDFs / Admin Note ─── */}
-            <div
-              className="space-y-4"
-              data-testid="admin-review-right-column"
-            >
+            {/* ─── Column 3 — Approval / Blocking Rules / PDFs / Admin Note / Regenerate ─── */}
+            <div className="space-y-4" data-testid="admin-review-right-column">
               <section className="space-y-2">
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   PDFs
@@ -990,9 +1099,7 @@ export function AdminReviewDialog({
                   </div>
                 )}
                 {!isUnder16 && totalMissingIcds === 0 && (
-                  <div className="text-[11px] text-slate-400 italic">
-                    No blocking rules.
-                  </div>
+                  <div className="text-[11px] text-slate-400 italic">No blocking rules.</div>
                 )}
               </section>
 
@@ -1011,6 +1118,27 @@ export function AdminReviewDialog({
                   placeholder="Optional context attached to this approval action"
                   data-testid={`admin-review-admin-note-${patient.id}`}
                 />
+              </section>
+
+              <section className="space-y-2">
+                <Button
+                  type="button"
+                  disabled={regenerateAllMutation.isPending}
+                  onClick={() => regenerateAllMutation.mutate()}
+                  data-testid="admin-review-global-regenerate"
+                  className="w-full"
+                  variant="outline"
+                >
+                  {regenerateAllMutation.isPending ? (
+                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3 h-3 mr-1" />
+                  )}
+                  Regenerate
+                </Button>
+                <div className="text-[10px] text-slate-500">
+                  Updates clinician reasoning, patient explanations, ICDs, qualifying factors, and pearls for every qualifying test. PDFs use the same source.
+                </div>
               </section>
 
               <section className="space-y-2">
@@ -1069,9 +1197,7 @@ export function AdminReviewDialog({
 function ClinicalField({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-        {label}
-      </div>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
       <div className="mt-1 text-xs text-slate-800 whitespace-pre-wrap min-h-[2rem]">
         {value?.trim() ? value : <span className="italic text-slate-400">Empty</span>}
       </div>
@@ -1079,15 +1205,99 @@ function ClinicalField({ label, value }: { label: string; value: string | null |
   );
 }
 
-function ReasoningPanel({ title, value }: { title: string; value?: string }) {
+function CanonicalReasoningCardView({ card }: { card: CanonicalReasoningCard }) {
+  const hasClinician = !!card.clinicianReasoning.trim();
+  const hasPatient = !!card.patientExplanation.trim();
+  const hasFactors = card.qualifyingFactors.length > 0;
+  const hasIcds = card.icd10Codes.length > 0;
+  const hasPearls = card.pearls.length > 0;
+
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-3">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-        {title}
+    <div
+      className="rounded-xl border border-slate-200 bg-white p-3 space-y-2"
+      data-testid="admin-review-canonical-reasoning-card"
+      data-test-name={card.testName}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-semibold text-sm text-slate-900">{card.testName}</div>
+        <div className="flex items-center gap-1.5">
+          {card.confidence && (
+            <span
+              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ${CONFIDENCE_TONE[card.confidence]}`}
+            >
+              {card.confidence}
+            </span>
+          )}
+          {card.approvalRequired && (
+            <span className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 text-rose-800 px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold">
+              Approval required
+            </span>
+          )}
+        </div>
       </div>
-      <div className="mt-1 text-xs text-slate-800 whitespace-pre-wrap min-h-[3rem]">
-        {value?.trim() ? value : <span className="italic text-slate-400">Not generated yet</span>}
+
+      {hasFactors && (
+        <div className="space-y-1">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Qualifying Factors
+          </div>
+          <ul className="text-xs text-slate-800 list-disc pl-4 space-y-0.5">
+            {card.qualifyingFactors.map((f, i) => (
+              <li key={`${card.testName}-f-${i}`}>{f}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <div className="rounded-md border border-slate-200 bg-slate-50/40 p-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Clinician Understanding
+          </div>
+          <div className="mt-1 text-xs text-slate-800 whitespace-pre-wrap min-h-[2rem]">
+            {hasClinician ? card.clinicianReasoning : <span className="italic text-slate-400">Not generated yet</span>}
+          </div>
+        </div>
+        <div className="rounded-md border border-slate-200 bg-slate-50/40 p-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Patient Talking Points
+          </div>
+          <div className="mt-1 text-xs text-slate-800 whitespace-pre-wrap min-h-[2rem]">
+            {hasPatient ? card.patientExplanation : <span className="italic text-slate-400">Not generated yet</span>}
+          </div>
+        </div>
       </div>
+
+      {hasIcds && (
+        <div className="space-y-1">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            ICD-10 Codes
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {card.icd10Codes.map((c, i) => (
+              <span
+                key={`${card.testName}-icd-${i}`}
+                className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-800 px-2 py-0.5 text-[10px] font-mono"
+              >
+                {c}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {hasPearls && (
+        <div className="space-y-1">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Clinical Pearls
+          </div>
+          <ul className="text-xs text-slate-800 list-disc pl-4 space-y-0.5">
+            {card.pearls.map((p, i) => (
+              <li key={`${card.testName}-p-${i}`}>{p}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -1157,9 +1367,7 @@ function EvidenceChip({
         >
           <span className="font-mono opacity-60">{chip.source}</span>
           <span>{chip.label}</span>
-          {chip.icdCode && (
-            <span className="font-mono opacity-70">· {chip.icdCode}</span>
-          )}
+          {chip.icdCode && <span className="font-mono opacity-70">· {chip.icdCode}</span>}
           <Plus className="w-3 h-3 opacity-60" />
         </button>
       </PopoverTrigger>

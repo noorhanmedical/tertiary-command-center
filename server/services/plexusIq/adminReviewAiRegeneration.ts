@@ -145,3 +145,175 @@ export async function regenerateAdminReviewReasoning(
     ancillaryNote: output.ancillaryNote || input.ancillaryNote || "",
   };
 }
+
+// ─── Canonical reasoning (one entry per qualifying test) ─────────────
+// Produces the same shape every other surface already reads from:
+//   patient.reasoning[testName] = {
+//     clinician_understanding, patient_talking_points,
+//     qualifying_factors, icd10_codes, pearls, confidence, approvalRequired
+//   }
+// Powers QualificationReasoningDialog, the patient-card icon popup, and
+// pdfGeneration. Returned as a sparse map of testName -> object.
+
+export type CanonicalReasoningEntry = {
+  clinician_understanding: string;
+  patient_talking_points: string;
+  qualifying_factors: string[];
+  icd10_codes: string[];
+  pearls: string[];
+  confidence: "high" | "medium" | "low";
+  approvalRequired: boolean;
+};
+
+export type CanonicalReasoningRegenerationInput = {
+  patient: PatientScreening;
+  qualifyingTests: string[];
+  assignedEvidenceByAncillary: Record<AdminReviewAncillaryId, AdminEvidenceChip[]>;
+  ancillaryNotes: Record<AdminReviewAncillaryId, string>;
+  adminNote?: string;
+  icdCodes: Array<{ code: string; label: string }>;
+};
+
+export type CanonicalReasoningRegenerationOutput = {
+  reasoningByTest: Record<string, CanonicalReasoningEntry>;
+};
+
+function parseCanonicalOutput(raw: string): CanonicalReasoningRegenerationOutput {
+  const parsed = JSON.parse(raw) as { entries?: Array<{ testName?: string } & Partial<CanonicalReasoningEntry>> };
+  const out: Record<string, CanonicalReasoningEntry> = {};
+  for (const entry of parsed.entries ?? []) {
+    if (!entry?.testName) continue;
+    const conf = entry.confidence;
+    out[entry.testName] = {
+      clinician_understanding: String(entry.clinician_understanding ?? "").trim(),
+      patient_talking_points: String(entry.patient_talking_points ?? "").trim(),
+      qualifying_factors: Array.isArray(entry.qualifying_factors)
+        ? entry.qualifying_factors.map((f) => String(f))
+        : [],
+      icd10_codes: Array.isArray(entry.icd10_codes) ? entry.icd10_codes.map((c) => String(c)) : [],
+      pearls: Array.isArray(entry.pearls) ? entry.pearls.map((p) => String(p)) : [],
+      confidence: conf === "high" || conf === "medium" || conf === "low" ? conf : "medium",
+      approvalRequired: !!entry.approvalRequired,
+    };
+  }
+  return { reasoningByTest: out };
+}
+
+export async function regenerateCanonicalReasoning(
+  input: CanonicalReasoningRegenerationInput,
+): Promise<CanonicalReasoningRegenerationOutput> {
+  const apiKey =
+    process.env.AI_INTEGRATIONS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "OPENAI_API_KEY (or AI_INTEGRATIONS_OPENAI_API_KEY) is not configured",
+    );
+  }
+  if (input.qualifyingTests.length === 0) {
+    return { reasoningByTest: {} };
+  }
+
+  const client = new OpenAI({ apiKey });
+  const age = patientAge(input.patient);
+  const under16 = typeof age === "number" && age < 16;
+
+  const evidenceBlocks = (
+    ["brainwave", "vitalwave", "ultrasound"] as AdminReviewAncillaryId[]
+  )
+    .map((id) => {
+      const lines = (input.assignedEvidenceByAncillary[id] ?? []).map(evidenceLine);
+      const note = (input.ancillaryNotes[id] ?? "").trim();
+      const body = lines.length ? lines.join("\n") : "  (none assigned)";
+      const noteLine = note ? `\n  Admin note: ${note}` : "";
+      return `[${id}]\n${body}${noteLine}`;
+    })
+    .join("\n\n");
+
+  const icdLines = input.icdCodes.length
+    ? input.icdCodes.map((c) => `- ${c.code} ${c.label}`).join("\n")
+    : "- (none)";
+
+  const systemPrompt = [
+    "You generate concise canonical per-test reasoning objects for an ancillary screening platform.",
+    "Use only the patient context, selected evidence per ancillary, and ICD codes provided.",
+    "Do not invent diagnoses, medications, symptoms, ICD codes, or prior tests beyond what is supplied.",
+    "Each test object must include clinician_understanding (concise medical rationale tied to evidence),",
+    "patient_talking_points (plain-language explanation), qualifying_factors (short bullet strings),",
+    "icd10_codes (only codes drawn from supplied ICD list), pearls (1-3 short clinical pearls),",
+    "confidence (high/medium/low), and approvalRequired (true if under 16 or evidence is weak).",
+    "If a test has no supporting evidence, mark approvalRequired true and state what is missing.",
+    "Return strict JSON only matching the provided schema.",
+  ].join("\n");
+
+  const userPrompt = [
+    `Under 16: ${under16 ? "yes — approvalRequired must be true for every test" : "no"}`,
+    "",
+    "Patient context:",
+    `Name: ${input.patient.name ?? ""}`,
+    `Age: ${age ?? ""}`,
+    `Hx: ${input.patient.history ?? ""}`,
+    `Dx: ${input.patient.diagnoses ?? ""}`,
+    `Rx: ${input.patient.medications ?? ""}`,
+    `Admin note: ${input.adminNote ?? ""}`,
+    "",
+    "ICD codes available:",
+    icdLines,
+    "",
+    "Selected evidence by ancillary:",
+    evidenceBlocks,
+    "",
+    "Qualifying tests to regenerate (one entry per test name, preserve exact spelling):",
+    input.qualifyingTests.map((t) => `- ${t}`).join("\n"),
+  ].join("\n");
+
+  const response = await client.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    input: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "admin_review_canonical_regeneration",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            entries: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  testName: { type: "string" },
+                  clinician_understanding: { type: "string" },
+                  patient_talking_points: { type: "string" },
+                  qualifying_factors: { type: "array", items: { type: "string" } },
+                  icd10_codes: { type: "array", items: { type: "string" } },
+                  pearls: { type: "array", items: { type: "string" } },
+                  confidence: { type: "string", enum: ["high", "medium", "low"] },
+                  approvalRequired: { type: "boolean" },
+                },
+                required: [
+                  "testName",
+                  "clinician_understanding",
+                  "patient_talking_points",
+                  "qualifying_factors",
+                  "icd10_codes",
+                  "pearls",
+                  "confidence",
+                  "approvalRequired",
+                ],
+              },
+            },
+          },
+          required: ["entries"],
+        },
+      },
+    },
+  });
+
+  return parseCanonicalOutput(response.output_text);
+}
