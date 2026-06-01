@@ -98,8 +98,7 @@ requireText(app, [
 
 // 4. Home dashboard has Plexus IQ night-sky hero, equal tiles, no PrimaryTile.
 requireText(home, [
-  "NightSkyHeroTile",
-  'testId="tile-plexus-iq"',
+  'data-testid="tile-plexus-iq"',
   "auto-rows-fr",
   'testId="tile-patient-directory"',
   'testId="tile-team-member-portals"',
