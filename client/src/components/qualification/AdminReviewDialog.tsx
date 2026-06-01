@@ -128,7 +128,10 @@ function seedFromReasoning(reasoning: Record<string, any>): {
 } {
   const assignments = emptyAncillaryMap<AdminEvidenceChip[]>(() => []);
   const notes = emptyAncillaryMap<string>(() => "");
-  const reasoningOut = emptyAncillaryMap<{ clinicianReasoning?: string; patientExplanation?: string }>(() => ({}));
+  const reasoningOut = emptyAncillaryMap<{
+    clinicianReasoning?: string;
+    patientExplanation?: string;
+  }>(() => ({}));
   for (const id of ["brainwave", "vitalwave", "ultrasound"] as AdminReviewAncillaryId[]) {
     const entry = reasoning[`adminReview:${id}`];
     if (entry && typeof entry === "object") {
@@ -149,6 +152,201 @@ function seedFromReasoning(reasoning: Record<string, any>): {
 
 function chipKey(chip: AdminEvidenceChip): string {
   return `${chip.id}::${chip.icdCode ?? "no-icd"}`;
+}
+
+function localStableId(parts: string[]): string {
+  return parts
+    .join(":")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+// Fallback evidence builder — runs entirely on the patient object so the
+// dialog always has chips to show even when /admin-review/evidence is
+// loading, errored, or returns empty. Mirrors the rule engine's heuristics
+// but in a smaller surface focused on what the popup needs to render.
+export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvidenceChip[] {
+  const hx = (patient.history ?? "").toLowerCase();
+  const dxText = (patient.diagnoses ?? "").toLowerCase();
+  const rxText = (patient.medications ?? "").toLowerCase();
+  const reasoningStr = JSON.stringify(patient.reasoning ?? {}).toLowerCase();
+  const prior = (
+    (patient as { previousTests?: string | null }).previousTests ?? ""
+  ).toLowerCase();
+  const blob = `${hx} ${dxText} ${rxText} ${reasoningStr} ${prior}`;
+
+  const out: AdminEvidenceChip[] = [];
+  const seen = new Set<string>();
+  function push(chip: AdminEvidenceChip) {
+    const k = chipKey(chip);
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(chip);
+  }
+
+  const matches = (terms: string[]) => terms.some((t) => blob.includes(t));
+  const icdInText = (code: string) => blob.includes(code.toLowerCase());
+
+  // Diabetes
+  if (matches(["diabetes", "dm2", "metformin", "insulin", "glp-1", "semaglutide", "jardiance", "farxiga"])) {
+    const code = ["E11.9", "E11.40"].find(icdInText) ?? null;
+    push({
+      id: localStableId(["diagnosis", "diabetes", code ?? "needs-icd"]),
+      kind: "diagnosis",
+      label: "Diabetes mellitus",
+      source: "AI",
+      icdCode: code,
+      icdLabel: code ? COMMON_ICD_SUGGESTIONS.diabetes.find((s) => s.code === code)?.label ?? null : null,
+      requiresIcd: !code,
+      suggestedIcds: code ? [] : COMMON_ICD_SUGGESTIONS.diabetes,
+      confidence: "high",
+      detail: "Local match on Hx/Dx/Rx",
+    });
+  }
+
+  // Hypertension
+  if (matches(["hypertension", "htn", "amlodipine", "lisinopril", "losartan", "hctz", "hydrochlorothiazide", "metoprolol"])) {
+    const code = icdInText("I10") ? "I10" : null;
+    push({
+      id: localStableId(["diagnosis", "hypertension", code ?? "needs-icd"]),
+      kind: "diagnosis",
+      label: "Hypertension",
+      source: "AI",
+      icdCode: code,
+      icdLabel: code ? COMMON_ICD_SUGGESTIONS.hypertension[0].label : null,
+      requiresIcd: !code,
+      suggestedIcds: code ? [] : COMMON_ICD_SUGGESTIONS.hypertension,
+      confidence: "high",
+      detail: "Local match on Hx/Dx/Rx",
+    });
+  }
+
+  // Hyperlipidemia
+  if (matches(["hyperlipidemia", "hld", "atorvastatin", "rosuvastatin", "pravastatin", "simvastatin", "statin"])) {
+    const code = icdInText("E78.5") ? "E78.5" : null;
+    push({
+      id: localStableId(["diagnosis", "hyperlipidemia", code ?? "needs-icd"]),
+      kind: "diagnosis",
+      label: "Hyperlipidemia",
+      source: "AI",
+      icdCode: code,
+      icdLabel: code ? COMMON_ICD_SUGGESTIONS.hyperlipidemia[0].label : null,
+      requiresIcd: !code,
+      suggestedIcds: code ? [] : COMMON_ICD_SUGGESTIONS.hyperlipidemia,
+      confidence: "high",
+      detail: "Local match on Hx/Dx/Rx",
+    });
+  }
+
+  // Vascular / PVD
+  if (matches(["claudication", "pad", "pvd", "leg pain"])) {
+    const code = icdInText("I73.9") ? "I73.9" : null;
+    push({
+      id: localStableId(["symptom", "pvd", code ?? "no-icd"]),
+      kind: "symptom",
+      label: "Peripheral vascular disease concern",
+      source: "Hx",
+      icdCode: code,
+      requiresIcd: false,
+      suggestedIcds: code ? [] : COMMON_ICD_SUGGESTIONS.pvd,
+      confidence: "medium",
+    });
+  }
+
+  // Edema
+  if (matches(["edema", "swelling"])) {
+    const code = icdInText("R60.0") ? "R60.0" : null;
+    push({
+      id: localStableId(["symptom", "edema", code ?? "no-icd"]),
+      kind: "symptom",
+      label: "Lower extremity edema",
+      source: "Hx",
+      icdCode: code,
+      requiresIcd: false,
+      suggestedIcds: code ? [] : COMMON_ICD_SUGGESTIONS.edema,
+      confidence: "medium",
+    });
+  }
+
+  // Dizziness / syncope / bruit
+  if (matches(["dizziness", "syncope", "bruit"])) {
+    const code = icdInText("R42") ? "R42" : null;
+    push({
+      id: localStableId(["symptom", "dizziness", code ?? "no-icd"]),
+      kind: "symptom",
+      label: "Dizziness / neurovascular symptom",
+      source: "Hx",
+      icdCode: code,
+      requiresIcd: false,
+      suggestedIcds: code ? [] : COMMON_ICD_SUGGESTIONS.dizziness,
+      confidence: "medium",
+    });
+  }
+
+  // Dyspnea
+  if (matches(["dyspnea", "shortness of breath", "sob"])) {
+    const code = icdInText("R06.02") ? "R06.02" : null;
+    push({
+      id: localStableId(["symptom", "dyspnea", code ?? "no-icd"]),
+      kind: "symptom",
+      label: "Dyspnea",
+      source: "Hx",
+      icdCode: code,
+      requiresIcd: false,
+      suggestedIcds: code ? [] : COMMON_ICD_SUGGESTIONS.dyspnea,
+      confidence: "medium",
+    });
+  }
+
+  // Antiplatelet / aspirin
+  if (matches(["aspirin", "antiplatelet", "clopidogrel", "plavix"])) {
+    push({
+      id: localStableId(["medication", "antiplatelet"]),
+      kind: "medication",
+      label: "Antiplatelet therapy",
+      source: "Rx",
+      confidence: "medium",
+    });
+  }
+
+  // Common meds
+  const meds: Array<[string, string[]]> = [
+    ["Metformin", ["metformin"]],
+    ["Insulin", ["insulin"]],
+    ["Amlodipine", ["amlodipine"]],
+    ["Lisinopril", ["lisinopril"]],
+    ["Losartan", ["losartan"]],
+    ["Metoprolol", ["metoprolol"]],
+    ["Atorvastatin", ["atorvastatin"]],
+    ["Rosuvastatin", ["rosuvastatin"]],
+  ];
+  for (const [label, terms] of meds) {
+    if (matches(terms)) {
+      push({
+        id: localStableId(["medication", label]),
+        kind: "medication",
+        label,
+        source: "Rx",
+        confidence: "high",
+      });
+    }
+  }
+
+  // Prior testing
+  if (prior.trim() || reasoningStr.includes("prior test") || reasoningStr.includes("previoustests")) {
+    push({
+      id: localStableId(["prior-test", "prior"]),
+      kind: "prior_test",
+      label: "Prior testing",
+      source: "Prior Test",
+      detail:
+        (patient as { previousTests?: string | null }).previousTests ?? null,
+      confidence: "medium",
+    });
+  }
+
+  return out;
 }
 
 export function AdminReviewDialog({
@@ -180,8 +378,8 @@ export function AdminReviewDialog({
     () => reasoningAsObject(patient.reasoning),
     [patient.reasoning],
   );
-
   const initialSeed = useMemo(() => seedFromReasoning(reasoningObject), [reasoningObject]);
+
   const [assignments, setAssignments] = useState<AncillaryAssignmentMap>(initialSeed.assignments);
   const [notes, setNotes] = useState<AncillaryNoteMap>(initialSeed.notes);
   const [reasoningOut, setReasoningOut] = useState<AncillaryReasoningMap>(initialSeed.reasoningOut);
@@ -202,7 +400,16 @@ export function AdminReviewDialog({
     setAdminNote("");
   }, [open, patient.id, patient.reasoning]);
 
-  const evidence: AdminEvidenceChip[] = evidenceQuery.data?.evidence ?? [];
+  const apiEvidence: AdminEvidenceChip[] = evidenceQuery.data?.evidence ?? [];
+  const localFallback = useMemo(() => buildLocalEvidenceFallback(patient), [patient]);
+  const evidence: AdminEvidenceChip[] = apiEvidence.length > 0 ? apiEvidence : localFallback;
+  const evidenceSource: "api" | "local" | "empty" =
+    apiEvidence.length > 0
+      ? "api"
+      : localFallback.length > 0
+        ? "local"
+        : "empty";
+
   const candidates: AdminReviewRuleCandidate[] = evidenceQuery.data?.candidates ?? [];
   const candidateById = useMemo(() => {
     const map = new Map<AdminReviewAncillaryId, AdminReviewRuleCandidate>();
@@ -230,6 +437,24 @@ export function AdminReviewDialog({
       }),
     [patient],
   );
+
+  // Pull every ICD chip referenced by current evidence — used for the
+  // dedicated ICD section in the left column.
+  const icdChips = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { code: string; label: string; source: string }[] = [];
+    for (const e of evidence) {
+      if (e.icdCode && !seen.has(e.icdCode)) {
+        seen.add(e.icdCode);
+        out.push({
+          code: e.icdCode,
+          label: e.icdLabel ?? e.label,
+          source: e.source ?? "Manual",
+        });
+      }
+    }
+    return out;
+  }, [evidence]);
 
   function assignEvidence(ancillary: AdminReviewAncillaryId | "all", chip: AdminEvidenceChip) {
     if (chip.requiresIcd) {
@@ -270,14 +495,12 @@ export function AdminReviewDialog({
       suggestedIcds: [],
       source: chip.source === "AI" ? "Manual" : chip.source,
     };
-    // Persist on the patient's diagnoses field if no dedicated icdCodes field exists.
     const existingDx = (patient.diagnoses ?? "").trim();
     const codeLine = `${code} - ${label}`;
     if (!existingDx.includes(code)) {
       const nextDx = existingDx ? `${existingDx}\n${codeLine}` : codeLine;
       onUpdate("diagnoses", nextDx);
     }
-    // Optimistically swap the chip in the evidence cache so the UI updates instantly.
     queryClient.setQueryData<EvidencePayload>(
       ["admin-review-evidence", patient.id],
       (old) => {
@@ -374,10 +597,12 @@ export function AdminReviewDialog({
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
+  const totalMissingIcds = evidence.filter((e) => e.requiresIcd).length;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="w-[calc(100vw-2rem)] max-w-5xl max-h-[92vh] overflow-hidden p-0 gap-0 rounded-2xl"
+        className="w-[calc(100vw-2rem)] max-w-[1280px] max-h-[92vh] overflow-hidden p-0 gap-0 rounded-2xl"
         data-testid={`dialog-admin-review-${patient.id}`}
       >
         <DialogHeader className="px-6 pt-5 pb-4 border-b border-slate-200 bg-white">
@@ -408,6 +633,16 @@ export function AdminReviewDialog({
                   <span className="text-slate-500">{patient.facility}</span>
                 )}
                 {scheduleDate && <span className="text-slate-500">· {scheduleDate}</span>}
+                {evidenceQuery.isFetching && (
+                  <span className="text-slate-400 inline-flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Evidence refreshing
+                  </span>
+                )}
+                {evidenceQuery.isError && (
+                  <span className="text-amber-700 inline-flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" /> Evidence unavailable
+                  </span>
+                )}
               </div>
             </div>
             <PatientPdfActions
@@ -420,323 +655,412 @@ export function AdminReviewDialog({
         </DialogHeader>
 
         <ScrollArea className="max-h-[calc(92vh-9rem)]">
-          <div className="px-6 py-5 space-y-6">
-            <section
-              className="space-y-2"
-              data-testid="admin-review-clinical-data"
+          <div
+            className="px-6 py-5 grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)_320px] gap-4"
+            data-testid="admin-review-three-column-layout"
+          >
+            {/* ─── Column 1 — Clinical Data + ICD ─── */}
+            <div
+              className="space-y-4"
+              data-testid="admin-review-left-column"
             >
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                Clinical Data
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <section
+                className="space-y-2"
+                data-testid="admin-review-clinical-data"
+              >
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Clinical Data
+                </div>
                 <ClinicalField label="Hx" value={patient.history} />
                 <ClinicalField label="Dx" value={patient.diagnoses} />
                 <ClinicalField label="Rx" value={patient.medications} />
-              </div>
-            </section>
+              </section>
 
-            <Separator />
-
-            <section
-              className="space-y-3"
-              data-testid="admin-review-evidence"
-            >
-              <div className="flex items-baseline justify-between">
+              <section
+                className="space-y-2"
+                data-testid="admin-review-icd-section"
+              >
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Evidence
+                  ICD
                 </div>
-                {evidenceQuery.isFetching && (
-                  <span className="text-[11px] text-slate-400 inline-flex items-center gap-1">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Refreshing
-                  </span>
-                )}
-              </div>
-              {evidenceQuery.isLoading ? (
-                <div className="text-sm text-slate-400">Loading evidence…</div>
-              ) : evidence.length === 0 ? (
-                <div className="text-sm text-slate-400">
-                  No evidence extracted from current Hx/Dx/Rx.
-                </div>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {evidence.map((chip) => (
-                    <EvidenceChip
-                      key={chipKey(chip)}
-                      chip={chip}
-                      onAssign={(ancillary) => assignEvidence(ancillary, chip)}
-                      onAttachIcd={(code, label) => attachIcdToChip(chip, code, label)}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <Separator />
-
-            <section className="space-y-3">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                Ancillaries
-              </div>
-              <div className="space-y-2">
-                {ANCILLARIES.map((row) => {
-                  const candidate = candidateById.get(row.id);
-                  const assigned = assignments[row.id] ?? [];
-                  const note = notes[row.id] ?? "";
-                  const reasoningEntry = reasoningOut[row.id] ?? {};
-                  const isOpen = expanded[row.id];
-                  const candidateMissingIcds = candidate?.missing.length ?? 0;
-                  const candidateStatusLabel = candidate
-                    ? candidate.status === "suggested"
-                      ? "Suggested"
-                      : candidate.status === "needs_info"
-                        ? "Needs Info"
-                        : "Admin approval required"
-                    : "—";
-                  return (
-                    <div
-                      key={row.id}
-                      className="rounded-2xl border border-slate-200 bg-white overflow-hidden"
-                      data-testid="admin-review-ancillary-card"
-                      data-ancillary={row.id}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => toggleExpand(row.id)}
-                        className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50 transition-colors"
-                        data-testid={`admin-review-ancillary-toggle-${row.id}`}
-                        aria-expanded={isOpen}
+                {icdChips.length === 0 ? (
+                  <div className="text-xs text-slate-400 italic">
+                    No ICD codes attached.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {icdChips.map((c) => (
+                      <span
+                        key={c.code}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-800 px-2 py-0.5 text-[11px]"
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          {isOpen ? (
-                            <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
-                          ) : (
-                            <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-                          )}
-                          <span className="font-semibold text-slate-900">{row.label}</span>
-                          <span className="text-[11px] text-slate-500">
-                            {candidateStatusLabel}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 text-[11px] text-slate-600">
-                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5">
-                            {assigned.length} evidence
-                          </span>
-                          {candidateMissingIcds > 0 && (
-                            <span className="inline-flex items-center rounded-full bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5">
-                              {candidateMissingIcds} ICD needed
-                            </span>
-                          )}
-                          {isUnder16 && (
-                            <span className="inline-flex items-center rounded-full bg-rose-50 text-rose-800 border border-rose-300 px-2 py-0.5 font-semibold">
-                              &lt;16
-                            </span>
-                          )}
-                        </div>
-                      </button>
+                        <span className="font-mono">{c.code}</span>
+                        <span className="truncate max-w-[160px]">{c.label}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {totalMissingIcds > 0 && (
+                  <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 inline-flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    {totalMissingIcds} ICD needed
+                  </div>
+                )}
+              </section>
+            </div>
 
-                      {isOpen && (
-                        <div
-                          className="px-4 pb-4 pt-1 space-y-3 border-t border-slate-100"
-                          data-testid="admin-review-ancillary-expanded"
+            {/* ─── Column 2 — Evidence + Ancillary Cards ─── */}
+            <div
+              className="space-y-4"
+              data-testid="admin-review-middle-column"
+            >
+              <section
+                className="space-y-2"
+                data-testid="admin-review-evidence"
+              >
+                <div className="flex items-baseline justify-between">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    Evidence
+                  </div>
+                  {evidenceSource === "local" && (
+                    <span className="text-[10px] text-slate-400">
+                      Local fallback
+                    </span>
+                  )}
+                </div>
+                {evidence.length === 0 ? (
+                  <div
+                    className="text-xs text-slate-400 italic px-3 py-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/40 text-center"
+                    data-testid="admin-review-evidence-empty"
+                  >
+                    No evidence
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {evidence.map((chip) => (
+                      <EvidenceChip
+                        key={chipKey(chip)}
+                        chip={chip}
+                        onAssign={(ancillary) => assignEvidence(ancillary, chip)}
+                        onAttachIcd={(code, label) => attachIcdToChip(chip, code, label)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <Separator />
+
+              <section className="space-y-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Ancillaries
+                </div>
+                <div className="space-y-2">
+                  {ANCILLARIES.map((row) => {
+                    const candidate = candidateById.get(row.id);
+                    const assigned = assignments[row.id] ?? [];
+                    const note = notes[row.id] ?? "";
+                    const reasoningEntry = reasoningOut[row.id] ?? {};
+                    const isOpen = expanded[row.id];
+                    const candidateMissingIcds = candidate?.missing.length ?? 0;
+                    const candidateStatusLabel = candidate
+                      ? candidate.status === "suggested"
+                        ? "Suggested"
+                        : candidate.status === "needs_info"
+                          ? "Needs Info"
+                          : "Admin approval required"
+                      : isUnder16
+                        ? "Admin approval required"
+                        : "Needs Info";
+                    return (
+                      <div
+                        key={row.id}
+                        className="rounded-2xl border border-slate-200 bg-white overflow-hidden"
+                        data-testid="admin-review-ancillary-card"
+                        data-ancillary={row.id}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(row.id)}
+                          className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50 transition-colors"
+                          data-testid={`admin-review-ancillary-toggle-${row.id}`}
+                          aria-expanded={isOpen}
                         >
-                          {isUnder16 && (
-                            <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
-                              Patient is under 16. Not routine — requires admin override approval below.
-                            </div>
-                          )}
-
-                          <div className="space-y-1">
-                            <Label className="text-[11px] uppercase tracking-wider text-slate-500">
-                              Assigned Evidence
-                            </Label>
-                            {assigned.length === 0 ? (
-                              <div className="text-xs text-slate-400">
-                                No evidence assigned yet.
-                              </div>
+                          <div className="flex items-center gap-3 min-w-0">
+                            {isOpen ? (
+                              <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
                             ) : (
-                              <div className="flex flex-wrap gap-1.5">
-                                {assigned.map((chip) => (
-                                  <span
-                                    key={chipKey(chip)}
-                                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${SOURCE_TONE[chip.source] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
-                                  >
-                                    {chip.label}
-                                    {chip.icdCode ? ` · ${chip.icdCode}` : ""}
-                                    <button
-                                      type="button"
-                                      onClick={() => unassignEvidence(row.id, chip)}
-                                      className="hover:text-rose-600"
-                                      aria-label={`Remove ${chip.label}`}
-                                    >
-                                      <X className="w-3 h-3" />
-                                    </button>
-                                  </span>
-                                ))}
-                              </div>
+                              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                            )}
+                            <span className="font-semibold text-slate-900">{row.label}</span>
+                            <span className="text-[11px] text-slate-500">
+                              {candidateStatusLabel}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px] text-slate-600">
+                            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5">
+                              {assigned.length} evidence
+                            </span>
+                            {candidateMissingIcds > 0 && (
+                              <span className="inline-flex items-center rounded-full bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5">
+                                {candidateMissingIcds} ICD needed
+                              </span>
+                            )}
+                            {isUnder16 && (
+                              <span className="inline-flex items-center rounded-full bg-rose-50 text-rose-800 border border-rose-300 px-2 py-0.5 font-semibold">
+                                &lt;16
+                              </span>
                             )}
                           </div>
+                        </button>
 
-                          <div className="space-y-1">
-                            <Label
-                              htmlFor={`admin-review-note-${row.id}`}
-                              className="text-[11px] uppercase tracking-wider text-slate-500"
-                            >
-                              Notes
-                            </Label>
-                            <Textarea
-                              id={`admin-review-note-${row.id}`}
-                              value={note}
-                              rows={2}
-                              onChange={(e) =>
-                                setNotes((prev) => ({ ...prev, [row.id]: e.target.value }))
-                              }
-                              data-testid={`admin-review-note-${row.id}`}
-                            />
-                          </div>
+                        {isOpen && (
+                          <div
+                            className="px-4 pb-4 pt-1 space-y-3 border-t border-slate-100"
+                            data-testid="admin-review-ancillary-expanded"
+                          >
+                            {isUnder16 && (
+                              <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
+                                Patient is under 16. Not routine — requires admin override approval.
+                              </div>
+                            )}
 
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <ReasoningPanel
-                              title="Clinician Reasoning"
-                              value={reasoningEntry.clinicianReasoning}
-                            />
-                            <ReasoningPanel
-                              title="Patient Explanation"
-                              value={reasoningEntry.patientExplanation}
-                            />
-                          </div>
-
-                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                            <div className="flex flex-wrap gap-2">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                disabled={!!regenInFlight[`${row.id}:clinician`]}
-                                onClick={() =>
-                                  regenerateMutation.mutate({ ancillary: row.id, mode: "clinician" })
-                                }
-                                data-testid="admin-review-regenerate-clinician"
-                              >
-                                {regenInFlight[`${row.id}:clinician`] ? (
-                                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                ) : (
-                                  <RefreshCw className="w-3 h-3 mr-1" />
-                                )}
-                                Regenerate clinician
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                disabled={!!regenInFlight[`${row.id}:patient`]}
-                                onClick={() =>
-                                  regenerateMutation.mutate({ ancillary: row.id, mode: "patient" })
-                                }
-                                data-testid="admin-review-regenerate-patient"
-                              >
-                                {regenInFlight[`${row.id}:patient`] ? (
-                                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                ) : (
-                                  <RefreshCw className="w-3 h-3 mr-1" />
-                                )}
-                                Regenerate patient
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                disabled={!!regenInFlight[`${row.id}:all`]}
-                                onClick={() =>
-                                  regenerateMutation.mutate({ ancillary: row.id, mode: "all" })
-                                }
-                                data-testid="admin-review-regenerate-all"
-                              >
-                                {regenInFlight[`${row.id}:all`] ? (
-                                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                ) : (
-                                  <Sparkles className="w-3 h-3 mr-1" />
-                                )}
-                                Regenerate all
-                              </Button>
+                            <div className="space-y-1">
+                              <Label className="text-[11px] uppercase tracking-wider text-slate-500">
+                                Assigned Evidence
+                              </Label>
+                              {assigned.length === 0 ? (
+                                <div className="text-xs text-slate-400">
+                                  No evidence assigned yet.
+                                </div>
+                              ) : (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {assigned.map((chip) => (
+                                    <span
+                                      key={chipKey(chip)}
+                                      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${SOURCE_TONE[chip.source] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
+                                    >
+                                      {chip.label}
+                                      {chip.icdCode ? ` · ${chip.icdCode}` : ""}
+                                      <button
+                                        type="button"
+                                        onClick={() => unassignEvidence(row.id, chip)}
+                                        className="hover:text-rose-600"
+                                        aria-label={`Remove ${chip.label}`}
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                            <PatientPdfActions
-                              patient={patient}
-                              facility={facility ?? patient.facility ?? null}
-                              scheduleDate={scheduleDate ?? null}
-                              compact
-                            />
+
+                            <div className="space-y-1">
+                              <Label
+                                htmlFor={`admin-review-note-${row.id}`}
+                                className="text-[11px] uppercase tracking-wider text-slate-500"
+                              >
+                                Notes
+                              </Label>
+                              <Textarea
+                                id={`admin-review-note-${row.id}`}
+                                value={note}
+                                rows={2}
+                                onChange={(e) =>
+                                  setNotes((prev) => ({ ...prev, [row.id]: e.target.value }))
+                                }
+                                data-testid={`admin-review-note-${row.id}`}
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <ReasoningPanel
+                                title="Clinician Reasoning"
+                                value={reasoningEntry.clinicianReasoning}
+                              />
+                              <ReasoningPanel
+                                title="Patient Explanation"
+                                value={reasoningEntry.patientExplanation}
+                              />
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={!!regenInFlight[`${row.id}:clinician`]}
+                                  onClick={() =>
+                                    regenerateMutation.mutate({ ancillary: row.id, mode: "clinician" })
+                                  }
+                                  data-testid="admin-review-regenerate-clinician"
+                                >
+                                  {regenInFlight[`${row.id}:clinician`] ? (
+                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                  ) : (
+                                    <RefreshCw className="w-3 h-3 mr-1" />
+                                  )}
+                                  Regenerate clinician
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={!!regenInFlight[`${row.id}:patient`]}
+                                  onClick={() =>
+                                    regenerateMutation.mutate({ ancillary: row.id, mode: "patient" })
+                                  }
+                                  data-testid="admin-review-regenerate-patient"
+                                >
+                                  {regenInFlight[`${row.id}:patient`] ? (
+                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                  ) : (
+                                    <RefreshCw className="w-3 h-3 mr-1" />
+                                  )}
+                                  Regenerate patient
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={!!regenInFlight[`${row.id}:all`]}
+                                  onClick={() =>
+                                    regenerateMutation.mutate({ ancillary: row.id, mode: "all" })
+                                  }
+                                  data-testid="admin-review-regenerate-all"
+                                >
+                                  {regenInFlight[`${row.id}:all`] ? (
+                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                  ) : (
+                                    <Sparkles className="w-3 h-3 mr-1" />
+                                  )}
+                                  Regenerate all
+                                </Button>
+                              </div>
+                              <PatientPdfActions
+                                patient={patient}
+                                facility={facility ?? patient.facility ?? null}
+                                scheduleDate={scheduleDate ?? null}
+                                compact
+                              />
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            </div>
 
-            <Separator />
+            {/* ─── Column 3 — Approval / Blocking Rules / PDFs / Admin Note ─── */}
+            <div
+              className="space-y-4"
+              data-testid="admin-review-right-column"
+            >
+              <section className="space-y-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  PDFs
+                </div>
+                <PatientPdfActions
+                  patient={patient}
+                  facility={facility ?? patient.facility ?? null}
+                  scheduleDate={scheduleDate ?? null}
+                />
+              </section>
 
-            <section className="space-y-2">
-              <Label
-                htmlFor={`admin-review-note-${patient.id}`}
-                className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
-              >
-                Admin Note
-              </Label>
-              <Textarea
-                id={`admin-review-note-${patient.id}`}
-                value={adminNote}
-                rows={2}
-                onChange={(e) => setAdminNote(e.target.value)}
-                placeholder="Optional context attached to this approval action"
-                data-testid={`admin-review-admin-note-${patient.id}`}
-              />
-            </section>
+              <section className="space-y-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Blocking Rules
+                </div>
+                {isUnder16 && (
+                  <div
+                    className="rounded-md border border-rose-200 bg-rose-50 text-rose-800 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full"
+                    data-testid="admin-review-under-16-rule"
+                  >
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    Under 16 · Admin approval required
+                  </div>
+                )}
+                {totalMissingIcds > 0 && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 text-amber-800 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    {totalMissingIcds} diagnosis ICD needed
+                  </div>
+                )}
+                {!isUnder16 && totalMissingIcds === 0 && (
+                  <div className="text-[11px] text-slate-400 italic">
+                    No blocking rules.
+                  </div>
+                )}
+              </section>
+
+              <section className="space-y-2">
+                <Label
+                  htmlFor={`admin-review-admin-note-${patient.id}`}
+                  className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
+                >
+                  Admin Note
+                </Label>
+                <Textarea
+                  id={`admin-review-admin-note-${patient.id}`}
+                  value={adminNote}
+                  rows={3}
+                  onChange={(e) => setAdminNote(e.target.value)}
+                  placeholder="Optional context attached to this approval action"
+                  data-testid={`admin-review-admin-note-${patient.id}`}
+                />
+              </section>
+
+              <section className="space-y-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Approval
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Button
+                    type="button"
+                    disabled={approvalMutation.isPending}
+                    onClick={() => approvalMutation.mutate({ status: "approved" })}
+                    data-testid={`admin-review-button-approve-${patient.id}`}
+                    className="bg-emerald-600 text-white hover:bg-emerald-700 w-full"
+                  >
+                    {approvalMutation.isPending ? (
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-3 h-3 mr-1" />
+                    )}
+                    {isUnder16 ? "Admin Override Approve" : "Approve"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={approvalMutation.isPending}
+                    onClick={() => approvalMutation.mutate({ status: "needs_info" })}
+                    data-testid={`admin-review-button-needs-info-${patient.id}`}
+                    className="w-full"
+                  >
+                    Needs Info
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={approvalMutation.isPending}
+                    onClick={() => approvalMutation.mutate({ status: "rejected" })}
+                    data-testid={`admin-review-button-reject-${patient.id}`}
+                    className="text-rose-700 border-rose-200 hover:bg-rose-50 w-full"
+                  >
+                    Reject
+                  </Button>
+                </div>
+                <div className="text-[10px] text-slate-500 inline-flex items-center gap-1 pt-1">
+                  <ShieldCheck className="w-3 h-3" />
+                  Admin decision is final for engagement send
+                </div>
+              </section>
+            </div>
           </div>
         </ScrollArea>
-
-        <div className="px-6 py-4 border-t border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3">
-          <div className="text-[11px] text-slate-500 inline-flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5" />
-            {isUnder16
-              ? "Admin Override required for under-16 patients"
-              : "Admin decision is final for engagement send"}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={approvalMutation.isPending}
-              onClick={() => approvalMutation.mutate({ status: "needs_info" })}
-              data-testid={`admin-review-button-needs-info-${patient.id}`}
-            >
-              Needs Info
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={approvalMutation.isPending}
-              onClick={() => approvalMutation.mutate({ status: "rejected" })}
-              data-testid={`admin-review-button-reject-${patient.id}`}
-              className="text-rose-700 border-rose-200 hover:bg-rose-50"
-            >
-              Reject
-            </Button>
-            <Button
-              type="button"
-              disabled={approvalMutation.isPending}
-              onClick={() => approvalMutation.mutate({ status: "approved" })}
-              data-testid={`admin-review-button-approve-${patient.id}`}
-              className="bg-emerald-600 text-white hover:bg-emerald-700"
-            >
-              {approvalMutation.isPending ? (
-                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-              ) : (
-                <CheckCircle2 className="w-3 h-3 mr-1" />
-              )}
-              {isUnder16 ? "Admin Override Approve" : "Approve"}
-            </Button>
-          </div>
-        </div>
       </DialogContent>
     </Dialog>
   );
@@ -749,7 +1073,7 @@ function ClinicalField({ label, value }: { label: string; value: string | null |
         {label}
       </div>
       <div className="mt-1 text-xs text-slate-800 whitespace-pre-wrap min-h-[2rem]">
-        {value?.trim() ? value : <span className="italic text-slate-400">empty</span>}
+        {value?.trim() ? value : <span className="italic text-slate-400">Empty</span>}
       </div>
     </div>
   );
