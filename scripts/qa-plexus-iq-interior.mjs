@@ -372,6 +372,59 @@ requireText(patientsRoute, [
   "admin_approval_updated",
 ]);
 
+// Admin Review evidence assignment + under-16 rule guardrails.
+requireText("shared/plexus-iq/adminReviewEvidence.ts", [
+  "buildAdminReviewEvidence",
+  "requiresIcd",
+  "suggestedIcds",
+  "under16",
+  "adminApprovalRequired",
+  "COMMON_ICD_SUGGESTIONS",
+]);
+
+requireText("server/services/plexusIq/adminReviewRuleEngine.ts", [
+  "runAdminReviewRuleEngine",
+  "buildAdminReviewEvidence",
+]);
+
+requireText("server/routes/patients.ts", [
+  "/api/patient-screenings/:id/admin-review/evidence",
+  "/api/patient-screenings/:id/admin-review/regenerate",
+]);
+
+requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
+  "admin-review-clinical-data",
+  "admin-review-evidence",
+  "admin-review-evidence-chip",
+  "admin-review-icd-needed",
+  "admin-review-icd-suggestion",
+  "admin-review-assign-evidence",
+  "admin-review-ancillary-card",
+  "admin-review-regenerate-clinician",
+  "admin-review-regenerate-patient",
+  "admin-review-regenerate-all",
+  "badge-admin-review-under-16",
+  "PatientPdfActions",
+]);
+
+requireText("client/src/components/PatientCard.tsx", [
+  "badge-patient-under-16",
+]);
+
+requireNotText(
+  "client/src/components/qualification/AdminReviewDialog.tsx",
+  [
+    "Added ICDs become evidence chips too",
+    "Click a chip to add",
+    "This UI edits evidence assignment",
+    "How this fits the spine",
+    "Rule engine is not shown here",
+    "deterministic eligibility",
+    "auto-qualify",
+  ],
+  "AdminReviewDialog must not contain tutorial/rule-engine UI copy",
+);
+
 if (failures.length) {
   console.error("Plexus IQ interior QA failed:");
   for (const failure of failures) console.error(`- ${failure}`);

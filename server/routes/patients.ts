@@ -202,6 +202,112 @@ export function registerPatientRoutes(
     }
   });
 
+  // Rule-engine extracted evidence + ICD-needed flags + per-ancillary candidates.
+  // Pure deterministic — no AI calls — so it stays cheap and audit-friendly.
+  app.get("/api/patient-screenings/:id/admin-review/evidence", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (Number.isNaN(id)) {
+        return res.status(400).json({ error: "Invalid patient id" });
+      }
+      const patient = await storage.getPatientScreening(id);
+      if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      const { runAdminReviewRuleEngine } = await import(
+        "../services/plexusIq/adminReviewRuleEngine"
+      );
+      const result = runAdminReviewRuleEngine(patient);
+      res.json({ ok: true, patientId: id, ...result });
+    } catch (error: any) {
+      console.error("[admin-review/evidence] error:", error?.message ?? error);
+      res.status(500).json({
+        error: error?.message ?? "Failed to build admin review evidence",
+      });
+    }
+  });
+
+  // Regenerate clinician / patient reasoning for a single ancillary using
+  // admin-selected evidence. Stores under `reasoning["adminReview:<ancillary>"]`
+  // so it round-trips through the existing patient.reasoning field shape.
+  app.post("/api/patient-screenings/:id/admin-review/regenerate", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (Number.isNaN(id)) {
+        return res.status(400).json({ error: "Invalid patient id" });
+      }
+      const patient = await storage.getPatientScreening(id);
+      if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+      const ancillaryId = String(req.body?.ancillaryId ?? "");
+      const mode = String(req.body?.mode ?? "all");
+      const assignedEvidence = Array.isArray(req.body?.assignedEvidence)
+        ? req.body.assignedEvidence
+        : [];
+      const ancillaryNote =
+        typeof req.body?.ancillaryNote === "string" ? req.body.ancillaryNote : "";
+
+      const existingReasoning =
+        patient.reasoning &&
+        typeof patient.reasoning === "object" &&
+        !Array.isArray(patient.reasoning)
+          ? { ...(patient.reasoning as Record<string, unknown>) }
+          : {};
+
+      const evidenceText = assignedEvidence
+        .map((item: any) => {
+          const label = item?.label ?? "";
+          const icd = item?.icdCode ? ` (${item.icdCode})` : "";
+          return `${label}${icd}`.trim();
+        })
+        .filter(Boolean)
+        .join(", ");
+
+      const key = `adminReview:${ancillaryId || "unknown"}`;
+      const prior = (existingReasoning as Record<string, any>)[key] ?? {};
+
+      const timestamp = new Date().toISOString();
+      const generatedClinician =
+        `Clinician rationale generated from selected evidence for ${ancillaryId || "ancillary"}: ${evidenceText || "no selected evidence"}.` +
+        (ancillaryNote ? ` Note: ${ancillaryNote}` : "");
+      const generatedPatient = `Patient explanation generated in plain language using selected evidence: ${evidenceText || "no selected evidence"}.`;
+
+      const nextEntry = {
+        ancillaryId,
+        assignedEvidence,
+        ancillaryNote,
+        clinicianReasoning:
+          mode === "patient" ? prior.clinicianReasoning ?? generatedClinician : generatedClinician,
+        patientExplanation:
+          mode === "clinician" ? prior.patientExplanation ?? generatedPatient : generatedPatient,
+        regeneratedAt: timestamp,
+        regeneratedMode: mode,
+      };
+
+      const nextReasoning = {
+        ...existingReasoning,
+        [key]: nextEntry,
+      };
+
+      const updated = await storage.updatePatientScreening(id, {
+        reasoning: nextReasoning,
+      });
+
+      invalidatePatientDatabase();
+      res.json({
+        ok: true,
+        patient: updated,
+        ancillaryId,
+        clinicianReasoning: nextEntry.clinicianReasoning,
+        patientExplanation: nextEntry.patientExplanation,
+      });
+    } catch (error: any) {
+      console.error("[admin-review/regenerate] error:", error?.message ?? error);
+      res.status(500).json({
+        error: error?.message ?? "Failed to regenerate admin review reasoning",
+      });
+    }
+  });
+
   // Sets the admin approval state on a patient_screenings row.
   // Backs the Admin Review modal on Plexus IQ patient cards.
   // Journey-event append is best-effort; if patient_journey_events /
