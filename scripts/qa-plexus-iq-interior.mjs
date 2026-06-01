@@ -393,40 +393,69 @@ requireText("server/routes/patients.ts", [
 ]);
 
 requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
-  // Three-column premium layout markers.
+  // Three-column board markers.
   "admin-review-three-column-layout",
   "admin-review-left-column",
   "admin-review-middle-column",
   "admin-review-right-column",
-  // Per-section testIds.
-  "admin-review-clinical-data",
-  "admin-review-icd-section",
-  "admin-review-evidence",
-  "admin-review-evidence-empty",
-  "admin-review-evidence-chip",
-  "admin-review-icd-needed",
-  "admin-review-icd-suggestion",
+  // Category meta from canonical source.
+  "categoryStyles",
+  "categoryIcons",
+  "categoryLabels",
+  "getAncillaryCategory",
+  // Supporting Item Library sections.
+  "admin-review-evidence-library",
+  "admin-review-evidence-library-dx",
+  "admin-review-evidence-library-meds",
+  "admin-review-evidence-library-hx",
+  "admin-review-evidence-library-prior",
+  // Buttons in the library.
+  "admin-review-icd-disease-button",
+  "admin-review-icd-disease-assigned",
+  "admin-review-icd-disease-needed",
+  "admin-review-med-button",
+  "admin-review-hx-button",
+  "admin-review-prior-button",
+  // Assignment controls.
   "admin-review-assign-evidence",
-  "admin-review-ancillary-card",
+  "admin-review-assign-brainwave",
+  "admin-review-assign-vitalwave",
+  "admin-review-assign-ultrasound",
+  "admin-review-assign-all",
+  "admin-review-unassign-supporting-item",
+  // Colored ancillary panels.
+  "admin-review-ancillary-colored-panel",
+  "admin-review-ancillary-services-list",
+  "admin-review-ancillary-supporting-list",
+  "admin-review-ancillary-header-supporting-items",
+  "admin-review-ancillary-header-chip",
   "admin-review-ancillary-expanded",
-  // Canonical reasoning binding.
+  // Per-ancillary regenerate.
+  "admin-review-regenerate-ancillary",
+  "admin-review-regenerate-brainwave",
+  "admin-review-regenerate-vitalwave",
+  "admin-review-regenerate-ultrasound",
+  // AI ICD search section.
+  "admin-review-add-icd-section",
+  "admin-review-icd-ai-search",
+  "admin-review-icd-ai-search-button",
+  "admin-review-icd-ai-search-result",
+  "admin-review-icd-ai-search-loading",
+  "admin-review-icd-ai-search-empty",
+  // Manual ICD entry kept as backup.
+  "admin-review-icd-manual-code",
+  "admin-review-icd-manual-label",
+  "admin-review-icd-add",
+  "admin-review-icd-remove",
+  // Canonical reasoning binding (still required).
   "admin-review-canonical-reasoning-card",
   "buildCanonicalReasoningByAncillary",
-  "getAncillaryCategory",
   "clinician_understanding",
   "patient_talking_points",
   "qualifying_factors",
   "icd10_codes",
   "pearls",
-  // ICD search/manual add/remove controls.
-  "admin-review-icd-search",
-  "admin-review-icd-manual-code",
-  "admin-review-icd-manual-label",
-  "admin-review-icd-add",
-  "admin-review-icd-remove",
-  // Single global regenerate button.
-  "admin-review-global-regenerate",
-  // Under-16 + ancillary labels.
+  // Under-16 + library/PDF essentials.
   "admin-review-under-16-rule",
   "badge-admin-review-under-16",
   "PatientPdfActions",
@@ -436,16 +465,21 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "Ultrasound Studies",
 ]);
 
-// Old per-mode regenerate buttons must be gone — a single global
-// "Regenerate" drives canonical regeneration now.
+// Old per-mode / single global regenerate buttons must be gone — per-ancillary
+// regenerate is now the only regenerate model. Also ban old "tests · " count
+// phrasing and the prefilled-on-empty ICD search bug.
 requireNotText(
   "client/src/components/qualification/AdminReviewDialog.tsx",
   [
     "admin-review-regenerate-clinician",
     "admin-review-regenerate-patient",
     "admin-review-regenerate-all",
+    "admin-review-global-regenerate",
+    "tests ·",
+    "qualifying tests",
+    "if (!q) return all.slice(0, 6)",
   ],
-  "AdminReviewDialog must use one global regenerate button",
+  "AdminReviewDialog must use per-ancillary regenerate and have no count copy",
 );
 
 requireText("client/src/components/PatientCard.tsx", [

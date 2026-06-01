@@ -75,7 +75,46 @@ requireText(patientsRoute, [
   "reasoning",
   "updatePatientScreening",
   "adminReview:",
+  // Per-ancillary regenerate + AI ICD search wiring.
+  "/api/patient-screenings/:id/admin-review/regenerate-ancillary",
+  "/api/patient-screenings/:id/admin-review/icd-search",
+  "searchAdminReviewIcdCodes",
+  "@shared/ancillaryCategory",
 ]);
+
+// AI ICD search service exists and uses the OpenAI Responses API with strict
+// json_schema. Prefers AI_INTEGRATIONS_OPENAI_API_KEY, falls back to OPENAI_API_KEY.
+requireText("server/services/plexusIq/adminReviewIcdSearch.ts", [
+  "searchAdminReviewIcdCodes",
+  "AI_INTEGRATIONS_OPENAI_API_KEY",
+  "OPENAI_API_KEY",
+  "client.responses.create",
+  "json_schema",
+]);
+
+// PDFs must NOT render ICD codes anywhere in their HTML output.
+// The data type may still include icd10_codes (kept for Admin Review +
+// canonical patient.reasoning[testName] consumers) — only the render
+// must be absent from PDF output.
+requireText("client/src/lib/pdfGeneration.ts", ["icd10_codes"]);
+{
+  const pdfContent = fs.readFileSync(
+    path.join(root, "client/src/lib/pdfGeneration.ts"),
+    "utf8",
+  );
+  for (const banned of [
+    "icd10Pills",
+    "renderIcd10Pills",
+    "ICD-10 Codes",
+    "ICD Codes</",
+  ]) {
+    if (pdfContent.includes(banned)) {
+      failures.push(
+        `pdfGeneration.ts must not render ICD codes; found "${banned}"`,
+      );
+    }
+  }
+}
 
 // 3. Schema must declare the soft-delete fields. Drizzle column names
 //    on the JS side are camelCase; the SQL/migration uses snake_case.
