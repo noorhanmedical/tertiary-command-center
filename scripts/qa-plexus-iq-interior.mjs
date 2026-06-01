@@ -393,18 +393,34 @@ requireText("server/routes/patients.ts", [
 ]);
 
 requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
+  // Three-column premium layout markers.
+  "admin-review-three-column-layout",
+  "admin-review-left-column",
+  "admin-review-middle-column",
+  "admin-review-right-column",
+  // Per-section testIds.
   "admin-review-clinical-data",
+  "admin-review-icd-section",
   "admin-review-evidence",
+  "admin-review-evidence-empty",
   "admin-review-evidence-chip",
   "admin-review-icd-needed",
   "admin-review-icd-suggestion",
   "admin-review-assign-evidence",
   "admin-review-ancillary-card",
+  "admin-review-ancillary-expanded",
   "admin-review-regenerate-clinician",
   "admin-review-regenerate-patient",
   "admin-review-regenerate-all",
+  "admin-review-under-16-rule",
   "badge-admin-review-under-16",
   "PatientPdfActions",
+  // Fallback evidence helper so popup never renders empty.
+  "buildLocalEvidenceFallback",
+  // All three ancillaries must always render.
+  "BrainWave",
+  "VitalWave",
+  "Ultrasound Studies",
 ]);
 
 requireText("client/src/components/PatientCard.tsx", [
