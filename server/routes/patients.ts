@@ -202,6 +202,94 @@ export function registerPatientRoutes(
     }
   });
 
+  // Sets the admin approval state on a patient_screenings row.
+  // Backs the Admin Review modal on Plexus IQ patient cards.
+  // Journey-event append is best-effort; if patient_journey_events /
+  // patient_execution_cases aren't deployed yet the audit row is
+  // dropped silently and the primary column update still succeeds.
+  app.post(
+    "/api/patient-screenings/:id/admin-approval",
+    async (req, res) => {
+      try {
+        const id = parseInt(req.params.id);
+        if (Number.isNaN(id)) {
+          return res.status(400).json({ error: "Invalid patient id" });
+        }
+        const allowedStatuses = ["pending", "approved", "needs_info", "rejected"] as const;
+        const status = String(req.body?.status ?? "");
+        if (!(allowedStatuses as readonly string[]).includes(status)) {
+          return res.status(400).json({
+            error: "status must be one of pending / approved / needs_info / rejected",
+          });
+        }
+        const note = typeof req.body?.note === "string" && req.body.note.trim()
+          ? req.body.note.trim()
+          : null;
+        const patient = await storage.getPatientScreening(id);
+        if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+        const userId: string | null = req.session.userId ?? null;
+        const isApproved = status === "approved";
+        const updated = await storage.updatePatientScreening(id, {
+          adminApprovalStatus: status,
+          adminApprovedAt: isApproved ? new Date() : null,
+          adminApprovedByUserId: isApproved ? userId : null,
+          adminApprovalNote: note,
+        });
+        if (!updated) {
+          return res.status(404).json({ error: "Patient not found" });
+        }
+
+        try {
+          const { db } = await import("../db");
+          const schema = await import("@shared/schema") as Record<string, unknown>;
+          const patientJourneyEvents = (schema as { patientJourneyEvents?: unknown }).patientJourneyEvents;
+          const patientExecutionCases = (schema as { patientExecutionCases?: unknown }).patientExecutionCases;
+          if (patientJourneyEvents && patientExecutionCases) {
+            const { desc, eq } = await import("drizzle-orm");
+            const [execCase] = await (db as any)
+              .select()
+              .from(patientExecutionCases)
+              .where(eq((patientExecutionCases as any).patientScreeningId, id))
+              .orderBy(desc((patientExecutionCases as any).id))
+              .limit(1);
+            await (db as any).insert(patientJourneyEvents).values({
+              patientScreeningId: id,
+              executionCaseId: execCase?.id ?? null,
+              actorUserId: userId,
+              patientName: patient.name,
+              patientDob: patient.dob ?? null,
+              eventType: "admin_approval_updated",
+              eventSource: "plexus_iq_admin_review",
+              summary: `Admin approval set to ${status}`,
+              metadata: { status, note },
+            });
+          }
+        } catch (auditErr) {
+          console.error(
+            "[admin-approval] journey event append failed:",
+            auditErr instanceof Error ? auditErr.message : auditErr,
+          );
+        }
+
+        void logAudit(req, "update", "patient", id, {
+          adminApprovalStatus: status,
+          note,
+        });
+        invalidatePatientDatabase();
+        res.json({ ok: true, patient: updated });
+      } catch (error: any) {
+        console.error(
+          "[admin-approval] error:",
+          error?.message ?? error,
+        );
+        res.status(500).json({
+          error: error?.message ?? "Failed to update admin approval",
+        });
+      }
+    },
+  );
+
   app.post("/api/patients/:id/analyze", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
