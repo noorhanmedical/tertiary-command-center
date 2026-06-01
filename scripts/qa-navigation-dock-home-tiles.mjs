@@ -47,7 +47,7 @@ const dock = "client/src/components/navigation/GlobalFloatingDock.tsx";
 const app = "client/src/App.tsx";
 const home = "client/src/components/HomeDashboard.tsx";
 
-// 1. Navigation registry defines the exact dock surface area.
+// 1. Navigation registry: dock surface area + canonical labels.
 requireFile(registry);
 requireText(registry, [
   "DOCK_ITEMS",
@@ -64,16 +64,22 @@ requireText(registry, [
   '"Tasks"',
   '"Chat"',
   '"Home"',
+  "global-floating-dock-home",
+  "global-floating-dock-chat",
+  "global-floating-dock-tasks",
+  "global-floating-dock-plexus-iq",
+  "global-floating-dock-calendar",
+  "global-floating-dock-communications",
 ]);
 
-// Plexus Drive must NOT be in the dock registry.
+// Plexus Drive must NOT be in dock registry. Communications label only.
 requireNotText(
   registry,
-  ['"Plexus Drive"', '"/drive"'],
-  "Dock registry must not include Plexus Drive",
+  ['"Plexus Drive"', '"/drive"', '"Phone System"', '"RingCentral"'],
+  "Dock registry must not include Plexus Drive / Phone System / RingCentral",
 );
 
-// 2. Floating dock component exists and wires hover/tap/panel behavior.
+// 2. Floating dock: middle-bottom PCS-style, hover/tap behaviour, panel.
 requireFile(dock);
 requireText(dock, [
   "GlobalFloatingDock",
@@ -82,13 +88,38 @@ requireText(dock, [
   "onMouseLeave",
   "setHovered",
   "setTapToggled",
-  "global-floating-dock",
-  "global-floating-dock-mobile-toggle",
-  "dock-calendar-placeholder",
+  'data-testid="global-floating-dock"',
+  'data-testid="global-floating-dock-collapsed"',
+  'data-testid="global-floating-dock-expanded"',
+  'data-testid="global-floating-dock-calendar-panel"',
+  // Middle-bottom positioning markers.
+  "fixed",
+  "bottom-",
+  "left-1/2",
+  "-translate-x-1/2",
+  // Sheet panel for Calendar.
   "Sheet",
 ]);
 
-// 3. App.tsx mounts the floating dock and gates GlobalNav on /home.
+// Dock must not be a left-rail vertical bar.
+requireNotText(
+  dock,
+  [
+    "fixed left-3 top-1/2",
+    "fixed left-4 top-1/2",
+    'data-testid="dock-item-home"',
+  ],
+  "Dock must not retain left-rail vertical positioning or legacy dock-item testIds",
+);
+
+// Dock must not surface Plexus Drive / Phone System / RingCentral.
+requireNotText(
+  dock,
+  ['"/drive"', '"Plexus Drive"', "Phone System", "RingCentral"],
+  "Dock must not include Plexus Drive / Phone System / RingCentral",
+);
+
+// 3. App.tsx mounts the dock and gates GlobalNav on /home.
 requireText(app, [
   "GlobalFloatingDock",
   "shouldShowGlobalNav",
@@ -96,36 +127,51 @@ requireText(app, [
   "{showGlobalNav && <GlobalNav",
 ]);
 
-// 4. Home dashboard has Plexus IQ night-sky hero, equal tiles, no PrimaryTile.
+// 4. Home dashboard tile set: canonical layout per 84f5430 intent.
 requireText(home, [
   'data-testid="tile-plexus-iq"',
   "auto-rows-fr",
-  'testId="tile-patient-directory"',
   'testId="tile-team-member-portals"',
-  'testId="tile-liaison-technician-portal"',
-  'testId="tile-scheduler-portal"',
-  'testId="tile-outreach-center"',
+  'testId="tile-engagement-center"',
+  'href="/engagement-center"',
+  'label="Outreach / Engagement Center"',
   'testId="tile-team-ops"',
+  'testId="tile-patient-directory"',
   'testId="tile-document-upload"',
   'testId="tile-documents"',
   'testId="tile-plexus-tasks"',
   'testId="tile-plexus-drive"',
 ]);
 
-// Hero tile must be styled as black night sky with white text.
+// Plexus IQ hero is the black night-sky.
 requireText(home, [
   "bg-[radial-gradient(ellipse_at_top_left,_#1e1b4b_0%,_#000000_55%,_#0b0716_100%)]",
   "text-white",
 ]);
 
-// PrimaryTile (the old aspect-square component) must be gone.
+// Removed standalone tiles (consolidated into Team Member Portals).
+requireNotText(
+  home,
+  [
+    'testId="tile-liaison-technician-portal"',
+    'testId="tile-scheduler-portal"',
+    'testId="tile-outreach-center"',
+    'testId="tile-visit-patients"',
+    'testId="tile-outreach-patients"',
+    'testId="tile-patient-care-specialist-portal"',
+    'testId="tile-ancillary-care-specialist-portal"',
+  ],
+  "Home dashboard must not retain standalone portal duplicates",
+);
+
+// Legacy PrimaryTile (the old aspect-square hero) must be gone.
 requireNotText(
   home,
   ["function PrimaryTile(", "<PrimaryTile"],
   "HomeDashboard must not retain the legacy PrimaryTile",
 );
 
-// Equal-height tiles: SecondaryTile must declare h-full on its Card.
+// Equal-height tiles.
 requireText(home, ['className="glass-tile glass-tile-interactive group cursor-pointer h-full"']);
 
 if (failures.length) {

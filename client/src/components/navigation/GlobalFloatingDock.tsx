@@ -9,14 +9,11 @@ import {
 } from "@/components/ui/sheet";
 import { DOCK_ITEMS, type DockItem } from "@/lib/navigation/navigationRegistry";
 
-const COLLAPSED_WIDTH = "w-14";
-const EXPANDED_WIDTH = "w-56";
-
 function CalendarPlaceholderPanel() {
   return (
     <div
       className="mt-6 rounded-2xl border border-dashed border-slate-200 dark:border-border bg-slate-50/60 dark:bg-muted/20 p-8 text-center"
-      data-testid="dock-calendar-placeholder"
+      data-testid="global-floating-dock-calendar-panel"
     >
       <p className="text-sm font-medium text-slate-700 dark:text-foreground">
         Calendar panel coming soon.
@@ -28,7 +25,7 @@ function CalendarPlaceholderPanel() {
   );
 }
 
-function DockRow({
+function DockButton({
   item,
   expanded,
   active,
@@ -40,37 +37,48 @@ function DockRow({
   onActivate: (item: DockItem) => void;
 }) {
   const Icon = item.Icon;
-  const baseClass =
-    "flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors w-full min-h-[44px]";
-  const stateClass = item.kind === "disabled"
-    ? "opacity-40 cursor-not-allowed text-slate-500 dark:text-muted-foreground"
-    : active
-      ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-200"
-      : "text-slate-700 dark:text-foreground hover:bg-slate-100 dark:hover:bg-muted/40";
 
-  const inner = (
-    <>
-      <Icon className="w-5 h-5 shrink-0" strokeWidth={1.75} />
-      <span
-        className={`text-sm font-medium whitespace-nowrap overflow-hidden transition-[max-width,opacity] duration-200 ${
-          expanded ? "max-w-[160px] opacity-100" : "max-w-0 opacity-0"
-        }`}
-      >
-        {item.label}
-      </span>
-    </>
+  const stateClass = item.kind === "disabled"
+    ? "opacity-40 cursor-not-allowed text-slate-500"
+    : active
+      ? "text-indigo-700 dark:text-indigo-200"
+      : "text-slate-700 dark:text-foreground hover:text-indigo-700 dark:hover:text-indigo-200";
+
+  const wrapperClass = `group/dock-item flex flex-col items-center gap-1 px-2 transition-all duration-200 ${stateClass}`;
+
+  const iconWrap = (
+    <span
+      className={`relative inline-flex items-center justify-center transition-all duration-200 rounded-2xl ${
+        active
+          ? "bg-indigo-50 dark:bg-indigo-500/15"
+          : "bg-transparent group-hover/dock-item:bg-slate-100 dark:group-hover/dock-item:bg-muted/40"
+      } ${expanded ? "h-10 w-10" : "h-9 w-9"}`}
+    >
+      <Icon className="w-5 h-5" strokeWidth={1.75} />
+    </span>
+  );
+
+  const label = (
+    <span
+      className={`text-[11px] font-medium leading-none transition-[max-height,opacity] duration-200 overflow-hidden ${
+        expanded ? "max-h-[1.25rem] opacity-100" : "max-h-0 opacity-0"
+      }`}
+    >
+      {item.label}
+    </span>
   );
 
   if (item.kind === "link" && item.href) {
     return (
       <Link href={item.href}>
         <a
-          className={`${baseClass} ${stateClass}`}
+          className={wrapperClass}
           data-testid={item.testId}
           aria-current={active ? "page" : undefined}
           title={item.label}
         >
-          {inner}
+          {iconWrap}
+          {label}
         </a>
       </Link>
     );
@@ -81,11 +89,12 @@ function DockRow({
       <button
         type="button"
         onClick={() => onActivate(item)}
-        className={`${baseClass} ${stateClass} text-left`}
+        className={wrapperClass}
         data-testid={item.testId}
         title={item.label}
       >
-        {inner}
+        {iconWrap}
+        {label}
       </button>
     );
   }
@@ -94,12 +103,13 @@ function DockRow({
     <button
       type="button"
       disabled
-      className={`${baseClass} ${stateClass} text-left`}
+      className={wrapperClass}
       data-testid={item.testId}
       aria-disabled="true"
       title={`${item.label} (unavailable)`}
     >
-      {inner}
+      {iconWrap}
+      {label}
     </button>
   );
 }
@@ -135,20 +145,45 @@ export function GlobalFloatingDock() {
     <>
       <div
         ref={rootRef}
-        className="fixed left-3 top-1/2 -translate-y-1/2 z-50 hidden md:block"
+        className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50"
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         data-testid="global-floating-dock"
         data-expanded={expanded ? "true" : "false"}
       >
-        <div
-          className={`${expanded ? EXPANDED_WIDTH : COLLAPSED_WIDTH} transition-[width] duration-200 ease-out rounded-2xl border border-slate-200/70 dark:border-border bg-white/90 dark:bg-card/85 backdrop-blur-xl shadow-lg overflow-hidden`}
+        <button
+          type="button"
+          onClick={() => setTapToggled((v) => !v)}
+          className="md:hidden absolute -top-3 left-1/2 -translate-x-1/2 inline-flex items-center justify-center h-6 w-12 rounded-full bg-indigo-600 text-white text-[10px] font-semibold shadow"
+          aria-label="Toggle dock labels"
+          data-testid="global-floating-dock-mobile-toggle"
         >
-          <nav className="flex flex-col gap-1 p-2" aria-label="Global navigation dock">
+          {tapToggled ? "—" : "•••"}
+        </button>
+
+        <div
+          className={`rounded-full border border-slate-200/70 dark:border-border bg-white/90 dark:bg-card/85 backdrop-blur-xl shadow-lg transition-all duration-200 ease-out ${
+            expanded ? "px-3 py-2" : "px-2 py-1.5"
+          }`}
+        >
+          <div
+            className={`hidden ${expanded ? "" : ""}`}
+            data-testid="global-floating-dock-collapsed"
+            aria-hidden={expanded ? "true" : "false"}
+          />
+          <div
+            className={`hidden ${expanded ? "" : ""}`}
+            data-testid="global-floating-dock-expanded"
+            aria-hidden={expanded ? "false" : "true"}
+          />
+          <nav
+            className="flex items-end gap-1"
+            aria-label="Global navigation dock"
+          >
             {DOCK_ITEMS.map((item) => {
               const active = !!item.href && (location === item.href || location.startsWith(item.href + "/"));
               return (
-                <DockRow
+                <DockButton
                   key={item.id}
                   item={item}
                   expanded={expanded}
@@ -161,48 +196,13 @@ export function GlobalFloatingDock() {
         </div>
       </div>
 
-      <div
-        className="fixed bottom-4 right-4 z-50 md:hidden"
+      <Sheet
+        open={openPanel === "calendar"}
+        onOpenChange={(open) => setOpenPanel(open ? "calendar" : null)}
       >
-        <button
-          type="button"
-          onClick={() => setTapToggled((v) => !v)}
-          className="w-12 h-12 rounded-full bg-indigo-600 text-white shadow-lg flex items-center justify-center"
-          aria-label="Toggle navigation"
-          data-testid="global-floating-dock-mobile-toggle"
-        >
-          <span className="block w-5 h-0.5 bg-white relative before:absolute before:inset-x-0 before:-top-1.5 before:h-0.5 before:bg-white after:absolute after:inset-x-0 after:top-1.5 after:h-0.5 after:bg-white" />
-        </button>
-        {tapToggled && (
-          <div
-            className="absolute bottom-14 right-0 w-56 rounded-2xl border border-slate-200/70 dark:border-border bg-white/95 dark:bg-card/90 backdrop-blur-xl shadow-lg overflow-hidden"
-            data-testid="global-floating-dock-mobile-panel"
-          >
-            <nav className="flex flex-col gap-1 p-2" aria-label="Global navigation dock (mobile)">
-              {DOCK_ITEMS.map((item) => {
-                const active = !!item.href && (location === item.href || location.startsWith(item.href + "/"));
-                return (
-                  <DockRow
-                    key={item.id}
-                    item={item}
-                    expanded={true}
-                    active={active}
-                    onActivate={(it) => {
-                      handleActivate(it);
-                      if (it.kind === "link") setTapToggled(false);
-                    }}
-                  />
-                );
-              })}
-            </nav>
-          </div>
-        )}
-      </div>
-
-      <Sheet open={openPanel === "calendar"} onOpenChange={(open) => setOpenPanel(open ? "calendar" : null)}>
         <SheetContent side="right" className="w-full sm:max-w-md">
           <SheetHeader>
-            <SheetTitle data-testid="dock-calendar-title">Calendar</SheetTitle>
+            <SheetTitle>Calendar</SheetTitle>
             <SheetDescription>
               Quick-glance calendar surface — full monthly view lives on Home.
             </SheetDescription>

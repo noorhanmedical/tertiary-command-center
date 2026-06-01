@@ -29,7 +29,7 @@ export const DOCK_ITEMS: DockItem[] = [
     Icon: HomeIcon,
     kind: "link",
     href: "/home",
-    testId: "dock-item-home",
+    testId: "global-floating-dock-home",
   },
   {
     id: "chat",
@@ -37,7 +37,7 @@ export const DOCK_ITEMS: DockItem[] = [
     Icon: MessageSquare,
     kind: CHAT_ROUTE_AVAILABLE ? "link" : "disabled",
     href: CHAT_ROUTE_AVAILABLE ? "/chat" : undefined,
-    testId: "dock-item-chat",
+    testId: "global-floating-dock-chat",
   },
   {
     id: "tasks",
@@ -45,7 +45,7 @@ export const DOCK_ITEMS: DockItem[] = [
     Icon: CheckSquare,
     kind: "link",
     href: "/plexus-tasks",
-    testId: "dock-item-tasks",
+    testId: "global-floating-dock-tasks",
   },
   {
     id: "plexus-iq",
@@ -53,7 +53,7 @@ export const DOCK_ITEMS: DockItem[] = [
     Icon: Sparkles,
     kind: "link",
     href: "/plexus-iq",
-    testId: "dock-item-plexus-iq",
+    testId: "global-floating-dock-plexus-iq",
   },
   {
     id: "calendar",
@@ -61,7 +61,7 @@ export const DOCK_ITEMS: DockItem[] = [
     Icon: CalendarDays,
     kind: "panel",
     panelId: "calendar",
-    testId: "dock-item-calendar",
+    testId: "global-floating-dock-calendar",
   },
   {
     id: "communications",
@@ -69,7 +69,7 @@ export const DOCK_ITEMS: DockItem[] = [
     Icon: Phone,
     kind: "link",
     href: "/scheduler-portal",
-    testId: "dock-item-communications",
+    testId: "global-floating-dock-communications",
   },
 ];
 
