@@ -364,6 +364,14 @@ requireText(adminReviewMigration, [
   "patient_screenings",
 ]);
 
+// Backend handler for the admin-approval POST that the dialog calls.
+const patientsRoute = "server/routes/patients.ts";
+requireText(patientsRoute, [
+  "/api/patient-screenings/:id/admin-approval",
+  "adminApprovalStatus",
+  "admin_approval_updated",
+]);
+
 if (failures.length) {
   console.error("Plexus IQ interior QA failed:");
   for (const failure of failures) console.error(`- ${failure}`);
