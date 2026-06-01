@@ -223,6 +223,10 @@ export function generateClinicianPDF(batchName: string, patients: PatientScreeni
     ).join("");
   };
 
+  // ICD-10 codes are intentionally not rendered in either PDF.
+  // They live in canonical patient.reasoning[testName].icd10_codes for
+  // Admin Review and downstream coding, not for distributed PDF output.
+
   const pages = patients.map(p => {
     const allTests = (p.qualifyingTests || []) as string[];
     const reasoning = (p.reasoning || {}) as Record<string, ReasoningValue>;
@@ -366,12 +370,9 @@ export function generatePlexusPDF(batchName: string, patients: PatientScreening[
     ).join("")}</div>`;
   };
 
-  const icd10Pills = (codes: string[] | null | undefined) => {
-    if (!codes || codes.length === 0) return "";
-    return `<div style="margin-top:3px;">${codes.slice(0, 4).map(c =>
-      `<span style="display:inline-block;font-size:7.5px;font-weight:600;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:3px;padding:1px 4px;margin:1px 2px 1px 0;">${esc(c)}</span>`
-    ).join("")}</div>`;
-  };
+  // ICD-10 codes are intentionally not rendered in either PDF.
+  // They live in canonical patient.reasoning[testName].icd10_codes for
+  // Admin Review and downstream coding, not for distributed PDF output.
 
   const pages = patients.flatMap(p => {
     const allTests = (p.qualifyingTests || []) as string[];
@@ -387,7 +388,6 @@ export function generatePlexusPDF(batchName: string, patients: PatientScreening[
       const clinician = r && typeof r !== "string" ? r.clinician_understanding : null;
       const talking   = r ? (typeof r === "string" ? r : r.patient_talking_points) : null;
       const factors   = r && typeof r !== "string" ? r.qualifying_factors : null;
-      const icd10     = r && typeof r !== "string" ? r.icd10_codes : null;
       const pearls    = r && typeof r !== "string" ? r.pearls : null;
       const accent    = catAccent[getAncillaryCategory(test)] || "#475569";
       const whatIs    = getOneSentenceDesc(test);
@@ -404,8 +404,7 @@ export function generatePlexusPDF(batchName: string, patients: PatientScreening[
           <p style="font-size:8.5px;line-height:1.35;color:#64748b;margin:0 0 3px;font-style:italic;">${esc(whatIs)}</p>
           ${clinician ? `
           <div style="font-size:8px;font-weight:700;color:#1a365d;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px;">Clinical Basis</div>
-          <p style="font-size:9px;line-height:1.4;color:#334155;margin:0 0 1px;">${esc(clinician)}</p>
-          ${icd10Pills(icd10)}` : ""}
+          <p style="font-size:9px;line-height:1.4;color:#334155;margin:0 0 1px;">${esc(clinician)}</p>` : ""}
           <div style="font-size:8px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px;margin-top:${clinician ? "3px" : "0"};">Talking Points</div>
           <p style="font-size:9px;line-height:1.4;color:#1e293b;margin:0;">${talking ? esc(talking) : `Clinical indicators in this patient's chart support this study.`}</p>
           ${factorPills(factors)}
