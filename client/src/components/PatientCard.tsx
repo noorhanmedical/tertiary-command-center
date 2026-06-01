@@ -368,6 +368,16 @@ export function PatientCard({
           {typeLabel}
         </span>
 
+        {typeof patient.age === "number" && patient.age < 16 && (
+          <div
+            className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 text-rose-800 border border-rose-300 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
+            data-testid={`badge-patient-under-16-${patient.id}`}
+            title="Patient is under 16 — admin approval required before ancillary qualification"
+          >
+            &lt;16 · Admin approval required
+          </div>
+        )}
+
         {/* Standalone premium category icons. Each icon is a transparent
             button — no rectangle, no chip background, no boxed wrapper.
             Clicking a category opens the *category-specific* reasoning

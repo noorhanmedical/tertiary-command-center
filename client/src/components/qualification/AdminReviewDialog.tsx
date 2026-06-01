@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -13,41 +13,34 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Loader2,
   ShieldCheck,
-  AlertCircle,
-  Clock,
-  XCircle,
-  X,
-  Save,
-  Pencil,
+  AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient as defaultQueryClient } from "@/lib/queryClient";
-import {
-  categoryIcons,
-  categoryLabels,
-  categoryStyles,
-  getAncillaryCategory,
-  type AncillaryCategory,
-} from "@/features/schedule/ancillaryMeta";
+import { apiRequest } from "@/lib/queryClient";
 import type { PatientScreening } from "@shared/schema";
 import { computeAdminReview, type AdminApprovalStatus } from "@/lib/adminReviewStatus";
-
-// One-stop premium Admin Review modal. Replaces the three
-// per-category reasoning popups with a single wide modal that
-// surfaces every qualifying test alongside the canonical AI
-// reasoning, lets the admin add/edit a per-test justification, and
-// hosts the approval footer (Approve / Needs Info / Reject) so the
-// reviewer never has to chase a tiny chip.
-//
-// Source of truth:
-//   - `qualifyingTests` and `reasoning` come from the canonical
-//     patient_screenings row.
-//   - Edits write back through the existing onUpdate(field, value)
-//     prop (same path PatientEditDialog uses), so any other surface
-//     reading the same row re-renders correctly.
+import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
+import {
+  COMMON_ICD_SUGGESTIONS,
+  type AdminEvidenceChip,
+  type AdminReviewAncillaryId,
+  type AdminReviewRuleCandidate,
+  type AdminReviewRuleResult,
+} from "@shared/plexus-iq/adminReviewEvidence";
 
 export type AdminReviewDialogProps = {
   open: boolean;
@@ -55,71 +48,107 @@ export type AdminReviewDialogProps = {
   patient: PatientScreening;
   facility?: string | null;
   scheduleDate?: string | null;
-  onUpdate: (field: string, value: string | string[] | boolean | Record<string, unknown>) => void;
+  onUpdate: (
+    field: string,
+    value: string | string[] | boolean | Record<string, unknown>,
+  ) => void;
   onAddTest?: (test: string) => void;
   onRemoveTest?: (test: string) => void;
 };
 
-const ANCILLARY_COLUMNS: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound"];
-
-type Reasoning = NonNullable<PatientScreening["reasoning"]>;
-type ReasoningValue = string | {
-  clinician_understanding?: string;
-  patient_talking_points?: string;
-  confidence?: "high" | "medium" | "low";
-  qualifying_factors?: string[];
-  icd10_codes?: string[];
-  pearls?: string[];
-  approvalRequired?: boolean;
-  admin_justification?: string;
-  admin_justification_updated_at?: string;
+type AncillaryRow = {
+  id: AdminReviewAncillaryId;
+  label: string;
 };
+
+const ANCILLARIES: AncillaryRow[] = [
+  { id: "brainwave", label: "BrainWave" },
+  { id: "vitalwave", label: "VitalWave" },
+  { id: "ultrasound", label: "Ultrasound Studies" },
+];
 
 const STATUS_META: Record<
   AdminApprovalStatus,
-  { label: string; tone: string; ringTone: string; Icon: typeof Clock }
+  { label: string; pillClass: string }
 > = {
   pending: {
-    label: "Pending review",
-    tone: "bg-amber-50 border-amber-200 text-amber-900",
-    ringTone: "ring-amber-200",
-    Icon: Clock,
+    label: "Pending",
+    pillClass: "bg-slate-100 text-slate-700 border border-slate-200",
   },
   approved: {
     label: "Approved",
-    tone: "bg-emerald-50 border-emerald-200 text-emerald-900",
-    ringTone: "ring-emerald-200",
-    Icon: ShieldCheck,
+    pillClass: "bg-emerald-50 text-emerald-800 border border-emerald-200",
   },
   needs_info: {
-    label: "Needs info",
-    tone: "bg-sky-50 border-sky-200 text-sky-900",
-    ringTone: "ring-sky-200",
-    Icon: AlertCircle,
+    label: "Needs Info",
+    pillClass: "bg-amber-50 text-amber-800 border border-amber-200",
   },
   rejected: {
     label: "Rejected",
-    tone: "bg-rose-50 border-rose-200 text-rose-900",
-    ringTone: "ring-rose-200",
-    Icon: XCircle,
+    pillClass: "bg-rose-50 text-rose-800 border border-rose-200",
   },
 };
 
-function asReasoningRecord(value: unknown): Record<string, ReasoningValue> {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, ReasoningValue>;
+const SOURCE_TONE: Record<string, string> = {
+  Hx: "bg-slate-100 text-slate-700 border-slate-200",
+  Dx: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  Rx: "bg-violet-50 text-violet-700 border-violet-200",
+  ICD: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  AI: "bg-sky-50 text-sky-700 border-sky-200",
+  Manual: "bg-amber-50 text-amber-800 border-amber-200",
+  "Prior Test": "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
+};
+
+type EvidencePayload = AdminReviewRuleResult & { ok?: boolean; patientId?: number };
+
+type AncillaryAssignmentMap = Record<AdminReviewAncillaryId, AdminEvidenceChip[]>;
+type AncillaryNoteMap = Record<AdminReviewAncillaryId, string>;
+type AncillaryReasoningMap = Record<
+  AdminReviewAncillaryId,
+  { clinicianReasoning?: string; patientExplanation?: string }
+>;
+
+function emptyAncillaryMap<T>(value: () => T): Record<AdminReviewAncillaryId, T> {
+  return {
+    brainwave: value(),
+    vitalwave: value(),
+    ultrasound: value(),
+  };
+}
+
+function reasoningAsObject(value: unknown): Record<string, any> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, any>;
+}
+
+function seedFromReasoning(reasoning: Record<string, any>): {
+  assignments: AncillaryAssignmentMap;
+  notes: AncillaryNoteMap;
+  reasoningOut: AncillaryReasoningMap;
+} {
+  const assignments = emptyAncillaryMap<AdminEvidenceChip[]>(() => []);
+  const notes = emptyAncillaryMap<string>(() => "");
+  const reasoningOut = emptyAncillaryMap<{ clinicianReasoning?: string; patientExplanation?: string }>(() => ({}));
+  for (const id of ["brainwave", "vitalwave", "ultrasound"] as AdminReviewAncillaryId[]) {
+    const entry = reasoning[`adminReview:${id}`];
+    if (entry && typeof entry === "object") {
+      if (Array.isArray(entry.assignedEvidence)) {
+        assignments[id] = entry.assignedEvidence as AdminEvidenceChip[];
+      }
+      if (typeof entry.ancillaryNote === "string") notes[id] = entry.ancillaryNote;
+      reasoningOut[id] = {
+        clinicianReasoning:
+          typeof entry.clinicianReasoning === "string" ? entry.clinicianReasoning : undefined,
+        patientExplanation:
+          typeof entry.patientExplanation === "string" ? entry.patientExplanation : undefined,
+      };
+    }
   }
-  return {};
+  return { assignments, notes, reasoningOut };
 }
 
-function reasonObj(r: ReasoningValue | undefined): Exclude<ReasoningValue, string> {
-  if (!r) return {};
-  if (typeof r === "string") return { clinician_understanding: r };
-  return r;
-}
-
-function adminJustificationFrom(r: ReasoningValue | undefined): string {
-  return reasonObj(r).admin_justification ?? "";
+function chipKey(chip: AdminEvidenceChip): string {
+  return `${chip.id}::${chip.icdCode ?? "no-icd"}`;
 }
 
 export function AdminReviewDialog({
@@ -129,532 +158,718 @@ export function AdminReviewDialog({
   facility,
   scheduleDate,
   onUpdate,
-  onRemoveTest,
 }: AdminReviewDialogProps) {
-  const queryClient = useQueryClient() ?? defaultQueryClient;
+  const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const tests: string[] = useMemo(
-    () => (Array.isArray(patient.qualifyingTests) ? patient.qualifyingTests : []),
-    [patient.qualifyingTests],
-  );
-  const reasoning: Record<string, ReasoningValue> = useMemo(
-    () => asReasoningRecord(patient.reasoning as Reasoning | null),
+  const evidenceQuery = useQuery<EvidencePayload>({
+    queryKey: ["admin-review-evidence", patient.id],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/patient-screenings/${patient.id}/admin-review/evidence`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error(`Failed to load evidence (${res.status})`);
+      return res.json();
+    },
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  const reasoningObject = useMemo(
+    () => reasoningAsObject(patient.reasoning),
     [patient.reasoning],
   );
 
-  // Local edit buffer for per-test admin justification. Seeded from
-  // the canonical reasoning whenever the dialog opens or the
-  // underlying patient updates.
-  const [editing, setEditing] = useState<string | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const initialSeed = useMemo(() => seedFromReasoning(reasoningObject), [reasoningObject]);
+  const [assignments, setAssignments] = useState<AncillaryAssignmentMap>(initialSeed.assignments);
+  const [notes, setNotes] = useState<AncillaryNoteMap>(initialSeed.notes);
+  const [reasoningOut, setReasoningOut] = useState<AncillaryReasoningMap>(initialSeed.reasoningOut);
+  const [expanded, setExpanded] = useState<Record<AdminReviewAncillaryId, boolean>>({
+    brainwave: false,
+    vitalwave: false,
+    ultrasound: false,
+  });
+  const [regenInFlight, setRegenInFlight] = useState<Record<string, boolean>>({});
   const [adminNote, setAdminNote] = useState<string>("");
 
   useEffect(() => {
     if (!open) return;
-    const seeded: Record<string, string> = {};
-    for (const test of tests) {
-      seeded[test] = adminJustificationFrom(reasoning[test]);
-    }
-    setDrafts(seeded);
-    setAdminNote(
-      typeof (patient as { adminApprovalNote?: string | null }).adminApprovalNote === "string"
-        ? ((patient as { adminApprovalNote?: string | null }).adminApprovalNote ?? "")
-        : "",
-    );
-    setEditing(null);
-  }, [open, tests, reasoning, patient]);
+    const seeded = seedFromReasoning(reasoningAsObject(patient.reasoning));
+    setAssignments(seeded.assignments);
+    setNotes(seeded.notes);
+    setReasoningOut(seeded.reasoningOut);
+    setAdminNote("");
+  }, [open, patient.id, patient.reasoning]);
 
-  // Group tests by ancillary category for the 3-column layout
-  const groups: Record<AncillaryCategory, string[]> = useMemo(() => {
-    const g: Record<AncillaryCategory, string[]> = {
-      brainwave: [],
-      vitalwave: [],
-      ultrasound: [],
-      other: [],
+  const evidence: AdminEvidenceChip[] = evidenceQuery.data?.evidence ?? [];
+  const candidates: AdminReviewRuleCandidate[] = evidenceQuery.data?.candidates ?? [];
+  const candidateById = useMemo(() => {
+    const map = new Map<AdminReviewAncillaryId, AdminReviewRuleCandidate>();
+    for (const c of candidates) map.set(c.ancillaryId, c);
+    return map;
+  }, [candidates]);
+
+  const ageNumber: number | null = useMemo(() => {
+    if (typeof patient.age === "number") return patient.age;
+    return null;
+  }, [patient.age]);
+  const isUnder16 = (ageNumber ?? 99) < 16;
+
+  const review = useMemo(
+    () =>
+      computeAdminReview({
+        name: patient.name,
+        dob: patient.dob,
+        phoneNumber: patient.phoneNumber,
+        facility: patient.facility,
+        qualifyingTests: patient.qualifyingTests ?? [],
+        commitStatus: patient.commitStatus,
+        adminApprovalStatus:
+          (patient as { adminApprovalStatus?: string | null }).adminApprovalStatus ?? null,
+      }),
+    [patient],
+  );
+
+  function assignEvidence(ancillary: AdminReviewAncillaryId | "all", chip: AdminEvidenceChip) {
+    if (chip.requiresIcd) {
+      toast({
+        title: "ICD required",
+        description: `Add an ICD code to "${chip.label}" before assigning.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setAssignments((prev) => {
+      const next = { ...prev };
+      const targets: AdminReviewAncillaryId[] =
+        ancillary === "all" ? ["brainwave", "vitalwave", "ultrasound"] : [ancillary];
+      for (const id of targets) {
+        const existing = next[id] ?? [];
+        if (!existing.some((c) => chipKey(c) === chipKey(chip))) {
+          next[id] = [...existing, chip];
+        }
+      }
+      return next;
+    });
+  }
+
+  function unassignEvidence(ancillary: AdminReviewAncillaryId, chip: AdminEvidenceChip) {
+    setAssignments((prev) => ({
+      ...prev,
+      [ancillary]: (prev[ancillary] ?? []).filter((c) => chipKey(c) !== chipKey(chip)),
+    }));
+  }
+
+  function attachIcdToChip(chip: AdminEvidenceChip, code: string, label: string) {
+    const updated: AdminEvidenceChip = {
+      ...chip,
+      icdCode: code,
+      icdLabel: label,
+      requiresIcd: false,
+      suggestedIcds: [],
+      source: chip.source === "AI" ? "Manual" : chip.source,
     };
-    for (const t of tests) {
-      const cat = getAncillaryCategory(t);
-      g[cat].push(t);
+    // Persist on the patient's diagnoses field if no dedicated icdCodes field exists.
+    const existingDx = (patient.diagnoses ?? "").trim();
+    const codeLine = `${code} - ${label}`;
+    if (!existingDx.includes(code)) {
+      const nextDx = existingDx ? `${existingDx}\n${codeLine}` : codeLine;
+      onUpdate("diagnoses", nextDx);
     }
-    return g;
-  }, [tests]);
-
-  const review = computeAdminReview(patient);
-  const meta = STATUS_META[review.approval];
-
-  // Write a justification edit back through the canonical onUpdate path
-  function saveJustification(test: string) {
-    const newVal = drafts[test] ?? "";
-    const existing = reasoning[test];
-    const existingObj = reasonObj(existing);
-    const merged: Record<string, ReasoningValue> = {
-      ...reasoning,
-      [test]: {
-        ...existingObj,
-        // Preserve the AI-generated fields verbatim; only the admin
-        // fields are written here.
-        admin_justification: newVal.trim() ? newVal : undefined,
-        admin_justification_updated_at: newVal.trim() ? new Date().toISOString() : undefined,
+    // Optimistically swap the chip in the evidence cache so the UI updates instantly.
+    queryClient.setQueryData<EvidencePayload>(
+      ["admin-review-evidence", patient.id],
+      (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          evidence: old.evidence.map((c) => (chipKey(c) === chipKey(chip) ? updated : c)),
+        };
       },
-    };
-    onUpdate("reasoning", merged);
-    setEditing(null);
-    toast({ title: "Justification saved", description: test });
+    );
   }
 
-  function deleteTest(test: string) {
-    if (!confirm(`Remove ${test}?`)) return;
-    if (onRemoveTest) {
-      onRemoveTest(test);
-    } else {
-      // Fallback: update qualifyingTests directly through the canonical
-      // patient update path if a removal handler wasn't wired.
-      const next = tests.filter((t) => t !== test);
-      onUpdate("qualifyingTests", next);
-    }
-    // Drop the per-test reasoning entry so we don't leak orphan
-    // justifications on the next re-generation.
-    const nextReasoning = { ...reasoning };
-    delete nextReasoning[test];
-    onUpdate("reasoning", nextReasoning);
-    toast({ title: "Qualifying test removed", description: test });
-  }
-
-  // POST /api/patient-screenings/:id/admin-approval is the canonical
-  // approval endpoint added in the prior batch — same path as
-  // AdminApprovalControl uses.
-  const approvalMutation = useMutation<
-    unknown,
+  const regenerateMutation = useMutation<
+    {
+      ok: boolean;
+      ancillaryId: string;
+      clinicianReasoning: string;
+      patientExplanation: string;
+    },
     Error,
-    { status: AdminApprovalStatus; closeOnSuccess: boolean }
+    { ancillary: AdminReviewAncillaryId; mode: "clinician" | "patient" | "all" }
   >({
-    mutationFn: async ({ status }) => {
-      return apiRequest("POST", `/api/patient-screenings/${patient.id}/admin-approval`, {
-        status,
-        note: adminNote.trim() || undefined,
+    mutationFn: async ({ ancillary, mode }) => {
+      setRegenInFlight((prev) => ({ ...prev, [`${ancillary}:${mode}`]: true }));
+      const res = await apiRequest(
+        "POST",
+        `/api/patient-screenings/${patient.id}/admin-review/regenerate`,
+        {
+          ancillaryId: ancillary,
+          mode,
+          assignedEvidence: assignments[ancillary] ?? [],
+          ancillaryNote: notes[ancillary] ?? "",
+        },
+      );
+      return res.json();
+    },
+    onSuccess: (data, vars) => {
+      setReasoningOut((prev) => ({
+        ...prev,
+        [vars.ancillary]: {
+          clinicianReasoning: data.clinicianReasoning,
+          patientExplanation: data.patientExplanation,
+        },
+      }));
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+    },
+    onError: (err, vars) => {
+      toast({
+        title: `Could not regenerate ${vars.ancillary}`,
+        description: err?.message ?? "Unknown error",
+        variant: "destructive",
       });
     },
-    onSuccess: (_data, vars) => {
+    onSettled: (_data, _err, vars) => {
+      setRegenInFlight((prev) => {
+        const next = { ...prev };
+        delete next[`${vars.ancillary}:${vars.mode}`];
+        return next;
+      });
+    },
+  });
+
+  const approvalMutation = useMutation<
+    { ok: boolean; patient: PatientScreening },
+    Error,
+    { status: AdminApprovalStatus }
+  >({
+    mutationFn: async ({ status }) => {
+      const res = await apiRequest(
+        "POST",
+        `/api/patient-screenings/${patient.id}/admin-approval`,
+        { status, note: adminNote.trim() || undefined },
+      );
+      return res.json();
+    },
+    onSuccess: (data, vars) => {
       toast({
         title: `Admin approval: ${vars.status.replace("_", " ")}`,
-        description: patient.name,
+        description: data.patient?.name ?? "",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-      queryClient.invalidateQueries({ queryKey: ["portal-command-center", patient.id] });
-      if (vars.closeOnSuccess) onOpenChange(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+      onOpenChange(false);
     },
     onError: (err) => {
       toast({
         title: "Could not update admin approval",
-        description: err.message,
+        description: err?.message ?? "Unknown error",
         variant: "destructive",
       });
     },
   });
 
-  function setApproval(status: AdminApprovalStatus, closeOnSuccess = false) {
-    approvalMutation.mutate({ status, closeOnSuccess });
+  function toggleExpand(id: AdminReviewAncillaryId) {
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="w-[calc(100vw-2rem)] max-w-6xl max-h-[90vh] flex flex-col p-0 gap-0 rounded-2xl bg-white"
-        data-testid={`admin-review-dialog-${patient.id}`}
+        className="w-[calc(100vw-2rem)] max-w-5xl max-h-[92vh] overflow-hidden p-0 gap-0 rounded-2xl"
+        data-testid={`dialog-admin-review-${patient.id}`}
       >
-        {/* ─── Header ───────────────────────────────────────────── */}
-        <DialogHeader className="px-6 py-4 border-b border-slate-100 shrink-0">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <DialogTitle className="text-lg font-semibold text-slate-900">
-                Admin Review · {patient.name}
+        <DialogHeader className="px-6 pt-5 pb-4 border-b border-slate-200 bg-white">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <DialogTitle className="text-base font-semibold tracking-tight text-slate-900">
+                Admin Review · {patient.name || "Unnamed patient"}
               </DialogTitle>
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                {patient.dob && <span>DOB {patient.dob}</span>}
-                {patient.phoneNumber && <span>{patient.phoneNumber}</span>}
-                {(facility ?? patient.facility) && (
-                  <span>{facility ?? patient.facility}</span>
+              <DialogDescription className="sr-only">
+                Admin review for {patient.name || "patient"}
+              </DialogDescription>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                <span
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 ${STATUS_META[review.approval].pillClass}`}
+                >
+                  {STATUS_META[review.approval].label}
+                </span>
+                {isUnder16 && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-rose-50 text-rose-800 border border-rose-300 px-2 py-0.5 font-semibold uppercase tracking-wider"
+                    data-testid="badge-admin-review-under-16"
+                  >
+                    <AlertTriangle className="w-3 h-3" />
+                    Under 16 · Admin approval required
+                  </span>
                 )}
-                {patient.time && <span>{patient.time}</span>}
-                {scheduleDate && <span>{scheduleDate}</span>}
+                {patient.facility && (
+                  <span className="text-slate-500">{patient.facility}</span>
+                )}
+                {scheduleDate && <span className="text-slate-500">· {scheduleDate}</span>}
               </div>
             </div>
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${meta.tone}`}
-              data-testid={`admin-review-status-${patient.id}`}
-            >
-              <meta.Icon className="h-3.5 w-3.5" />
-              {meta.label}
-            </span>
+            <PatientPdfActions
+              patient={patient}
+              facility={facility ?? patient.facility ?? null}
+              scheduleDate={scheduleDate ?? null}
+              compact
+            />
           </div>
-          {review.readyForAdminReview && (
-            <div
-              className="mt-2 inline-flex items-center gap-1.5 self-start rounded-full bg-violet-50 text-violet-800 border border-violet-200 px-2.5 py-0.5 text-[10px] font-medium"
-              data-testid={`admin-review-ribbon-${patient.id}`}
-            >
-              <CheckCircle2 className="h-3 w-3" />
-              Ready for Admin Review
-            </div>
-          )}
-          {!review.hasQualification && (
-            <div className="mt-2 text-[11px] text-amber-700">
-              Qualification has not been generated for this patient. The admin
-              review section will populate after the next Generate run.
-            </div>
-          )}
         </DialogHeader>
 
-        {/* ─── Body: 3-column qualifying tests ──────────────────── */}
-        <ScrollArea className="flex-1 overflow-y-auto">
-          <div className="px-6 py-5">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="text-sm font-semibold text-slate-900">
-                  Qualifying Tests
-                </div>
-                <div className="text-[11px] text-slate-500">
-                  Edits update the canonical patient row immediately. Reasoning
-                  panels mirror the prior per-category popups.
-                </div>
+        <ScrollArea className="max-h-[calc(92vh-9rem)]">
+          <div className="px-6 py-5 space-y-6">
+            <section
+              className="space-y-2"
+              data-testid="admin-review-clinical-data"
+            >
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                Clinical Data
               </div>
-              <span className="text-[11px] text-slate-500 tabular-nums">
-                {tests.length} test{tests.length === 1 ? "" : "s"}
-              </span>
-            </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <ClinicalField label="Hx" value={patient.history} />
+                <ClinicalField label="Dx" value={patient.diagnoses} />
+                <ClinicalField label="Rx" value={patient.medications} />
+              </div>
+            </section>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {ANCILLARY_COLUMNS.map((cat) => {
-                const Icon = categoryIcons[cat];
-                const style = categoryStyles[cat];
-                const colTests = groups[cat];
-                return (
-                  <div
-                    key={cat}
-                    className={`rounded-2xl border ${style.border} bg-white shadow-sm flex flex-col`}
-                    data-testid={`admin-review-column-${cat}`}
-                  >
-                    <div
-                      className={`flex items-center justify-between gap-2 px-4 py-3 rounded-t-2xl ${style.bg} ${style.border} border-b`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Icon className={`h-4 w-4 ${style.icon}`} />
-                        <span className={`text-sm font-semibold ${style.accent}`}>
-                          {categoryLabels[cat]}
-                        </span>
-                      </div>
-                      <span
-                        className={`text-[10px] font-semibold tabular-nums ${style.accent}`}
-                      >
-                        {colTests.length}
-                      </span>
-                    </div>
+            <Separator />
 
-                    <div className="flex-1 p-3 space-y-3">
-                      {colTests.length === 0 ? (
-                        <div className="text-[11px] italic text-slate-400 py-4 text-center">
-                          No {categoryLabels[cat].toLowerCase()} tests qualified.
-                        </div>
-                      ) : (
-                        colTests.map((test) => {
-                          const reason = reasoning[test];
-                          const r = reasonObj(reason);
-                          const clinician = typeof reason === "string" ? reason : r.clinician_understanding;
-                          const talking = r.patient_talking_points;
-                          const confidence = r.confidence;
-                          const qf = r.qualifying_factors ?? [];
-                          const icd10 = r.icd10_codes ?? [];
-                          const pearls = r.pearls ?? [];
-                          const justification = drafts[test] ?? "";
-                          const isEditing = editing === test;
-                          const savedJustification = r.admin_justification ?? "";
-
-                          const confidenceClass =
-                            confidence === "high"
-                              ? "bg-emerald-100 text-emerald-800"
-                              : confidence === "medium"
-                                ? "bg-amber-100 text-amber-800"
-                                : "bg-slate-100 text-slate-700";
-
-                          return (
-                            <div
-                              key={test}
-                              className={`rounded-xl border ${style.border} ${style.bg} p-3`}
-                              data-testid={`admin-review-test-${test}`}
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className={`text-[12px] font-semibold ${style.accent}`}>
-                                    {test}
-                                  </span>
-                                  {confidence && (
-                                    <span
-                                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-semibold ${confidenceClass}`}
-                                    >
-                                      {confidence.toUpperCase()}
-                                    </span>
-                                  )}
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => deleteTest(test)}
-                                  className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
-                                  title={`Remove ${test}`}
-                                  aria-label={`Remove ${test}`}
-                                  data-testid={`admin-review-remove-${test}`}
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
-                              </div>
-
-                              {qf.length > 0 && (
-                                <div className="mt-1.5 flex flex-wrap gap-1">
-                                  {qf.map((factor, idx) => (
-                                    <span
-                                      key={idx}
-                                      className="inline-flex items-center px-1.5 py-0 rounded-full text-[9px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60"
-                                    >
-                                      {factor}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-
-                              {clinician && (
-                                <div className="mt-2 rounded-lg bg-white/80 backdrop-blur-sm p-2 shadow-sm">
-                                  <div className="text-[9px] font-semibold text-slate-900 uppercase tracking-wider mb-1">
-                                    Clinician Understanding
-                                  </div>
-                                  <p className="text-[11px] leading-relaxed text-slate-900">
-                                    {clinician}
-                                  </p>
-                                </div>
-                              )}
-
-                              {talking && (
-                                <div className="mt-1.5 rounded-lg bg-white/80 backdrop-blur-sm p-2 shadow-sm">
-                                  <div className="text-[9px] font-semibold text-slate-900 uppercase tracking-wider mb-1">
-                                    Patient Talking Points
-                                  </div>
-                                  <p className="text-[11px] leading-relaxed text-slate-900">
-                                    {talking}
-                                  </p>
-                                </div>
-                              )}
-
-                              {icd10.length > 0 && (
-                                <div className="mt-1.5 rounded-lg bg-white/80 p-2 shadow-sm">
-                                  <div className="text-[9px] font-semibold text-slate-900 uppercase tracking-wider mb-1">
-                                    ICD-10
-                                  </div>
-                                  <div className="flex flex-wrap gap-1">
-                                    {icd10.map((code, idx) => (
-                                      <span
-                                        key={idx}
-                                        className="inline-flex items-center px-1.5 py-0 rounded-full text-[9px] font-medium bg-slate-100 text-slate-700 border border-slate-200"
-                                      >
-                                        {code}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {pearls.length > 0 && (
-                                <div className="mt-1.5 rounded-lg bg-white/80 p-2 shadow-sm">
-                                  <div className="text-[9px] font-semibold text-slate-900 uppercase tracking-wider mb-1">
-                                    Clinical Pearls
-                                  </div>
-                                  <div className="space-y-0.5">
-                                    {pearls.map((pear, idx) => (
-                                      <p
-                                        key={idx}
-                                        className="text-[10px] leading-relaxed text-slate-900"
-                                      >
-                                        • {pear}
-                                      </p>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Admin justification — editable */}
-                              <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50/60 p-2">
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="text-[9px] font-semibold text-violet-900 uppercase tracking-wider">
-                                    Admin Justification
-                                  </span>
-                                  {!isEditing && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setEditing(test)}
-                                      className="inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-violet-700 hover:text-violet-900"
-                                      data-testid={`admin-review-edit-${test}`}
-                                    >
-                                      <Pencil className="h-2.5 w-2.5" />
-                                      {savedJustification ? "Edit" : "Add"}
-                                    </button>
-                                  )}
-                                </div>
-                                {isEditing ? (
-                                  <div className="space-y-1.5">
-                                    <Textarea
-                                      value={justification}
-                                      onChange={(e) =>
-                                        setDrafts((d) => ({ ...d, [test]: e.target.value }))
-                                      }
-                                      placeholder="Why does this test belong on this patient's packet?"
-                                      className="min-h-[60px] text-[11px] bg-white"
-                                      data-testid={`admin-review-justification-input-${test}`}
-                                    />
-                                    <div className="flex items-center justify-end gap-1.5">
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        className="h-6 text-[10px] px-2"
-                                        onClick={() => {
-                                          setDrafts((d) => ({
-                                            ...d,
-                                            [test]: savedJustification,
-                                          }));
-                                          setEditing(null);
-                                        }}
-                                      >
-                                        Cancel
-                                      </Button>
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        className="h-6 text-[10px] px-2 gap-1 bg-violet-600 hover:bg-violet-700"
-                                        onClick={() => saveJustification(test)}
-                                        data-testid={`admin-review-justification-save-${test}`}
-                                      >
-                                        <Save className="h-2.5 w-2.5" />
-                                        Save
-                                      </Button>
-                                    </div>
-                                  </div>
-                                ) : savedJustification ? (
-                                  <p className="text-[11px] leading-relaxed text-slate-900 whitespace-pre-wrap">
-                                    {savedJustification}
-                                  </p>
-                                ) : (
-                                  <p className="text-[10px] italic text-violet-600/80">
-                                    No admin justification yet.
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <Separator className="my-5" />
-
-            {/* ─── Approval block ────────────────────────────────── */}
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <div className="text-sm font-semibold text-slate-900">Admin Review</div>
-                  <div className="text-[11px] text-slate-500">
-                    Approval flows through{" "}
-                    <code className="font-mono text-[10px]">
-                      POST /api/patient-screenings/:id/admin-approval
-                    </code>
-                    . Send to Engagement remains blocked until
-                    <em> approved</em>.
-                  </div>
+            <section
+              className="space-y-3"
+              data-testid="admin-review-evidence"
+            >
+              <div className="flex items-baseline justify-between">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Evidence
                 </div>
-                {review.missing.length > 0 && (
-                  <div className="text-[11px] text-amber-700">
-                    Missing for Engagement: {review.missing.join(" · ")}
-                  </div>
+                {evidenceQuery.isFetching && (
+                  <span className="text-[11px] text-slate-400 inline-flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Refreshing
+                  </span>
                 )}
               </div>
+              {evidenceQuery.isLoading ? (
+                <div className="text-sm text-slate-400">Loading evidence…</div>
+              ) : evidence.length === 0 ? (
+                <div className="text-sm text-slate-400">
+                  No evidence extracted from current Hx/Dx/Rx.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {evidence.map((chip) => (
+                    <EvidenceChip
+                      key={chipKey(chip)}
+                      chip={chip}
+                      onAssign={(ancillary) => assignEvidence(ancillary, chip)}
+                      onAttachIcd={(code, label) => attachIcdToChip(chip, code, label)}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
 
-              <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                Admin note (optional)
+            <Separator />
+
+            <section className="space-y-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                Ancillaries
+              </div>
+              <div className="space-y-2">
+                {ANCILLARIES.map((row) => {
+                  const candidate = candidateById.get(row.id);
+                  const assigned = assignments[row.id] ?? [];
+                  const note = notes[row.id] ?? "";
+                  const reasoningEntry = reasoningOut[row.id] ?? {};
+                  const isOpen = expanded[row.id];
+                  const candidateMissingIcds = candidate?.missing.length ?? 0;
+                  const candidateStatusLabel = candidate
+                    ? candidate.status === "suggested"
+                      ? "Suggested"
+                      : candidate.status === "needs_info"
+                        ? "Needs Info"
+                        : "Admin approval required"
+                    : "—";
+                  return (
+                    <div
+                      key={row.id}
+                      className="rounded-2xl border border-slate-200 bg-white overflow-hidden"
+                      data-testid="admin-review-ancillary-card"
+                      data-ancillary={row.id}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(row.id)}
+                        className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50 transition-colors"
+                        data-testid={`admin-review-ancillary-toggle-${row.id}`}
+                        aria-expanded={isOpen}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {isOpen ? (
+                            <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
+                          ) : (
+                            <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                          )}
+                          <span className="font-semibold text-slate-900">{row.label}</span>
+                          <span className="text-[11px] text-slate-500">
+                            {candidateStatusLabel}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] text-slate-600">
+                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5">
+                            {assigned.length} evidence
+                          </span>
+                          {candidateMissingIcds > 0 && (
+                            <span className="inline-flex items-center rounded-full bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5">
+                              {candidateMissingIcds} ICD needed
+                            </span>
+                          )}
+                          {isUnder16 && (
+                            <span className="inline-flex items-center rounded-full bg-rose-50 text-rose-800 border border-rose-300 px-2 py-0.5 font-semibold">
+                              &lt;16
+                            </span>
+                          )}
+                        </div>
+                      </button>
+
+                      {isOpen && (
+                        <div
+                          className="px-4 pb-4 pt-1 space-y-3 border-t border-slate-100"
+                          data-testid="admin-review-ancillary-expanded"
+                        >
+                          {isUnder16 && (
+                            <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
+                              Patient is under 16. Not routine — requires admin override approval below.
+                            </div>
+                          )}
+
+                          <div className="space-y-1">
+                            <Label className="text-[11px] uppercase tracking-wider text-slate-500">
+                              Assigned Evidence
+                            </Label>
+                            {assigned.length === 0 ? (
+                              <div className="text-xs text-slate-400">
+                                No evidence assigned yet.
+                              </div>
+                            ) : (
+                              <div className="flex flex-wrap gap-1.5">
+                                {assigned.map((chip) => (
+                                  <span
+                                    key={chipKey(chip)}
+                                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${SOURCE_TONE[chip.source] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
+                                  >
+                                    {chip.label}
+                                    {chip.icdCode ? ` · ${chip.icdCode}` : ""}
+                                    <button
+                                      type="button"
+                                      onClick={() => unassignEvidence(row.id, chip)}
+                                      className="hover:text-rose-600"
+                                      aria-label={`Remove ${chip.label}`}
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label
+                              htmlFor={`admin-review-note-${row.id}`}
+                              className="text-[11px] uppercase tracking-wider text-slate-500"
+                            >
+                              Notes
+                            </Label>
+                            <Textarea
+                              id={`admin-review-note-${row.id}`}
+                              value={note}
+                              rows={2}
+                              onChange={(e) =>
+                                setNotes((prev) => ({ ...prev, [row.id]: e.target.value }))
+                              }
+                              data-testid={`admin-review-note-${row.id}`}
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <ReasoningPanel
+                              title="Clinician Reasoning"
+                              value={reasoningEntry.clinicianReasoning}
+                            />
+                            <ReasoningPanel
+                              title="Patient Explanation"
+                              value={reasoningEntry.patientExplanation}
+                            />
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={!!regenInFlight[`${row.id}:clinician`]}
+                                onClick={() =>
+                                  regenerateMutation.mutate({ ancillary: row.id, mode: "clinician" })
+                                }
+                                data-testid="admin-review-regenerate-clinician"
+                              >
+                                {regenInFlight[`${row.id}:clinician`] ? (
+                                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="w-3 h-3 mr-1" />
+                                )}
+                                Regenerate clinician
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={!!regenInFlight[`${row.id}:patient`]}
+                                onClick={() =>
+                                  regenerateMutation.mutate({ ancillary: row.id, mode: "patient" })
+                                }
+                                data-testid="admin-review-regenerate-patient"
+                              >
+                                {regenInFlight[`${row.id}:patient`] ? (
+                                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="w-3 h-3 mr-1" />
+                                )}
+                                Regenerate patient
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={!!regenInFlight[`${row.id}:all`]}
+                                onClick={() =>
+                                  regenerateMutation.mutate({ ancillary: row.id, mode: "all" })
+                                }
+                                data-testid="admin-review-regenerate-all"
+                              >
+                                {regenInFlight[`${row.id}:all`] ? (
+                                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                ) : (
+                                  <Sparkles className="w-3 h-3 mr-1" />
+                                )}
+                                Regenerate all
+                              </Button>
+                            </div>
+                            <PatientPdfActions
+                              patient={patient}
+                              facility={facility ?? patient.facility ?? null}
+                              scheduleDate={scheduleDate ?? null}
+                              compact
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            <Separator />
+
+            <section className="space-y-2">
+              <Label
+                htmlFor={`admin-review-note-${patient.id}`}
+                className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
+              >
+                Admin Note
               </Label>
               <Textarea
+                id={`admin-review-note-${patient.id}`}
                 value={adminNote}
+                rows={2}
                 onChange={(e) => setAdminNote(e.target.value)}
-                placeholder="What is the reviewer recording here?"
-                className="mt-1 min-h-[60px] text-xs"
-                data-testid={`admin-review-note-${patient.id}`}
+                placeholder="Optional context attached to this approval action"
+                data-testid={`admin-review-admin-note-${patient.id}`}
               />
-            </div>
+            </section>
           </div>
         </ScrollArea>
 
-        {/* ─── Footer: approval actions ─────────────────────────── */}
-        <DialogFooter className="px-6 py-3 border-t border-slate-100 shrink-0 flex-wrap gap-2">
-          <div className="flex flex-1 items-center gap-2 flex-wrap">
+        <div className="px-6 py-4 border-t border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3">
+          <div className="text-[11px] text-slate-500 inline-flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            {isUnder16
+              ? "Admin Override required for under-16 patients"
+              : "Admin decision is final for engagement send"}
+          </div>
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               variant="outline"
-              className="gap-1.5"
-              onClick={() => setApproval("rejected", false)}
               disabled={approvalMutation.isPending}
-              data-testid={`admin-review-reject-${patient.id}`}
+              onClick={() => approvalMutation.mutate({ status: "needs_info" })}
+              data-testid={`admin-review-button-needs-info-${patient.id}`}
             >
-              <XCircle className="h-4 w-4 text-rose-600" />
-              Reject
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-1.5"
-              onClick={() => setApproval("needs_info", false)}
-              disabled={approvalMutation.isPending}
-              data-testid={`admin-review-needs-info-${patient.id}`}
-            >
-              <AlertCircle className="h-4 w-4 text-sky-600" />
               Needs Info
             </Button>
             <Button
               type="button"
               variant="outline"
-              className="gap-1.5"
-              onClick={() => setApproval("pending", false)}
-              disabled={approvalMutation.isPending || review.approval === "pending"}
-              data-testid={`admin-review-pending-${patient.id}`}
-            >
-              <Clock className="h-4 w-4 text-amber-600" />
-              Reset to Pending
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
               disabled={approvalMutation.isPending}
+              onClick={() => approvalMutation.mutate({ status: "rejected" })}
+              data-testid={`admin-review-button-reject-${patient.id}`}
+              className="text-rose-700 border-rose-200 hover:bg-rose-50"
             >
-              Close
+              Reject
             </Button>
             <Button
               type="button"
-              onClick={() => setApproval("approved", true)}
-              disabled={approvalMutation.isPending || review.approval === "approved"}
-              className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
-              data-testid={`admin-review-approve-${patient.id}`}
+              disabled={approvalMutation.isPending}
+              onClick={() => approvalMutation.mutate({ status: "approved" })}
+              data-testid={`admin-review-button-approve-${patient.id}`}
+              className="bg-emerald-600 text-white hover:bg-emerald-700"
             >
               {approvalMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
               ) : (
-                <ShieldCheck className="h-4 w-4" />
+                <CheckCircle2 className="w-3 h-3 mr-1" />
               )}
-              Approve
+              {isUnder16 ? "Admin Override Approve" : "Approve"}
             </Button>
           </div>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ClinicalField({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+        {label}
+      </div>
+      <div className="mt-1 text-xs text-slate-800 whitespace-pre-wrap min-h-[2rem]">
+        {value?.trim() ? value : <span className="italic text-slate-400">empty</span>}
+      </div>
+    </div>
+  );
+}
+
+function ReasoningPanel({ title, value }: { title: string; value?: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-3">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+        {title}
+      </div>
+      <div className="mt-1 text-xs text-slate-800 whitespace-pre-wrap min-h-[3rem]">
+        {value?.trim() ? value : <span className="italic text-slate-400">Not generated yet</span>}
+      </div>
+    </div>
+  );
+}
+
+function EvidenceChip({
+  chip,
+  onAssign,
+  onAttachIcd,
+}: {
+  chip: AdminEvidenceChip;
+  onAssign: (ancillary: AdminReviewAncillaryId | "all") => void;
+  onAttachIcd: (code: string, label: string) => void;
+}) {
+  const tone = SOURCE_TONE[chip.source] ?? "bg-slate-50 text-slate-700 border-slate-200";
+  if (chip.requiresIcd) {
+    const suggestions =
+      chip.suggestedIcds && chip.suggestedIcds.length > 0
+        ? chip.suggestedIcds
+        : COMMON_ICD_SUGGESTIONS["diabetes"];
+    return (
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] ${tone} hover:bg-amber-100`}
+            data-testid="admin-review-evidence-chip"
+            data-icd-needed="true"
+          >
+            <span>{chip.label}</span>
+            <span
+              className="text-amber-800 font-semibold"
+              data-testid="admin-review-icd-needed"
+            >
+              · ICD needed
+            </span>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72 p-2">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 px-1 py-1">
+            Suggested ICDs
+          </div>
+          <div className="flex flex-col gap-1">
+            {suggestions?.map((s) => (
+              <button
+                key={s.code}
+                type="button"
+                onClick={() => onAttachIcd(s.code, s.label)}
+                className="text-left text-xs rounded-md px-2 py-1 hover:bg-slate-100 inline-flex items-center gap-2"
+                data-testid="admin-review-icd-suggestion"
+              >
+                <span className="font-mono text-slate-700">{s.code}</span>
+                <span className="text-slate-500 truncate">{s.label}</span>
+              </button>
+            ))}
+          </div>
+        </PopoverContent>
+      </Popover>
+    );
+  }
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] ${tone} hover:opacity-90`}
+          data-testid="admin-review-evidence-chip"
+        >
+          <span className="font-mono opacity-60">{chip.source}</span>
+          <span>{chip.label}</span>
+          {chip.icdCode && (
+            <span className="font-mono opacity-70">· {chip.icdCode}</span>
+          )}
+          <Plus className="w-3 h-3 opacity-60" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-52 p-1" data-testid="admin-review-assign-evidence">
+        <button
+          type="button"
+          onClick={() => onAssign("brainwave")}
+          className="w-full text-left text-xs rounded-md px-2 py-1 hover:bg-slate-100"
+        >
+          Assign to BrainWave
+        </button>
+        <button
+          type="button"
+          onClick={() => onAssign("vitalwave")}
+          className="w-full text-left text-xs rounded-md px-2 py-1 hover:bg-slate-100"
+        >
+          Assign to VitalWave
+        </button>
+        <button
+          type="button"
+          onClick={() => onAssign("ultrasound")}
+          className="w-full text-left text-xs rounded-md px-2 py-1 hover:bg-slate-100"
+        >
+          Assign to Ultrasound Studies
+        </button>
+        <Separator className="my-1" />
+        <button
+          type="button"
+          onClick={() => onAssign("all")}
+          className="w-full text-left text-xs rounded-md px-2 py-1 hover:bg-slate-100 font-semibold"
+        >
+          Assign to all
+        </button>
+      </PopoverContent>
+    </Popover>
   );
 }
