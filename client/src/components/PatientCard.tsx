@@ -12,8 +12,9 @@ import {
 import {
   Loader2,
   Sparkles,
-  Trash2,
   MoreHorizontal,
+  Trash2,
+  ShieldCheck,
   Pencil,
 } from "lucide-react";
 import { PatientSilhouette } from "@/components/PatientSilhouette";
@@ -28,11 +29,13 @@ import {
 import { PatientEditDialog } from "@/components/PatientEditDialog";
 import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
 import { EngagementAssignmentBadge } from "@/components/qualification/EngagementAssignmentBadge";
+import { AdminReviewDialog } from "@/components/qualification/AdminReviewDialog";
 import { QualificationReasoningDialog } from "@/features/schedule/QualificationReasoningDialog";
 import type { ReasoningValue } from "@/lib/pdfGeneration";
 import { isPatientPdfEligible } from "@/lib/pdfPacketGrouping";
 import { derivePatientType } from "@shared/patientType";
 import { getPatientCompleteness } from "@/lib/patientCompleteness";
+import { computeAdminReview } from "@/lib/adminReviewStatus";
 
 type ScreeningBatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
@@ -41,7 +44,13 @@ const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultraso
 interface PatientCardProps {
   patient: PatientScreening;
   isAnalyzing: boolean;
-  onUpdate: (field: string, value: string | string[] | boolean) => void;
+  // Field-level update bridge to the canonical patient_screenings row.
+  // Accepts arbitrary jsonb shapes (e.g. the `reasoning` map) in
+  // addition to the simpler scalar/array fields.
+  onUpdate: (
+    field: string,
+    value: string | string[] | boolean | Record<string, unknown>,
+  ) => void;
   onDelete: () => void;
   onAnalyze: () => void;
   onOpenScheduleModal?: (patient: PatientScreening) => void;
@@ -61,10 +70,17 @@ export function PatientCard({
   asOfDate,
   sourceMode,
 }: PatientCardProps) {
+  const isCompleted = patient.status === "completed";
+
   const serverTests = patient.qualifyingTests || [];
   const [localTests, setLocalTests] = useState<string[]>(serverTests);
   const [generatingTests, setGeneratingTests] = useState<Set<string>>(new Set());
   const [editOpen, setEditOpen] = useState(false);
+  const [adminReviewOpen, setAdminReviewOpen] = useState(false);
+  // Per-category reasoning popup — restored to its prior behavior so
+  // clicking a category icon opens that category's detail dialog
+  // (BrainWave / VitalWave / Ultrasound). Admin Review lives behind
+  // the dedicated Admin Review button.
   const [selectedTestDetail, setSelectedTestDetail] = useState<{
     patientId: number;
     category: string;
@@ -88,11 +104,13 @@ export function PatientCard({
     storedPatientType: patient.patientType,
     asOfDate: todayIso,
   });
+  // Build screen context wins over derivation: an outreach build screen always
+  // labels its cards "Outreach" so the workflow context stays explicit even if
+  // a stale appointment record otherwise classifies the patient as visit.
   const typeLabel: "Visit" | "Outreach" =
     sourceMode === "outreach" ? "Outreach" :
     sourceMode === "visit" ? "Visit" :
     derivedType === "visit" ? "Visit" : "Outreach";
-  const isVisit = typeLabel === "Visit";
 
   useEffect(() => { setLocalTests(patient.qualifyingTests || []); }, [patient.qualifyingTests]);
 
@@ -141,10 +159,24 @@ export function PatientCard({
   const tests = localTests;
   const reasoning = (patient.reasoning || {}) as Record<string, ReasoningValue>;
 
+  // Group qualifying tests by ancillary category — drives the
+  // standalone premium icon row on the card front.
   const testsByCategory = ANCILLARY_ORDER.reduce<Record<AncillaryCategory, string[]>>((acc, cat) => {
     acc[cat] = tests.filter((t) => getAncillaryCategory(t) === cat);
     return acc;
   }, { brainwave: [], vitalwave: [], ultrasound: [], other: [] });
+
+  // Centralized review state (lavender lights up when this is true).
+  const review = computeAdminReview({
+    name: patient.name,
+    dob: patient.dob,
+    phoneNumber: patient.phoneNumber,
+    facility: patient.facility,
+    qualifyingTests: tests,
+    commitStatus: patient.commitStatus,
+    adminApprovalStatus:
+      (patient as { adminApprovalStatus?: string | null }).adminApprovalStatus ?? null,
+  });
 
   const ageDisplay = ((): string => {
     if (patient.age != null) return String(patient.age);
@@ -172,32 +204,66 @@ export function PatientCard({
   if (patient.phoneNumber) metaParts.push(patient.phoneNumber);
   const displayName = (patient.name || "").trim() || "Unnamed patient";
 
-  const showTimeInBanner = isVisit && !!patient.time;
+  const showTimeInBanner = typeLabel === "Visit" && !!patient.time;
 
+  // Two orthogonal axes:
+  //   - infoComplete : has every required intake field (Hx/Dx/Rx/etc.)
+  //   - generatedFinal : patient.status === "completed" (canonical commit)
+  //
+  // Banner is dark navy ONLY when the intake is complete. If the patient
+  // was previously analyzed but a required field has since been cleared,
+  // the banner reverts to light azure and Generate is gated. Status pill
+  // distinguishes Pending (incomplete) / Ready (complete, not generated)
+  // / Final (complete and generated).
+  const isVisit = typeLabel === "Visit";
   const { isComplete: infoComplete, missing } = getPatientCompleteness(patient, { isVisit });
   const generatedFinal = patient.status === "completed";
   const showAsFinal = infoComplete && generatedFinal;
   const statusLabel = !infoComplete ? "Pending" : generatedFinal ? "Final" : "Ready";
 
-  const banner = infoComplete
+  // Three banner states:
+  //   1. Lavender — `readyForAdminReview` (premium soft violet gradient,
+  //      surfaced as the dominant signal so reviewers spot the queue).
+  //   2. Navy — info complete + qualified + already decided (final).
+  //   3. Sky — incomplete intake / draft.
+  const banner = review.readyForAdminReview
     ? {
-        bar: "bg-plexus-navy-800 text-white",
-        avatarRing: "bg-white/10 ring-1 ring-white/20 text-white",
-        title: "text-white",
-        subLabel: "text-white/60",
-        time: "text-white",
-        statusPill: showAsFinal
-          ? "bg-emerald-400/15 text-emerald-200 border border-emerald-300/30"
-          : "bg-white/15 text-white border border-white/25",
-      }
-    : {
-        bar: "bg-sky-100 text-slate-900",
-        avatarRing: "bg-white ring-1 ring-sky-200 text-plexus-navy-800",
+        bar: "bg-gradient-to-br from-violet-50 via-violet-100 to-indigo-50 text-slate-900 ring-1 ring-violet-200/60",
+        avatarRing: "bg-white ring-1 ring-violet-200 text-violet-900",
         title: "text-slate-900",
-        subLabel: "text-slate-500",
+        subLabel: "text-violet-700/80",
         time: "text-slate-900",
-        statusPill: "bg-white text-sky-800 border border-sky-200",
-      };
+        statusPill: "bg-violet-200/80 text-violet-900 border border-violet-300",
+      }
+    : infoComplete
+      ? {
+          bar: "bg-plexus-navy-800 text-white",
+          avatarRing: "bg-white/10 ring-1 ring-white/20 text-white",
+          title: "text-white",
+          subLabel: "text-white/60",
+          time: "text-white",
+          statusPill: showAsFinal
+            ? "bg-emerald-400/15 text-emerald-200 border border-emerald-300/30"
+            : "bg-white/15 text-white border border-white/25",
+        }
+      : {
+          bar: "bg-sky-100 text-slate-900",
+          avatarRing: "bg-white ring-1 ring-sky-200 text-plexus-navy-800",
+          title: "text-slate-900",
+          subLabel: "text-slate-500",
+          time: "text-slate-900",
+          statusPill: "bg-white text-sky-800 border border-sky-200",
+        };
+
+  const reviewPillLabel = review.readyForAdminReview
+    ? "Ready for Admin Review"
+    : review.approval === "approved"
+      ? "Approved"
+      : review.approval === "rejected"
+        ? "Rejected"
+        : review.approval === "needs_info"
+          ? "Needs Info"
+          : statusLabel;
 
   const generateLabel = generatedFinal ? "Re-generate" : "Generate";
   const generateDisabled = isAnalyzing || !infoComplete;
@@ -207,6 +273,12 @@ export function PatientCard({
 
   const openEdit = () => setEditOpen(true);
 
+  // The two dialogs below are rendered as siblings of <Card>, NOT as
+  // children. React's synthetic event system propagates events along the
+  // React parent tree even across Radix portals, so a click on the dialog
+  // Done/X/overlay would bubble to the clickable <Card onClick={openEdit}>
+  // and reopen the dialog in the same render. Hoisting them out of the Card
+  // subtree breaks that bubble path while preserving card-click-to-open.
   return (
     <>
     <Card
@@ -236,6 +308,7 @@ export function PatientCard({
             </div>
 
             <div className="min-w-0 flex-1 flex flex-col justify-center leading-tight">
+              {/* Patient name is always the primary header. */}
               <h3
                 className={`min-w-0 text-lg font-light tracking-tight ${banner.title} break-words`}
                 title={displayName}
@@ -243,11 +316,16 @@ export function PatientCard({
               >
                 {displayName}
               </h3>
+              {/* Subline carries the type label + (for Visit) the
+                  appointment time as secondary metadata. Time is
+                  never allowed to outrank the name. */}
               <div
                 className={`mt-0.5 flex items-center gap-x-2 text-[10px] uppercase tracking-[0.14em] font-medium ${banner.subLabel}`}
               >
-                <span>{isVisit ? "Visit Appointment" : "Outreach"}</span>
-                {isVisit && showTimeInBanner && (
+                <span>
+                  {typeLabel === "Visit" ? "Visit Appointment" : "Outreach"}
+                </span>
+                {typeLabel === "Visit" && showTimeInBanner && (
                   <>
                     <span aria-hidden className="opacity-60">·</span>
                     <span
@@ -263,15 +341,16 @@ export function PatientCard({
           </div>
           <span
             className={`shrink-0 inline-flex items-center text-[10px] font-semibold uppercase tracking-wide rounded-full px-2.5 py-0.5 ${banner.statusPill}`}
-            title={!infoComplete ? `Missing: ${missing.join(", ")}` : statusLabel}
+            title={!infoComplete ? `Missing: ${missing.join(", ")}` : reviewPillLabel}
             data-testid={`pill-patient-status-${patient.id}`}
           >
-            {statusLabel}
+            {reviewPillLabel}
           </span>
         </div>
       </div>
 
       <div className="px-5 pt-4 pb-4 space-y-3">
+        {/* Identity meta line — DOB · age · insurance · phone */}
         <div
           className="text-xs text-slate-700 truncate"
           data-testid={`text-patient-meta-${patient.id}`}
@@ -289,6 +368,12 @@ export function PatientCard({
           {typeLabel}
         </span>
 
+        {/* Standalone premium category icons. Each icon is a transparent
+            button — no rectangle, no chip background, no boxed wrapper.
+            Clicking a category opens the *category-specific* reasoning
+            popup (BrainWave / VitalWave / Ultrasound), restored to the
+            pre-3-column-modal behavior. Admin Review lives behind the
+            dedicated Admin Review button. */}
         {ANCILLARY_ORDER.some((cat) => testsByCategory[cat].length > 0) && (
           <div
             className="flex items-center justify-center gap-6 py-1"
@@ -338,6 +423,9 @@ export function PatientCard({
           </div>
         )}
 
+        {/* Status row — missing info + engagement assignment (admin
+            approval state is surfaced in the banner pill + primary
+            Admin Review button below; no more tiny click-target chip). */}
         {(
           !infoComplete ||
           (patient.commitStatus ?? "Draft") !== "Draft"
@@ -360,6 +448,10 @@ export function PatientCard({
           </div>
         )}
 
+        {/* Action row — icon-only utility actions (left) + Admin Review (right).
+            Schedule is owned by the schedule bar elsewhere — no calendar
+            affordance lives on the card itself. Re-generate moves into the
+            More dropdown so the front stays icon-only and uncluttered. */}
         <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
           <div className="inline-flex items-center gap-1">
             {isPatientPdfEligible(patient) && (
@@ -431,6 +523,10 @@ export function PatientCard({
           </div>
 
           <div className="inline-flex items-center gap-1.5">
+            {/* When no qualifying tests exist yet we still expose a
+                subtle icon-only Generate on the front so the card has
+                a primary CTA. Once tests exist, Generate disappears
+                from the front (Re-generate is in the More menu). */}
             {tests.length === 0 && (
               <button
                 type="button"
@@ -456,9 +552,33 @@ export function PatientCard({
                 )}
               </button>
             )}
+            {isPatientPdfEligible(patient) && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAdminReviewOpen(true);
+                }}
+                aria-label="Open Admin Review"
+                title={`Admin Review · ${reviewPillLabel}`}
+                className={`inline-flex items-center justify-center h-8 w-8 rounded-full shadow-sm transition-colors ${
+                  review.readyForAdminReview
+                    ? "bg-violet-600 text-white hover:bg-violet-700"
+                    : review.approval === "approved"
+                      ? "bg-emerald-100 text-emerald-900 border border-emerald-200 hover:bg-emerald-200"
+                      : review.approval === "rejected"
+                        ? "bg-rose-100 text-rose-900 border border-rose-200 hover:bg-rose-200"
+                        : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50"
+                }`}
+                data-testid={`button-admin-review-${patient.id}`}
+              >
+                <ShieldCheck className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
       </div>
+
     </Card>
 
     <PatientEditDialog
@@ -475,6 +595,18 @@ export function PatientCard({
       onAnalyze={onAnalyze}
       isAnalyzing={isAnalyzing}
       isCompleted={generatedFinal}
+      onOpenAdminReview={() => setAdminReviewOpen(true)}
+    />
+
+    <AdminReviewDialog
+      open={adminReviewOpen}
+      onOpenChange={setAdminReviewOpen}
+      patient={patient}
+      facility={patient.facility ?? null}
+      scheduleDate={batchScheduleDate ?? null}
+      onUpdate={onUpdate}
+      onAddTest={handleAddTest}
+      onRemoveTest={handleRemoveTest}
     />
 
     <QualificationReasoningDialog

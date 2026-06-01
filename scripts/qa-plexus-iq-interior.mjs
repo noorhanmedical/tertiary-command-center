@@ -297,24 +297,18 @@ requireText(patientCard, [
   "Pencil",
 ]);
 
-// PatientCard must NOT pull in AdminReviewDialog / AdminApprovalControl
-// / adminApprovalStatus / adminReviewStatus in this batch — those land
-// in Batch 4 with migration 0025 + schema additions.
-requireNotText(
-  patientCard,
-  [
-    "AdminReviewDialog",
-    "AdminApprovalControl",
-    "adminReviewStatus",
-    "computeAdminReview",
-    "adminApprovalStatus",
-    "ShieldCheck",
-    "readyForAdminReview",
-  ],
-  "PatientCard must defer Admin Review wiring to Batch 4",
-);
+// Admin / Clinician Review is intentionally restored in this batch.
+requireText(patientCard, [
+  "AdminReviewDialog",
+  "computeAdminReview",
+  "adminApprovalStatus",
+  "ShieldCheck",
+  "readyForAdminReview",
+  "button-admin-review",
+  "Ready for Admin Review",
+]);
 
-// Edit dialog gets completeness + missing pill, but not the admin review section.
+// Edit dialog gets completeness + missing pill plus Admin Review entry.
 requireText(patientEditDialog, [
   "getPatientCompleteness",
   "dialog-missing-",
@@ -322,11 +316,53 @@ requireText(patientEditDialog, [
   "isVisit",
   "generateDisabled",
 ]);
-requireNotText(
-  patientEditDialog,
-  ["computeAdminReview", "onOpenAdminReview", "ShieldCheck"],
-  "PatientEditDialog must defer Admin Review wiring to Batch 4",
-);
+requireText(patientEditDialog, [
+  "onOpenAdminReview",
+  "Admin Review",
+]);
+
+
+// Admin / Clinician Review files and schema/migration guardrails.
+const adminReviewDialog = "client/src/components/qualification/AdminReviewDialog.tsx";
+const adminApprovalControl = "client/src/components/qualification/AdminApprovalControl.tsx";
+const adminReviewStatus = "client/src/lib/adminReviewStatus.ts";
+const screeningSchema = "shared/schema/screening.ts";
+const adminReviewMigration = "migrations/0025_add_patient_screening_admin_approval.sql";
+
+requireFile(adminReviewDialog);
+requireFile(adminApprovalControl);
+requireFile(adminReviewStatus);
+requireFile(adminReviewMigration);
+
+requireText(adminReviewDialog, [
+  "AdminReviewDialog",
+  "computeAdminReview",
+  "/admin-approval",
+  "Approved",
+  "Reject",
+]);
+
+requireText(adminApprovalControl, [
+  "AdminApprovalControl",
+  "approved",
+  "rejected",
+  "needs_info",
+]);
+
+requireText(adminReviewStatus, [
+  "computeAdminReview",
+  "readyForAdminReview",
+  "adminApprovalStatus",
+]);
+
+requireText(screeningSchema, [
+  "adminApprovalStatus",
+]);
+
+requireText(adminReviewMigration, [
+  "admin_approval_status",
+  "patient_screenings",
+]);
 
 if (failures.length) {
   console.error("Plexus IQ interior QA failed:");

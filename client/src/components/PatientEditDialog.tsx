@@ -9,12 +9,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Check, Plus, Loader2, Sparkles, X } from "lucide-react";
+import { Check, Plus, Loader2, Sparkles, X, ShieldCheck } from "lucide-react";
 import type { PatientScreening } from "@shared/schema";
 import { ClinicalDataEditor } from "@/components/ClinicalDataEditor";
 import { ANCILLARY_TESTS } from "@shared/plexus";
 import { getAncillaryCategory, getBadgeColor } from "@/features/schedule/ancillaryMeta";
 import { getPatientCompleteness } from "@/lib/patientCompleteness";
+import { computeAdminReview } from "@/lib/adminReviewStatus";
 
 const ALL_AVAILABLE_TESTS: string[] = [...ANCILLARY_TESTS];
 
@@ -53,8 +54,14 @@ interface PatientEditDialogProps {
   patient: PatientScreening;
   open: boolean;
   onClose: () => void;
-  onUpdate: (field: string, value: string | string[] | boolean) => void;
+  onUpdate: (
+    field: string,
+    value: string | string[] | boolean | Record<string, unknown>,
+  ) => void;
   showTime?: boolean;
+  // Whether this patient is a visit-type row. Drives the completeness check
+  // (Time is required only for Visit). Defaults to `showTime` for back-compat
+  // with any caller that hasn't been updated.
   isVisit?: boolean;
   qualifyingTests: string[];
   generatingTests: Set<string>;
@@ -63,6 +70,9 @@ interface PatientEditDialogProps {
   onAnalyze?: () => void;
   isAnalyzing?: boolean;
   isCompleted?: boolean;
+  // Opens the unified Admin Review modal from inside the edit dialog.
+  // Wired by PatientCard; optional so older callers compile.
+  onOpenAdminReview?: () => void;
 }
 
 export function PatientEditDialog({
@@ -79,6 +89,7 @@ export function PatientEditDialog({
   onAnalyze,
   isAnalyzing = false,
   isCompleted = false,
+  onOpenAdminReview,
 }: PatientEditDialogProps) {
   const visitContext = isVisit ?? showTime;
   const [localName, setLocalName] = useState(patient.name || "");
@@ -129,6 +140,9 @@ export function PatientEditDialog({
     return String(age);
   })();
 
+  // Live completeness — runs against the in-flight local* state so the
+  // missing chip + Generate disable flip the moment a required field is
+  // filled, without waiting for onBlur to commit through onUpdate.
   const completeness = getPatientCompleteness(
     {
       name: localName,
@@ -359,6 +373,59 @@ export function PatientEditDialog({
               </Popover>
             </div>
           </section>
+
+          {/* Admin Review entry point — surfaces the unified review
+              dialog from inside the edit flow. Visible whenever the
+              caller wires the handler. */}
+          {onOpenAdminReview && (
+            <section className="space-y-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-finance-text-muted">
+                Admin Review
+              </div>
+              {(() => {
+                const review = computeAdminReview({
+                  name: patient.name,
+                  dob: patient.dob,
+                  phoneNumber: patient.phoneNumber,
+                  facility: patient.facility,
+                  qualifyingTests,
+                  commitStatus: patient.commitStatus,
+                  adminApprovalStatus:
+                    (patient as { adminApprovalStatus?: string | null })
+                      .adminApprovalStatus ?? null,
+                });
+                const label =
+                  review.approval === "approved"
+                    ? "Approved · Open Admin Review"
+                    : review.approval === "rejected"
+                      ? "Rejected · Open Admin Review"
+                      : review.approval === "needs_info"
+                        ? "Needs Info · Open Admin Review"
+                        : review.readyForAdminReview
+                          ? "Ready for Admin Review"
+                          : "Open Admin Review";
+                const variant =
+                  review.readyForAdminReview
+                    ? "bg-violet-600 text-white hover:bg-violet-700"
+                    : review.approval === "approved"
+                      ? "bg-emerald-100 text-emerald-900 border border-emerald-200 hover:bg-emerald-200"
+                      : review.approval === "rejected"
+                        ? "bg-rose-100 text-rose-900 border border-rose-200 hover:bg-rose-200"
+                        : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50";
+                return (
+                  <Button
+                    type="button"
+                    onClick={onOpenAdminReview}
+                    className={`gap-1.5 ${variant}`}
+                    data-testid={`dialog-button-admin-review-${patient.id}`}
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    {label}
+                  </Button>
+                );
+              })()}
+            </section>
+          )}
         </div>
 
         {!completeness.isComplete && (
