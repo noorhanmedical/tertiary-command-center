@@ -94,31 +94,6 @@ function buildBreakdownFromPatients(patients: DayPatient[]) {
   return map;
 }
 
-function PrimaryTile({
-  href,
-  icon,
-  label,
-  testId,
-}: {
-  href: string;
-  icon: React.ReactNode;
-  label: string;
-  testId: string;
-}) {
-  return (
-    <Link href={href}>
-      <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid={testId}>
-        <div className="aspect-square flex flex-col items-center justify-center gap-3 p-6">
-          {icon}
-          <span className="text-[14px] font-semibold text-slate-900 dark:text-foreground text-center leading-tight">
-            {label}
-          </span>
-        </div>
-      </Card>
-    </Link>
-  );
-}
-
 function SecondaryTile({
   href,
   icon,
@@ -132,13 +107,57 @@ function SecondaryTile({
 }) {
   return (
     <Link href={href}>
-      <Card className="glass-tile glass-tile-interactive group cursor-pointer" data-testid={testId}>
+      <Card className="glass-tile glass-tile-interactive group cursor-pointer h-full" data-testid={testId}>
         <div className="h-[122px] flex items-center gap-4 px-5">
           <div className="shrink-0">{icon}</div>
           <div className="min-w-0">
             <div className="text-[14px] font-semibold text-slate-900 dark:text-foreground leading-tight">
               {label}
             </div>
+          </div>
+        </div>
+      </Card>
+    </Link>
+  );
+}
+
+function NightSkyHeroTile({
+  href,
+  testId,
+  title,
+  subtitle,
+}: {
+  href: string;
+  testId: string;
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <Link href={href}>
+      <Card
+        className="glass-tile-interactive group cursor-pointer md:col-span-3 relative overflow-hidden border-0 bg-[radial-gradient(ellipse_at_top_left,_#1e1b4b_0%,_#000000_55%,_#0b0716_100%)] text-white shadow-2xl"
+        data-testid={testId}
+      >
+        <div
+          className="pointer-events-none absolute inset-0 opacity-70"
+          style={{
+            backgroundImage:
+              "radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,0.9) 50%, transparent 51%), radial-gradient(1px 1px at 60% 70%, rgba(255,255,255,0.7) 50%, transparent 51%), radial-gradient(1.5px 1.5px at 80% 20%, rgba(255,255,255,0.95) 50%, transparent 51%), radial-gradient(1px 1px at 40% 80%, rgba(255,255,255,0.6) 50%, transparent 51%), radial-gradient(1px 1px at 10% 60%, rgba(255,255,255,0.8) 50%, transparent 51%), radial-gradient(1.2px 1.2px at 90% 50%, rgba(255,255,255,0.85) 50%, transparent 51%)",
+            backgroundRepeat: "no-repeat",
+          }}
+          aria-hidden="true"
+        />
+        <div className="relative flex items-center gap-4 px-6 py-5">
+          <div className="shrink-0 w-12 h-12 rounded-2xl bg-white/10 ring-1 ring-white/20 flex items-center justify-center">
+            <Sparkles className="w-6 h-6 text-white" strokeWidth={1.75} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <span className="text-[18px] font-semibold text-white tracking-tight">
+              {title}
+            </span>
+            <p className="text-[12px] text-white/70 mt-0.5 leading-snug">
+              {subtitle}
+            </p>
           </div>
         </div>
       </Card>
@@ -389,36 +408,22 @@ export function HomeDashboard({
                 </div>
               </Card>
 
-              <div className="grid grid-cols-1 gap-4">
-                <PrimaryTile
-                  href="/patient-directory"
-                  testId="tile-patient-directory"
-                  label="Patient Directory"
-                  icon={<Users className="glass-tile-icon w-14 h-14 text-indigo-900" strokeWidth={1.5} />}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <NightSkyHeroTile
+                  href="/plexus-iq"
+                  testId="tile-plexus-iq"
+                  title="Plexus IQ"
+                  subtitle="Build, qualify, and review Visit and Outreach schedules across dates and facilities."
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Link href="/plexus-iq">
-                  <Card className="glass-tile glass-tile-interactive group cursor-pointer md:col-span-3" data-testid="tile-plexus-iq">
-                    <div className="flex items-center gap-4 px-6 py-5">
-                      <div className="shrink-0 w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 flex items-center justify-center">
-                        <Sparkles className="w-6 h-6 text-indigo-700" strokeWidth={1.75} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <span className="text-[18px] font-semibold text-slate-900 dark:text-foreground tracking-tight">
-                          Plexus IQ
-                        </span>
-                        <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-0.5 leading-snug">
-                          Build, qualify, and review Visit and Outreach schedules across dates and facilities.
-                        </p>
-                      </div>
-                    </div>
-                  </Card>
-                </Link>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 auto-rows-fr">
+                <SecondaryTile
+                  href="/patient-directory"
+                  testId="tile-patient-directory"
+                  label="Patient Directory"
+                  icon={<Users className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
                 <SecondaryTile
                   href="/team-member-portals"
                   testId="tile-team-member-portals"
@@ -451,7 +456,7 @@ export function HomeDashboard({
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 auto-rows-fr">
                 <SecondaryTile
                   href="/document-upload"
                   testId="tile-document-upload"
