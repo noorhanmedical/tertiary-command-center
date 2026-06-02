@@ -403,51 +403,69 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "categoryIcons",
   "categoryLabels",
   "getAncillaryCategory",
-  // Supporting Item Library sections.
-  "admin-review-evidence-library",
-  "admin-review-evidence-library-dx",
-  "admin-review-evidence-library-meds",
-  "admin-review-evidence-library-hx",
-  "admin-review-evidence-library-prior",
-  // Buttons in the library.
+  // Raw Clinical Source on the left.
+  "admin-review-clinical-source",
+  "admin-review-source-hx",
+  "admin-review-source-dx",
+  "admin-review-source-rx",
+  // Available Buttons section.
+  "admin-review-available-buttons",
+  "admin-review-available-buttons-dx",
+  "admin-review-available-buttons-rx",
+  "admin-review-available-buttons-hx",
+  "admin-review-available-buttons-icd-search",
+  // Parsing helpers.
+  "parseDiagnosisButtonsFromDx",
+  "parseMedicationButtonsFromRx",
+  "parseSymptomButtonsFromHx",
+  // Derived button testIds + button kinds.
+  "admin-review-dx-derived-diagnosis",
+  "admin-review-rx-derived-med",
+  "admin-review-hx-derived-symptom",
   "admin-review-icd-disease-button",
   "admin-review-icd-disease-assigned",
   "admin-review-icd-disease-needed",
   "admin-review-med-button",
   "admin-review-hx-button",
-  "admin-review-prior-button",
-  // Assignment controls.
-  "admin-review-assign-evidence",
-  "admin-review-assign-brainwave",
-  "admin-review-assign-vitalwave",
-  "admin-review-assign-ultrasound",
-  "admin-review-assign-all",
-  "admin-review-unassign-supporting-item",
-  // Colored ancillary panels.
-  "admin-review-ancillary-colored-panel",
-  "admin-review-ancillary-services-list",
-  "admin-review-ancillary-supporting-list",
-  "admin-review-ancillary-header-supporting-items",
-  "admin-review-ancillary-header-chip",
-  "admin-review-ancillary-expanded",
-  // Per-ancillary regenerate.
-  "admin-review-regenerate-ancillary",
-  "admin-review-regenerate-brainwave",
-  "admin-review-regenerate-vitalwave",
-  "admin-review-regenerate-ultrasound",
-  // AI ICD search section.
-  "admin-review-add-icd-section",
+  // OpenAI ICD search controls + universal copy.
   "admin-review-icd-ai-search",
   "admin-review-icd-ai-search-button",
   "admin-review-icd-ai-search-result",
   "admin-review-icd-ai-search-loading",
   "admin-review-icd-ai-search-empty",
-  // Manual ICD entry kept as backup.
-  "admin-review-icd-manual-code",
-  "admin-review-icd-manual-label",
-  "admin-review-icd-add",
-  "admin-review-icd-remove",
-  // Canonical reasoning binding (still required).
+  "admin-review-icd-ai-search-error",
+  "Search any ICD-10 diagnosis",
+  "Search ICD-10 codes beyond the current chart",
+  // Assignment controls.
+  "admin-review-assign-evidence",
+  "admin-review-assign-brainwave",
+  "admin-review-assign-vitalwave",
+  "admin-review-assign-ultrasound-parent",
+  "admin-review-assign-ultrasound-test",
+  "admin-review-assign-all",
+  "admin-review-unassign-supporting-item",
+  // Ancillary panels (BrainWave + VitalWave).
+  "admin-review-ancillary-colored-panel",
+  "admin-review-ancillary-services-list",
+  "admin-review-ancillary-selected-list",
+  "admin-review-ancillary-header-chip",
+  "admin-review-ancillary-icd-button",
+  "admin-review-ancillary-med-button",
+  "admin-review-ancillary-hx-button",
+  "admin-review-ancillary-expanded",
+  "admin-review-regenerate-ancillary",
+  "admin-review-regenerate-brainwave",
+  "admin-review-regenerate-vitalwave",
+  // Ultrasound parent + child bars.
+  "admin-review-ultrasound-parent-panel",
+  "admin-review-ultrasound-child-panel",
+  "admin-review-ultrasound-child-selected-list",
+  "admin-review-ultrasound-child-icd-button",
+  "admin-review-ultrasound-child-med-button",
+  "admin-review-ultrasound-child-hx-button",
+  "admin-review-regenerate-ultrasound-test",
+  "admin-review-regenerate-ultrasound",
+  // Canonical reasoning binding (preserved).
   "admin-review-canonical-reasoning-card",
   "buildCanonicalReasoningByAncillary",
   "clinician_understanding",
@@ -455,7 +473,7 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "qualifying_factors",
   "icd10_codes",
   "pearls",
-  // Under-16 + library/PDF essentials.
+  // Under-16 + PDF essentials.
   "admin-review-under-16-rule",
   "badge-admin-review-under-16",
   "PatientPdfActions",
@@ -465,9 +483,7 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "Ultrasound Studies",
 ]);
 
-// Old per-mode / single global regenerate buttons must be gone — per-ancillary
-// regenerate is now the only regenerate model. Also ban old "tests · " count
-// phrasing and the prefilled-on-empty ICD search bug.
+// Forbidden: legacy regenerate buttons, manual ICD form, count copy, etc.
 requireNotText(
   "client/src/components/qualification/AdminReviewDialog.tsx",
   [
@@ -475,11 +491,16 @@ requireNotText(
     "admin-review-regenerate-patient",
     "admin-review-regenerate-all",
     "admin-review-global-regenerate",
+    "admin-review-icd-manual-code",
+    "admin-review-icd-manual-label",
+    "admin-review-icd-add",
     "tests ·",
     "qualifying tests",
+    "2 tests",
+    "3 evidence",
     "if (!q) return all.slice(0, 6)",
   ],
-  "AdminReviewDialog must use per-ancillary regenerate and have no count copy",
+  "AdminReviewDialog must use the canonical source-buttons architecture",
 );
 
 requireText("client/src/components/PatientCard.tsx", [

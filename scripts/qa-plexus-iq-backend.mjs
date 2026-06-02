@@ -80,16 +80,44 @@ requireText(patientsRoute, [
   "/api/patient-screenings/:id/admin-review/icd-search",
   "searchAdminReviewIcdCodes",
   "@shared/ancillaryCategory",
+  // Per-test regenerate route.
+  "/api/patient-screenings/:id/admin-review/regenerate-test",
+  "qualifyingTests: [testName]",
+  "adminReview:test:",
+  // ICD search structured error envelope (no leaking keys/PHI).
+  "OpenAI universal ICD search failed",
+  "hasAIIntegrationsKey",
+  "hasOpenAIKey",
+  "hasBaseUrl",
 ]);
 
-// AI ICD search service exists and uses the OpenAI Responses API with strict
-// json_schema. Prefers AI_INTEGRATIONS_OPENAI_API_KEY, falls back to OPENAI_API_KEY.
+// AI ICD search service: universal search, Responses API + strict json_schema,
+// baseURL support, explicit error messages, prefers AI_INTEGRATIONS_OPENAI_API_KEY.
 requireText("server/services/plexusIq/adminReviewIcdSearch.ts", [
   "searchAdminReviewIcdCodes",
   "AI_INTEGRATIONS_OPENAI_API_KEY",
   "OPENAI_API_KEY",
+  "AI_INTEGRATIONS_OPENAI_BASE_URL",
   "client.responses.create",
   "json_schema",
+  // Universal-search prompt language.
+  "universal ICD-10-CM search",
+  "full ICD-10-CM code universe",
+  "Do not limit results to the patient chart",
+  "patient context is optional",
+  // Structured errors.
+  "ICD search requires AI_INTEGRATIONS_OPENAI_API_KEY or OPENAI_API_KEY",
+  "OpenAI universal ICD search failed",
+  "OpenAI universal ICD search returned invalid JSON",
+]);
+
+// Admin Review regeneration service must also honour the Replit base URL.
+// Both regenerate functions construct their OpenAI client the same way.
+requireText("server/services/plexusIq/adminReviewAiRegeneration.ts", [
+  "AI_INTEGRATIONS_OPENAI_BASE_URL",
+  "baseURL",
+  "new OpenAI({",
+  "...(baseURL ? { baseURL } : {})",
 ]);
 
 // PDFs must NOT render ICD codes anywhere in their HTML output.

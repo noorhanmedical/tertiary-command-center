@@ -62,6 +62,7 @@ export async function regenerateAdminReviewReasoning(
 ): Promise<AdminReviewAiRegenerationOutput> {
   // Repo convention: AI_INTEGRATIONS_OPENAI_API_KEY is the canonical key (set
   // by Replit integration). Fall back to OPENAI_API_KEY for local/dev setups.
+  // AI_INTEGRATIONS_OPENAI_BASE_URL is the Replit-side proxy/base override.
   const apiKey =
     process.env.AI_INTEGRATIONS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -70,7 +71,11 @@ export async function regenerateAdminReviewReasoning(
     );
   }
 
-  const client = new OpenAI({ apiKey });
+  const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined;
+  const client = new OpenAI({
+    apiKey,
+    ...(baseURL ? { baseURL } : {}),
+  });
   const age = patientAge(input.patient);
   const under16 = typeof age === "number" && age < 16;
   const evidenceText = input.assignedEvidence.length
@@ -213,7 +218,11 @@ export async function regenerateCanonicalReasoning(
     return { reasoningByTest: {} };
   }
 
-  const client = new OpenAI({ apiKey });
+  const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined;
+  const client = new OpenAI({
+    apiKey,
+    ...(baseURL ? { baseURL } : {}),
+  });
   const age = patientAge(input.patient);
   const under16 = typeof age === "number" && age < 16;
 

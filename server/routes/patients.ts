@@ -562,17 +562,28 @@ export function registerPatientRoutes(
     },
   );
 
-  // OpenAI-backed ICD-10 search for the Admin Review left column.
+  // Universal OpenAI ICD-10-CM search for the Admin Review Available Buttons section.
+  // Logs only non-sensitive metadata — no key, no PHI, no full query, no Hx/Dx/Rx.
   app.post(
     "/api/patient-screenings/:id/admin-review/icd-search",
     async (req, res) => {
+      const id = parseInt(req.params.id);
       try {
-        const id = parseInt(req.params.id);
         if (Number.isNaN(id)) {
-          return res.status(400).json({ error: "Invalid patient id" });
+          return res.status(400).json({
+            ok: false,
+            error: "OpenAI universal ICD search failed",
+            detail: "Invalid patient id",
+          });
         }
         const patient = await storage.getPatientScreening(id);
-        if (!patient) return res.status(404).json({ error: "Patient not found" });
+        if (!patient) {
+          return res.status(404).json({
+            ok: false,
+            error: "OpenAI universal ICD search failed",
+            detail: "Patient not found",
+          });
+        }
 
         const query = String(req.body?.query ?? "").trim();
         if (query.length < 2) {
@@ -604,9 +615,154 @@ export function registerPatientRoutes(
         });
         res.json({ ok: true, results });
       } catch (error: any) {
-        console.error("[admin-review/icd-search] error:", error?.message ?? error);
+        const detail =
+          error instanceof Error
+            ? error.message.slice(0, 240)
+            : String(error ?? "unknown").slice(0, 240);
+        console.error("[admin-review/icd-search] error", {
+          patientId: id,
+          queryLength: String(req.body?.query ?? "").trim().length,
+          hasAIIntegrationsKey: !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+          hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+          hasBaseUrl: !!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+          message: detail,
+        });
         res.status(500).json({
-          error: error?.message ?? "Failed to search ICD codes",
+          ok: false,
+          error: "OpenAI universal ICD search failed",
+          detail,
+        });
+      }
+    },
+  );
+
+  // Per-test regenerate — writes canonical patient.reasoning[testName] for
+  // exactly one qualifying test. Stores supplemental metadata under
+  // reasoning[`adminReview:test:<testName>`]. Other tests preserved verbatim.
+  app.post(
+    "/api/patient-screenings/:id/admin-review/regenerate-test",
+    async (req, res) => {
+      try {
+        const id = parseInt(req.params.id);
+        if (Number.isNaN(id)) {
+          return res.status(400).json({ error: "Invalid patient id" });
+        }
+        const testName = String(req.body?.testName ?? "").trim();
+        if (!testName) {
+          return res.status(400).json({ error: "testName is required" });
+        }
+        const ancillaryId = String(req.body?.ancillaryId ?? "");
+        if (
+          ancillaryId !== "brainwave" &&
+          ancillaryId !== "vitalwave" &&
+          ancillaryId !== "ultrasound"
+        ) {
+          return res.status(400).json({
+            error: "ancillaryId must be one of brainwave / vitalwave / ultrasound",
+          });
+        }
+        const patient = await storage.getPatientScreening(id);
+        if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+        const allTests = Array.isArray(patient.qualifyingTests)
+          ? patient.qualifyingTests
+          : [];
+        if (!allTests.includes(testName)) {
+          return res.status(400).json({
+            error: `testName "${testName}" is not in patient.qualifyingTests`,
+          });
+        }
+
+        const assignedEvidence = Array.isArray(req.body?.assignedEvidence)
+          ? req.body.assignedEvidence
+          : [];
+        const ancillaryNote =
+          typeof req.body?.ancillaryNote === "string" ? req.body.ancillaryNote : "";
+        const adminNote =
+          typeof req.body?.adminNote === "string" ? req.body.adminNote : "";
+        const icdCodes: Array<{ code: string; label: string }> = Array.isArray(
+          req.body?.icdCodes,
+        )
+          ? req.body.icdCodes
+              .map((c: any) => ({
+                code: String(c?.code ?? "").trim(),
+                label: String(c?.label ?? "").trim(),
+              }))
+              .filter((c: { code: string }) => c.code.length > 0)
+          : [];
+        const updatedDiagnoses =
+          typeof req.body?.diagnoses === "string" ? req.body.diagnoses : patient.diagnoses;
+        const updatedMedications =
+          typeof req.body?.medications === "string" ? req.body.medications : patient.medications;
+        const updatedHistory =
+          typeof req.body?.history === "string" ? req.body.history : patient.history;
+
+        const { regenerateCanonicalReasoning } = await import(
+          "../services/plexusIq/adminReviewAiRegeneration"
+        );
+
+        const ai = await regenerateCanonicalReasoning({
+          patient: {
+            ...patient,
+            history: updatedHistory ?? null,
+            diagnoses: updatedDiagnoses ?? null,
+            medications: updatedMedications ?? null,
+          } as typeof patient,
+          qualifyingTests: [testName],
+          assignedEvidenceByAncillary: {
+            brainwave: ancillaryId === "brainwave" ? assignedEvidence : [],
+            vitalwave: ancillaryId === "vitalwave" ? assignedEvidence : [],
+            ultrasound: ancillaryId === "ultrasound" ? assignedEvidence : [],
+          },
+          ancillaryNotes: {
+            brainwave: ancillaryId === "brainwave" ? ancillaryNote : "",
+            vitalwave: ancillaryId === "vitalwave" ? ancillaryNote : "",
+            ultrasound: ancillaryId === "ultrasound" ? ancillaryNote : "",
+          },
+          adminNote,
+          icdCodes,
+        });
+
+        const existingReasoning =
+          patient.reasoning &&
+          typeof patient.reasoning === "object" &&
+          !Array.isArray(patient.reasoning)
+            ? { ...(patient.reasoning as Record<string, unknown>) }
+            : {};
+
+        // Merge ONLY the single regenerated test's entry. Everything else preserved.
+        for (const [name, entry] of Object.entries(ai.reasoningByTest)) {
+          existingReasoning[name] = entry;
+        }
+
+        const timestamp = new Date().toISOString();
+        existingReasoning[`adminReview:test:${testName}`] = {
+          testName,
+          ancillaryId,
+          assignedEvidence,
+          ancillaryNote,
+          regeneratedAt: timestamp,
+          regeneratedMode: "test",
+        };
+
+        const updatePayload: Record<string, unknown> = {
+          reasoning: existingReasoning,
+        };
+        if (updatedDiagnoses !== patient.diagnoses) updatePayload.diagnoses = updatedDiagnoses;
+        if (updatedMedications !== patient.medications) updatePayload.medications = updatedMedications;
+        if (updatedHistory !== patient.history) updatePayload.history = updatedHistory;
+
+        const updated = await storage.updatePatientScreening(id, updatePayload);
+
+        invalidatePatientDatabase();
+        res.json({ ok: true, patient: updated, testName, ancillaryId });
+      } catch (error: any) {
+        console.error(
+          "[admin-review/regenerate-test] error:",
+          error?.message ?? error,
+        );
+        res.status(500).json({
+          error: error?.message ?? "Failed to regenerate test reasoning",
         });
       }
     },
