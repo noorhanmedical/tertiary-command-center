@@ -661,16 +661,44 @@ export function AdminReviewDialog({
 
   const ultrasoundTests = canonicalReasoningByAncillary.ultrasound.map((c) => c.testName);
 
-  // Assignment helpers
-  function assignToTarget(target: AssignmentTarget, btn: SupportingButton) {
-    if (btn.kind === "icd_disease" && btn.requiresIcd) {
-      toast({
-        title: "ICD required",
-        description: `Search for an ICD code for "${btn.label}" before assigning.`,
-        variant: "destructive",
-      });
-      return;
+  // Whether a given button is already assigned to a specific target.
+  // Drives the "Already on X" disabled states in AssignMenu and prevents
+  // duplicate entries on the same ancillary bar.
+  function isAssignedToTarget(
+    btn: SupportingButton,
+    target: AssignmentTarget,
+    state: AdminReviewAssignmentState,
+  ): boolean {
+    const key = chipKeyForAssignment(btn);
+    if (target.type === "ancillary") {
+      return state[target.ancillaryId].some(
+        (b) => chipKeyForAssignment(b) === key,
+      );
     }
+    if (target.type === "ultrasound-parent") {
+      return state.ultrasound.parent.some(
+        (b) => chipKeyForAssignment(b) === key,
+      );
+    }
+    if (target.type === "ultrasound-test") {
+      return (state.ultrasound.byTestName[target.testName] ?? []).some(
+        (b) => chipKeyForAssignment(b) === key,
+      );
+    }
+    if (target.type === "all") {
+      return (
+        state.brainwave.some((b) => chipKeyForAssignment(b) === key) &&
+        state.vitalwave.some((b) => chipKeyForAssignment(b) === key) &&
+        state.ultrasound.parent.some((b) => chipKeyForAssignment(b) === key)
+      );
+    }
+    return false;
+  }
+
+  // Assignment helper. A missing ICD code does NOT block assignment —
+  // every diagnosis from patient.diagnoses is a valid SupportingButton.
+  // ICD Search is an optional add-on, not a prerequisite.
+  function assignToTarget(target: AssignmentTarget, btn: SupportingButton) {
     setAssignments((prev) => {
       const next: AdminReviewAssignmentState = {
         brainwave: [...prev.brainwave],
@@ -1002,6 +1030,104 @@ export function AdminReviewDialog({
                   testId="admin-review-source-rx"
                 />
               </section>
+
+              <section
+                className="space-y-1.5 rounded-2xl border border-slate-200 bg-white p-3"
+                data-testid="admin-review-icd-search-left"
+              >
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Search ICD-10
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Search ICD-10 codes beyond the current chart, then assign selected codes to ancillaries.
+                </div>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+                  <Input
+                    type="search"
+                    placeholder="Search any ICD-10 diagnosis..."
+                    value={icdSearchQuery}
+                    onChange={(e) => setIcdSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && icdSearchQuery.trim().length >= 2) {
+                        icdSearchMutation.mutate({ query: icdSearchQuery.trim() });
+                      }
+                    }}
+                    className="h-8 text-xs"
+                    data-testid="admin-review-icd-ai-search"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={
+                      icdSearchMutation.isPending || icdSearchQuery.trim().length < 2
+                    }
+                    onClick={() =>
+                      icdSearchMutation.mutate({ query: icdSearchQuery.trim() })
+                    }
+                    data-testid="admin-review-icd-ai-search-button"
+                    className="h-8 px-2"
+                  >
+                    {icdSearchMutation.isPending ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Search className="w-3 h-3" />
+                    )}
+                  </Button>
+                </div>
+
+                {icdSearchMutation.isPending && (
+                  <div
+                    className="text-[11px] text-slate-400 inline-flex items-center gap-1"
+                    data-testid="admin-review-icd-ai-search-loading"
+                  >
+                    <Loader2 className="w-3 h-3 animate-spin" /> Searching ICD codes
+                  </div>
+                )}
+                {icdSearchMutation.isError && (
+                  <div
+                    className="text-[11px] text-rose-700 inline-flex items-center gap-1"
+                    data-testid="admin-review-icd-ai-search-error"
+                  >
+                    <AlertTriangle className="w-3 h-3" /> OpenAI universal ICD search failed
+                  </div>
+                )}
+                {icdSearchMutation.isSuccess && icdSearchMutation.data?.results?.length === 0 && (
+                  <div
+                    className="text-[11px] text-slate-400 italic"
+                    data-testid="admin-review-icd-ai-search-empty"
+                  >
+                    No matching ICD codes.
+                  </div>
+                )}
+                {icdSearchMutation.isSuccess && (icdSearchMutation.data?.results ?? []).length > 0 && (
+                  <div className="flex flex-col gap-1 max-h-48 overflow-auto rounded-md border border-slate-200 bg-white">
+                    {(icdSearchMutation.data?.results ?? []).map((r) => (
+                      <button
+                        key={r.code}
+                        type="button"
+                        onClick={() => adoptIcdSearchResult(r)}
+                        data-testid="admin-review-icd-ai-search-result"
+                        className="text-left text-xs px-2 py-1.5 hover:bg-slate-100 inline-flex items-start gap-2"
+                      >
+                        <span className="font-mono text-slate-700 shrink-0">{r.code}</span>
+                        <div className="min-w-0">
+                          <div className="text-slate-800 truncate">{r.label}</div>
+                          {r.rationale && (
+                            <div className="text-[10px] text-slate-500 truncate">
+                              {r.rationale}
+                            </div>
+                          )}
+                        </div>
+                        <span
+                          className={`ml-auto inline-flex items-center rounded-full border px-1.5 text-[9px] uppercase tracking-wider ${CONFIDENCE_TONE[r.confidence]}`}
+                        >
+                          {r.confidence}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
             </div>
 
             {/* ─── Column 2 — Available Buttons + Ancillary Panels ─── */}
@@ -1029,6 +1155,7 @@ export function AdminReviewDialog({
                       key={buttonKey(b)}
                       btn={b}
                       ultrasoundTests={ultrasoundTests}
+                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                       onAssign={(target) => assignToTarget(target, b)}
                     />
                   )}
@@ -1047,6 +1174,7 @@ export function AdminReviewDialog({
                       tone="purple"
                       prefix="Med"
                       ultrasoundTests={ultrasoundTests}
+                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                       onAssign={(target) => assignToTarget(target, b)}
                     />
                   )}
@@ -1067,110 +1195,12 @@ export function AdminReviewDialog({
                       tone={b.kind === "prior_test" ? "teal" : "amber"}
                       prefix={b.kind === "prior_test" ? "Prior" : "Hx"}
                       ultrasoundTests={ultrasoundTests}
+                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                       onAssign={(target) => assignToTarget(target, b)}
                     />
                   )}
                 />
 
-                <Separator />
-
-                <section
-                  className="space-y-1.5"
-                  data-testid="admin-review-available-buttons-icd-search"
-                >
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                    Search ICD-10
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    Search ICD-10 codes beyond the current chart, then assign selected codes to ancillaries.
-                  </div>
-                  <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
-                    <Input
-                      type="search"
-                      placeholder="Search any ICD-10 diagnosis..."
-                      value={icdSearchQuery}
-                      onChange={(e) => setIcdSearchQuery(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && icdSearchQuery.trim().length >= 2) {
-                          icdSearchMutation.mutate({ query: icdSearchQuery.trim() });
-                        }
-                      }}
-                      className="h-8 text-xs"
-                      data-testid="admin-review-icd-ai-search"
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={
-                        icdSearchMutation.isPending || icdSearchQuery.trim().length < 2
-                      }
-                      onClick={() =>
-                        icdSearchMutation.mutate({ query: icdSearchQuery.trim() })
-                      }
-                      data-testid="admin-review-icd-ai-search-button"
-                      className="h-8 px-2"
-                    >
-                      {icdSearchMutation.isPending ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <Search className="w-3 h-3" />
-                      )}
-                    </Button>
-                  </div>
-
-                  {icdSearchMutation.isPending && (
-                    <div
-                      className="text-[11px] text-slate-400 inline-flex items-center gap-1"
-                      data-testid="admin-review-icd-ai-search-loading"
-                    >
-                      <Loader2 className="w-3 h-3 animate-spin" /> Searching ICD codes
-                    </div>
-                  )}
-                  {icdSearchMutation.isError && (
-                    <div
-                      className="text-[11px] text-rose-700 inline-flex items-center gap-1"
-                      data-testid="admin-review-icd-ai-search-error"
-                    >
-                      <AlertTriangle className="w-3 h-3" /> OpenAI universal ICD search failed
-                    </div>
-                  )}
-                  {icdSearchMutation.isSuccess && icdSearchMutation.data?.results?.length === 0 && (
-                    <div
-                      className="text-[11px] text-slate-400 italic"
-                      data-testid="admin-review-icd-ai-search-empty"
-                    >
-                      No matching ICD codes.
-                    </div>
-                  )}
-                  {icdSearchMutation.isSuccess && (icdSearchMutation.data?.results ?? []).length > 0 && (
-                    <div className="flex flex-col gap-1 max-h-48 overflow-auto rounded-md border border-slate-200 bg-white">
-                      {(icdSearchMutation.data?.results ?? []).map((r) => (
-                        <button
-                          key={r.code}
-                          type="button"
-                          onClick={() => adoptIcdSearchResult(r)}
-                          data-testid="admin-review-icd-ai-search-result"
-                          className="text-left text-xs px-2 py-1.5 hover:bg-slate-100 inline-flex items-start gap-2"
-                        >
-                          <span className="font-mono text-slate-700 shrink-0">{r.code}</span>
-                          <div className="min-w-0">
-                            <div className="text-slate-800 truncate">{r.label}</div>
-                            {r.rationale && (
-                              <div className="text-[10px] text-slate-500 truncate">
-                                {r.rationale}
-                              </div>
-                            )}
-                          </div>
-                          <span
-                            className={`ml-auto inline-flex items-center rounded-full border px-1.5 text-[9px] uppercase tracking-wider ${CONFIDENCE_TONE[r.confidence]}`}
-                          >
-                            {r.confidence}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </section>
               </section>
 
               {/* BrainWave + VitalWave panels */}
@@ -1685,67 +1715,106 @@ function AvailableButtonsRow({
 }
 
 function AssignMenu({
+  btn,
   ultrasoundTests,
+  isAlreadyAssigned,
   onAssign,
 }: {
+  btn: SupportingButton;
   ultrasoundTests: string[];
+  isAlreadyAssigned: (target: AssignmentTarget) => boolean;
   onAssign: (target: AssignmentTarget) => void;
 }) {
+  function row(
+    target: AssignmentTarget,
+    label: string,
+    alreadyLabel: string,
+    testId: string,
+    activeClass: string,
+    extra?: { dataTestName?: string },
+  ) {
+    const taken = isAlreadyAssigned(target);
+    return (
+      <button
+        type="button"
+        disabled={taken}
+        onClick={() => {
+          if (taken) return;
+          onAssign(target);
+        }}
+        data-testid={testId}
+        data-already-assigned={taken ? "true" : "false"}
+        data-test-name={extra?.dataTestName}
+        className={`w-full text-left text-xs rounded-md px-2 py-1 ${
+          taken
+            ? "text-slate-400 cursor-not-allowed italic"
+            : activeClass
+        }`}
+      >
+        {taken ? (
+          <span data-testid="admin-review-assignment-already-selected">
+            {alreadyLabel}
+          </span>
+        ) : (
+          label
+        )}
+      </button>
+    );
+  }
+
+  // Use a void reference to btn so future per-button gating can read its
+  // metadata without TypeScript flagging the parameter as unused.
+  void btn;
+
   return (
-    <PopoverContent className="w-56 p-1" data-testid="admin-review-assign-evidence">
-      <button
-        type="button"
-        onClick={() => onAssign({ type: "ancillary", ancillaryId: "brainwave" })}
-        data-testid="admin-review-assign-brainwave"
-        className="w-full text-left text-xs rounded-md px-2 py-1 hover:bg-violet-50 text-violet-800"
-      >
-        Assign to BrainWave
-      </button>
-      <button
-        type="button"
-        onClick={() => onAssign({ type: "ancillary", ancillaryId: "vitalwave" })}
-        data-testid="admin-review-assign-vitalwave"
-        className="w-full text-left text-xs rounded-md px-2 py-1 hover:bg-red-50 text-red-800"
-      >
-        Assign to VitalWave
-      </button>
-      <button
-        type="button"
-        onClick={() => onAssign({ type: "ultrasound-parent" })}
-        data-testid="admin-review-assign-ultrasound-parent"
-        className="w-full text-left text-xs rounded-md px-2 py-1 hover:bg-emerald-50 text-emerald-800"
-      >
-        Assign to Ultrasound Studies (all children)
-      </button>
+    <PopoverContent className="w-60 p-1" data-testid="admin-review-assign-evidence">
+      {row(
+        { type: "ancillary", ancillaryId: "brainwave" },
+        "Assign to BrainWave",
+        "Already on BrainWave",
+        "admin-review-assign-brainwave",
+        "hover:bg-violet-50 text-violet-800",
+      )}
+      {row(
+        { type: "ancillary", ancillaryId: "vitalwave" },
+        "Assign to VitalWave",
+        "Already on VitalWave",
+        "admin-review-assign-vitalwave",
+        "hover:bg-red-50 text-red-800",
+      )}
+      {row(
+        { type: "ultrasound-parent" },
+        "Assign to Ultrasound Studies",
+        "Already on Ultrasound Studies",
+        "admin-review-assign-ultrasound-parent",
+        "hover:bg-emerald-50 text-emerald-800",
+      )}
       {ultrasoundTests.length > 0 && (
         <>
           <Separator className="my-1" />
           <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-slate-500">
             Assign to specific ultrasound test
           </div>
-          {ultrasoundTests.map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => onAssign({ type: "ultrasound-test", testName: t })}
-              data-testid="admin-review-assign-ultrasound-test"
-              data-test-name={t}
-              className="w-full text-left text-xs rounded-md px-2 py-1 hover:bg-emerald-50 text-emerald-900"
-            >
-              {t}
-            </button>
-          ))}
+          {ultrasoundTests.map((t) =>
+            row(
+              { type: "ultrasound-test", testName: t },
+              `Assign to ${t}`,
+              `Already on ${t}`,
+              "admin-review-assign-ultrasound-test",
+              "hover:bg-emerald-50 text-emerald-900",
+              { dataTestName: t },
+            ),
+          )}
         </>
       )}
       <Separator className="my-1" />
-      <button
-        type="button"
-        onClick={() => onAssign({ type: "all" })}
-        data-testid="admin-review-assign-all"
-        className="w-full text-left text-xs rounded-md px-2 py-1 hover:bg-slate-100 font-semibold"
-      >
-        Assign to all
-      </button>
+      {row(
+        { type: "all" },
+        "Assign to all",
+        "Already on all",
+        "admin-review-assign-all",
+        "hover:bg-slate-100 font-semibold",
+      )}
     </PopoverContent>
   );
 }
@@ -1753,24 +1822,41 @@ function AssignMenu({
 function IcdDiseaseButton({
   btn,
   ultrasoundTests,
+  isAlreadyAssigned,
   onAssign,
 }: {
   btn: SupportingButton;
   ultrasoundTests: string[];
+  isAlreadyAssigned: (target: AssignmentTarget) => boolean;
   onAssign: (target: AssignmentTarget) => void;
 }) {
+  // ICD-needed diagnoses are still assignable. Missing ICD code is internal
+  // admin metadata, not a precondition. The button still opens the assign popover.
   if (btn.requiresIcd) {
     return (
-      <span
-        className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 text-blue-800 px-2.5 py-0.5 text-[11px]"
-        data-testid="admin-review-icd-disease-button"
-        data-derived="admin-review-dx-derived-diagnosis"
-      >
-        <span className="font-semibold" data-testid="admin-review-icd-disease-needed">
-          ICD needed
-        </span>
-        <span>· {btn.label}</span>
-      </span>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 text-blue-800 px-2.5 py-0.5 text-[11px] hover:bg-blue-100"
+            data-testid="admin-review-icd-disease-button"
+            data-derived="admin-review-dx-derived-diagnosis"
+            data-icd-needed-assignable="admin-review-icd-needed-diagnosis-assignable"
+          >
+            <span className="font-semibold" data-testid="admin-review-icd-disease-needed">
+              ICD needed
+            </span>
+            <span>· {btn.label}</span>
+            <Plus className="w-3 h-3 opacity-60" />
+          </button>
+        </PopoverTrigger>
+        <AssignMenu
+          btn={btn}
+          ultrasoundTests={ultrasoundTests}
+          isAlreadyAssigned={isAlreadyAssigned}
+          onAssign={onAssign}
+        />
+      </Popover>
     );
   }
   return (
@@ -1788,7 +1874,12 @@ function IcdDiseaseButton({
           <Plus className="w-3 h-3 opacity-60" />
         </button>
       </PopoverTrigger>
-      <AssignMenu ultrasoundTests={ultrasoundTests} onAssign={onAssign} />
+      <AssignMenu
+        btn={btn}
+        ultrasoundTests={ultrasoundTests}
+        isAlreadyAssigned={isAlreadyAssigned}
+        onAssign={onAssign}
+      />
     </Popover>
   );
 }
@@ -1799,6 +1890,7 @@ function SupportingChipButton({
   tone,
   prefix,
   ultrasoundTests,
+  isAlreadyAssigned,
   onAssign,
 }: {
   btn: SupportingButton;
@@ -1806,6 +1898,7 @@ function SupportingChipButton({
   tone: "purple" | "amber" | "teal";
   prefix: string;
   ultrasoundTests: string[];
+  isAlreadyAssigned: (target: AssignmentTarget) => boolean;
   onAssign: (target: AssignmentTarget) => void;
 }) {
   const toneClass =
@@ -1834,7 +1927,12 @@ function SupportingChipButton({
           <Plus className="w-3 h-3 opacity-60" />
         </button>
       </PopoverTrigger>
-      <AssignMenu ultrasoundTests={ultrasoundTests} onAssign={onAssign} />
+      <AssignMenu
+        btn={btn}
+        ultrasoundTests={ultrasoundTests}
+        isAlreadyAssigned={isAlreadyAssigned}
+        onAssign={onAssign}
+      />
     </Popover>
   );
 }

@@ -408,12 +408,21 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "admin-review-source-hx",
   "admin-review-source-dx",
   "admin-review-source-rx",
-  // Available Buttons section.
+  // Available Buttons section (no ICD search here — moved to left column).
   "admin-review-available-buttons",
   "admin-review-available-buttons-dx",
   "admin-review-available-buttons-rx",
   "admin-review-available-buttons-hx",
-  "admin-review-available-buttons-icd-search",
+  // ICD search lives in the left column under raw Hx/Dx/Rx source cards.
+  "admin-review-icd-search-left",
+  // ICD-needed diagnoses must still be assignable to ancillaries.
+  "admin-review-icd-needed-diagnosis-assignable",
+  // Duplicate-prevention helper + UX state.
+  "isAssignedToTarget",
+  "admin-review-assignment-already-selected",
+  "Already on BrainWave",
+  "Already on VitalWave",
+  "Already on Ultrasound Studies",
   // Parsing helpers.
   "parseDiagnosisButtonsFromDx",
   "parseMedicationButtonsFromRx",
@@ -499,6 +508,8 @@ requireNotText(
     "2 tests",
     "3 evidence",
     "if (!q) return all.slice(0, 6)",
+    // ICD search must not live inside the middle Available Buttons section.
+    "admin-review-available-buttons-icd-search",
   ],
   "AdminReviewDialog must use the canonical source-buttons architecture",
 );
