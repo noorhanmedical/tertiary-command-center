@@ -111,6 +111,15 @@ requireText("server/services/plexusIq/adminReviewIcdSearch.ts", [
   "OpenAI universal ICD search returned invalid JSON",
 ]);
 
+// Admin Review regeneration service must also honour the Replit base URL.
+// Both regenerate functions construct their OpenAI client the same way.
+requireText("server/services/plexusIq/adminReviewAiRegeneration.ts", [
+  "AI_INTEGRATIONS_OPENAI_BASE_URL",
+  "baseURL",
+  "new OpenAI({",
+  "...(baseURL ? { baseURL } : {})",
+]);
+
 // PDFs must NOT render ICD codes anywhere in their HTML output.
 // The data type may still include icd10_codes (kept for Admin Review +
 // canonical patient.reasoning[testName] consumers) — only the render
