@@ -568,4 +568,39 @@ if (failures.length) {
   process.exit(1);
 }
 
+// ─── Card / List view toggle + collapsible date groups ───────────────
+// Shared renderer for every Plexus IQ bucket — toggle + grouping lives in
+// QualificationPatientCardsPane so all status buckets get the same UX.
+const cardsPane = "client/src/components/qualification/QualificationPatientCardsPane.tsx";
+const listRow = "client/src/components/qualification/PatientListRow.tsx";
+
+requireFile(listRow);
+
+requireText(cardsPane, [
+  // View toggle.
+  "plexus-iq-view-toggle",
+  "plexus-iq-view-cards",
+  "plexus-iq-view-list",
+  // Date groups.
+  "plexus-iq-date-group",
+  "plexus-iq-date-group-toggle",
+  "plexus-iq-date-group-header",
+  "plexus-iq-date-group-body",
+  // Card vs list view containers.
+  "plexus-iq-card-view",
+  "plexus-iq-list-view",
+  "plexus-iq-patient-card-grid",
+  "plexus-iq-patient-list",
+  // Both renderers wired.
+  "PatientListRow",
+  "PatientCard",
+]);
+
+requireText(listRow, [
+  "plexus-iq-patient-list-row",
+  "button-admin-review-list-row",
+  "AdminReviewDialog",
+  "PatientPdfActions",
+]);
+
 console.log("Plexus IQ interior QA passed.");
