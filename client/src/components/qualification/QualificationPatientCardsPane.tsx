@@ -69,7 +69,13 @@ export default function QualificationPatientCardsPane({
   sourceMode,
 }: QualificationPatientCardsPaneProps) {
   const [displayMode, setDisplayMode] = useState<PatientDisplayMode>("cards");
+  // Date groups default closed — `undefined` is treated as collapsed.
+  // User clicks toggle the explicit boolean in this map.
   const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
+
+  function isDateGroupCollapsed(dateKey: string): boolean {
+    return collapsedDateGroups[dateKey] ?? true;
+  }
 
   const dateGroups = useMemo(() => {
     const map = new Map<string, PatientScreening[]>();
@@ -90,7 +96,10 @@ export default function QualificationPatientCardsPane({
   if (patients.length === 0) return null;
 
   function toggleGroup(key: string) {
-    setCollapsedDateGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+    setCollapsedDateGroups((prev) => {
+      const currentlyCollapsed = isDateGroupCollapsed(key);
+      return { ...prev, [key]: !currentlyCollapsed };
+    });
   }
 
   return (
@@ -144,23 +153,26 @@ export default function QualificationPatientCardsPane({
       </div>
 
       <div
-        className="space-y-4"
+        className="space-y-6"
         data-testid={displayMode === "list" ? "plexus-iq-list-view" : "plexus-iq-card-view"}
         data-display-mode={displayMode}
       >
         {dateGroups.map(([dateKey, groupPatients]) => {
-          const collapsed = !!collapsedDateGroups[dateKey];
+          const collapsed = isDateGroupCollapsed(dateKey);
           return (
-            <div
+            <section
               key={dateKey}
-              className="rounded-2xl border border-slate-200/70 bg-white/60"
+              className="space-y-2"
               data-testid="plexus-iq-date-group"
               data-date-key={dateKey}
+              data-default-collapsed-date-group="true"
             >
               <button
                 type="button"
                 onClick={() => toggleGroup(dateKey)}
-                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-slate-50 transition-colors rounded-t-2xl"
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left rounded-xl border border-slate-200/70 bg-slate-50/60 hover:bg-slate-100/70 transition-colors ${
+                  collapsed ? "" : "rounded-b-md"
+                }`}
                 data-testid="plexus-iq-date-group-toggle"
                 aria-expanded={!collapsed}
               >
@@ -184,7 +196,7 @@ export default function QualificationPatientCardsPane({
 
               {!collapsed && (
                 <div
-                  className="px-3 pb-3"
+                  className="px-1"
                   data-testid="plexus-iq-date-group-body"
                   data-date-key={dateKey}
                 >
@@ -234,7 +246,7 @@ export default function QualificationPatientCardsPane({
                   )}
                 </div>
               )}
-            </div>
+            </section>
           );
         })}
       </div>

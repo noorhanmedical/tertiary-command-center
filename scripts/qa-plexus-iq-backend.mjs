@@ -225,6 +225,30 @@ for (const rel of forbiddenClientPaths) {
   }
 }
 
+// ─── Admin Review removal routes + additive merge prompt ─────────────
+requireText("server/routes/patients.ts", [
+  // New remove routes.
+  "/api/patient-screenings/:id/admin-review/remove-test",
+  "/api/patient-screenings/:id/admin-review/remove-ancillary",
+  // Filters by canonical ancillary category + uses qualifyingTests filter.
+  "getAncillaryCategory",
+  ".filter((t) => !toRemove.has(t))",
+  // Per-test metadata cleanup.
+  "adminReview:test:",
+]);
+
+// Regeneration helper must enforce the additive merge contract.
+requireText("server/services/plexusIq/adminReviewAiRegeneration.ts", [
+  "Preserve existing qualifying_factors",
+  "Do not drop previous qualifying factors",
+  "mergedQualifyingFactors",
+  "selected support buttons",
+  "existingReasoning",
+  "qualifying_factors",
+  "Do not reintroduce explicitly removed qualifying factors",
+  "Selected support buttons are the active qualifying support layer",
+]);
+
 if (failures.length) {
   console.error("Plexus IQ backend QA failed:");
   for (const failure of failures) console.error(`- ${failure}`);

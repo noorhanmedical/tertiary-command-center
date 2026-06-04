@@ -586,6 +586,9 @@ requireText(cardsPane, [
   "plexus-iq-date-group-toggle",
   "plexus-iq-date-group-header",
   "plexus-iq-date-group-body",
+  // Default-collapsed date-group helper.
+  "isDateGroupCollapsed",
+  "?? true",
   // Card vs list view containers.
   "plexus-iq-card-view",
   "plexus-iq-list-view",
@@ -598,9 +601,43 @@ requireText(cardsPane, [
 
 requireText(listRow, [
   "plexus-iq-patient-list-row",
+  "plexus-iq-patient-list-row-clickable",
   "button-admin-review-list-row",
+  "stopPropagation",
   "AdminReviewDialog",
   "PatientPdfActions",
+]);
+
+// Facility / dashboard bucket labels: visible strings + centralized const.
+const bucketLabelsHost = "client/src/components/plexus-iq/PlexusIQWorkspace.tsx";
+requireText(bucketLabelsHost, [
+  "PLEXUS_IQ_BUCKET_LABELS",
+  "Parsed",
+  "Missing Info",
+  "Admin Review",
+  "Submitted / Sent to Engagement",
+]);
+
+// Admin Review removal controls.
+const adminReviewDialogRemovals = "client/src/components/qualification/AdminReviewDialog.tsx";
+requireText(adminReviewDialogRemovals, [
+  // Generic remove + per-bar variants.
+  "admin-review-remove-qualifying-factor",
+  "admin-review-remove-brainwave-factor",
+  "admin-review-remove-vitalwave-factor",
+  "admin-review-remove-ultrasound-parent-factor",
+  "admin-review-remove-ultrasound-child-factor",
+  // Whole-ancillary remove + per-ancillary variants.
+  "admin-review-remove-ancillary",
+  "admin-review-remove-brainwave",
+  "admin-review-remove-vitalwave",
+  "admin-review-remove-ultrasound-parent",
+  // Ultrasound child dropdown + remove.
+  "admin-review-ultrasound-child-dropdown",
+  "admin-review-ultrasound-child-toggle",
+  "admin-review-ultrasound-child-body",
+  "admin-review-remove-ultrasound-test",
+  "admin-review-remove-ultrasound-child",
 ]);
 
 console.log("Plexus IQ interior QA passed.");
