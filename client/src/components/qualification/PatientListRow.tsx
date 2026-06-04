@@ -154,14 +154,27 @@ export function PatientListRow({
   return (
     <>
       <div
-        className="grid grid-cols-[minmax(140px,1.4fr)_minmax(80px,0.7fr)_minmax(110px,0.9fr)_minmax(120px,1.1fr)_minmax(110px,0.9fr)_minmax(80px,0.6fr)_auto_auto] gap-3 items-center px-3 py-2 border border-slate-200 rounded-xl bg-white hover:bg-slate-50/60 transition-colors"
+        role="button"
+        tabIndex={0}
+        onClick={() => setEditOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setEditOpen(true);
+          }
+        }}
+        className="grid grid-cols-[minmax(140px,1.4fr)_minmax(80px,0.7fr)_minmax(110px,0.9fr)_minmax(120px,1.1fr)_minmax(110px,0.9fr)_minmax(80px,0.6fr)_auto_auto] gap-3 items-center px-3 py-2 border border-slate-200 rounded-xl bg-white hover:bg-slate-50/60 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40"
         data-testid={`plexus-iq-patient-list-row-${patient.id}`}
         data-row-type="plexus-iq-patient-list-row"
+        data-clickable="plexus-iq-patient-list-row-clickable"
       >
         {/* Name */}
         <button
           type="button"
-          onClick={() => setEditOpen(true)}
+          onClick={(e) => {
+            e.stopPropagation();
+            setEditOpen(true);
+          }}
           className="text-left min-w-0"
           data-testid={`text-list-row-patient-name-${patient.id}`}
         >
@@ -229,8 +242,13 @@ export function PatientListRow({
           })}
         </div>
 
-        {/* Actions: Admin Review, PDF, More */}
-        <div className="flex items-center gap-1.5 justify-end">
+        {/* Actions: Admin Review, PDF, More. Each handler calls stopPropagation
+            so action clicks do not bubble to the row's onClick (which opens
+            the edit dialog). */}
+        <div
+          className="flex items-center gap-1.5 justify-end"
+          onClick={(e) => e.stopPropagation()}
+        >
           {isPatientPdfEligible(patient) && (
             <PatientPdfActions
               patient={patient}
@@ -241,7 +259,10 @@ export function PatientListRow({
           )}
           <button
             type="button"
-            onClick={() => setAdminReviewOpen(true)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setAdminReviewOpen(true);
+            }}
             aria-label="Admin Review"
             title="Admin Review"
             className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
@@ -254,6 +275,7 @@ export function PatientListRow({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
+                onClick={(e) => e.stopPropagation()}
                 aria-label="More actions"
                 title="More"
                 className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition-colors"
@@ -262,9 +284,12 @@ export function PatientListRow({
                 <MoreHorizontal className="h-3.5 w-3.5" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
               <DropdownMenuItem
-                onClick={() => setEditOpen(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditOpen(true);
+                }}
                 data-testid={`menu-list-row-edit-${patient.id}`}
               >
                 <Pencil className="w-3.5 h-3.5 mr-2" />
@@ -272,7 +297,8 @@ export function PatientListRow({
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={generateDisabled}
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   if (!infoComplete) return;
                   onAnalyze();
                 }}
@@ -286,7 +312,8 @@ export function PatientListRow({
                 {generateLabel}
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   if (confirm("Remove this patient?")) onDelete();
                 }}
                 data-testid={`menu-list-row-delete-${patient.id}`}

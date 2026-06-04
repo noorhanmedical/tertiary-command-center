@@ -49,6 +49,15 @@ import { useToast } from "@/hooks/use-toast";
 
 type BatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
+// Centralized facility/dashboard bucket display labels. Backend status
+// values stay untouched — this is presentation only.
+export const PLEXUS_IQ_BUCKET_LABELS = {
+  needs_completion: "Parsed",
+  missing_info: "Missing Info",
+  admin_review: "Admin Review",
+  submitted_engagement: "Submitted / Sent to Engagement",
+} as const;
+
 type PlexusIQWorklistGroup = {
   key: string;
   facility: string;
@@ -697,7 +706,7 @@ export function PlexusIQWorkspace({
       }> = [
         {
           id: "needs",
-          label: "Needs Completion",
+          label: PLEXUS_IQ_BUCKET_LABELS.needs_completion,
           count: summary?.incompleteCount ?? 0,
           tone: "amber",
         },
@@ -709,19 +718,19 @@ export function PlexusIQWorkspace({
         },
         {
           id: "missingInfo",
-          label: "Missing Info",
+          label: PLEXUS_IQ_BUCKET_LABELS.missing_info,
           count: summary?.missingInfoCount ?? 0,
           tone: "rose",
         },
         {
           id: "readyForEngagement",
-          label: "Ready for Engagement",
+          label: PLEXUS_IQ_BUCKET_LABELS.admin_review,
           count: summary?.readyForEngagementCount ?? 0,
           tone: "sky",
         },
         {
           id: "sentToEngagement",
-          label: "Sent to Engagement",
+          label: PLEXUS_IQ_BUCKET_LABELS.submitted_engagement,
           count: summary?.sentToEngagementCount ?? 0,
           tone: "slate",
         },
@@ -909,7 +918,7 @@ export function PlexusIQWorkspace({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <TabsList className="bg-slate-100" data-testid="plexus-iq-worklist-tabs">
             <TabsTrigger value="needs" data-testid="tab-plexus-iq-needs">
-              Needs Completion
+              {PLEXUS_IQ_BUCKET_LABELS.needs_completion}
               {totals.totalIncomplete > 0 && (
                 <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-amber-100 px-1.5 text-[10px] font-semibold text-amber-800">
                   {totals.totalIncomplete}

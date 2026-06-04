@@ -376,6 +376,48 @@ export function registerPatientRoutes(
       const { regenerateCanonicalReasoning } = await import(
         "../services/plexusIq/adminReviewAiRegeneration"
       );
+      const { getAncillaryCategory } = await import("@shared/ancillaryCategory");
+
+      const existingReasoningByTest: Record<string, any> = {};
+      const priorReasoning =
+        patient.reasoning && typeof patient.reasoning === "object" && !Array.isArray(patient.reasoning)
+          ? (patient.reasoning as Record<string, any>)
+          : {};
+      for (const t of qualifyingTests) {
+        const e = priorReasoning[t];
+        if (e && typeof e === "object" && !Array.isArray(e)) existingReasoningByTest[t] = e;
+      }
+
+      // Map test -> ancillary so selected support buttons follow the right bucket.
+      const selectedSupportButtonsByTest: Record<string, any[]> = {};
+      for (const t of qualifyingTests) {
+        const cat = getAncillaryCategory(t);
+        if (cat === "brainwave" || cat === "vitalwave" || cat === "ultrasound") {
+          selectedSupportButtonsByTest[t] = assignedEvidenceByAncillary[cat] ?? [];
+        }
+      }
+
+      // removedFactors come from the client and may be per-test or per-ancillary.
+      const removedFactorsByTest: Record<string, string[]> = {};
+      const removedFromBody = req.body?.removedFactorsByTest;
+      if (removedFromBody && typeof removedFromBody === "object") {
+        for (const [t, arr] of Object.entries(removedFromBody)) {
+          if (Array.isArray(arr)) removedFactorsByTest[t] = arr.map((s: any) => String(s));
+        }
+      }
+      const removedByAncillary = req.body?.removedFactorsByAncillary;
+      if (removedByAncillary && typeof removedByAncillary === "object") {
+        for (const t of qualifyingTests) {
+          const cat = getAncillaryCategory(t);
+          const arr = (removedByAncillary as Record<string, unknown>)[cat];
+          if (Array.isArray(arr)) {
+            removedFactorsByTest[t] = [
+              ...(removedFactorsByTest[t] ?? []),
+              ...arr.map((s: any) => String(s)),
+            ];
+          }
+        }
+      }
 
       const ai = await regenerateCanonicalReasoning({
         patient: {
@@ -389,6 +431,9 @@ export function registerPatientRoutes(
         ancillaryNotes,
         adminNote,
         icdCodes,
+        existingReasoningByTest,
+        removedFactorsByTest,
+        selectedSupportButtonsByTest,
       });
 
       const existingReasoning =
@@ -495,6 +540,38 @@ export function registerPatientRoutes(
           "../services/plexusIq/adminReviewAiRegeneration"
         );
 
+        const priorReasoning =
+          patient.reasoning && typeof patient.reasoning === "object" && !Array.isArray(patient.reasoning)
+            ? (patient.reasoning as Record<string, any>)
+            : {};
+        const existingReasoningByTest: Record<string, any> = {};
+        for (const t of filteredTests) {
+          const e = priorReasoning[t];
+          if (e && typeof e === "object" && !Array.isArray(e)) existingReasoningByTest[t] = e;
+        }
+
+        const selectedSupportButtonsByTest: Record<string, any[]> = {};
+        for (const t of filteredTests) selectedSupportButtonsByTest[t] = assignedEvidence;
+
+        const removedFactorsByTest: Record<string, string[]> = {};
+        const removedAncillary = Array.isArray(req.body?.removedFactors) ? req.body.removedFactors : [];
+        if (removedAncillary.length) {
+          for (const t of filteredTests) {
+            removedFactorsByTest[t] = removedAncillary.map((s: any) => String(s));
+          }
+        }
+        const removedPerTestBody = req.body?.removedFactorsByTest;
+        if (removedPerTestBody && typeof removedPerTestBody === "object") {
+          for (const [t, arr] of Object.entries(removedPerTestBody)) {
+            if (Array.isArray(arr)) {
+              removedFactorsByTest[t] = [
+                ...(removedFactorsByTest[t] ?? []),
+                ...arr.map((s: any) => String(s)),
+              ];
+            }
+          }
+        }
+
         const ai = await regenerateCanonicalReasoning({
           patient: {
             ...patient,
@@ -515,6 +592,9 @@ export function registerPatientRoutes(
           },
           adminNote,
           icdCodes,
+          existingReasoningByTest,
+          removedFactorsByTest,
+          selectedSupportButtonsByTest,
         });
 
         const existingReasoning =
@@ -701,6 +781,24 @@ export function registerPatientRoutes(
           "../services/plexusIq/adminReviewAiRegeneration"
         );
 
+        const priorReasoning =
+          patient.reasoning && typeof patient.reasoning === "object" && !Array.isArray(patient.reasoning)
+            ? (patient.reasoning as Record<string, any>)
+            : {};
+        const priorEntry = priorReasoning[testName];
+        const existingReasoningByTest: Record<string, any> =
+          priorEntry && typeof priorEntry === "object" && !Array.isArray(priorEntry)
+            ? { [testName]: priorEntry }
+            : {};
+        const selectedSupportButtonsByTest: Record<string, any[]> = {
+          [testName]: assignedEvidence,
+        };
+        const removedFactorsByTest: Record<string, string[]> = {};
+        const removedArr = Array.isArray(req.body?.removedFactors) ? req.body.removedFactors : [];
+        if (removedArr.length) {
+          removedFactorsByTest[testName] = removedArr.map((s: any) => String(s));
+        }
+
         const ai = await regenerateCanonicalReasoning({
           patient: {
             ...patient,
@@ -721,6 +819,9 @@ export function registerPatientRoutes(
           },
           adminNote,
           icdCodes,
+          existingReasoningByTest,
+          removedFactorsByTest,
+          selectedSupportButtonsByTest,
         });
 
         const existingReasoning =
@@ -763,6 +864,133 @@ export function registerPatientRoutes(
         );
         res.status(500).json({
           error: error?.message ?? "Failed to regenerate test reasoning",
+        });
+      }
+    },
+  );
+
+  // Remove a single qualifying test from patient.qualifyingTests and
+  // clear the associated `adminReview:test:<testName>` metadata. The
+  // canonical reasoning entry `patient.reasoning[testName]` is left
+  // intact so historical context survives (UI display is governed by
+  // qualifyingTests). Other tests are unaffected.
+  app.post(
+    "/api/patient-screenings/:id/admin-review/remove-test",
+    async (req, res) => {
+      try {
+        const id = parseInt(req.params.id);
+        if (Number.isNaN(id)) {
+          return res.status(400).json({ error: "Invalid patient id" });
+        }
+        const testName = String(req.body?.testName ?? "").trim();
+        if (!testName) {
+          return res.status(400).json({ error: "testName is required" });
+        }
+        const patient = await storage.getPatientScreening(id);
+        if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+        const allTests = Array.isArray(patient.qualifyingTests)
+          ? patient.qualifyingTests
+          : [];
+        if (!allTests.includes(testName)) {
+          return res.status(400).json({
+            error: `testName "${testName}" is not in patient.qualifyingTests`,
+          });
+        }
+        const nextTests = allTests.filter((t) => t !== testName);
+
+        const existingReasoning =
+          patient.reasoning &&
+          typeof patient.reasoning === "object" &&
+          !Array.isArray(patient.reasoning)
+            ? { ...(patient.reasoning as Record<string, unknown>) }
+            : {};
+        delete existingReasoning[`adminReview:test:${testName}`];
+
+        const updated = await storage.updatePatientScreening(id, {
+          qualifyingTests: nextTests,
+          reasoning: existingReasoning,
+        });
+
+        invalidatePatientDatabase();
+        res.json({ ok: true, patient: updated, removedTestName: testName });
+      } catch (error: any) {
+        console.error(
+          "[admin-review/remove-test] error:",
+          error?.message ?? error,
+        );
+        res.status(500).json({
+          error: error?.message ?? "Failed to remove test",
+        });
+      }
+    },
+  );
+
+  // Remove a whole ancillary from a patient: filter qualifyingTests by
+  // `getAncillaryCategory(testName) === ancillaryId` and drop matching
+  // entries. Clear the ancillary's adminReview metadata block and any
+  // per-test metadata for tests that just got removed. Canonical
+  // reasoning entries are left intact.
+  app.post(
+    "/api/patient-screenings/:id/admin-review/remove-ancillary",
+    async (req, res) => {
+      try {
+        const id = parseInt(req.params.id);
+        if (Number.isNaN(id)) {
+          return res.status(400).json({ error: "Invalid patient id" });
+        }
+        const ancillaryId = String(req.body?.ancillaryId ?? "");
+        if (
+          ancillaryId !== "brainwave" &&
+          ancillaryId !== "vitalwave" &&
+          ancillaryId !== "ultrasound"
+        ) {
+          return res.status(400).json({
+            error: "ancillaryId must be one of brainwave / vitalwave / ultrasound",
+          });
+        }
+        const patient = await storage.getPatientScreening(id);
+        if (!patient) return res.status(404).json({ error: "Patient not found" });
+
+        const { getAncillaryCategory } = await import("@shared/ancillaryCategory");
+        const allTests = Array.isArray(patient.qualifyingTests)
+          ? patient.qualifyingTests
+          : [];
+        const toRemove = new Set(
+          allTests.filter((t) => getAncillaryCategory(t) === ancillaryId),
+        );
+        const nextTests = allTests.filter((t) => !toRemove.has(t));
+
+        const existingReasoning =
+          patient.reasoning &&
+          typeof patient.reasoning === "object" &&
+          !Array.isArray(patient.reasoning)
+            ? { ...(patient.reasoning as Record<string, unknown>) }
+            : {};
+        delete existingReasoning[`adminReview:${ancillaryId}`];
+        for (const t of toRemove) {
+          delete existingReasoning[`adminReview:test:${t}`];
+        }
+
+        const updated = await storage.updatePatientScreening(id, {
+          qualifyingTests: nextTests,
+          reasoning: existingReasoning,
+        });
+
+        invalidatePatientDatabase();
+        res.json({
+          ok: true,
+          patient: updated,
+          ancillaryId,
+          removedTests: Array.from(toRemove),
+        });
+      } catch (error: any) {
+        console.error(
+          "[admin-review/remove-ancillary] error:",
+          error?.message ?? error,
+        );
+        res.status(500).json({
+          error: error?.message ?? "Failed to remove ancillary",
         });
       }
     },

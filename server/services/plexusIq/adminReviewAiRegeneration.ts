@@ -177,6 +177,11 @@ export type CanonicalReasoningRegenerationInput = {
   ancillaryNotes: Record<AdminReviewAncillaryId, string>;
   adminNote?: string;
   icdCodes: Array<{ code: string; label: string }>;
+  // Per-test additive merge inputs. These are read by the deterministic
+  // pre-merge and re-enforced after OpenAI returns.
+  existingReasoningByTest?: Record<string, CanonicalReasoningEntry | undefined>;
+  removedFactorsByTest?: Record<string, string[]>;
+  selectedSupportButtonsByTest?: Record<string, AdminEvidenceChip[]>;
 };
 
 export type CanonicalReasoningRegenerationOutput = {
@@ -242,6 +247,73 @@ export async function regenerateCanonicalReasoning(
     ? input.icdCodes.map((c) => `- ${c.code} ${c.label}`).join("\n")
     : "- (none)";
 
+  // Deterministic merge of existing qualifying_factors + selected
+  // support buttons - explicitly removed factors. The merged value is
+  // sent to OpenAI as the starting point so the model preserves rather
+  // than wipes prior context. After OpenAI returns, the same merge is
+  // enforced again on the output (post-process).
+  const existingReasoning = input.existingReasoningByTest ?? {};
+  const removedByTest = input.removedFactorsByTest ?? {};
+  const selectedByTest = input.selectedSupportButtonsByTest ?? {};
+
+  function labelForQualifyingFactor(chip: AdminEvidenceChip): string {
+    if (chip.icdCode && chip.label) return `${chip.icdCode} · ${chip.label}`;
+    return chip.label;
+  }
+
+  function dedupePreserveOrder(items: string[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of items) {
+      const v = String(raw ?? "").trim();
+      if (!v) continue;
+      const k = v.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(v);
+    }
+    return out;
+  }
+
+  function mergedQualifyingFactorsFor(testName: string): string[] {
+    const prior = existingReasoning[testName]?.qualifying_factors ?? [];
+    const selectedLabels = (selectedByTest[testName] ?? []).map(labelForQualifyingFactor);
+    const removedSet = new Set(
+      (removedByTest[testName] ?? []).map((s) => s.trim().toLowerCase()),
+    );
+    const combined = dedupePreserveOrder([...prior, ...selectedLabels]);
+    return combined.filter((f) => !removedSet.has(f.toLowerCase()));
+  }
+
+  const mergedQualifyingFactorsByTest: Record<string, string[]> = {};
+  for (const t of input.qualifyingTests) {
+    mergedQualifyingFactorsByTest[t] = mergedQualifyingFactorsFor(t);
+  }
+
+  const priorReasoningBlock = input.qualifyingTests
+    .map((t) => {
+      const e = existingReasoning[t];
+      if (!e) return `[${t}]\n  (no prior reasoning on file)`;
+      const lines = [
+        `[${t}]`,
+        `  clinician_understanding: ${e.clinician_understanding || "(empty)"}`,
+        `  patient_talking_points: ${e.patient_talking_points || "(empty)"}`,
+        `  qualifying_factors (preserve unless explicitly removed):`,
+        ...mergedQualifyingFactorsByTest[t].map((f) => `    - ${f}`),
+        `  icd10_codes: ${(e.icd10_codes ?? []).join(", ") || "(none)"}`,
+        `  pearls: ${(e.pearls ?? []).join("; ") || "(none)"}`,
+      ];
+      const removedHere = removedByTest[t] ?? [];
+      if (removedHere.length) {
+        lines.push(
+          `  explicitly removed factors (do not reintroduce):`,
+          ...removedHere.map((f) => `    - ${f}`),
+        );
+      }
+      return lines.join("\n");
+    })
+    .join("\n\n");
+
   const systemPrompt = [
     "You generate concise canonical per-test reasoning objects for an ancillary screening platform.",
     "Use only the patient context, selected evidence per ancillary, and ICD codes provided.",
@@ -251,6 +323,12 @@ export async function regenerateCanonicalReasoning(
     "icd10_codes (only codes drawn from supplied ICD list), pearls (1-3 short clinical pearls),",
     "confidence (high/medium/low), and approvalRequired (true if under 16 or evidence is weak).",
     "If a test has no supporting evidence, mark approvalRequired true and state what is missing.",
+    // Additive merge contract (deterministic post-process enforces it too).
+    "Preserve existing qualifying_factors unless the admin-selected support items explicitly remove or contradict them.",
+    "Do not drop previous qualifying factors.",
+    "Add new qualifying factors from selected support buttons.",
+    "Do not reintroduce explicitly removed qualifying factors.",
+    "Selected support buttons are the active qualifying support layer.",
     "Return strict JSON only matching the provided schema.",
   ].join("\n");
 
@@ -270,6 +348,9 @@ export async function regenerateCanonicalReasoning(
     "",
     "Selected evidence by ancillary:",
     evidenceBlocks,
+    "",
+    "Existing reasoning per test (preserve unless explicitly removed; mergedQualifyingFactors below is the floor):",
+    priorReasoningBlock,
     "",
     "Qualifying tests to regenerate (one entry per test name, preserve exact spelling):",
     input.qualifyingTests.map((t) => `- ${t}`).join("\n"),
@@ -324,5 +405,47 @@ export async function regenerateCanonicalReasoning(
     },
   });
 
-  return parseCanonicalOutput(response.output_text);
+  const parsed = parseCanonicalOutput(response.output_text);
+
+  // Post-process: enforce the deterministic merge so OpenAI cannot
+  // drop preserved factors and cannot resurrect explicitly removed ones.
+  for (const t of input.qualifyingTests) {
+    const aiEntry = parsed.reasoningByTest[t];
+    const floorFactors = mergedQualifyingFactorsByTest[t] ?? [];
+    const removedSet = new Set(
+      (removedByTest[t] ?? []).map((s) => s.trim().toLowerCase()),
+    );
+    const aiFactors = Array.isArray(aiEntry?.qualifying_factors)
+      ? aiEntry!.qualifying_factors
+      : [];
+    const combined = dedupePreserveOrder([...floorFactors, ...aiFactors]).filter(
+      (f) => !removedSet.has(f.toLowerCase()),
+    );
+
+    const existing = existingReasoning[t];
+    const fallback: CanonicalReasoningEntry = {
+      clinician_understanding: existing?.clinician_understanding ?? "",
+      patient_talking_points: existing?.patient_talking_points ?? "",
+      qualifying_factors: combined,
+      icd10_codes: existing?.icd10_codes ?? [],
+      pearls: existing?.pearls ?? [],
+      confidence: existing?.confidence ?? "medium",
+      approvalRequired: existing?.approvalRequired ?? false,
+    };
+
+    if (aiEntry) {
+      parsed.reasoningByTest[t] = {
+        ...aiEntry,
+        qualifying_factors: combined,
+        clinician_understanding:
+          aiEntry.clinician_understanding || fallback.clinician_understanding,
+        patient_talking_points:
+          aiEntry.patient_talking_points || fallback.patient_talking_points,
+      };
+    } else {
+      parsed.reasoningByTest[t] = fallback;
+    }
+  }
+
+  return parsed;
 }
