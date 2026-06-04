@@ -419,6 +419,17 @@ export function registerPatientRoutes(
         }
       }
 
+      // Authoritative qualifying-factor floor sent from the client (preferred
+      // over reading patient.reasoning[testName] on the server, since older
+      // stored shapes may lose the array on round-trip).
+      const priorQualifyingFactorsByTest: Record<string, string[]> = {};
+      const priorFromBody = req.body?.priorQualifyingFactorsByTest;
+      if (priorFromBody && typeof priorFromBody === "object") {
+        for (const [t, arr] of Object.entries(priorFromBody)) {
+          if (Array.isArray(arr)) priorQualifyingFactorsByTest[t] = arr.map((s: any) => String(s));
+        }
+      }
+
       const ai = await regenerateCanonicalReasoning({
         patient: {
           ...patient,
@@ -434,6 +445,7 @@ export function registerPatientRoutes(
         existingReasoningByTest,
         removedFactorsByTest,
         selectedSupportButtonsByTest,
+        priorQualifyingFactorsByTest,
       });
 
       const existingReasoning =
@@ -572,6 +584,14 @@ export function registerPatientRoutes(
           }
         }
 
+        const priorQualifyingFactorsByTest: Record<string, string[]> = {};
+        const priorFromBody = req.body?.priorQualifyingFactorsByTest;
+        if (priorFromBody && typeof priorFromBody === "object") {
+          for (const [t, arr] of Object.entries(priorFromBody)) {
+            if (Array.isArray(arr)) priorQualifyingFactorsByTest[t] = arr.map((s: any) => String(s));
+          }
+        }
+
         const ai = await regenerateCanonicalReasoning({
           patient: {
             ...patient,
@@ -595,6 +615,7 @@ export function registerPatientRoutes(
           existingReasoningByTest,
           removedFactorsByTest,
           selectedSupportButtonsByTest,
+          priorQualifyingFactorsByTest,
         });
 
         const existingReasoning =
@@ -799,6 +820,14 @@ export function registerPatientRoutes(
           removedFactorsByTest[testName] = removedArr.map((s: any) => String(s));
         }
 
+        const priorQualifyingFactorsByTest: Record<string, string[]> = {};
+        const priorFromBody = req.body?.priorQualifyingFactorsByTest;
+        if (priorFromBody && typeof priorFromBody === "object") {
+          for (const [t, arr] of Object.entries(priorFromBody)) {
+            if (Array.isArray(arr)) priorQualifyingFactorsByTest[t] = arr.map((s: any) => String(s));
+          }
+        }
+
         const ai = await regenerateCanonicalReasoning({
           patient: {
             ...patient,
@@ -822,6 +851,7 @@ export function registerPatientRoutes(
           existingReasoningByTest,
           removedFactorsByTest,
           selectedSupportButtonsByTest,
+          priorQualifyingFactorsByTest,
         });
 
         const existingReasoning =
