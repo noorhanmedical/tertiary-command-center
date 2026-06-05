@@ -797,6 +797,48 @@ export function AdminReviewDialog({
   function labelForRemoval(btn: SupportingButton): string {
     return btn.icdCode && btn.label ? `${btn.icdCode} · ${btn.label}` : btn.label;
   }
+
+  // Remove a single canonical qualifying factor from patient.reasoning[testName].
+  // Persists immediately via onUpdate so the user sees it gone on next render,
+  // and records the label in removedFactors so a later regenerate won't re-add it.
+  function removeCanonicalQualifyingFactor(testName: string, factor: string) {
+    const reasoning = reasoningAsObject(patient.reasoning);
+    const entry = reasoning[testName];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+    const factors = Array.isArray((entry as any).qualifying_factors)
+      ? ((entry as any).qualifying_factors as string[])
+      : [];
+    const filtered = factors.filter((f) => f !== factor);
+    const nextReasoning = {
+      ...reasoning,
+      [testName]: { ...(entry as Record<string, unknown>), qualifying_factors: filtered },
+    };
+    onUpdate("reasoning", nextReasoning);
+
+    // Record so a subsequent regenerate doesn't re-add this factor.
+    const category = getAncillaryCategory(testName);
+    setRemovedFactors((prev) => {
+      const next = {
+        brainwave: [...prev.brainwave],
+        vitalwave: [...prev.vitalwave],
+        ultrasound: {
+          parent: [...prev.ultrasound.parent],
+          byTestName: { ...prev.ultrasound.byTestName },
+        },
+      };
+      if (category === "brainwave" && !next.brainwave.includes(factor)) {
+        next.brainwave.push(factor);
+      } else if (category === "vitalwave" && !next.vitalwave.includes(factor)) {
+        next.vitalwave.push(factor);
+      } else if (category === "ultrasound") {
+        const list = [...(next.ultrasound.byTestName[testName] ?? [])];
+        if (!list.includes(factor)) list.push(factor);
+        next.ultrasound.byTestName[testName] = list;
+      }
+      return next;
+    });
+  }
+
   function removeQualifyingFactor(from: AssignmentTarget, btn: SupportingButton) {
     const label = labelForRemoval(btn);
     setRemovedFactors((prev) => {
@@ -982,6 +1024,14 @@ export function AdminReviewDialog({
         ancillary === "ultrasound"
           ? removedFactors.ultrasound.parent
           : removedFactors[ancillary];
+      // Authoritative floor: send the current canonical qualifying_factors
+      // straight from patient.reasoning so the server merge can't lose them
+      // even if the stored shape is unusual.
+      const priorQualifyingFactorsByTest: Record<string, string[]> = {};
+      const filtered = canonicalReasoningByAncillary[ancillary] ?? [];
+      for (const c of filtered) {
+        priorQualifyingFactorsByTest[c.testName] = c.qualifyingFactors;
+      }
       const res = await apiRequest(
         "POST",
         `/api/patient-screenings/${patient.id}/admin-review/regenerate-ancillary`,
@@ -995,6 +1045,7 @@ export function AdminReviewDialog({
           history: patient.history ?? "",
           icdCodes: activeIcdCodes(),
           removedFactors: removedForCall,
+          priorQualifyingFactorsByTest,
         },
       );
       return res.json();
@@ -1034,6 +1085,13 @@ export function AdminReviewDialog({
         ...(removedFactors.ultrasound.byTestName[testName] ?? []),
         ...removedFactors.ultrasound.parent,
       ];
+      // Authoritative floor for this single test (see regenerate-ancillary above).
+      const priorEntry = (canonicalReasoningByAncillary.ultrasound ?? []).find(
+        (c) => c.testName === testName,
+      );
+      const priorQualifyingFactorsByTest: Record<string, string[]> = {
+        [testName]: priorEntry?.qualifyingFactors ?? [],
+      };
       const res = await apiRequest(
         "POST",
         `/api/patient-screenings/${patient.id}/admin-review/regenerate-test`,
@@ -1048,6 +1106,7 @@ export function AdminReviewDialog({
           history: patient.history ?? "",
           icdCodes: activeIcdCodes(),
           removedFactors: removedForCall,
+          priorQualifyingFactorsByTest,
         },
       );
       return res.json();
@@ -1517,7 +1576,11 @@ export function AdminReviewDialog({
                         ) : (
                           <div className="space-y-2">
                             {canonicalReasoningByAncillary[id].map((card) => (
-                              <CanonicalReasoningCardView key={card.testName} card={card} />
+                              <CanonicalReasoningCardView
+                                key={card.testName}
+                                card={card}
+                                onRemoveFactor={removeCanonicalQualifyingFactor}
+                              />
                             ))}
                           </div>
                         )}
@@ -1820,7 +1883,10 @@ export function AdminReviewDialog({
                                       )}
                                     </div>
                                   </div>
-                                  <CanonicalReasoningCardView card={card} />
+                                  <CanonicalReasoningCardView
+                                    card={card}
+                                    onRemoveFactor={removeCanonicalQualifyingFactor}
+                                  />
                                 </div>
                               )}
                             </div>
@@ -2272,7 +2338,16 @@ function SelectedChip({
   );
 }
 
-function CanonicalReasoningCardView({ card }: { card: CanonicalReasoningCard }) {
+function CanonicalReasoningCardView({
+  card,
+  onRemoveFactor,
+}: {
+  card: CanonicalReasoningCard;
+  // When provided, each qualifying factor renders as a removable chip
+  // with an X. Clicking the X immediately drops the factor from the
+  // canonical reasoning (the parent persists via onUpdate).
+  onRemoveFactor?: (testName: string, factor: string) => void;
+}) {
   const hasClinician = !!card.clinicianReasoning.trim();
   const hasPatient = !!card.patientExplanation.trim();
   const hasFactors = card.qualifyingFactors.length > 0;
@@ -2303,15 +2378,37 @@ function CanonicalReasoningCardView({ card }: { card: CanonicalReasoningCard }) 
       </div>
 
       {hasFactors && (
-        <div className="space-y-1">
+        <div className="space-y-1" data-testid="admin-review-qualifying-factors-list">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
             Qualifying Factors
           </div>
-          <ul className="text-xs text-slate-800 list-disc pl-4 space-y-0.5">
+          <div className="flex flex-wrap gap-1.5">
             {card.qualifyingFactors.map((f, i) => (
-              <li key={`${card.testName}-f-${i}`}>{f}</li>
+              <span
+                key={`${card.testName}-f-${i}`}
+                className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 text-slate-800 px-2 py-0.5 text-[11px]"
+                data-testid="admin-review-qualifying-factor-chip"
+                data-test-name={card.testName}
+              >
+                <span>{f}</span>
+                {onRemoveFactor && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveFactor(card.testName, f);
+                    }}
+                    aria-label={`Remove qualifying factor ${f}`}
+                    data-testid="admin-review-remove-qualifying-factor-chip"
+                    data-remove-factor="admin-review-remove-qualifying-factor"
+                    className="hover:text-rose-600"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </span>
             ))}
-          </ul>
+          </div>
         </div>
       )}
 

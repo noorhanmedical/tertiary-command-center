@@ -237,7 +237,8 @@ requireText("server/routes/patients.ts", [
   "adminReview:test:",
 ]);
 
-// Regeneration helper must enforce the additive merge contract.
+// Regeneration helper must enforce the additive merge contract AND
+// honour the client-supplied authoritative floor.
 requireText("server/services/plexusIq/adminReviewAiRegeneration.ts", [
   "Preserve existing qualifying_factors",
   "Do not drop previous qualifying factors",
@@ -247,6 +248,14 @@ requireText("server/services/plexusIq/adminReviewAiRegeneration.ts", [
   "qualifying_factors",
   "Do not reintroduce explicitly removed qualifying factors",
   "Selected support buttons are the active qualifying support layer",
+  "priorQualifyingFactorsByTest",
+  "priorByTest",
+]);
+
+// Routes must forward priorQualifyingFactorsByTest from request body to the
+// AI service for all three regenerate endpoints.
+requireText("server/routes/patients.ts", [
+  "priorQualifyingFactorsByTest",
 ]);
 
 if (failures.length) {

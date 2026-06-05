@@ -618,6 +618,19 @@ requireText(bucketLabelsHost, [
   "Submitted / Sent to Engagement",
 ]);
 
+// Canonical qualifying factors must render as removable chips inside the
+// canonical reasoning card so the admin can selectively delete any factor.
+const adminReviewDialogChips = "client/src/components/qualification/AdminReviewDialog.tsx";
+requireText(adminReviewDialogChips, [
+  "admin-review-qualifying-factors-list",
+  "admin-review-qualifying-factor-chip",
+  "admin-review-remove-qualifying-factor-chip",
+  "onRemoveFactor",
+  "removeCanonicalQualifyingFactor",
+  // Authoritative floor sent on every regenerate request.
+  "priorQualifyingFactorsByTest",
+]);
+
 // Admin Review removal controls.
 const adminReviewDialogRemovals = "client/src/components/qualification/AdminReviewDialog.tsx";
 requireText(adminReviewDialogRemovals, [

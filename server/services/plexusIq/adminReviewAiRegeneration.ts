@@ -182,6 +182,12 @@ export type CanonicalReasoningRegenerationInput = {
   existingReasoningByTest?: Record<string, CanonicalReasoningEntry | undefined>;
   removedFactorsByTest?: Record<string, string[]>;
   selectedSupportButtonsByTest?: Record<string, AdminEvidenceChip[]>;
+  // Authoritative qualifying-factor floor. When the client sends this
+  // (it does today — read directly from patient.reasoning[testName] in
+  // the dialog), it overrides the inferred prior from
+  // existingReasoningByTest. This guards against patients whose stored
+  // reasoning has lost the array via round-trip.
+  priorQualifyingFactorsByTest?: Record<string, string[]>;
 };
 
 export type CanonicalReasoningRegenerationOutput = {
@@ -275,8 +281,14 @@ export async function regenerateCanonicalReasoning(
     return out;
   }
 
+  // Authoritative client-supplied prior wins over inferred reasoning.
+  const priorByTest = input.priorQualifyingFactorsByTest ?? {};
+
   function mergedQualifyingFactorsFor(testName: string): string[] {
-    const prior = existingReasoning[testName]?.qualifying_factors ?? [];
+    const prior =
+      priorByTest[testName] ??
+      existingReasoning[testName]?.qualifying_factors ??
+      [];
     const selectedLabels = (selectedByTest[testName] ?? []).map(labelForQualifyingFactor);
     const removedSet = new Set(
       (removedByTest[testName] ?? []).map((s) => s.trim().toLowerCase()),
