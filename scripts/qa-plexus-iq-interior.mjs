@@ -562,12 +562,6 @@ requireNotText(
   "OpenAI API key must never appear in client code",
 );
 
-if (failures.length) {
-  console.error("Plexus IQ interior QA failed:");
-  for (const failure of failures) console.error(`- ${failure}`);
-  process.exit(1);
-}
-
 // ─── Card / List view toggle + collapsible date groups ───────────────
 // Shared renderer for every Plexus IQ bucket — toggle + grouping lives in
 // QualificationPatientCardsPane so all status buckets get the same UX.
@@ -581,6 +575,8 @@ requireText(cardsPane, [
   "plexus-iq-view-toggle",
   "plexus-iq-view-cards",
   "plexus-iq-view-list",
+  // Default display mode must be list.
+  'useState<PatientDisplayMode>("list")',
   // Date groups.
   "plexus-iq-date-group",
   "plexus-iq-date-group-toggle",
@@ -589,6 +585,10 @@ requireText(cardsPane, [
   // Default-collapsed date-group helper.
   "isDateGroupCollapsed",
   "?? true",
+  // Updater-based toggle (no closure-state read).
+  "prev[key] ?? true",
+  // groupByDate prop must be supported so nested-date contexts opt out.
+  "groupByDate",
   // Card vs list view containers.
   "plexus-iq-card-view",
   "plexus-iq-list-view",
@@ -597,6 +597,12 @@ requireText(cardsPane, [
   // Both renderers wired.
   "PatientListRow",
   "PatientCard",
+]);
+
+// PlexusIQWorkspace must opt out of the pane's date grouping where it
+// already shows a date/facility header above the pane.
+requireText("client/src/components/plexus-iq/PlexusIQWorkspace.tsx", [
+  "groupByDate={false}",
 ]);
 
 requireText(listRow, [
@@ -614,9 +620,16 @@ requireText(bucketLabelsHost, [
   "PLEXUS_IQ_BUCKET_LABELS",
   "Parsed",
   "Missing Info",
-  "Admin Review",
-  "Submitted / Sent to Engagement",
+  "Admin Review Pending",
+  "Completed",
+  "Sent to Engagement",
 ]);
+// Old label phrasing must be gone.
+requireNotText(
+  bucketLabelsHost,
+  ["Submitted / Sent to Engagement"],
+  "Old 'Submitted / Sent to Engagement' label must be replaced with 'Sent to Engagement'",
+);
 
 // Canonical qualifying factors must render as removable chips inside the
 // canonical reasoning card so the admin can selectively delete any factor.
@@ -652,5 +665,13 @@ requireText(adminReviewDialogRemovals, [
   "admin-review-remove-ultrasound-test",
   "admin-review-remove-ultrasound-child",
 ]);
+
+// Final failure check — must be at the very end so every requireText /
+// requireNotText above contributes to the failure list.
+if (failures.length) {
+  console.error("Plexus IQ interior QA failed:");
+  for (const failure of failures) console.error(`- ${failure}`);
+  process.exit(1);
+}
 
 console.log("Plexus IQ interior QA passed.");
