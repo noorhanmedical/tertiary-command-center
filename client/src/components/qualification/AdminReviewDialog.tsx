@@ -1351,77 +1351,6 @@ export function AdminReviewDialog({
 
             {/* ─── Column 2 — Available Buttons + Ancillary Panels ─── */}
             <div className="space-y-4" data-testid="admin-review-middle-column">
-              <section
-                className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4"
-                data-testid="admin-review-available-buttons"
-              >
-                <div>
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                    Available Buttons
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    Select items to add to BrainWave, VitalWave, or Ultrasound.
-                  </div>
-                </div>
-
-                <AvailableButtonsRow
-                  title="Diagnoses / ICD"
-                  testId="admin-review-available-buttons-dx"
-                  emptyText="No diagnoses extracted"
-                  items={availableButtons.filter((b) => b.kind === "icd_disease")}
-                  renderItem={(b) => (
-                    <IcdDiseaseButton
-                      key={buttonKey(b)}
-                      btn={b}
-                      ultrasoundTests={ultrasoundTests}
-                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
-                      onAssign={(target) => assignToTarget(target, b)}
-                    />
-                  )}
-                />
-
-                <AvailableButtonsRow
-                  title="Medications"
-                  testId="admin-review-available-buttons-rx"
-                  emptyText="No medications detected"
-                  items={availableButtons.filter((b) => b.kind === "medication")}
-                  renderItem={(b) => (
-                    <SupportingChipButton
-                      key={buttonKey(b)}
-                      btn={b}
-                      testId="admin-review-med-button"
-                      tone="purple"
-                      prefix="Med"
-                      ultrasoundTests={ultrasoundTests}
-                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
-                      onAssign={(target) => assignToTarget(target, b)}
-                    />
-                  )}
-                />
-
-                <AvailableButtonsRow
-                  title="Symptoms / History"
-                  testId="admin-review-available-buttons-hx"
-                  emptyText="No symptoms recorded"
-                  items={availableButtons.filter(
-                    (b) => b.kind === "symptom" || b.kind === "history" || b.kind === "prior_test",
-                  )}
-                  renderItem={(b) => (
-                    <SupportingChipButton
-                      key={buttonKey(b)}
-                      btn={b}
-                      testId={b.kind === "prior_test" ? "admin-review-prior-button" : "admin-review-hx-button"}
-                      tone={b.kind === "prior_test" ? "teal" : "amber"}
-                      prefix={b.kind === "prior_test" ? "Prior" : "Hx"}
-                      ultrasoundTests={ultrasoundTests}
-                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
-                      onAssign={(target) => assignToTarget(target, b)}
-                    />
-                  )}
-                />
-
-              </section>
-
               {/* BrainWave + VitalWave panels */}
               {(["brainwave", "vitalwave"] as const).map((id) => {
                 const style = categoryStyles[id];
@@ -1901,6 +1830,76 @@ export function AdminReviewDialog({
 
             {/* ─── Column 3 — PDFs / Blocking / Admin Note / Approval ─── */}
             <div className="space-y-4" data-testid="admin-review-right-column">
+              <section
+                className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4"
+                data-testid="admin-review-available-buttons"
+              >
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    Available Buttons
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Select items to add to BrainWave, VitalWave, or Ultrasound.
+                  </div>
+                </div>
+
+                <AvailableButtonsRow
+                  title="Diagnoses / ICD"
+                  testId="admin-review-available-buttons-dx"
+                  emptyText="No diagnoses extracted"
+                  items={availableButtons.filter((b) => b.kind === "icd_disease")}
+                  renderItem={(b) => (
+                    <IcdDiseaseButton
+                      key={buttonKey(b)}
+                      btn={b}
+                      ultrasoundTests={ultrasoundTests}
+                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
+                      onAssign={(target) => assignToTarget(target, b)}
+                    />
+                  )}
+                />
+
+                <AvailableButtonsRow
+                  title="Medications"
+                  testId="admin-review-available-buttons-rx"
+                  emptyText="No medications detected"
+                  items={availableButtons.filter((b) => b.kind === "medication")}
+                  renderItem={(b) => (
+                    <SupportingChipButton
+                      key={buttonKey(b)}
+                      btn={b}
+                      testId="admin-review-med-button"
+                      tone="purple"
+                      prefix="Med"
+                      ultrasoundTests={ultrasoundTests}
+                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
+                      onAssign={(target) => assignToTarget(target, b)}
+                    />
+                  )}
+                />
+
+                <AvailableButtonsRow
+                  title="Symptoms / History"
+                  testId="admin-review-available-buttons-hx"
+                  emptyText="No symptoms recorded"
+                  items={availableButtons.filter(
+                    (b) => b.kind === "symptom" || b.kind === "history" || b.kind === "prior_test",
+                  )}
+                  renderItem={(b) => (
+                    <SupportingChipButton
+                      key={buttonKey(b)}
+                      btn={b}
+                      testId={b.kind === "prior_test" ? "admin-review-prior-button" : "admin-review-hx-button"}
+                      tone={b.kind === "prior_test" ? "teal" : "amber"}
+                      prefix={b.kind === "prior_test" ? "Prior" : "Hx"}
+                      ultrasoundTests={ultrasoundTests}
+                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
+                      onAssign={(target) => assignToTarget(target, b)}
+                    />
+                  )}
+                />
+              </section>
+
               <section className="space-y-2">
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   PDFs

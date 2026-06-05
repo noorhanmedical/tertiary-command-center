@@ -18,6 +18,12 @@ interface QualificationPatientCardsPaneProps {
   schedulerName?: string | null;
   batchScheduleDate?: string | null;
   sourceMode?: "visit" | "outreach";
+  // When false (e.g. inside PlexusIQWorkspace facility/date accordions
+  // and WorklistGroupCard, which already display a date header), the
+  // pane skips its own date grouping and renders patients directly.
+  // Defaults to true for callers that need their own date grouping
+  // (Visit/Outreach qualification batches, recent qualification cards).
+  groupByDate?: boolean;
 }
 
 const UNGROUPED_KEY = "__no_date__";
@@ -67,8 +73,10 @@ export default function QualificationPatientCardsPane({
   schedulerName = null,
   batchScheduleDate = null,
   sourceMode,
+  groupByDate = true,
 }: QualificationPatientCardsPaneProps) {
-  const [displayMode, setDisplayMode] = useState<PatientDisplayMode>("cards");
+  // Default to list view. Each caller can flip back with the toggle.
+  const [displayMode, setDisplayMode] = useState<PatientDisplayMode>("list");
   // Date groups default closed — `undefined` is treated as collapsed.
   // User clicks toggle the explicit boolean in this map.
   const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
@@ -96,8 +104,10 @@ export default function QualificationPatientCardsPane({
   if (patients.length === 0) return null;
 
   function toggleGroup(key: string) {
+    // Use the updater's `prev` rather than the render-closure state so
+    // back-to-back toggles aren't read off a stale snapshot.
     setCollapsedDateGroups((prev) => {
-      const currentlyCollapsed = isDateGroupCollapsed(key);
+      const currentlyCollapsed = prev[key] ?? true;
       return { ...prev, [key]: !currentlyCollapsed };
     });
   }
@@ -157,99 +167,108 @@ export default function QualificationPatientCardsPane({
         data-testid={displayMode === "list" ? "plexus-iq-list-view" : "plexus-iq-card-view"}
         data-display-mode={displayMode}
       >
-        {dateGroups.map(([dateKey, groupPatients]) => {
-          const collapsed = isDateGroupCollapsed(dateKey);
-          return (
-            <section
-              key={dateKey}
-              className="space-y-2"
-              data-testid="plexus-iq-date-group"
-              data-date-key={dateKey}
-              data-default-collapsed-date-group="true"
-            >
-              <button
-                type="button"
-                onClick={() => toggleGroup(dateKey)}
-                className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left rounded-xl border border-slate-200/70 bg-slate-50/60 hover:bg-slate-100/70 transition-colors ${
-                  collapsed ? "" : "rounded-b-md"
-                }`}
-                data-testid="plexus-iq-date-group-toggle"
-                aria-expanded={!collapsed}
-              >
-                <div
-                  className="flex items-center gap-2 min-w-0"
-                  data-testid="plexus-iq-date-group-header"
-                >
-                  {collapsed ? (
-                    <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
-                  )}
-                  <span className="text-sm font-semibold text-slate-900 truncate">
-                    {formatDateHeader(dateKey)}
-                  </span>
-                  <span className="text-[11px] text-slate-500 tabular-nums">
-                    · {groupPatients.length}
-                  </span>
-                </div>
-              </button>
-
-              {!collapsed && (
-                <div
-                  className="px-1"
-                  data-testid="plexus-iq-date-group-body"
+        {groupByDate
+          ? dateGroups.map(([dateKey, groupPatients]) => {
+              const collapsed = isDateGroupCollapsed(dateKey);
+              return (
+                <section
+                  key={dateKey}
+                  className="space-y-2"
+                  data-testid="plexus-iq-date-group"
                   data-date-key={dateKey}
+                  data-default-collapsed-date-group="true"
                 >
-                  {displayMode === "cards" ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(dateKey)}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left rounded-xl border border-slate-200/70 bg-slate-50/60 hover:bg-slate-100/70 transition-colors ${
+                      collapsed ? "" : "rounded-b-md"
+                    }`}
+                    data-testid="plexus-iq-date-group-toggle"
+                    aria-expanded={!collapsed}
+                  >
                     <div
-                      className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start"
-                      data-testid="plexus-iq-patient-card-grid"
+                      className="flex items-center gap-2 min-w-0"
+                      data-testid="plexus-iq-date-group-header"
                     >
-                      {groupPatients.map((patient) => (
-                        <PatientCard
-                          key={patient.id}
-                          patient={patient}
-                          isAnalyzing={analyzingPatients.has(patient.id)}
-                          onUpdate={(field, value) =>
-                            onUpdatePatient(patient.id, { [field]: value })
-                          }
-                          onDelete={() => onDeletePatient(patient.id)}
-                          onAnalyze={() => onAnalyzeOnePatient(patient.id)}
-                          onOpenScheduleModal={(p) => onOpenScheduleModal(p)}
-                          schedulerName={schedulerName}
-                          batchScheduleDate={batchScheduleDate}
-                          sourceMode={sourceMode}
-                        />
-                      ))}
+                      {collapsed ? (
+                        <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
+                      )}
+                      <span className="text-sm font-semibold text-slate-900 truncate">
+                        {formatDateHeader(dateKey)}
+                      </span>
+                      <span className="text-[11px] text-slate-500 tabular-nums">
+                        · {groupPatients.length}
+                      </span>
                     </div>
-                  ) : (
+                  </button>
+
+                  {!collapsed && (
                     <div
-                      className="flex flex-col gap-1.5"
-                      data-testid="plexus-iq-patient-list"
+                      className="px-1"
+                      data-testid="plexus-iq-date-group-body"
+                      data-date-key={dateKey}
                     >
-                      {groupPatients.map((patient) => (
-                        <PatientListRow
-                          key={patient.id}
-                          patient={patient}
-                          isAnalyzing={analyzingPatients.has(patient.id)}
-                          onUpdate={(field, value) =>
-                            onUpdatePatient(patient.id, { [field]: value })
-                          }
-                          onDelete={() => onDeletePatient(patient.id)}
-                          onAnalyze={() => onAnalyzeOnePatient(patient.id)}
-                          schedulerName={schedulerName}
-                          batchScheduleDate={batchScheduleDate}
-                          sourceMode={sourceMode}
-                        />
-                      ))}
+                      {renderPatientGroup(groupPatients)}
                     </div>
                   )}
-                </div>
-              )}
-            </section>
-          );
-        })}
+                </section>
+              );
+            })
+          : renderPatientGroup(patients as PatientScreening[])}
       </div>
     </section>
   );
+
+  function renderPatientGroup(groupPatients: PatientScreening[]) {
+    if (displayMode === "cards") {
+      return (
+        <div
+          className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start"
+          data-testid="plexus-iq-patient-card-grid"
+        >
+          {groupPatients.map((patient) => (
+            <PatientCard
+              key={patient.id}
+              patient={patient}
+              isAnalyzing={analyzingPatients.has(patient.id)}
+              onUpdate={(field, value) =>
+                onUpdatePatient(patient.id, { [field]: value })
+              }
+              onDelete={() => onDeletePatient(patient.id)}
+              onAnalyze={() => onAnalyzeOnePatient(patient.id)}
+              onOpenScheduleModal={(p) => onOpenScheduleModal(p)}
+              schedulerName={schedulerName}
+              batchScheduleDate={batchScheduleDate}
+              sourceMode={sourceMode}
+            />
+          ))}
+        </div>
+      );
+    }
+    return (
+      <div
+        className="flex flex-col gap-1.5"
+        data-testid="plexus-iq-patient-list"
+      >
+        {groupPatients.map((patient) => (
+          <PatientListRow
+            key={patient.id}
+            patient={patient}
+            isAnalyzing={analyzingPatients.has(patient.id)}
+            onUpdate={(field, value) =>
+              onUpdatePatient(patient.id, { [field]: value })
+            }
+            onDelete={() => onDeletePatient(patient.id)}
+            onAnalyze={() => onAnalyzeOnePatient(patient.id)}
+            schedulerName={schedulerName}
+            batchScheduleDate={batchScheduleDate}
+            sourceMode={sourceMode}
+          />
+        ))}
+      </div>
+    );
+  }
 }

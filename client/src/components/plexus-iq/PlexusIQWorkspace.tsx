@@ -54,8 +54,9 @@ type BatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 export const PLEXUS_IQ_BUCKET_LABELS = {
   needs_completion: "Parsed",
   missing_info: "Missing Info",
-  admin_review: "Admin Review",
-  submitted_engagement: "Submitted / Sent to Engagement",
+  admin_review: "Admin Review Pending",
+  completed: "Completed",
+  submitted_engagement: "Sent to Engagement",
 } as const;
 
 type PlexusIQWorklistGroup = {
@@ -410,6 +411,7 @@ function WorklistGroupCard({
               onOpenScheduleModal={() => { /* Plexus IQ has no per-patient appointment modal */ }}
               schedulerName={null}
               batchScheduleDate={group.scheduleDate}
+              groupByDate={false}
             />
           )}
         </div>
@@ -712,7 +714,7 @@ export function PlexusIQWorkspace({
         },
         {
           id: "completed",
-          label: "Completed",
+          label: PLEXUS_IQ_BUCKET_LABELS.completed,
           count: summary?.finalizedCount ?? 0,
           tone: "emerald",
         },
@@ -1198,6 +1200,7 @@ export function PlexusIQWorkspace({
                                 onOpenScheduleModal={() => { /* Plexus IQ has no per-patient appointment modal */ }}
                                 schedulerName={null}
                                 batchScheduleDate={row.scheduleDate ?? null}
+                                groupByDate={false}
                               />
                             )}
                           </AccordionContent>
@@ -1369,6 +1372,7 @@ function ClinicDetailPackets({
                 onOpenScheduleModal={() => { /* no per-patient appointment modal here */ }}
                 schedulerName={null}
                 batchScheduleDate={group.scheduleDate}
+                groupByDate={false}
               />
             </div>
           </div>
