@@ -827,9 +827,15 @@ export function PlexusIQWorkspace({
       );
     }
 
-    // Top-level clinic tile board.
+    // First Plexus IQ overview surface: facility tiles only.
+    // Global stat cards, qualification jobs, recent qualification cards,
+    // and recently-deleted panels are NOT rendered here per the
+    // facility-first rule. Clicking a tile opens its facility interior.
     return (
-      <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3">
+      <div
+        className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3"
+        data-testid="plexus-iq-facility-overview"
+      >
         <div className="flex items-center justify-between gap-2">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
             Clinics
@@ -843,7 +849,11 @@ export function PlexusIQWorkspace({
             Legacy full view →
           </button>
         </div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3" data-testid="plexus-iq-clinic-tiles">
+        <div
+          className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
+          data-testid="plexus-iq-facility-tile-grid"
+          data-tile-grid-legacy="plexus-iq-clinic-tiles"
+        >
           {clinicSummaries.map((c) => (
             <button
               key={c.facility}
@@ -855,7 +865,9 @@ export function PlexusIQWorkspace({
                 );
               }}
               className="group flex flex-col overflow-hidden rounded-2xl bg-white text-left shadow-[0_2px_8px_rgba(15,23,42,0.06)] hover:shadow-[0_6px_20px_rgba(15,23,42,0.10)] transition-shadow"
-              data-testid={`plexus-iq-clinic-tile-${c.facility}`}
+              data-testid="plexus-iq-facility-tile"
+              data-facility={c.facility}
+              data-legacy-testid={`plexus-iq-clinic-tile-${c.facility}`}
             >
               {/* Black header strip — clinic name only, no counts. */}
               <div className="bg-slate-900 group-hover:bg-slate-800 transition-colors px-4 py-3">

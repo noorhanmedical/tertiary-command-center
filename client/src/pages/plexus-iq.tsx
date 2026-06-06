@@ -41,12 +41,7 @@ import {
   startPlexusIqQualificationJob,
 } from "@/lib/plexusIqClinicalImportApi";
 import type { PlexusIqClinicalImportRow } from "@/lib/plexusIqClinicalImportParser";
-import {
-  PlexusIQQualificationJobsStatus,
-  type ActiveQualificationJob,
-} from "@/components/plexus-iq/PlexusIQQualificationJobsStatus";
-import { PlexusIQRecentQualificationCards } from "@/components/plexus-iq/PlexusIQRecentQualificationCards";
-import { PlexusIQRecentlyDeleted } from "@/components/plexus-iq/PlexusIQRecentlyDeleted";
+import type { ActiveQualificationJob } from "@/components/plexus-iq/PlexusIQQualificationJobsStatus";
 
 // LocalStorage key for the active clinical-import qualification job
 // banner. Bumping the suffix (`.v1`) is the migration story if the
@@ -73,7 +68,6 @@ function mergeQualificationJobs(
 import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
 import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
 import { PlexusIQWorkspace } from "@/components/plexus-iq/PlexusIQWorkspace";
-import { PlexusIQDashboardRow } from "@/components/plexus-iq/PlexusIQDashboardRow";
 
 // Plexus IQ page — patient workspace center + calendar drawer.
 //
@@ -777,33 +771,13 @@ export default function PlexusIQPage() {
         ref={mainScrollRef}
         className="flex-1 min-h-0 overflow-auto bg-slate-50/40"
       >
-        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-6">
-          <PlexusIQDashboardRow summary={summary} batchDetails={batchDetails} />
-        </div>
-        {activeQualificationJobs.length > 0 && (
-          <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-3">
-            <PlexusIQQualificationJobsStatus
-              jobs={activeQualificationJobs}
-              onJobsChange={setActiveQualificationJobs}
-              onDismiss={() => setActiveQualificationJobs([])}
-            />
-          </div>
-        )}
-        {activeQualificationJobs.length > 0 && (
-          <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-3">
-            <PlexusIQRecentQualificationCards
-              jobs={activeQualificationJobs}
-              batchDetails={batchDetails}
-              analyzingPatients={analyzingPatients}
-              onUpdatePatient={handleUpdatePatient}
-              onDeletePatient={handleDeletePatient}
-              onAnalyzeOnePatient={handleAnalyzePatient}
-            />
-          </div>
-        )}
-        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-3">
-          <PlexusIQRecentlyDeleted />
-        </div>
+        {/* Facility-first overview: the first Plexus IQ surface shows
+            facility tiles only. Global stat cards, qualification jobs,
+            recent qualification cards, and recently-deleted panels were
+            removed from the overview per the facility-first rule.
+            Their components (PlexusIQDashboardRow / *JobsStatus /
+            *RecentQualificationCards / *RecentlyDeleted) remain on disk
+            for future reuse. */}
         <PlexusIQWorkspace
           summary={summary}
           batchDetails={batchDetails}
