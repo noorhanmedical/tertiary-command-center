@@ -27,6 +27,7 @@ import {
   ChevronRight,
   Plus,
   Sparkles,
+  Trash2,
   X,
   Search,
 } from "lucide-react";
@@ -101,7 +102,7 @@ const CONFIDENCE_TONE: Record<string, string> = {
 
 // ────────────────────────────────────────────────────────────────────
 // SupportingButton model — single shape for every clickable item in
-// the Available Buttons section.
+// the right-panel popover button rows.
 // ────────────────────────────────────────────────────────────────────
 type SupportingButtonKind =
   | "icd_disease"
@@ -421,7 +422,7 @@ export function buildCanonicalReasoningByAncillary(
 
 // Local fallback evidence kept so /admin-review/evidence outage doesn't blank the popup.
 export function buildLocalEvidenceFallback(patient: PatientScreening): AdminEvidenceChip[] {
-  // Reused by Available Buttons through parsers; returned empty since parsers
+  // Reused by the right-panel popovers through parsers; returned empty since parsers
   // now cover Dx/Rx/Hx directly. Kept as an exported function for QA continuity.
   void patient;
   return [];
@@ -606,7 +607,7 @@ export function AdminReviewDialog({
 
   const apiEvidence: AdminEvidenceChip[] = evidenceQuery.data?.evidence ?? [];
 
-  // Build Available Buttons from raw source + rule engine + AI ICD additions.
+  // Build assignable button lists from raw source + rule engine + AI ICD additions.
   const dxButtons = useMemo(
     () => parseDiagnosisButtonsFromDx(patient.diagnoses),
     [patient.diagnoses],
@@ -1349,28 +1350,19 @@ export function AdminReviewDialog({
               </section>
             </div>
 
-            {/* ─── Column 2 — Available Buttons + Ancillary Panels ─── */}
+            {/* ─── Column 2 — Ancillary Panels ─── */}
             <div className="space-y-4" data-testid="admin-review-middle-column">
-              {/* BrainWave + VitalWave panels */}
+              {/* BrainWave + VitalWave panels. Bar shows only qualifying-
+                  factor chips + icon-only Regenerate/Delete. Status
+                  labels, the services row, and the selected list were removed
+                  per the dropdown-cleanup spec — the canonical
+                  reasoning expansion still carries that detail. */}
               {(["brainwave", "vitalwave"] as const).map((id) => {
                 const style = categoryStyles[id];
                 const Icon = categoryIcons[id];
-                const candidate = candidateById.get(id);
-                const services = canonicalReasoningByAncillary[id].map((c) => c.testName);
                 const selected = selectedFor(id);
                 const note = ancillaryNotes[id] ?? "";
                 const isOpen = !!expanded[id];
-                const statusLabel = candidate
-                  ? candidate.status === "suggested"
-                    ? "Suggested"
-                    : candidate.status === "needs_info"
-                      ? "Needs Info"
-                      : "Admin approval required"
-                  : isUnder16
-                    ? "Admin approval required"
-                    : services.length > 0
-                      ? "Generated"
-                      : "Needs Info";
                 return (
                   <div
                     key={id}
@@ -1379,113 +1371,102 @@ export function AdminReviewDialog({
                     data-ancillary={id}
                   >
                     <div className="px-4 py-3 border-b border-white/40 bg-white/30 backdrop-blur-sm">
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center justify-between gap-3">
                         <button
                           type="button"
                           onClick={() => toggleExpand(id)}
-                          className="flex items-start gap-3 min-w-0 flex-1 text-left"
+                          className="flex items-center gap-3 min-w-0 flex-1 text-left"
                           aria-expanded={isOpen}
                         >
                           {isOpen ? (
-                            <ChevronDown className={`w-4 h-4 mt-0.5 shrink-0 ${style.accent}`} />
+                            <ChevronDown className={`w-4 h-4 shrink-0 ${style.accent}`} />
                           ) : (
-                            <ChevronRight className={`w-4 h-4 mt-0.5 shrink-0 ${style.accent}`} />
+                            <ChevronRight className={`w-4 h-4 shrink-0 ${style.accent}`} />
                           )}
                           <div className={`shrink-0 w-7 h-7 rounded-full bg-white inline-flex items-center justify-center ${style.icon}`}>
                             <Icon className="w-4 h-4" strokeWidth={2} fill="none" />
                           </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <div className={`font-semibold text-sm ${style.accent}`}>
-                                {categoryLabels[id]}
-                              </div>
-                              <span className="text-[11px] text-slate-700/80">{statusLabel}</span>
-                              {isUnder16 && (
-                                <span className="text-[10px] font-semibold uppercase tracking-wider text-rose-800 bg-rose-50 border border-rose-300 rounded-full px-1.5">
-                                  &lt;16
-                                </span>
-                              )}
+                          <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                            <div className={`font-semibold text-sm ${style.accent} shrink-0`}>
+                              {categoryLabels[id]}
                             </div>
-                            <div className="mt-1 text-[11px] text-slate-700">
-                              <div className="flex items-baseline gap-1">
-                                <span className="font-semibold text-slate-600">Services:</span>
-                                <span
-                                  className="truncate"
-                                  data-testid="admin-review-ancillary-services-list"
-                                >
-                                  {services.length > 0 ? services.join(", ") : "—"}
-                                </span>
-                              </div>
-                              <div className="mt-0.5">
-                                <div className="font-semibold text-slate-600 text-[11px]">Selected:</div>
-                                <div
-                                  className="flex flex-wrap gap-1 mt-0.5"
-                                  data-testid="admin-review-ancillary-selected-list"
-                                >
-                                  {selected.length === 0 ? (
-                                    <span className="text-slate-400 italic">—</span>
-                                  ) : (
-                                    selected.map((b) => (
-                                      <SelectedChip
-                                        key={chipKeyForAssignment(b)}
-                                        b={b}
-                                        removeTestId={
-                                          id === "brainwave"
-                                            ? "admin-review-remove-brainwave-factor"
-                                            : "admin-review-remove-vitalwave-factor"
-                                        }
-                                        onRemove={() =>
-                                          removeQualifyingFactor({ type: "ancillary", ancillaryId: id }, b)
-                                        }
-                                      />
-                                    ))
-                                  )}
-                                </div>
-                              </div>
+                            {isUnder16 && (
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-rose-800 bg-rose-50 border border-rose-300 rounded-full px-1.5 shrink-0">
+                                &lt;16
+                              </span>
+                            )}
+                            <div
+                              className="flex flex-wrap items-center gap-1"
+                              data-testid="admin-review-ancillary-factor-chip-row"
+                            >
+                              {selected.map((b) => (
+                                <FactorChip
+                                  key={chipKeyForAssignment(b)}
+                                  b={b}
+                                  testId="admin-review-ancillary-factor-chip"
+                                  removeTestId={
+                                    id === "brainwave"
+                                      ? "admin-review-remove-brainwave-factor"
+                                      : "admin-review-remove-vitalwave-factor"
+                                  }
+                                  onRemove={() =>
+                                    removeQualifyingFactor({ type: "ancillary", ancillaryId: id }, b)
+                                  }
+                                />
+                              ))}
                             </div>
                           </div>
                         </button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={!!regenInFlight[id]}
-                          onClick={() => regenerateAncillaryMutation.mutate({ ancillary: id })}
-                          data-testid={REGENERATE_TEST_IDS[id]}
-                          data-regenerate="admin-review-regenerate-ancillary"
-                          className="shrink-0 bg-white/80"
-                        >
-                          {regenInFlight[id] ? (
-                            <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                          ) : (
-                            <Sparkles className="w-3 h-3 mr-1" />
-                          )}
-                          Regenerate {categoryLabels[id]}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={removeAncillaryMutation.isPending}
-                          onClick={() => {
-                            if (
-                              confirm(
-                                `Remove ${categoryLabels[id]} from this patient? All ${categoryLabels[id]} tests will be cleared.`,
-                              )
-                            ) {
-                              removeAncillaryMutation.mutate({ ancillary: id });
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            disabled={!!regenInFlight[id]}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              regenerateAncillaryMutation.mutate({ ancillary: id });
+                            }}
+                            aria-label={`Regenerate ${categoryLabels[id]}`}
+                            title={`Regenerate ${categoryLabels[id]}`}
+                            data-testid="admin-review-regenerate-icon-button"
+                            data-bar-testid={REGENERATE_TEST_IDS[id]}
+                            data-regenerate="admin-review-regenerate-ancillary"
+                            data-ancillary={id}
+                            className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-white/80 hover:bg-white text-slate-700 hover:text-slate-900 transition-colors disabled:opacity-50"
+                          >
+                            {regenInFlight[id] ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Sparkles className="w-4 h-4" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={removeAncillaryMutation.isPending}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (
+                                confirm(
+                                  `Remove ${categoryLabels[id]} from this patient? All ${categoryLabels[id]} tests will be cleared.`,
+                                )
+                              ) {
+                                removeAncillaryMutation.mutate({ ancillary: id });
+                              }
+                            }}
+                            aria-label={`Remove ${categoryLabels[id]}`}
+                            title={`Remove ${categoryLabels[id]}`}
+                            data-testid="admin-review-delete-icon-button"
+                            data-bar-testid={
+                              id === "brainwave"
+                                ? "admin-review-remove-brainwave"
+                                : "admin-review-remove-vitalwave"
                             }
-                          }}
-                          data-testid={
-                            id === "brainwave"
-                              ? "admin-review-remove-brainwave"
-                              : "admin-review-remove-vitalwave"
-                          }
-                          data-remove-ancillary="admin-review-remove-ancillary"
-                          className="shrink-0 text-rose-700 border-rose-200 hover:bg-rose-50"
-                        >
-                          Remove
-                        </Button>
+                            data-remove-ancillary="admin-review-remove-ancillary"
+                            data-ancillary={id}
+                            className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-white/80 hover:bg-rose-50 text-slate-700 hover:text-rose-700 transition-colors disabled:opacity-50"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                     {isOpen && (
@@ -1536,24 +1517,25 @@ export function AdminReviewDialog({
                 );
               })}
 
-              {/* Ultrasound parent + child bars */}
+              {/* Ultrasound parent + child bars — simplified to the same
+                  chip-only / icon-only pattern as BrainWave/VitalWave. */}
               <div
                 className={`rounded-2xl border overflow-hidden ${categoryStyles.ultrasound.bg} ${categoryStyles.ultrasound.border}`}
                 data-testid="admin-review-ultrasound-parent-panel"
                 data-ancillary="ultrasound"
               >
                 <div className="px-4 py-3 border-b border-white/40 bg-white/30 backdrop-blur-sm">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center justify-between gap-3">
                     <button
                       type="button"
                       onClick={() => toggleExpand("ultrasound")}
-                      className="flex items-start gap-3 min-w-0 flex-1 text-left"
+                      className="flex items-center gap-3 min-w-0 flex-1 text-left"
                       aria-expanded={!!expanded.ultrasound}
                     >
                       {expanded.ultrasound ? (
-                        <ChevronDown className={`w-4 h-4 mt-0.5 shrink-0 ${categoryStyles.ultrasound.accent}`} />
+                        <ChevronDown className={`w-4 h-4 shrink-0 ${categoryStyles.ultrasound.accent}`} />
                       ) : (
-                        <ChevronRight className={`w-4 h-4 mt-0.5 shrink-0 ${categoryStyles.ultrasound.accent}`} />
+                        <ChevronRight className={`w-4 h-4 shrink-0 ${categoryStyles.ultrasound.accent}`} />
                       )}
                       <div className={`shrink-0 w-7 h-7 rounded-full bg-white inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
                         {(() => {
@@ -1561,89 +1543,79 @@ export function AdminReviewDialog({
                           return <Icon className="w-4 h-4" strokeWidth={2} fill="none" />;
                         })()}
                       </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <div className={`font-semibold text-sm ${categoryStyles.ultrasound.accent}`}>
-                            {categoryLabels.ultrasound}
-                          </div>
-                          {isUnder16 && (
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-rose-800 bg-rose-50 border border-rose-300 rounded-full px-1.5">
-                              &lt;16
-                            </span>
-                          )}
+                      <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                        <div className={`font-semibold text-sm ${categoryStyles.ultrasound.accent} shrink-0`}>
+                          {categoryLabels.ultrasound}
                         </div>
-                        <div className="mt-1 text-[11px] text-slate-700">
-                          <div className="flex items-baseline gap-1">
-                            <span className="font-semibold text-slate-600">Services:</span>
-                            <span
-                              className="truncate"
-                              data-testid="admin-review-ancillary-services-list"
-                            >
-                              {ultrasoundTests.length > 0 ? ultrasoundTests.join(", ") : "—"}
-                            </span>
-                          </div>
-                          <div className="mt-0.5">
-                            <div className="font-semibold text-slate-600 text-[11px]">Selected:</div>
-                            <div
-                              className="flex flex-wrap gap-1 mt-0.5"
-                              data-testid="admin-review-ancillary-selected-list"
-                            >
-                              {ultrasoundParentSelected().length === 0 ? (
-                                <span className="text-slate-400 italic">—</span>
-                              ) : (
-                                ultrasoundParentSelected().map((b) => (
-                                  <SelectedChip
-                                    key={chipKeyForAssignment(b)}
-                                    b={b}
-                                    removeTestId="admin-review-remove-ultrasound-parent-factor"
-                                    onRemove={() =>
-                                      removeQualifyingFactor({ type: "ultrasound-parent" }, b)
-                                    }
-                                  />
-                                ))
-                              )}
-                            </div>
-                          </div>
+                        {isUnder16 && (
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-rose-800 bg-rose-50 border border-rose-300 rounded-full px-1.5 shrink-0">
+                            &lt;16
+                          </span>
+                        )}
+                        <div
+                          className="flex flex-wrap items-center gap-1"
+                          data-testid="admin-review-ancillary-factor-chip-row"
+                        >
+                          {ultrasoundParentSelected().map((b) => (
+                            <FactorChip
+                              key={chipKeyForAssignment(b)}
+                              b={b}
+                              testId="admin-review-ancillary-factor-chip"
+                              removeTestId="admin-review-remove-ultrasound-parent-factor"
+                              onRemove={() =>
+                                removeQualifyingFactor({ type: "ultrasound-parent" }, b)
+                              }
+                            />
+                          ))}
                         </div>
                       </div>
                     </button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={!!regenInFlight.ultrasound}
-                      onClick={() => regenerateAncillaryMutation.mutate({ ancillary: "ultrasound" })}
-                      data-testid={REGENERATE_TEST_IDS.ultrasound}
-                      data-regenerate="admin-review-regenerate-ancillary"
-                      className="shrink-0 bg-white/80"
-                    >
-                      {regenInFlight.ultrasound ? (
-                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                      ) : (
-                        <Sparkles className="w-3 h-3 mr-1" />
-                      )}
-                      Regenerate {categoryLabels.ultrasound}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={removeAncillaryMutation.isPending}
-                      onClick={() => {
-                        if (
-                          confirm(
-                            `Remove all ${categoryLabels.ultrasound} from this patient? Every child ultrasound test will be cleared.`,
-                          )
-                        ) {
-                          removeAncillaryMutation.mutate({ ancillary: "ultrasound" });
-                        }
-                      }}
-                      data-testid="admin-review-remove-ultrasound-parent"
-                      data-remove-ancillary="admin-review-remove-ancillary"
-                      className="shrink-0 text-rose-700 border-rose-200 hover:bg-rose-50"
-                    >
-                      Remove
-                    </Button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        disabled={!!regenInFlight.ultrasound}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          regenerateAncillaryMutation.mutate({ ancillary: "ultrasound" });
+                        }}
+                        aria-label={`Regenerate ${categoryLabels.ultrasound}`}
+                        title={`Regenerate ${categoryLabels.ultrasound}`}
+                        data-testid="admin-review-regenerate-icon-button"
+                        data-bar-testid={REGENERATE_TEST_IDS.ultrasound}
+                        data-regenerate="admin-review-regenerate-ancillary"
+                        data-ancillary="ultrasound"
+                        className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-white/80 hover:bg-white text-slate-700 hover:text-slate-900 transition-colors disabled:opacity-50"
+                      >
+                        {regenInFlight.ultrasound ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-4 h-4" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={removeAncillaryMutation.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (
+                            confirm(
+                              `Remove all ${categoryLabels.ultrasound} from this patient? Every child ultrasound test will be cleared.`,
+                            )
+                          ) {
+                            removeAncillaryMutation.mutate({ ancillary: "ultrasound" });
+                          }
+                        }}
+                        aria-label={`Remove ${categoryLabels.ultrasound}`}
+                        title={`Remove ${categoryLabels.ultrasound}`}
+                        data-testid="admin-review-delete-icon-button"
+                        data-bar-testid="admin-review-remove-ultrasound-parent"
+                        data-remove-ancillary="admin-review-remove-ancillary"
+                        data-ancillary="ultrasound"
+                        className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-white/80 hover:bg-rose-50 text-slate-700 hover:text-rose-700 transition-colors disabled:opacity-50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1672,7 +1644,7 @@ export function AdminReviewDialog({
                               data-testid="admin-review-ultrasound-child-dropdown"
                               data-test-name={card.testName}
                             >
-                              <div className="px-3 py-2 flex items-start justify-between gap-2">
+                              <div className="px-3 py-2 flex items-center justify-between gap-2">
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -1682,54 +1654,75 @@ export function AdminReviewDialog({
                                     }))
                                   }
                                   aria-expanded={childOpen}
-                                  className="flex items-start gap-2 min-w-0 flex-1 text-left"
+                                  className="flex items-center gap-2 min-w-0 flex-1 text-left"
                                   data-testid="admin-review-ultrasound-child-toggle"
                                   data-test-name={card.testName}
                                 >
                                   {childOpen ? (
-                                    <ChevronDown className="w-4 h-4 mt-0.5 shrink-0 text-emerald-700" />
+                                    <ChevronDown className="w-4 h-4 shrink-0 text-emerald-700" />
                                   ) : (
-                                    <ChevronRight className="w-4 h-4 mt-0.5 shrink-0 text-emerald-700" />
+                                    <ChevronRight className="w-4 h-4 shrink-0 text-emerald-700" />
                                   )}
-                                  <div className="min-w-0">
-                                    <div className="text-sm font-semibold text-slate-900 truncate">
+                                  <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                    <div className="text-sm font-semibold text-slate-900 shrink-0">
                                       {card.testName}
                                     </div>
-                                    <div className="mt-0.5 text-[11px] text-slate-600">
-                                      {selected.length === 0
-                                        ? "No supporting items selected"
-                                        : `${selected.length} supporting · click to expand`}
+                                    <div
+                                      className="flex flex-wrap items-center gap-1"
+                                      data-testid="admin-review-ultrasound-child-factor-chip-row"
+                                    >
+                                      {selected.map((b) => {
+                                        const fromParent = assignments.ultrasound.parent.some(
+                                          (p) => chipKeyForAssignment(p) === chipKeyForAssignment(b),
+                                        );
+                                        return (
+                                          <FactorChip
+                                            key={chipKeyForAssignment(b)}
+                                            b={b}
+                                            testId="admin-review-ultrasound-child-factor-chip"
+                                            removeTestId="admin-review-remove-ultrasound-child-factor"
+                                            inherited={fromParent}
+                                            onRemove={() =>
+                                              removeQualifyingFactor(
+                                                { type: "ultrasound-test", testName: card.testName },
+                                                b,
+                                              )
+                                            }
+                                          />
+                                        );
+                                      })}
                                     </div>
                                   </div>
                                 </button>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  <Button
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
                                     type="button"
-                                    size="sm"
-                                    variant="outline"
                                     disabled={inFlight}
-                                    onClick={() =>
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       regenerateTestMutation.mutate({
                                         testName: card.testName,
                                         ancillaryId: "ultrasound",
-                                      })
-                                    }
-                                    data-testid="admin-review-regenerate-ultrasound-test"
+                                      });
+                                    }}
+                                    aria-label={`Regenerate ${card.testName}`}
+                                    title={`Regenerate ${card.testName}`}
+                                    data-testid="admin-review-ultrasound-regenerate-icon-button"
+                                    data-bar-testid="admin-review-regenerate-ultrasound-test"
                                     data-test-name={card.testName}
+                                    className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-emerald-200 transition-colors disabled:opacity-50"
                                   >
                                     {inFlight ? (
-                                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                     ) : (
-                                      <Sparkles className="w-3 h-3 mr-1" />
+                                      <Sparkles className="w-3.5 h-3.5" />
                                     )}
-                                    Regenerate {card.testName}
-                                  </Button>
-                                  <Button
+                                  </button>
+                                  <button
                                     type="button"
-                                    size="sm"
-                                    variant="outline"
                                     disabled={removeInFlight}
-                                    onClick={() => {
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       if (
                                         confirm(
                                           `Remove ${card.testName} from this patient? Other ultrasound tests stay.`,
@@ -1738,13 +1731,16 @@ export function AdminReviewDialog({
                                         removeTestMutation.mutate({ testName: card.testName });
                                       }
                                     }}
-                                    data-testid="admin-review-remove-ultrasound-test"
+                                    aria-label={`Remove ${card.testName}`}
+                                    title={`Remove ${card.testName}`}
+                                    data-testid="admin-review-ultrasound-delete-icon-button"
+                                    data-bar-testid="admin-review-remove-ultrasound-test"
                                     data-remove-ultrasound-child="admin-review-remove-ultrasound-child"
                                     data-test-name={card.testName}
-                                    className="text-rose-700 border-rose-200 hover:bg-rose-50"
+                                    className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-rose-200 transition-colors disabled:opacity-50"
                                   >
-                                    Remove
-                                  </Button>
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
                                 </div>
                               </div>
                               {childOpen && (
@@ -1753,65 +1749,6 @@ export function AdminReviewDialog({
                                   data-testid="admin-review-ultrasound-child-body"
                                   data-test-name={card.testName}
                                 >
-                                  <div className="mt-2 text-[11px]">
-                                    <div className="font-semibold text-slate-600">Selected:</div>
-                                    <div
-                                      className="flex flex-wrap gap-1 mt-0.5"
-                                      data-testid="admin-review-ultrasound-child-selected-list"
-                                    >
-                                      {selected.length === 0 ? (
-                                        <span className="text-slate-400 italic">—</span>
-                                      ) : (
-                                        selected.map((b) => {
-                                          const fromParent = assignments.ultrasound.parent.some(
-                                            (p) => chipKeyForAssignment(p) === chipKeyForAssignment(b),
-                                          );
-                                          const childTestId =
-                                            b.kind === "icd_disease"
-                                              ? "admin-review-ultrasound-child-icd-button"
-                                              : b.kind === "medication"
-                                                ? "admin-review-ultrasound-child-med-button"
-                                                : "admin-review-ultrasound-child-hx-button";
-                                          return (
-                                            <span
-                                              key={chipKeyForAssignment(b)}
-                                              data-testid={childTestId}
-                                              data-inherited={fromParent ? "true" : "false"}
-                                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${
-                                                b.kind === "icd_disease"
-                                                  ? "bg-blue-50 text-blue-800 border-blue-200"
-                                                  : b.kind === "medication"
-                                                    ? "bg-purple-50 text-purple-800 border-purple-200"
-                                                    : "bg-amber-50 text-amber-800 border-amber-200"
-                                              }`}
-                                            >
-                                              {b.icdCode ? `${b.icdCode} · ` : ""}{b.label}
-                                              {fromParent ? (
-                                                <span className="text-[9px] opacity-60">↑ parent</span>
-                                              ) : (
-                                                <button
-                                                  type="button"
-                                                  aria-label={`Remove ${b.label}`}
-                                                  data-testid="admin-review-remove-qualifying-factor"
-                                                  data-remove-bar="admin-review-remove-ultrasound-child-factor"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    removeQualifyingFactor(
-                                                      { type: "ultrasound-test", testName: card.testName },
-                                                      b,
-                                                    );
-                                                  }}
-                                                  className="hover:text-rose-600"
-                                                >
-                                                  <X className="w-3 h-3" />
-                                                </button>
-                                              )}
-                                            </span>
-                                          );
-                                        })
-                                      )}
-                                    </div>
-                                  </div>
                                   <CanonicalReasoningCardView
                                     card={card}
                                     onRemoveFactor={removeCanonicalQualifyingFactor}
@@ -1830,74 +1767,125 @@ export function AdminReviewDialog({
 
             {/* ─── Column 3 — PDFs / Blocking / Admin Note / Approval ─── */}
             <div className="space-y-4" data-testid="admin-review-right-column">
+              {/* Right panel actions: 3 clean popover buttons. The
+                  old header + helper copy were removed; each
+                  category's items live behind its own popover so the
+                  panel stays compact. */}
               <section
-                className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4"
-                data-testid="admin-review-available-buttons"
+                className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4"
+                data-testid="admin-review-right-panel-buttons"
               >
-                <div>
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                    Available Buttons
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    Select items to add to BrainWave, VitalWave, or Ultrasound.
-                  </div>
+                <div
+                  className="grid grid-cols-3 gap-2"
+                  data-testid="admin-review-right-panel-button-row"
+                >
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="rounded-xl border border-blue-200 bg-blue-50 text-blue-800 px-3 py-2 text-xs font-semibold hover:bg-blue-100 transition-colors"
+                        data-testid="admin-review-right-button-diagnosis"
+                      >
+                        Diagnosis
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      className="w-[320px] p-3 space-y-2"
+                      data-testid="admin-review-right-popover-diagnosis"
+                    >
+                      <AvailableButtonsRow
+                        title="Diagnoses / ICD"
+                        testId="admin-review-available-buttons-dx"
+                        emptyText="No diagnoses extracted"
+                        items={availableButtons.filter((b) => b.kind === "icd_disease")}
+                        renderItem={(b) => (
+                          <IcdDiseaseButton
+                            key={buttonKey(b)}
+                            btn={b}
+                            ultrasoundTests={ultrasoundTests}
+                            isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
+                            onAssign={(target) => assignToTarget(target, b)}
+                          />
+                        )}
+                      />
+                    </PopoverContent>
+                  </Popover>
+
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="rounded-xl border border-purple-200 bg-purple-50 text-purple-800 px-3 py-2 text-xs font-semibold hover:bg-purple-100 transition-colors"
+                        data-testid="admin-review-right-button-medications"
+                      >
+                        Medications
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      className="w-[320px] p-3 space-y-2"
+                      data-testid="admin-review-right-popover-medications"
+                    >
+                      <AvailableButtonsRow
+                        title="Medications"
+                        testId="admin-review-available-buttons-rx"
+                        emptyText="No medications detected"
+                        items={availableButtons.filter((b) => b.kind === "medication")}
+                        renderItem={(b) => (
+                          <SupportingChipButton
+                            key={buttonKey(b)}
+                            btn={b}
+                            testId="admin-review-med-button"
+                            tone="purple"
+                            prefix="Med"
+                            ultrasoundTests={ultrasoundTests}
+                            isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
+                            onAssign={(target) => assignToTarget(target, b)}
+                          />
+                        )}
+                      />
+                    </PopoverContent>
+                  </Popover>
+
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-xs font-semibold hover:bg-amber-100 transition-colors"
+                        data-testid="admin-review-right-button-symptoms"
+                      >
+                        Symptoms
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      className="w-[320px] p-3 space-y-2"
+                      data-testid="admin-review-right-popover-symptoms"
+                    >
+                      <AvailableButtonsRow
+                        title="Symptoms / History"
+                        testId="admin-review-available-buttons-hx"
+                        emptyText="No symptoms recorded"
+                        items={availableButtons.filter(
+                          (b) => b.kind === "symptom" || b.kind === "history" || b.kind === "prior_test",
+                        )}
+                        renderItem={(b) => (
+                          <SupportingChipButton
+                            key={buttonKey(b)}
+                            btn={b}
+                            testId={b.kind === "prior_test" ? "admin-review-prior-button" : "admin-review-hx-button"}
+                            tone={b.kind === "prior_test" ? "teal" : "amber"}
+                            prefix={b.kind === "prior_test" ? "Prior" : "Hx"}
+                            ultrasoundTests={ultrasoundTests}
+                            isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
+                            onAssign={(target) => assignToTarget(target, b)}
+                          />
+                        )}
+                      />
+                    </PopoverContent>
+                  </Popover>
                 </div>
-
-                <AvailableButtonsRow
-                  title="Diagnoses / ICD"
-                  testId="admin-review-available-buttons-dx"
-                  emptyText="No diagnoses extracted"
-                  items={availableButtons.filter((b) => b.kind === "icd_disease")}
-                  renderItem={(b) => (
-                    <IcdDiseaseButton
-                      key={buttonKey(b)}
-                      btn={b}
-                      ultrasoundTests={ultrasoundTests}
-                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
-                      onAssign={(target) => assignToTarget(target, b)}
-                    />
-                  )}
-                />
-
-                <AvailableButtonsRow
-                  title="Medications"
-                  testId="admin-review-available-buttons-rx"
-                  emptyText="No medications detected"
-                  items={availableButtons.filter((b) => b.kind === "medication")}
-                  renderItem={(b) => (
-                    <SupportingChipButton
-                      key={buttonKey(b)}
-                      btn={b}
-                      testId="admin-review-med-button"
-                      tone="purple"
-                      prefix="Med"
-                      ultrasoundTests={ultrasoundTests}
-                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
-                      onAssign={(target) => assignToTarget(target, b)}
-                    />
-                  )}
-                />
-
-                <AvailableButtonsRow
-                  title="Symptoms / History"
-                  testId="admin-review-available-buttons-hx"
-                  emptyText="No symptoms recorded"
-                  items={availableButtons.filter(
-                    (b) => b.kind === "symptom" || b.kind === "history" || b.kind === "prior_test",
-                  )}
-                  renderItem={(b) => (
-                    <SupportingChipButton
-                      key={buttonKey(b)}
-                      btn={b}
-                      testId={b.kind === "prior_test" ? "admin-review-prior-button" : "admin-review-hx-button"}
-                      tone={b.kind === "prior_test" ? "teal" : "amber"}
-                      prefix={b.kind === "prior_test" ? "Prior" : "Hx"}
-                      ultrasoundTests={ultrasoundTests}
-                      isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
-                      onAssign={(target) => assignToTarget(target, b)}
-                    />
-                  )}
-                />
               </section>
 
               <section className="space-y-2">
@@ -2179,8 +2167,10 @@ function IcdDiseaseButton({
   isAlreadyAssigned: (target: AssignmentTarget) => boolean;
   onAssign: (target: AssignmentTarget) => void;
 }) {
-  // ICD-needed diagnoses are still assignable. Missing ICD code is internal
-  // admin metadata, not a precondition. The button still opens the assign popover.
+  // Diagnoses without an ICD code are still assignable — the visible
+  // label is just the diagnosis name. The internal requiresIcd flag
+  // stays so the rule engine still surfaces the gap on the blocking
+  // panel; no visible ICD-status tag is rendered on the chip.
   if (btn.requiresIcd) {
     return (
       <Popover>
@@ -2191,11 +2181,9 @@ function IcdDiseaseButton({
             data-testid="admin-review-icd-disease-button"
             data-derived="admin-review-dx-derived-diagnosis"
             data-icd-needed-assignable="admin-review-icd-needed-diagnosis-assignable"
+            data-requires-icd="true"
           >
-            <span className="font-semibold" data-testid="admin-review-icd-disease-needed">
-              ICD needed
-            </span>
-            <span>· {btn.label}</span>
+            <span>{btn.label}</span>
             <Plus className="w-3 h-3 opacity-60" />
           </button>
         </PopoverTrigger>
@@ -2286,53 +2274,55 @@ function SupportingChipButton({
   );
 }
 
-function SelectedChip({
+// Slim chip used in the simplified ancillary bars. Renders just the
+// qualifying-factor label with an inline X. `testId` is the bar-
+// specific tag (admin-review-ancillary-factor-chip,
+// admin-review-ultrasound-child-factor-chip) so QA can target the
+// chip even though the visual style is shared.
+function FactorChip({
   b,
-  onRemove,
+  testId,
   removeTestId,
+  inherited = false,
+  onRemove,
 }: {
   b: SupportingButton;
-  onRemove: () => void;
-  // Bar-specific testId for the removal X (e.g.
-  // "admin-review-remove-brainwave-factor"). The generic
-  // "admin-review-remove-qualifying-factor" testid is always also set
-  // so QA can locate the X regardless of which bar it's on.
+  testId: string;
   removeTestId?: string;
+  inherited?: boolean;
+  onRemove: () => void;
 }) {
-  const chipTestId =
+  const toneClass =
     b.kind === "icd_disease"
-      ? "admin-review-ancillary-icd-button"
+      ? "bg-blue-50 text-blue-800 border-blue-200"
       : b.kind === "medication"
-        ? "admin-review-ancillary-med-button"
-        : "admin-review-ancillary-hx-button";
+        ? "bg-purple-50 text-purple-800 border-purple-200"
+        : "bg-amber-50 text-amber-800 border-amber-200";
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${
-        b.kind === "icd_disease"
-          ? "bg-blue-50 text-blue-800 border-blue-200"
-          : b.kind === "medication"
-            ? "bg-purple-50 text-purple-800 border-purple-200"
-            : "bg-amber-50 text-amber-800 border-amber-200"
-      }`}
-      data-testid="admin-review-ancillary-header-chip"
-      data-chip-kind={chipTestId}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${toneClass}`}
+      data-testid={testId}
+      data-chip-kind={b.kind}
+      data-inherited={inherited ? "true" : "false"}
     >
-      <span data-testid={chipTestId} className="contents">
-        {b.icdCode ? `${b.icdCode} · ` : ""}{b.label}
-      </span>
-      <button
-        type="button"
-        aria-label={`Remove ${b.label}`}
-        data-testid="admin-review-remove-qualifying-factor"
-        data-remove-bar={removeTestId ?? "admin-review-unassign-supporting-item"}
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove();
-        }}
-        className="hover:text-rose-600"
-      >
-        <X className="w-3 h-3" />
-      </button>
+      <span>{b.icdCode ? `${b.icdCode} · ` : ""}{b.label}</span>
+      {inherited ? (
+        <span className="text-[9px] opacity-60" aria-hidden>↑</span>
+      ) : (
+        <button
+          type="button"
+          aria-label={`Remove ${b.label}`}
+          data-testid="admin-review-remove-qualifying-factor"
+          data-remove-bar={removeTestId ?? "admin-review-unassign-supporting-item"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="hover:text-rose-600"
+        >
+          <X className="w-3 h-3" />
+        </button>
+      )}
     </span>
   );
 }

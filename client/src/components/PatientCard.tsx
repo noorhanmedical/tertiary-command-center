@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import type { AuthUser } from "@/App";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
 import {
@@ -77,6 +78,12 @@ export function PatientCard({
   const [generatingTests, setGeneratingTests] = useState<Set<string>>(new Set());
   const [editOpen, setEditOpen] = useState(false);
   const [adminReviewOpen, setAdminReviewOpen] = useState(false);
+  // Admin Review is admin-only. Delete is available to Plexus IQ users.
+  const { data: currentUser } = useQuery<AuthUser>({
+    queryKey: ["/api/auth/me"],
+    staleTime: 5 * 60 * 1000,
+  });
+  const isAdmin = currentUser?.role === "admin";
   // Per-category reasoning popup — restored to its prior behavior so
   // clicking a category icon opens that category's detail dialog
   // (BrainWave / VitalWave / Ultrasound). Admin Review lives behind
@@ -472,6 +479,7 @@ export function PatientCard({
                 iconOnly
               />
             )}
+            {/* Delete is available to Plexus IQ users — NOT admin-only. */}
             <button
               type="button"
               onClick={(e) => {
@@ -482,6 +490,7 @@ export function PatientCard({
               title="Remove patient"
               className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors"
               data-testid={`button-delete-patient-${patient.id}`}
+              data-delete-action="plexus-iq-delete-patient"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -562,7 +571,8 @@ export function PatientCard({
                 )}
               </button>
             )}
-            {isPatientPdfEligible(patient) && (
+            {/* Admin Review is admin-only — gated on currentUser.role === "admin". */}
+            {isAdmin && isPatientPdfEligible(patient) && (
               <button
                 type="button"
                 onClick={(e) => {
@@ -581,6 +591,7 @@ export function PatientCard({
                         : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50"
                 }`}
                 data-testid={`button-admin-review-${patient.id}`}
+                data-admin-only="Admin Review is admin-only"
               >
                 <ShieldCheck className="h-4 w-4" />
               </button>

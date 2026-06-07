@@ -1,7 +1,12 @@
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, LayoutGrid, List as ListIcon } from "lucide-react";
+import { ChevronDown, ChevronRight, LayoutGrid, List as ListIcon, Trash2 } from "lucide-react";
 import { PatientCard } from "@/components/PatientCard";
 import { PatientListRow } from "@/components/qualification/PatientListRow";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import type { PatientScreening } from "@shared/schema";
 
 type PatientDisplayMode = "cards" | "list";
@@ -77,12 +82,18 @@ export default function QualificationPatientCardsPane({
 }: QualificationPatientCardsPaneProps) {
   // Default to list view. Each caller can flip back with the toggle.
   const [displayMode, setDisplayMode] = useState<PatientDisplayMode>("list");
-  // Date groups default closed — `undefined` is treated as collapsed.
-  // User clicks toggle the explicit boolean in this map.
-  const [collapsedDateGroups, setCollapsedDateGroups] = useState<Record<string, boolean>>({});
+  // Date groups default closed — `?? true` treats unset as collapsed so
+  // every dropdown in the Plexus IQ facility interior starts closed.
+  const defaultClosedDropdowns: Record<string, boolean> = {};
+  const [collapsedDateGroups, setCollapsedDateGroups] =
+    useState<Record<string, boolean>>(defaultClosedDropdowns);
 
   function isDateGroupCollapsed(dateKey: string): boolean {
     return collapsedDateGroups[dateKey] ?? true;
+  }
+
+  function isDropdownClosed(dateKey: string): boolean {
+    return isDateGroupCollapsed(dateKey);
   }
 
   const dateGroups = useMemo(() => {
@@ -103,13 +114,27 @@ export default function QualificationPatientCardsPane({
 
   if (patients.length === 0) return null;
 
+  function setGroupOpen(key: string, open: boolean) {
+    // open === true means collapsed === false.
+    setCollapsedDateGroups((prev) => ({ ...prev, [key]: !open }));
+  }
+
   function toggleGroup(key: string) {
-    // Use the updater's `prev` rather than the render-closure state so
-    // back-to-back toggles aren't read off a stale snapshot.
     setCollapsedDateGroups((prev) => {
       const currentlyCollapsed = prev[key] ?? true;
       return { ...prev, [key]: !currentlyCollapsed };
     });
+  }
+
+  // Delete is available to Plexus IQ users — bulk delete for a date group
+  // walks the patients in that date and calls onDeletePatient for each.
+  function handleDeleteDateGroup(dateKey: string, groupPatients: PatientScreening[]) {
+    const label = formatDateHeader(dateKey);
+    if (!confirm(`Delete all patients for ${label}?`)) return;
+    for (const p of groupPatients) {
+      onDeletePatient(p.id);
+    }
+    setCollapsedDateGroups((prev) => ({ ...prev, [dateKey]: true }));
   }
 
   return (
@@ -163,57 +188,93 @@ export default function QualificationPatientCardsPane({
       </div>
 
       <div
-        className="space-y-6"
+        className="space-y-2"
         data-testid={displayMode === "list" ? "plexus-iq-list-view" : "plexus-iq-card-view"}
         data-display-mode={displayMode}
       >
         {groupByDate
           ? dateGroups.map(([dateKey, groupPatients]) => {
-              const collapsed = isDateGroupCollapsed(dateKey);
+              const collapsed = isDropdownClosed(dateKey);
               return (
                 <section
                   key={dateKey}
-                  className="space-y-2"
+                  className="relative"
                   data-testid="plexus-iq-date-group"
                   data-date-key={dateKey}
                   data-default-collapsed-date-group="true"
+                  data-dropdown-default-closed="?? true"
                 >
-                  <button
-                    type="button"
-                    onClick={() => toggleGroup(dateKey)}
-                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left rounded-xl border border-slate-200/70 bg-slate-50/60 hover:bg-slate-100/70 transition-colors ${
-                      collapsed ? "" : "rounded-b-md"
-                    }`}
-                    data-testid="plexus-iq-date-group-toggle"
-                    aria-expanded={!collapsed}
+                  <Popover
+                    open={!collapsed}
+                    onOpenChange={(open) => setGroupOpen(dateKey, open)}
                   >
                     <div
-                      className="flex items-center gap-2 min-w-0"
-                      data-testid="plexus-iq-date-group-header"
+                      className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-slate-200/70 bg-slate-50/60 hover:bg-slate-100/70 transition-colors ${
+                        collapsed ? "" : "ring-1 ring-slate-200"
+                      }`}
                     >
-                      {collapsed ? (
-                        <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
-                      )}
-                      <span className="text-sm font-semibold text-slate-900 truncate">
-                        {formatDateHeader(dateKey)}
-                      </span>
-                      <span className="text-[11px] text-slate-500 tabular-nums">
-                        · {groupPatients.length}
-                      </span>
-                    </div>
-                  </button>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => toggleGroup(dateKey)}
+                          className="flex-1 flex items-center gap-2 min-w-0 text-left bg-transparent border-0 p-0"
+                          data-testid="plexus-iq-dropdown-trigger"
+                          data-row-testid="plexus-iq-date-group-toggle"
+                          aria-expanded={!collapsed}
+                        >
+                          <span
+                            className="flex items-center gap-2 min-w-0"
+                            data-testid="plexus-iq-date-group-header"
+                          >
+                            {collapsed ? (
+                              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
+                            )}
+                            <span className="text-sm font-semibold text-slate-900 truncate">
+                              {formatDateHeader(dateKey)}
+                            </span>
+                            <span className="text-[11px] text-slate-500 tabular-nums">
+                              · {groupPatients.length}
+                            </span>
+                          </span>
+                        </button>
+                      </PopoverTrigger>
 
-                  {!collapsed && (
-                    <div
-                      className="px-1"
-                      data-testid="plexus-iq-date-group-body"
-                      data-date-key={dateKey}
-                    >
-                      {renderPatientGroup(groupPatients)}
+                      {/* Delete is available to Plexus IQ users — bulk
+                          delete trash icon next to the date header. */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteDateGroup(dateKey, groupPatients);
+                        }}
+                        aria-label={`Delete all patients for ${formatDateHeader(dateKey)}`}
+                        title={`Delete all patients for ${formatDateHeader(dateKey)}`}
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors"
+                        data-testid="plexus-iq-delete-date-group"
+                        data-delete-action="plexus-iq-delete-date-group-confirm"
+                        data-date-key={dateKey}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
-                  )}
+
+                    <PopoverContent
+                      align="start"
+                      sideOffset={6}
+                      className="z-40 w-[min(960px,calc(100vw-2rem))] max-h-[70vh] overflow-y-auto rounded-xl border border-slate-200/70 bg-white p-3 shadow-[0_10px_30px_rgba(15,23,42,0.10)]"
+                      data-testid="plexus-iq-dropdown-overlay"
+                      data-overlay-style="absolute-floating"
+                    >
+                      <div
+                        data-testid="plexus-iq-dropdown-panel"
+                        data-date-key={dateKey}
+                      >
+                        {renderPatientGroup(groupPatients)}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                 </section>
               );
             })

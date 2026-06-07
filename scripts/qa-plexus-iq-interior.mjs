@@ -418,8 +418,18 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "admin-review-source-hx",
   "admin-review-source-dx",
   "admin-review-source-rx",
-  // Available Buttons section (no ICD search here — moved to left column).
-  "admin-review-available-buttons",
+  // Right panel: Available Buttons are now behind 3 popover triggers
+  // (Diagnosis / Medications / Symptoms). The header copy ("Available
+  // Buttons" + helper text) was intentionally removed.
+  "admin-review-right-panel-buttons",
+  "admin-review-right-button-diagnosis",
+  "admin-review-right-button-medications",
+  "admin-review-right-button-symptoms",
+  "admin-review-right-popover-diagnosis",
+  "admin-review-right-popover-medications",
+  "admin-review-right-popover-symptoms",
+  // The popovers still render the per-category AvailableButtonsRow
+  // (Dx / Rx / Hx).
   "admin-review-available-buttons-dx",
   "admin-review-available-buttons-rx",
   "admin-review-available-buttons-hx",
@@ -443,7 +453,6 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "admin-review-hx-derived-symptom",
   "admin-review-icd-disease-button",
   "admin-review-icd-disease-assigned",
-  "admin-review-icd-disease-needed",
   "admin-review-med-button",
   "admin-review-hx-button",
   // OpenAI ICD search controls + universal copy.
@@ -463,25 +472,22 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "admin-review-assign-ultrasound-test",
   "admin-review-assign-all",
   "admin-review-unassign-supporting-item",
-  // Ancillary panels (BrainWave + VitalWave).
+  // Simplified ancillary panels (BrainWave + VitalWave).
   "admin-review-ancillary-colored-panel",
-  "admin-review-ancillary-services-list",
-  "admin-review-ancillary-selected-list",
-  "admin-review-ancillary-header-chip",
-  "admin-review-ancillary-icd-button",
-  "admin-review-ancillary-med-button",
-  "admin-review-ancillary-hx-button",
+  "admin-review-ancillary-factor-chip",
   "admin-review-ancillary-expanded",
   "admin-review-regenerate-ancillary",
   "admin-review-regenerate-brainwave",
   "admin-review-regenerate-vitalwave",
-  // Ultrasound parent + child bars.
+  // Icon-only Regenerate / Delete buttons on every ancillary bar.
+  "admin-review-regenerate-icon-button",
+  "admin-review-delete-icon-button",
+  // Ultrasound parent + child bars (simplified to chip + icon row).
   "admin-review-ultrasound-parent-panel",
   "admin-review-ultrasound-child-panel",
-  "admin-review-ultrasound-child-selected-list",
-  "admin-review-ultrasound-child-icd-button",
-  "admin-review-ultrasound-child-med-button",
-  "admin-review-ultrasound-child-hx-button",
+  "admin-review-ultrasound-child-factor-chip",
+  "admin-review-ultrasound-regenerate-icon-button",
+  "admin-review-ultrasound-delete-icon-button",
   "admin-review-regenerate-ultrasound-test",
   "admin-review-regenerate-ultrasound",
   // Canonical reasoning binding (preserved).
@@ -501,6 +507,35 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "VitalWave",
   "Ultrasound Studies",
 ]);
+
+// Admin Review forbidden visible copy. The simplified bars and the
+// new 3-button right panel must NOT carry helper labels, status copy,
+// or the legacy "ICD needed" tag.
+requireNotText(
+  "client/src/components/qualification/AdminReviewDialog.tsx",
+  [
+    "Available Buttons",
+    "Select items to add to BrainWave, VitalWave, or Ultrasound.",
+    "ICD needed",
+    "Services:",
+    "Selected:",
+    "Supporting:",
+    "No supporting items selected",
+    "supporting · click to expand",
+  ],
+  "Admin Review must drop legacy helper / status copy from bars and right panel",
+);
+
+// "Needs Info" must still exist on the right-panel approval button
+// (admin-review-button-needs-info-*), but must not appear as a status
+// label inside the ancillary panel headers anymore.
+const adminReviewSource =
+  read("client/src/components/qualification/AdminReviewDialog.tsx") ?? "";
+if (/text-slate-700\/80[^}]*Needs Info/.test(adminReviewSource)) {
+  failures.push(
+    'AdminReviewDialog must not render "Needs Info" status label on ancillary bars',
+  );
+}
 
 // Forbidden: legacy regenerate buttons, manual ICD form, count copy, etc.
 requireNotText(
@@ -589,14 +624,21 @@ requireText(cardsPane, [
   'useState<PatientDisplayMode>("list")',
   // Date groups.
   "plexus-iq-date-group",
-  "plexus-iq-date-group-toggle",
   "plexus-iq-date-group-header",
-  "plexus-iq-date-group-body",
   // Default-collapsed date-group helper.
   "isDateGroupCollapsed",
+  "isDropdownClosed",
   "?? true",
   // Updater-based toggle (no closure-state read).
   "prev[key] ?? true",
+  // Dropdown bodies must overlay instead of pushing content down.
+  "plexus-iq-dropdown-overlay",
+  "plexus-iq-dropdown-trigger",
+  "plexus-iq-dropdown-panel",
+  // Delete per date is available to Plexus IQ users.
+  "plexus-iq-delete-date-group",
+  "plexus-iq-delete-date-group-confirm",
+  "Delete is available to Plexus IQ users",
   // groupByDate prop must be supported so nested-date contexts opt out.
   "groupByDate",
   // Card vs list view containers.
@@ -626,6 +668,22 @@ requireText(listRow, [
   "stopPropagation",
   "AdminReviewDialog",
   "PatientPdfActions",
+  // Admin Review is admin-only — list row gates the button on the
+  // current user's role and tags the wrapper for QA visibility.
+  "Admin Review is admin-only",
+  'currentUser?.role === "admin"',
+  // Delete remains available to Plexus IQ users (NOT admin-only).
+  "Delete is available to Plexus IQ users",
+  "plexus-iq-delete-patient",
+]);
+
+// PatientCard mirrors the same permission rule for its in-card Admin
+// Review button and trash control.
+requireText(patientCard, [
+  "Admin Review is admin-only",
+  'currentUser?.role === "admin"',
+  "Delete is available to Plexus IQ users",
+  "plexus-iq-delete-patient",
 ]);
 
 // Facility / dashboard bucket labels: visible strings + centralized const.
