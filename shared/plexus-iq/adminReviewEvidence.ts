@@ -17,9 +17,28 @@ export type AdminEvidenceChip = {
   detail?: string | null;
   icdCode?: string | null;
   icdLabel?: string | null;
+  // requiresIcd is metadata only: the chip is still placeable on any
+  // ancillary bar regardless of this flag.
+  // SOURCE MARKER: requiresIcd does not block chip placement
   requiresIcd?: boolean;
   suggestedIcds?: Array<{ code: string; label: string }>;
   confidence?: "high" | "medium" | "low";
+};
+
+// A diagnosis SUGGESTION derived from a medication or risk-factor cue.
+// Suggestions are inactive — they appear in the right-panel popover for
+// the user to optionally accept. They are NOT auto-promoted to
+// AdminEvidenceChip.
+//
+// SOURCE MARKER: Medications do not auto-create diagnoses
+// SOURCE MARKER: Medication-derived diagnosis suggestions are inactive until accepted
+export type AdminDiagnosisSuggestion = {
+  id: string;
+  label: string;
+  reason: string;
+  source: "Rx" | "Hx" | "AI";
+  triggerLabel?: string;
+  suggestedIcds?: Array<{ code: string; label: string }>;
 };
 
 export type AdminReviewAncillaryId = "brainwave" | "vitalwave" | "ultrasound";
@@ -34,6 +53,9 @@ export type AdminReviewRuleCandidate = {
 
 export type AdminReviewRuleResult = {
   evidence: AdminEvidenceChip[];
+  // Diagnosis suggestions (inactive until accepted). Always disjoint
+  // from `evidence` so a suggestion never doubles as an active chip.
+  suggestions: AdminDiagnosisSuggestion[];
   candidates: AdminReviewRuleCandidate[];
   flags: {
     under16: boolean;
@@ -65,7 +87,48 @@ export const COMMON_ICD_SUGGESTIONS: Record<string, Array<{ code: string; label:
   pvd: [
     { code: "I73.9", label: "Peripheral vascular disease, unspecified" },
   ],
+  venous_insufficiency: [
+    { code: "I87.2", label: "Venous insufficiency (chronic) (peripheral)" },
+  ],
+  dvt: [
+    { code: "I82.40", label: "Acute embolism and thrombosis of unspecified deep veins of lower extremity" },
+  ],
+  varicose: [
+    { code: "I83.90", label: "Asymptomatic varicose veins of unspecified lower extremity" },
+  ],
 };
+
+// Class of meds that suggest a diagnosis but never prove one. Each
+// entry contains the medication label as it appears in Rx, the
+// diagnosis the prescriber is *likely* treating, and the rationale
+// shown to the user when they hover the suggestion chip.
+//
+// SOURCE MARKER: Medications do not auto-create diagnoses
+export const COMMON_MEDICATION_SUGGESTIONS: Array<{
+  diagnosisLabel: string;
+  diagnosisKey: keyof typeof COMMON_ICD_SUGGESTIONS;
+  triggers: string[];
+  reason: string;
+}> = [
+  {
+    diagnosisLabel: "Diabetes mellitus",
+    diagnosisKey: "diabetes",
+    triggers: ["metformin", "insulin", "glp-1", "semaglutide", "ozempic", "jardiance", "farxiga", "empagliflozin", "dapagliflozin"],
+    reason: "Antidiabetic medication may suggest diabetes mellitus",
+  },
+  {
+    diagnosisLabel: "Hypertension",
+    diagnosisKey: "hypertension",
+    triggers: ["amlodipine", "lisinopril", "losartan", "metoprolol", "hctz", "hydrochlorothiazide", "valsartan", "carvedilol"],
+    reason: "Antihypertensive medication may suggest hypertension",
+  },
+  {
+    diagnosisLabel: "Hyperlipidemia",
+    diagnosisKey: "hyperlipidemia",
+    triggers: ["atorvastatin", "rosuvastatin", "pravastatin", "simvastatin", "statin", "ezetimibe"],
+    reason: "Statin/lipid medication may suggest hyperlipidemia",
+  },
+];
 
 function normalize(value: unknown): string {
   return String(value ?? "").toLowerCase();
@@ -86,6 +149,141 @@ function pushUnique(out: AdminEvidenceChip[], chip: AdminEvidenceChip) {
   if (!out.some((x) => x.id === chip.id)) out.push(chip);
 }
 
+// ─── Ultrasound test classification helpers ─────────────────────────
+// These split ultrasound subtests by vascular bed so the per-test bar
+// only seeds chips with relevant clinical support. A venous test
+// pulls edema/swelling/DVT support; an arterial/PVD test pulls
+// claudication/PVD support; carotid pulls dizziness/bruit; echo pulls
+// dyspnea/HTN/cardiac.
+
+const VENOUS_TERMS = ["venous", "vein", "venous reflux", "venous insufficiency", "lower extremity venous", "upper extremity venous", "dvt", "duplex venous"];
+const ARTERIAL_TERMS = ["arterial", "abi", "ankle-brachial", "pad", "pvd", "peripheral arterial"];
+const CAROTID_TERMS = ["carotid"];
+const ECHO_TERMS = ["echo", "echocardiogram", "tte", "tee"];
+const RENAL_ABDO_TERMS = ["renal", "kidney", "aorta", "aaa", "abdominal"];
+
+export function isVenousUltrasoundTest(testName: string | null | undefined): boolean {
+  const t = normalize(testName);
+  if (!t) return false;
+  return VENOUS_TERMS.some((term) => t.includes(term));
+}
+
+export function isArterialUltrasoundTest(testName: string | null | undefined): boolean {
+  const t = normalize(testName);
+  if (!t) return false;
+  return ARTERIAL_TERMS.some((term) => t.includes(term));
+}
+
+export function isCarotidUltrasoundTest(testName: string | null | undefined): boolean {
+  const t = normalize(testName);
+  if (!t) return false;
+  return CAROTID_TERMS.some((term) => t.includes(term));
+}
+
+export function isEchoUltrasoundTest(testName: string | null | undefined): boolean {
+  const t = normalize(testName);
+  if (!t) return false;
+  return ECHO_TERMS.some((term) => t.includes(term));
+}
+
+// Per-test ancillary support. Returns the subset of evidence chips
+// (already built by buildAdminReviewEvidence) that are clinically
+// supportive for the named ultrasound test. Medication chips are
+// always included as supporting meds — they never become a diagnosis.
+export function evidenceForUltrasoundTest(
+  testName: string,
+  evidence: AdminEvidenceChip[],
+): AdminEvidenceChip[] {
+  if (!evidence || evidence.length === 0) return [];
+  const venous = isVenousUltrasoundTest(testName);
+  const arterial = isArterialUltrasoundTest(testName);
+  const carotid = isCarotidUltrasoundTest(testName);
+  const echo = isEchoUltrasoundTest(testName);
+  const renal = RENAL_ABDO_TERMS.some((t) => normalize(testName).includes(t));
+
+  const out: AdminEvidenceChip[] = [];
+  for (const chip of evidence) {
+    const label = chip.label.toLowerCase();
+    // Medications are always supporting context — they support any test.
+    // SOURCE MARKER: Medications do not auto-create diagnoses
+    if (chip.kind === "medication") {
+      out.push(chip);
+      continue;
+    }
+    if (venous) {
+      if (
+        ["edema", "swelling", "venous", "dvt", "varicose", "leg swelling", "calf pain", "leg pain"].some((t) => label.includes(t))
+      ) {
+        out.push(chip);
+        continue;
+      }
+      // Vascular risk diagnoses qualify a venous test only when they
+      // arrived from Dx (i.e. an explicit diagnosis), never from a med.
+      if (
+        chip.kind === "diagnosis" &&
+        chip.source !== "Rx" &&
+        ["diabetes", "hypertension", "hyperlipidemia", "pvd", "peripheral vascular"].some((t) => label.includes(t))
+      ) {
+        out.push(chip);
+        continue;
+      }
+    }
+    if (carotid) {
+      if (["dizziness", "syncope", "bruit", "neurovascular", "stroke", "tia"].some((t) => label.includes(t))) {
+        out.push(chip);
+        continue;
+      }
+      if (
+        chip.kind === "diagnosis" &&
+        chip.source !== "Rx" &&
+        ["hypertension", "hyperlipidemia", "diabetes", "pvd"].some((t) => label.includes(t))
+      ) {
+        out.push(chip);
+        continue;
+      }
+    }
+    if (arterial) {
+      if (["claudication", "pvd", "peripheral vascular", "leg pain"].some((t) => label.includes(t))) {
+        out.push(chip);
+        continue;
+      }
+      if (
+        chip.kind === "diagnosis" &&
+        chip.source !== "Rx" &&
+        ["diabetes", "hypertension", "hyperlipidemia"].some((t) => label.includes(t))
+      ) {
+        out.push(chip);
+        continue;
+      }
+    }
+    if (echo) {
+      if (["dyspnea", "edema", "shortness of breath", "chest pain", "palpitations"].some((t) => label.includes(t))) {
+        out.push(chip);
+        continue;
+      }
+      if (
+        chip.kind === "diagnosis" &&
+        chip.source !== "Rx" &&
+        ["hypertension", "heart failure", "cad", "coronary"].some((t) => label.includes(t))
+      ) {
+        out.push(chip);
+        continue;
+      }
+    }
+    if (renal) {
+      if (
+        chip.kind === "diagnosis" &&
+        chip.source !== "Rx" &&
+        ["hypertension", "diabetes", "ckd", "kidney"].some((t) => label.includes(t))
+      ) {
+        out.push(chip);
+        continue;
+      }
+    }
+  }
+  return out;
+}
+
 export function buildAdminReviewEvidence(input: {
   age?: number | null;
   hx?: string | null;
@@ -101,20 +299,26 @@ export function buildAdminReviewEvidence(input: {
   const rx = normalize(`${input.rx ?? ""} ${input.medications ?? ""}`);
   const icdText = normalize(input.icdText);
   const prior = normalize(input.previousTests);
-  const all = `${hx} ${dx} ${rx} ${icdText} ${prior}`;
+  const dxAndIcd = `${dx} ${icdText}`;
 
   const evidence: AdminEvidenceChip[] = [];
+  const suggestions: AdminDiagnosisSuggestion[] = [];
   const under16 = typeof input.age === "number" && input.age < 16;
 
-  const diagnosis = (
+  // Diagnosis chip seeding: ONLY look at Dx/ICD text. Medications are
+  // explicitly excluded from the diagnosis trigger set — a statin in
+  // Rx must never auto-create a Hyperlipidemia chip.
+  //
+  // SOURCE MARKER: Medications do not auto-create diagnoses
+  const seedDiagnosis = (
     label: string,
     key: keyof typeof COMMON_ICD_SUGGESTIONS,
-    codeChecks: string[],
-    terms: string[],
-    source: AdminEvidenceSource = "AI",
+    dxTerms: string[],
+    source: AdminEvidenceSource = "Dx",
   ) => {
-    if (!hasAny(all, terms)) return;
-    const matchedCode = codeChecks.find((c) => icdText.includes(c.toLowerCase())) ?? null;
+    if (!hasAny(dxAndIcd, dxTerms)) return;
+    const codeChecks = COMMON_ICD_SUGGESTIONS[key]?.map((s) => s.code.toLowerCase()) ?? [];
+    const matchedCode = codeChecks.find((c) => icdText.includes(c))?.toUpperCase() ?? null;
     pushUnique(evidence, {
       id: stableId("diagnosis", label, source, matchedCode),
       kind: "diagnosis",
@@ -124,22 +328,22 @@ export function buildAdminReviewEvidence(input: {
       icdLabel: matchedCode
         ? COMMON_ICD_SUGGESTIONS[key]?.find((s) => s.code === matchedCode)?.label ?? null
         : null,
+      // requiresIcd is metadata only — chip is still placeable.
+      // SOURCE MARKER: requiresIcd does not block chip placement
       requiresIcd: !matchedCode,
       suggestedIcds: !matchedCode ? COMMON_ICD_SUGGESTIONS[key] : [],
       confidence: "high",
-      detail: "Extracted from Hx/Dx/Rx",
+      detail: "Extracted from Dx/ICD text",
     });
   };
 
-  diagnosis("Diabetes mellitus", "diabetes", ["E11.9", "E11.40"], [
-    "diabetes", "dm2", "metformin", "insulin", "glp-1", "semaglutide", "jardiance", "farxiga",
-  ]);
-  diagnosis("Hypertension", "hypertension", ["I10"], [
-    "hypertension", "htn", "amlodipine", "lisinopril", "losartan", "hctz", "hydrochlorothiazide", "metoprolol",
-  ]);
-  diagnosis("Hyperlipidemia", "hyperlipidemia", ["E78.5"], [
-    "hyperlipidemia", "hld", "atorvastatin", "rosuvastatin", "pravastatin", "simvastatin", "statin",
-  ]);
+  seedDiagnosis("Diabetes mellitus", "diabetes", ["diabetes", "dm2", "type 2 dm", "e11"]);
+  seedDiagnosis("Hypertension", "hypertension", ["hypertension", "htn", "i10"]);
+  seedDiagnosis("Hyperlipidemia", "hyperlipidemia", ["hyperlipidemia", "hld", "dyslipidemia", "e78"]);
+  seedDiagnosis("Venous insufficiency", "venous_insufficiency", ["venous insufficiency", "venous reflux", "i87"]);
+  seedDiagnosis("DVT", "dvt", ["dvt", "deep vein thrombosis", "i82"]);
+  seedDiagnosis("Varicose veins", "varicose", ["varicose", "i83"]);
+  seedDiagnosis("Peripheral vascular disease", "pvd", ["pvd", "pad", "peripheral vascular", "i73"]);
 
   const meds: Array<[string, string[]]> = [
     ["Metformin", ["metformin"]],
@@ -151,6 +355,9 @@ export function buildAdminReviewEvidence(input: {
     ["Atorvastatin", ["atorvastatin"]],
     ["Rosuvastatin", ["rosuvastatin"]],
     ["Aspirin", ["aspirin"]],
+    ["Apixaban", ["apixaban", "eliquis"]],
+    ["Rivaroxaban", ["rivaroxaban", "xarelto"]],
+    ["Warfarin", ["warfarin", "coumadin"]],
   ];
 
   for (const [label, terms] of meds) {
@@ -165,15 +372,41 @@ export function buildAdminReviewEvidence(input: {
     }
   }
 
+  // Medication-derived diagnosis SUGGESTIONS. These are inactive —
+  // they live in `suggestions` until the user clicks accept in the
+  // right-panel Diagnosis popover, at which point the UI promotes
+  // them to a real diagnosis SupportingButton.
+  //
+  // SOURCE MARKER: Medication-derived diagnosis suggestions are inactive until accepted
+  const alreadyDiagnosed = new Set(
+    evidence.filter((e) => e.kind === "diagnosis").map((e) => e.label.toLowerCase()),
+  );
+  for (const cue of COMMON_MEDICATION_SUGGESTIONS) {
+    if (alreadyDiagnosed.has(cue.diagnosisLabel.toLowerCase())) continue;
+    const hit = cue.triggers.find((t) => rx.includes(t));
+    if (!hit) continue;
+    suggestions.push({
+      id: stableId("suggestion", cue.diagnosisLabel, "Rx", hit),
+      label: cue.diagnosisLabel,
+      reason: `${cue.reason} (Rx: ${hit})`,
+      source: "Rx",
+      triggerLabel: hit,
+      suggestedIcds: COMMON_ICD_SUGGESTIONS[cue.diagnosisKey] ?? [],
+    });
+  }
+
   const symptoms: Array<[string, keyof typeof COMMON_ICD_SUGGESTIONS, string[]]> = [
-    ["Lower extremity edema", "edema", ["edema", "swelling"]],
-    ["Dizziness / neurovascular symptom", "dizziness", ["dizziness", "syncope", "bruit"]],
+    ["Lower extremity edema", "edema", ["edema", "swelling", "leg swelling"]],
+    ["Dizziness / neurovascular symptom", "dizziness", ["dizziness", "syncope", "bruit", "vertigo"]],
     ["Dyspnea", "dyspnea", ["dyspnea", "shortness of breath", "sob"]],
     ["Peripheral vascular disease concern", "pvd", ["claudication", "pad", "pvd", "leg pain"]],
+    ["Venous stasis / varicose history", "varicose", ["varicose", "venous stasis", "spider veins"]],
+    ["Prior DVT", "dvt", ["dvt", "deep vein thrombosis"]],
+    ["Calf pain", "edema", ["calf pain"]],
   ];
 
   for (const [label, key, terms] of symptoms) {
-    if (hasAny(all, terms)) {
+    if (hasAny(hx, terms)) {
       const code = COMMON_ICD_SUGGESTIONS[key]?.find((s) => icdText.includes(s.code.toLowerCase()))?.code ?? null;
       pushUnique(evidence, {
         id: stableId("symptom", label, "Hx", code),
@@ -236,7 +469,7 @@ export function buildAdminReviewEvidence(input: {
       label: "BrainWave",
       status: under16
         ? "admin_approval_required"
-        : hasAny(all, ["dizziness", "syncope", "neuropathy"])
+        : hasAny(`${hx} ${dx}`, ["dizziness", "syncope", "neuropathy"])
           ? "suggested"
           : "needs_info",
       evidenceIds: evidence
@@ -248,6 +481,7 @@ export function buildAdminReviewEvidence(input: {
 
   return {
     evidence,
+    suggestions,
     candidates,
     flags: {
       under16,

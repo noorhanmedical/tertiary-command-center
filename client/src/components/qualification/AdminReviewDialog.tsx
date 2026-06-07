@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Popover,
   PopoverContent,
@@ -25,8 +26,14 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Lightbulb,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Sparkles,
+  StickyNote,
   Trash2,
   X,
   Search,
@@ -47,7 +54,9 @@ import type {
   AdminReviewRuleCandidate,
   AdminReviewRuleResult,
   AdminEvidenceChip,
+  AdminDiagnosisSuggestion,
 } from "@shared/plexus-iq/adminReviewEvidence";
+import { evidenceForUltrasoundTest } from "@shared/plexus-iq/adminReviewEvidence";
 
 export type AdminReviewDialogProps = {
   open: boolean;
@@ -85,13 +94,47 @@ const STATUS_META: Record<
     pillClass: "bg-emerald-50 text-emerald-800 border border-emerald-200",
   },
   needs_info: {
-    label: "Needs Info",
+    // Visible label kept short to avoid the legacy needs-info phrasing
+    // that lived on ancillary bars. The approval state itself remains
+    // `needs_info` for backend compat.
+    label: "Pending Info",
     pillClass: "bg-amber-50 text-amber-800 border border-amber-200",
   },
   rejected: {
     label: "Rejected",
     pillClass: "bg-rose-50 text-rose-800 border border-rose-200",
   },
+};
+
+// Audit/change-log entry shown in the bottom "Updates Made In Patient"
+// box. This is a thin trace surface, not a second clinical truth
+// layer — every entry mirrors an action the admin took during this
+// review session.
+export type AdminReviewUpdateType =
+  | "diagnosis_added"
+  | "medication_added"
+  | "symptom_added"
+  | "icd_added"
+  | "suggestion_accepted"
+  | "qualifying_factor_removed"
+  | "ancillary_removed"
+  | "ultrasound_child_removed"
+  | "regenerate"
+  | "pdf_previewed"
+  | "admin_note_updated"
+  | "approval_approved"
+  | "approval_pended"
+  | "approval_needs_info"
+  | "approval_rejected"
+  | "scheduler_routing_changed";
+
+export type AdminReviewUpdateEntry = {
+  id: string;
+  type: AdminReviewUpdateType;
+  label: string;
+  at: string;
+  by?: string | null;
+  metadata?: Record<string, unknown>;
 };
 
 const CONFIDENCE_TONE: Record<string, string> = {
@@ -590,6 +633,27 @@ export function AdminReviewDialog({
 
   const [regenInFlight, setRegenInFlight] = useState<Record<string, boolean>>({});
 
+  // Suggestion acceptance — a med-derived diagnosis becomes a real
+  // SupportingButton only after the admin clicks accept.
+  const [acceptedSuggestions, setAcceptedSuggestions] = useState<SupportingButton[]>([]);
+
+  // Layout state — left/right panels default open, collapsible via
+  // header toggle buttons. Source tab is the default left tab.
+  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [leftTab, setLeftTab] = useState<
+    "source" | "patient-directory" | "cooldown" | "insurance" | "history"
+  >("source");
+
+  // Audit log. Seeded from patient.reasoning["adminReview:updates"]
+  // so prior persisted entries survive a dialog reopen. New entries
+  // append at the top and persist via onUpdate when the type allows.
+  const [updatesLog, setUpdatesLog] = useState<AdminReviewUpdateEntry[]>(() => {
+    const stored = (reasoningObject as Record<string, unknown>)["adminReview:updates"];
+    if (Array.isArray(stored)) return stored as AdminReviewUpdateEntry[];
+    return [];
+  });
+
   useEffect(() => {
     if (!open) return;
     setAssignments(seedAssignmentsFromReasoning(reasoningAsObject(patient.reasoning)));
@@ -598,12 +662,40 @@ export function AdminReviewDialog({
     setIcdSearchQuery("");
     setAiIcdButtons([]);
     setUltrasoundChildExpanded({});
+    setAcceptedSuggestions([]);
     setRemovedFactors({
       brainwave: [],
       vitalwave: [],
       ultrasound: { parent: [], byTestName: {} },
     });
+    const stored = reasoningAsObject(patient.reasoning)["adminReview:updates"];
+    setUpdatesLog(Array.isArray(stored) ? (stored as AdminReviewUpdateEntry[]) : []);
   }, [open, patient.id, patient.reasoning]);
+
+  // recordAdminReviewUpdate — append to the session log and persist
+  // to patient.reasoning["adminReview:updates"] so the audit trail
+  // survives across reopens. Safe metadata-only persistence; never
+  // mutates Hx/Dx/Rx.
+  function recordAdminReviewUpdate(
+    type: AdminReviewUpdateType,
+    label: string,
+    metadata?: Record<string, unknown>,
+  ) {
+    const entry: AdminReviewUpdateEntry = {
+      id: `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      type,
+      label,
+      at: new Date().toISOString(),
+      metadata,
+    };
+    setUpdatesLog((prev) => {
+      const next = [entry, ...prev].slice(0, 200);
+      const reasoning = reasoningAsObject(patient.reasoning);
+      const nextReasoning = { ...reasoning, "adminReview:updates": next };
+      onUpdate("reasoning", nextReasoning);
+      return next;
+    });
+  }
 
   const apiEvidence: AdminEvidenceChip[] = evidenceQuery.data?.evidence ?? [];
 
@@ -636,11 +728,15 @@ export function AdminReviewDialog({
     [hxButtons, apiEvidence],
   );
 
-  // Dedicated AI ICD result buttons (user-added via search).
+  // Dedicated AI ICD result buttons (user-added via search) + accepted
+  // medication-derived suggestions. A suggestion only enters this list
+  // after the admin explicitly clicks accept — until then it lives in
+  // the right-panel Diagnosis popover as a dashed inactive chip.
+  // SOURCE MARKER: Medication-derived diagnosis suggestions are inactive until accepted
   const availableButtons = useMemo(() => {
     const seen = new Set<string>();
     const out: SupportingButton[] = [];
-    for (const list of [mergedDx, aiIcdButtons, mergedRx, mergedHx]) {
+    for (const list of [mergedDx, aiIcdButtons, acceptedSuggestions, mergedRx, mergedHx]) {
       for (const b of list) {
         const k = buttonKey(b);
         if (!seen.has(k)) {
@@ -650,7 +746,48 @@ export function AdminReviewDialog({
       }
     }
     return out;
-  }, [mergedDx, mergedRx, mergedHx, aiIcdButtons]);
+  }, [mergedDx, mergedRx, mergedHx, aiIcdButtons, acceptedSuggestions]);
+
+  // Rule-engine suggestions filtered to those NOT already accepted or
+  // covered by an existing diagnosis chip.
+  const ruleSuggestions: AdminDiagnosisSuggestion[] =
+    evidenceQuery.data?.suggestions ?? [];
+  const activeDiagnosisLabels = useMemo(() => {
+    const labels = new Set<string>();
+    for (const b of availableButtons) {
+      if (b.kind === "icd_disease") labels.add(b.label.toLowerCase());
+    }
+    return labels;
+  }, [availableButtons]);
+  const visibleSuggestions = useMemo(
+    () => ruleSuggestions.filter((s) => !activeDiagnosisLabels.has(s.label.toLowerCase())),
+    [ruleSuggestions, activeDiagnosisLabels],
+  );
+
+  function acceptDiagnosisSuggestion(s: AdminDiagnosisSuggestion) {
+    const chip: SupportingButton = {
+      id: makeId(["suggestion", s.id]),
+      kind: "icd_disease",
+      label: s.label,
+      source: "AI ICD Search",
+      sourceText: s.reason,
+      icdCode: s.suggestedIcds?.[0]?.code ?? null,
+      icdLabel: s.suggestedIcds?.[0]?.label ?? null,
+      // requiresIcd does not block placement — an accepted suggestion
+      // is a real diagnosis chip even if no code is selected.
+      // SOURCE MARKER: requiresIcd does not block chip placement
+      requiresIcd: !s.suggestedIcds?.[0]?.code,
+      confidence: "medium",
+    };
+    setAcceptedSuggestions((prev) => {
+      if (prev.some((b) => buttonKey(b) === buttonKey(chip))) return prev;
+      return [...prev, chip];
+    });
+    recordAdminReviewUpdate("suggestion_accepted", `Accepted suggestion: ${s.label}`, {
+      suggestionId: s.id,
+      trigger: s.triggerLabel ?? null,
+    });
+  }
 
   const candidates: AdminReviewRuleCandidate[] = evidenceQuery.data?.candidates ?? [];
   const candidateById = useMemo(() => {
@@ -684,6 +821,118 @@ export function AdminReviewDialog({
   );
 
   const ultrasoundTests = canonicalReasoningByAncillary.ultrasound.map((c) => c.testName);
+
+  // Convert rule-engine AdminEvidenceChip → SupportingButton so the
+  // bar can render seeded chips inline alongside user-assigned ones.
+  function evidenceToSupporting(chip: AdminEvidenceChip): SupportingButton {
+    if (chip.kind === "diagnosis" || chip.kind === "icd") {
+      return {
+        id: makeId(["rule", "icd", chip.icdCode ?? "needs", chip.label]),
+        kind: "icd_disease",
+        label: chip.label,
+        source: "Rule Engine",
+        sourceText: chip.detail ?? null,
+        icdCode: chip.icdCode ?? null,
+        icdLabel: chip.icdLabel ?? null,
+        // SOURCE MARKER: requiresIcd does not block chip placement
+        requiresIcd: !!chip.requiresIcd,
+        confidence: chip.confidence ?? "medium",
+      };
+    }
+    if (chip.kind === "medication") {
+      return {
+        id: makeId(["rule", "rx", chip.label]),
+        kind: "medication",
+        label: chip.label,
+        source: "Rule Engine",
+        sourceText: chip.detail ?? null,
+        medicationName: chip.label,
+        confidence: chip.confidence ?? "medium",
+      };
+    }
+    if (chip.kind === "prior_test") {
+      return {
+        id: makeId(["rule", "prior", chip.label]),
+        kind: "prior_test",
+        label: chip.label,
+        source: "Prior Test",
+        sourceText: chip.detail ?? null,
+        confidence: chip.confidence ?? "medium",
+      };
+    }
+    return {
+      id: makeId(["rule", chip.kind, chip.label]),
+      kind: "symptom",
+      label: chip.label,
+      source: "Rule Engine",
+      sourceText: chip.detail ?? null,
+      symptomName: chip.label,
+      confidence: chip.confidence ?? "medium",
+    };
+  }
+
+  // Rule-engine evidence that the bar should display as a seeded chip.
+  // BrainWave pulls neurovascular/dizziness; VitalWave pulls vascular
+  // risk/edema/dyspnea. Medications are ALWAYS supporting context for
+  // any bar — they never become a diagnosis.
+  // SOURCE MARKER: Medications do not auto-create diagnoses
+  function ruleSeededChipsForAncillary(
+    id: "brainwave" | "vitalwave",
+  ): SupportingButton[] {
+    const out: SupportingButton[] = [];
+    for (const chip of apiEvidence) {
+      const label = chip.label.toLowerCase();
+      if (chip.kind === "medication") {
+        out.push(evidenceToSupporting(chip));
+        continue;
+      }
+      if (id === "brainwave") {
+        if (["dizziness", "syncope", "neuropathy", "bruit", "stroke", "tia"].some((t) => label.includes(t))) {
+          out.push(evidenceToSupporting(chip));
+        }
+        continue;
+      }
+      // vitalwave
+      if (
+        ["edema", "dyspnea", "claudication", "leg pain", "peripheral vascular", "pvd"].some((t) => label.includes(t))
+      ) {
+        out.push(evidenceToSupporting(chip));
+        continue;
+      }
+      if (
+        chip.kind === "diagnosis" &&
+        ["diabetes", "hypertension", "hyperlipidemia"].some((t) => label.includes(t))
+      ) {
+        out.push(evidenceToSupporting(chip));
+      }
+    }
+    return out;
+  }
+
+  function ruleSeededChipsForUltrasoundParent(): SupportingButton[] {
+    return apiEvidence.map(evidenceToSupporting);
+  }
+
+  function ruleSeededChipsForUltrasoundTest(testName: string): SupportingButton[] {
+    return evidenceForUltrasoundTest(testName, apiEvidence).map(evidenceToSupporting);
+  }
+
+  // Combine user-assigned chips with rule-engine-seeded ones,
+  // deduped. Seeded chips never displace a user click.
+  function combineChips(
+    selected: SupportingButton[],
+    seeded: SupportingButton[],
+  ): Array<{ chip: SupportingButton; seeded: boolean }> {
+    const keys = new Set(selected.map(chipKeyForAssignment));
+    const out: Array<{ chip: SupportingButton; seeded: boolean }> = selected.map((c) => ({ chip: c, seeded: false }));
+    for (const s of seeded) {
+      const k = chipKeyForAssignment(s);
+      if (keys.has(k)) continue;
+      keys.add(k);
+      out.push({ chip: s, seeded: true });
+    }
+    return out;
+  }
 
   // Whether a given button is already assigned to a specific target.
   // Drives the "Already on X" disabled states in AssignMenu and prevents
@@ -752,6 +1001,19 @@ export function AdminReviewDialog({
       }
       return next;
     });
+    const type: AdminReviewUpdateType =
+      btn.kind === "icd_disease"
+        ? "diagnosis_added"
+        : btn.kind === "medication"
+          ? "medication_added"
+          : "symptom_added";
+    const label =
+      btn.kind === "icd_disease"
+        ? `Added diagnosis: ${btn.label}`
+        : btn.kind === "medication"
+          ? `Added medication: ${btn.label}`
+          : `Added symptom: ${btn.label}`;
+    recordAdminReviewUpdate(type, label, { target });
   }
 
   function unassign(from: AssignmentTarget, btn: SupportingButton) {
@@ -867,6 +1129,7 @@ export function AdminReviewDialog({
       return next;
     });
     unassign(from, btn);
+    recordAdminReviewUpdate("qualifying_factor_removed", `Removed qualifying factor: ${label}`, { from });
   }
 
   // Backend: remove an entire ancillary from this patient.
@@ -905,6 +1168,11 @@ export function AdminReviewDialog({
         };
         return next;
       });
+      recordAdminReviewUpdate(
+        "ancillary_removed",
+        `Removed ancillary: ${categoryLabels[vars.ancillary]}`,
+        { removed: data.removedTests ?? [] },
+      );
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
     },
     onError: (err, vars) => {
@@ -950,6 +1218,10 @@ export function AdminReviewDialog({
           ),
         },
       }));
+      recordAdminReviewUpdate(
+        "ultrasound_child_removed",
+        `Removed ultrasound test: ${vars.testName}`,
+      );
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
     },
     onError: (err, vars) => {
@@ -1009,6 +1281,10 @@ export function AdminReviewDialog({
       if (prev.some((b) => buttonKey(b) === buttonKey(chip))) return prev;
       return [...prev, chip];
     });
+    recordAdminReviewUpdate("icd_added", `Added ICD: ${r.code} · ${r.label}`, {
+      code: r.code,
+      label: r.label,
+    });
   }
 
   // Regenerate (per-ancillary OR per-ultrasound-test)
@@ -1059,6 +1335,10 @@ export function AdminReviewDialog({
       if (data.patient) {
         onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
       }
+      recordAdminReviewUpdate(
+        "regenerate",
+        `Regenerated ${categoryLabels[vars.ancillary]}`,
+      );
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
       queryClient.invalidateQueries({ queryKey: ["admin-review-evidence", patient.id] });
     },
@@ -1120,6 +1400,7 @@ export function AdminReviewDialog({
       if (data.patient) {
         onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
       }
+      recordAdminReviewUpdate("regenerate", `Regenerated ${vars.testName}`);
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
     },
     onError: (err, vars) => {
@@ -1172,16 +1453,25 @@ export function AdminReviewDialog({
     (b) => b.kind === "icd_disease" && b.requiresIcd,
   ).length;
 
+  // Grid template flexes to whichever panels are open. Collapsed
+  // panels collapse to a 40px rail with the toggle button.
+  const leftCol = leftPanelOpen ? "340px" : "44px";
+  const rightCol = rightPanelOpen ? "340px" : "44px";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="w-[calc(100vw-2rem)] max-w-[1280px] max-h-[92vh] overflow-hidden p-0 gap-0 rounded-2xl"
+        className="w-[calc(100vw-2rem)] max-w-[1440px] max-h-[94vh] overflow-hidden p-0 gap-0 rounded-2xl"
         data-testid={`dialog-admin-review-${patient.id}`}
       >
-        <DialogHeader className="px-6 pt-5 pb-4 border-b border-slate-200 bg-white">
+        {/* Smoke header — black at ~70% opacity per Team Portal spec. */}
+        <DialogHeader
+          className="px-6 pt-5 pb-4 border-b border-black/30 bg-black/70 backdrop-blur-md text-white"
+          data-testid="admin-review-smoke-header"
+        >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <DialogTitle className="text-base font-semibold tracking-tight text-slate-900">
+              <DialogTitle className="text-base font-semibold tracking-tight text-white">
                 Admin Review · {patient.name || "Unnamed patient"}
               </DialogTitle>
               <DialogDescription className="sr-only">
@@ -1195,66 +1485,173 @@ export function AdminReviewDialog({
                 </span>
                 {isUnder16 && (
                   <span
-                    className="inline-flex items-center gap-1 rounded-full bg-rose-50 text-rose-800 border border-rose-300 px-2 py-0.5 font-semibold uppercase tracking-wider"
+                    className="inline-flex items-center gap-1 rounded-full bg-rose-100 text-rose-900 border border-rose-300 px-2 py-0.5 font-semibold uppercase tracking-wider"
                     data-testid="badge-admin-review-under-16"
                   >
                     <AlertTriangle className="w-3 h-3" />
                     Under 16 · Admin approval required
                   </span>
                 )}
-                {patient.facility && <span className="text-slate-500">{patient.facility}</span>}
-                {scheduleDate && <span className="text-slate-500">· {scheduleDate}</span>}
+                {patient.facility && <span className="text-white/70">{patient.facility}</span>}
+                {scheduleDate && <span className="text-white/70">· {scheduleDate}</span>}
                 {evidenceQuery.isFetching && (
-                  <span className="text-slate-400 inline-flex items-center gap-1">
+                  <span className="text-white/60 inline-flex items-center gap-1">
                     <Loader2 className="w-3 h-3 animate-spin" /> Refreshing
                   </span>
                 )}
               </div>
             </div>
-            <PatientPdfActions
-              patient={patient}
-              facility={facility ?? patient.facility ?? null}
-              scheduleDate={scheduleDate ?? null}
-              compact
-            />
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setLeftPanelOpen((v) => !v)}
+                aria-label={leftPanelOpen ? "Collapse left panel" : "Expand left panel"}
+                title={leftPanelOpen ? "Collapse left panel" : "Expand left panel"}
+                data-testid="admin-review-left-panel-toggle"
+                data-panel-state={leftPanelOpen ? "admin-review-left-panel-open" : "admin-review-left-panel-collapsed"}
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/80 hover:text-white hover:bg-white/10"
+              >
+                {leftPanelOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setRightPanelOpen((v) => !v)}
+                aria-label={rightPanelOpen ? "Collapse right panel" : "Expand right panel"}
+                title={rightPanelOpen ? "Collapse right panel" : "Expand right panel"}
+                data-testid="admin-review-right-panel-toggle"
+                data-panel-state={rightPanelOpen ? "admin-review-right-panel-open" : "admin-review-right-panel-collapsed"}
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/80 hover:text-white hover:bg-white/10"
+              >
+                {rightPanelOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[calc(92vh-9rem)]">
-          <div
-            className="px-6 py-5 grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)_320px] gap-4"
-            data-testid="admin-review-three-column-layout"
-          >
-            {/* ─── Column 1 — Raw Clinical Source (display only) ─── */}
-            <div className="space-y-3" data-testid="admin-review-left-column">
-              <section className="space-y-2" data-testid="admin-review-clinical-source">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Clinical Source
+        <div
+          className="grid grid-cols-1 xl:grid-cols-[var(--left)_minmax(0,1fr)_var(--right)] gap-0 max-h-[calc(94vh-7.5rem)]"
+          style={{
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ['--left' as any]: leftCol,
+            ['--right' as any]: rightCol,
+          }}
+          data-testid="admin-review-three-column-layout"
+          data-left-state={leftPanelOpen ? "admin-review-left-panel-open" : "admin-review-left-panel-collapsed"}
+          data-right-state={rightPanelOpen ? "admin-review-right-panel-open" : "admin-review-right-panel-collapsed"}
+        >
+            {/* ─── Column 1 — Team Portal blue, tabs, scrollable ─── */}
+            <aside
+              className="bg-blue-900 text-white border-r border-blue-950/30 flex flex-col min-h-0"
+              data-testid="admin-review-left-column"
+              data-panel-style="admin-review-blue-left-panel"
+            >
+              {!leftPanelOpen ? (
+                <div
+                  className="flex-1 flex items-start justify-center pt-3"
+                  data-testid="admin-review-left-panel-collapsed"
+                >
+                  <span className="text-[10px] uppercase tracking-[0.2em] text-white/60 rotate-90 origin-top mt-8 whitespace-nowrap">
+                    Source
+                  </span>
                 </div>
-                <RawSourceCard
-                  label="Hx"
-                  value={patient.history}
-                  emptyText="No history entered"
-                  testId="admin-review-source-hx"
-                />
-                <RawSourceCard
-                  label="Dx"
-                  value={patient.diagnoses}
-                  emptyText="No diagnoses entered"
-                  testId="admin-review-source-dx"
-                />
-                <RawSourceCard
-                  label="Rx"
-                  value={patient.medications}
-                  emptyText="No medications entered"
-                  testId="admin-review-source-rx"
-                />
-              </section>
+              ) : (
+                <div
+                  className="flex-1 min-h-0 flex flex-col"
+                  data-testid="admin-review-left-panel-open"
+                >
+                  <ScrollArea
+                    className="flex-1 min-h-0 px-4 py-4"
+                    data-testid="admin-review-left-panel-scroll"
+                  >
+                    <Tabs
+                      value={leftTab}
+                      onValueChange={(v) => setLeftTab(v as typeof leftTab)}
+                      className="w-full"
+                      data-testid="admin-review-left-tabs"
+                    >
+                      <TabsList className="bg-blue-950/40 text-white grid grid-cols-3 w-full">
+                        <TabsTrigger
+                          value="source"
+                          data-testid="admin-review-left-tab-source"
+                          className="text-[11px] data-[state=active]:bg-blue-700 data-[state=active]:text-white"
+                        >
+                          Source
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="patient-directory"
+                          data-testid="admin-review-left-tab-patient-directory"
+                          className="text-[11px] data-[state=active]:bg-blue-700 data-[state=active]:text-white"
+                        >
+                          Directory
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="cooldown"
+                          data-testid="admin-review-left-tab-cooldown"
+                          className="text-[11px] data-[state=active]:bg-blue-700 data-[state=active]:text-white"
+                        >
+                          Cooldown
+                        </TabsTrigger>
+                      </TabsList>
+                      <TabsList className="bg-blue-950/40 text-white grid grid-cols-2 w-full mt-1">
+                        <TabsTrigger
+                          value="insurance"
+                          data-testid="admin-review-left-tab-insurance"
+                          className="text-[11px] data-[state=active]:bg-blue-700 data-[state=active]:text-white"
+                        >
+                          Insurance
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="history"
+                          data-testid="admin-review-left-tab-history"
+                          className="text-[11px] data-[state=active]:bg-blue-700 data-[state=active]:text-white"
+                        >
+                          History
+                        </TabsTrigger>
+                      </TabsList>
 
-              <section
-                className="space-y-1.5 rounded-2xl border border-slate-200 bg-white p-3"
-                data-testid="admin-review-icd-search-left"
-              >
+                      <TabsContent
+                        value="source"
+                        className="mt-3 space-y-3"
+                        data-testid="admin-review-source-tab-content"
+                      >
+                        <section className="space-y-2" data-testid="admin-review-clinical-source">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
+                            Clinical Source
+                          </div>
+                          <RawSourceCard
+                            label="Hx"
+                            value={patient.history}
+                            emptyText="No history entered"
+                            testId="admin-review-source-hx"
+                          />
+                          <RawSourceCard
+                            label="Dx"
+                            value={patient.diagnoses}
+                            emptyText="No diagnoses entered"
+                            testId="admin-review-source-dx"
+                          />
+                          <RawSourceCard
+                            label="Rx"
+                            value={patient.medications}
+                            emptyText="No medications entered"
+                            testId="admin-review-source-rx"
+                          />
+                          <RawSourceCard
+                            label="Previous Tests"
+                            value={
+                              typeof (patient as { previousTests?: unknown }).previousTests === "string"
+                                ? ((patient as { previousTests?: string }).previousTests ?? "")
+                                : ""
+                            }
+                            emptyText="No prior testing on file"
+                            testId="admin-review-source-prior"
+                          />
+                        </section>
+
+                        <section
+                          className="space-y-1.5 rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3"
+                          data-testid="admin-review-icd-search-left"
+                        >
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   Search ICD-10
                 </div>
@@ -1347,11 +1744,121 @@ export function AdminReviewDialog({
                     ))}
                   </div>
                 )}
-              </section>
-            </div>
+                        </section>
+                      </TabsContent>
 
-            {/* ─── Column 2 — Ancillary Panels ─── */}
-            <div className="space-y-4" data-testid="admin-review-middle-column">
+                      <TabsContent
+                        value="patient-directory"
+                        className="mt-3"
+                        data-testid="admin-review-patient-directory-tab-content"
+                      >
+                        <div className="rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3 space-y-2">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
+                            Patient Directory
+                          </div>
+                          <div className="text-xs text-white/80">
+                            <div>{patient.name || "Unnamed patient"}</div>
+                            {patient.dob && <div className="text-white/60">DOB {patient.dob}</div>}
+                            {patient.phoneNumber && (
+                              <div className="text-white/60">{patient.phoneNumber}</div>
+                            )}
+                            {patient.facility && (
+                              <div className="text-white/60">{patient.facility}</div>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-white/50 italic">
+                            Full directory roster will appear here when the
+                            backend route is wired.
+                          </div>
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent
+                        value="cooldown"
+                        className="mt-3"
+                        data-testid="admin-review-cooldown-tab-content"
+                      >
+                        <div
+                          className="rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3 space-y-1"
+                          data-testid="admin-review-patient-cooldown-summary"
+                        >
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
+                            Cooldown
+                          </div>
+                          <div className="text-xs text-white/80">
+                            No active cooldown rules detected for this patient.
+                          </div>
+                          <div className="text-[10px] text-white/50 italic">
+                            Cooldown engine wires here once the per-test
+                            cooldown route ships.
+                          </div>
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent
+                        value="insurance"
+                        className="mt-3"
+                        data-testid="admin-review-insurance-tab-content"
+                      >
+                        <div className="rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3 space-y-1">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
+                            Insurance
+                          </div>
+                          <div className="text-xs text-white/80">
+                            {patient.insurance || (
+                              <span className="italic text-white/50">No insurance on file</span>
+                            )}
+                          </div>
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent
+                        value="history"
+                        className="mt-3"
+                        data-testid="admin-review-history-tab-content"
+                      >
+                        <div className="rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3 space-y-1">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
+                            Patient History (chart)
+                          </div>
+                          <div className="text-xs text-white/80 whitespace-pre-wrap min-h-[3rem]">
+                            {patient.history || (
+                              <span className="italic text-white/50">No history entered</span>
+                            )}
+                          </div>
+                        </div>
+                      </TabsContent>
+                    </Tabs>
+                  </ScrollArea>
+                </div>
+              )}
+            </aside>
+
+            {/* ─── Column 2 — Ancillary Playground (white) ─── */}
+            <main
+              className="bg-white min-h-0 flex flex-col"
+              data-testid="admin-review-middle-column"
+              data-panel-style="admin-review-ancillary-playground-white-panel"
+            >
+              <div className="px-5 pt-4 pb-2 border-b border-slate-100 flex items-center gap-2">
+                <span
+                  className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 text-white px-3 py-1 text-[11px] font-semibold uppercase tracking-wider shadow-sm"
+                  data-testid="admin-review-ancillary-playground-pill"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  Ancillary Playground
+                </span>
+                {evidenceQuery.isFetching && (
+                  <span className="text-[10px] text-slate-400 inline-flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Refreshing rule engine
+                  </span>
+                )}
+              </div>
+              <ScrollArea className="flex-1 min-h-0 px-5 py-4">
+                <div
+                  className="space-y-4"
+                  data-testid="admin-review-ancillary-playground"
+                >
               {/* BrainWave + VitalWave panels. Bar shows only qualifying-
                   factor chips + icon-only Regenerate/Delete. Status
                   labels, the services row, and the selected list were removed
@@ -1399,9 +1906,9 @@ export function AdminReviewDialog({
                               className="flex flex-wrap items-center gap-1"
                               data-testid="admin-review-ancillary-factor-chip-row"
                             >
-                              {selected.map((b) => (
+                              {combineChips(selected, ruleSeededChipsForAncillary(id)).map(({ chip: b, seeded }) => (
                                 <FactorChip
-                                  key={chipKeyForAssignment(b)}
+                                  key={`${chipKeyForAssignment(b)}-${seeded ? "rule" : "user"}`}
                                   b={b}
                                   testId="admin-review-ancillary-factor-chip"
                                   removeTestId={
@@ -1409,6 +1916,7 @@ export function AdminReviewDialog({
                                       ? "admin-review-remove-brainwave-factor"
                                       : "admin-review-remove-vitalwave-factor"
                                   }
+                                  ruleSeeded={seeded}
                                   onRemove={() =>
                                     removeQualifyingFactor({ type: "ancillary", ancillaryId: id }, b)
                                   }
@@ -1556,12 +2064,13 @@ export function AdminReviewDialog({
                           className="flex flex-wrap items-center gap-1"
                           data-testid="admin-review-ancillary-factor-chip-row"
                         >
-                          {ultrasoundParentSelected().map((b) => (
+                          {combineChips(ultrasoundParentSelected(), ruleSeededChipsForUltrasoundParent()).map(({ chip: b, seeded }) => (
                             <FactorChip
-                              key={chipKeyForAssignment(b)}
+                              key={`${chipKeyForAssignment(b)}-${seeded ? "rule" : "user"}`}
                               b={b}
                               testId="admin-review-ancillary-factor-chip"
                               removeTestId="admin-review-remove-ultrasound-parent-factor"
+                              ruleSeeded={seeded}
                               onRemove={() =>
                                 removeQualifyingFactor({ type: "ultrasound-parent" }, b)
                               }
@@ -1671,17 +2180,18 @@ export function AdminReviewDialog({
                                       className="flex flex-wrap items-center gap-1"
                                       data-testid="admin-review-ultrasound-child-factor-chip-row"
                                     >
-                                      {selected.map((b) => {
+                                      {combineChips(selected, ruleSeededChipsForUltrasoundTest(card.testName)).map(({ chip: b, seeded }) => {
                                         const fromParent = assignments.ultrasound.parent.some(
                                           (p) => chipKeyForAssignment(p) === chipKeyForAssignment(b),
                                         );
                                         return (
                                           <FactorChip
-                                            key={chipKeyForAssignment(b)}
+                                            key={`${chipKeyForAssignment(b)}-${seeded ? "rule" : "user"}`}
                                             b={b}
                                             testId="admin-review-ultrasound-child-factor-chip"
                                             removeTestId="admin-review-remove-ultrasound-child-factor"
                                             inherited={fromParent}
+                                            ruleSeeded={seeded}
                                             onRemove={() =>
                                               removeQualifyingFactor(
                                                 { type: "ultrasound-test", testName: card.testName },
@@ -1763,27 +2273,83 @@ export function AdminReviewDialog({
                   </div>
                 )}
               </div>
-            </div>
+                </div>
+              </ScrollArea>
+            </main>
 
-            {/* ─── Column 3 — PDFs / Blocking / Admin Note / Approval ─── */}
-            <div className="space-y-4" data-testid="admin-review-right-column">
-              {/* Right panel actions: 3 clean popover buttons. The
-                  old header + helper copy were removed; each
-                  category's items live behind its own popover so the
-                  panel stays compact. */}
+            {/* ─── Column 3 — Team Portal blue actions panel ─── */}
+            <aside
+              className="bg-blue-900 text-white border-l border-blue-950/30 flex flex-col min-h-0"
+              data-testid="admin-review-right-column"
+              data-panel-style="admin-review-blue-right-panel"
+            >
+              {!rightPanelOpen ? (
+                <div
+                  className="flex-1 flex items-start justify-center pt-3"
+                  data-testid="admin-review-right-panel-collapsed"
+                >
+                  <span className="text-[10px] uppercase tracking-[0.2em] text-white/60 rotate-90 origin-top mt-8 whitespace-nowrap">
+                    Actions
+                  </span>
+                </div>
+              ) : (
+              <ScrollArea
+                className="flex-1 min-h-0 px-4 py-4"
+                data-testid="admin-review-right-panel-scroll"
+              >
+              <div
+                className="space-y-4"
+                data-testid="admin-review-right-panel-open"
+              >
               <section
-                className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4"
+                className="space-y-2"
+                data-testid="admin-review-right-actions-panel"
+              >
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    recordAdminReviewUpdate("pdf_previewed", "Previewed Patient PDF", { kind: "plexus" });
+                  }}
+                  data-testid="admin-review-pdf-preview-button-patient"
+                  className="rounded-xl border border-blue-300/30 bg-blue-800/70 hover:bg-blue-800 text-white px-3 py-2 text-xs font-semibold transition-colors"
+                >
+                  Patient PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    recordAdminReviewUpdate("pdf_previewed", "Previewed Clinician PDF", { kind: "clinician" });
+                  }}
+                  data-testid="admin-review-pdf-preview-button-clinician"
+                  className="rounded-xl border border-blue-300/30 bg-blue-800/70 hover:bg-blue-800 text-white px-3 py-2 text-xs font-semibold transition-colors"
+                >
+                  Clinician PDF
+                </button>
+              </div>
+              <div data-testid="admin-review-pdf-actions-inline" className="bg-white rounded-xl p-2">
+                <PatientPdfActions
+                  patient={patient}
+                  facility={facility ?? patient.facility ?? null}
+                  scheduleDate={scheduleDate ?? null}
+                  compact
+                />
+              </div>
+              </section>
+
+              <section
+                className="space-y-2 rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3"
                 data-testid="admin-review-right-panel-buttons"
               >
                 <div
-                  className="grid grid-cols-3 gap-2"
+                  className="grid grid-cols-2 gap-2"
                   data-testid="admin-review-right-panel-button-row"
                 >
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="rounded-xl border border-blue-200 bg-blue-50 text-blue-800 px-3 py-2 text-xs font-semibold hover:bg-blue-100 transition-colors"
+                        className="rounded-xl border border-blue-200 bg-blue-50 text-blue-900 px-3 py-2 text-xs font-semibold hover:bg-blue-100 transition-colors"
                         data-testid="admin-review-right-button-diagnosis"
                       >
                         Diagnosis
@@ -1791,7 +2357,7 @@ export function AdminReviewDialog({
                     </PopoverTrigger>
                     <PopoverContent
                       align="end"
-                      className="w-[320px] p-3 space-y-2"
+                      className="w-[340px] p-3 space-y-3 max-h-[60vh] overflow-y-auto"
                       data-testid="admin-review-right-popover-diagnosis"
                     >
                       <AvailableButtonsRow
@@ -1808,6 +2374,14 @@ export function AdminReviewDialog({
                             onAssign={(target) => assignToTarget(target, b)}
                           />
                         )}
+                      />
+                      {/* Suggested diagnoses from meds — inactive until
+                          accepted. Clicking the row promotes the
+                          suggestion to a real SupportingButton via
+                          acceptDiagnosisSuggestion. */}
+                      <DiagnosisSuggestionsSection
+                        suggestions={visibleSuggestions}
+                        onAccept={acceptDiagnosisSuggestion}
                       />
                     </PopoverContent>
                   </Popover>
@@ -1885,27 +2459,59 @@ export function AdminReviewDialog({
                       />
                     </PopoverContent>
                   </Popover>
+
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-900 px-3 py-2 text-xs font-semibold hover:bg-emerald-100 transition-colors col-span-2"
+                        data-testid="admin-review-right-button-suggestions"
+                      >
+                        <span className="inline-flex items-center gap-1.5">
+                          <Lightbulb className="w-3 h-3" />
+                          Suggestions
+                          {visibleSuggestions.length > 0 && (
+                            <span className="inline-flex items-center justify-center rounded-full bg-emerald-200 text-emerald-900 text-[10px] px-1.5">
+                              {visibleSuggestions.length}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      className="w-[340px] p-3 space-y-2"
+                      data-testid="admin-review-right-popover-suggestions"
+                    >
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                        Diagnosis Suggestions
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        Medication-derived. Click to accept — suggestions are
+                        inactive until accepted.
+                      </div>
+                      {visibleSuggestions.length === 0 ? (
+                        <div className="text-[11px] text-slate-400 italic">
+                          No suggestions for this patient.
+                        </div>
+                      ) : (
+                        <DiagnosisSuggestionsSection
+                          suggestions={visibleSuggestions}
+                          onAccept={acceptDiagnosisSuggestion}
+                        />
+                      )}
+                    </PopoverContent>
+                  </Popover>
                 </div>
               </section>
 
               <section className="space-y-2">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  PDFs
-                </div>
-                <PatientPdfActions
-                  patient={patient}
-                  facility={facility ?? patient.facility ?? null}
-                  scheduleDate={scheduleDate ?? null}
-                />
-              </section>
-
-              <section className="space-y-2">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
                   Blocking Rules
                 </div>
                 {isUnder16 && (
                   <div
-                    className="rounded-md border border-rose-200 bg-rose-50 text-rose-800 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full"
+                    className="rounded-md border border-rose-300 bg-rose-100 text-rose-900 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full"
                     data-testid="admin-review-under-16-rule"
                   >
                     <AlertTriangle className="w-3 h-3 shrink-0" />
@@ -1913,44 +2519,84 @@ export function AdminReviewDialog({
                   </div>
                 )}
                 {totalMissingIcds > 0 && (
-                  <div className="rounded-md border border-amber-200 bg-amber-50 text-amber-800 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full">
+                  <div className="rounded-md border border-amber-300 bg-amber-100 text-amber-900 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full">
                     <AlertTriangle className="w-3 h-3 shrink-0" />
                     Diagnosis missing ICD
                   </div>
                 )}
                 {!isUnder16 && totalMissingIcds === 0 && (
-                  <div className="text-[11px] text-slate-400 italic">No blocking rules.</div>
+                  <div className="text-[11px] text-white/50 italic">No blocking rules.</div>
                 )}
               </section>
 
-              <section className="space-y-2">
-                <Label
-                  htmlFor={`admin-review-admin-note-${patient.id}`}
-                  className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
-                >
-                  Admin Note
-                </Label>
-                <Textarea
-                  id={`admin-review-admin-note-${patient.id}`}
-                  value={adminNote}
-                  rows={3}
-                  onChange={(e) => setAdminNote(e.target.value)}
-                  placeholder="Optional context attached to this approval action"
-                  data-testid={`admin-review-admin-note-${patient.id}`}
-                />
+              {/* Admin note: circular icon button opens an inline
+                  popover with the note textarea — keeps the panel
+                  compact when the admin doesn't need a note. */}
+              <section className="flex items-center gap-2">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="Add admin note"
+                      title={adminNote ? "Admin note recorded" : "Add admin note"}
+                      data-testid="admin-review-admin-note-icon-button"
+                      className={`inline-flex items-center justify-center h-9 w-9 rounded-full border border-blue-300/40 transition-colors ${
+                        adminNote
+                          ? "bg-blue-200 text-blue-900"
+                          : "bg-blue-800/60 text-white hover:bg-blue-800"
+                      }`}
+                    >
+                      <StickyNote className="w-4 h-4" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="end"
+                    className="w-[300px] p-3 space-y-2"
+                    data-testid="admin-review-admin-note-popover"
+                  >
+                    <Label
+                      htmlFor={`admin-review-admin-note-${patient.id}`}
+                      className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
+                    >
+                      Admin Note
+                    </Label>
+                    <Textarea
+                      id={`admin-review-admin-note-${patient.id}`}
+                      value={adminNote}
+                      rows={4}
+                      onChange={(e) => setAdminNote(e.target.value)}
+                      onBlur={() => {
+                        if (adminNote.trim()) {
+                          recordAdminReviewUpdate("admin_note_updated", "Admin note updated", {
+                            length: adminNote.length,
+                          });
+                        }
+                      }}
+                      placeholder="Optional context attached to this approval action"
+                      data-testid={`admin-review-admin-note-${patient.id}`}
+                    />
+                  </PopoverContent>
+                </Popover>
+                <div className="text-[11px] text-white/70">
+                  {adminNote.trim() ? "Admin note recorded for this session" : "No admin note yet"}
+                </div>
               </section>
 
               <section className="space-y-2">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Approval
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
+                  Decision
                 </div>
                 <div className="flex flex-col gap-2">
                   <Button
                     type="button"
                     disabled={approvalMutation.isPending}
-                    onClick={() => approvalMutation.mutate({ status: "approved" })}
-                    data-testid={`admin-review-button-approve-${patient.id}`}
-                    className="bg-emerald-600 text-white hover:bg-emerald-700 w-full"
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "approved" });
+                      recordAdminReviewUpdate("approval_approved", "Approved review");
+                    }}
+                    data-testid="admin-review-approve-button"
+                    data-bar-testid={`admin-review-button-approve-${patient.id}`}
+                    className="bg-emerald-500 text-white hover:bg-emerald-600 w-full"
                   >
                     {approvalMutation.isPending ? (
                       <Loader2 className="w-3 h-3 mr-1 animate-spin" />
@@ -1963,31 +2609,82 @@ export function AdminReviewDialog({
                     type="button"
                     variant="outline"
                     disabled={approvalMutation.isPending}
-                    onClick={() => approvalMutation.mutate({ status: "needs_info" })}
-                    data-testid={`admin-review-button-needs-info-${patient.id}`}
-                    className="w-full"
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "needs_info" });
+                      recordAdminReviewUpdate("approval_pended", "Pended review");
+                    }}
+                    data-testid="admin-review-pend-button"
+                    data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
+                    className="w-full bg-white/10 text-white border-white/20 hover:bg-white/20"
                   >
-                    Needs Info
+                    Pend
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
                     disabled={approvalMutation.isPending}
-                    onClick={() => approvalMutation.mutate({ status: "rejected" })}
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "rejected" });
+                      recordAdminReviewUpdate("approval_rejected", "Rejected review");
+                    }}
                     data-testid={`admin-review-button-reject-${patient.id}`}
-                    className="text-rose-700 border-rose-200 hover:bg-rose-50 w-full"
+                    className="w-full text-rose-200 border-rose-300/40 bg-rose-900/40 hover:bg-rose-900/60"
                   >
                     Reject
                   </Button>
                 </div>
-                <div className="text-[10px] text-slate-500 inline-flex items-center gap-1 pt-1">
+                <div
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white/10 text-white/70 px-2 py-0.5 text-[10px]"
+                  data-testid="admin-review-scheduler-routing-chip"
+                >
                   <ShieldCheck className="w-3 h-3" />
-                  Admin decision is final for engagement send
+                  Scheduler routing wires here when available
                 </div>
               </section>
-            </div>
+              </div>
+              </ScrollArea>
+              )}
+            </aside>
           </div>
-        </ScrollArea>
+
+          {/* ─── Bottom box — Updates Made In Patient ──────────── */}
+          <div
+            className="border-t border-slate-200 bg-slate-50 px-5 py-3"
+            data-testid="admin-review-updates-made-box"
+            data-record-helper="admin-review-record-update"
+          >
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                Updates Made In Patient
+              </div>
+              <span className="text-[10px] text-slate-400 tabular-nums">
+                {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
+              </span>
+            </div>
+            {updatesLog.length === 0 ? (
+              <div className="text-[11px] text-slate-400 italic">
+                Audit log will populate as you make changes in this review.
+              </div>
+            ) : (
+              <ScrollArea className="max-h-[110px]">
+                <ul className="space-y-1 pr-2">
+                  {updatesLog.map((entry) => (
+                    <li
+                      key={entry.id}
+                      className="flex items-start gap-2 text-[11px] text-slate-700 leading-snug"
+                      data-testid="admin-review-updates-made-item"
+                      data-update-type={entry.type}
+                    >
+                      <span className="font-mono text-[10px] text-slate-400 shrink-0 tabular-nums">
+                        {entry.at.slice(11, 16)}
+                      </span>
+                      <span className="min-w-0">{entry.label}</span>
+                    </li>
+                  ))}
+                </ul>
+              </ScrollArea>
+            )}
+          </div>
       </DialogContent>
     </Dialog>
   );
@@ -1996,6 +2693,53 @@ export function AdminReviewDialog({
 // ────────────────────────────────────────────────────────────────────
 // Small presentational components
 // ────────────────────────────────────────────────────────────────────
+
+// Suggested diagnoses derived from meds. Rendered with a dashed
+// border so they read as inactive at a glance; click promotes to a
+// real SupportingButton via the parent's acceptDiagnosisSuggestion.
+//
+// SOURCE MARKER: Medication-derived diagnosis suggestions are inactive until accepted
+function DiagnosisSuggestionsSection({
+  suggestions,
+  onAccept,
+}: {
+  suggestions: AdminDiagnosisSuggestion[];
+  onAccept: (s: AdminDiagnosisSuggestion) => void;
+}) {
+  if (suggestions.length === 0) return null;
+  return (
+    <div className="space-y-1.5" data-testid="admin-review-diagnosis-suggestions">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+        Suggested diagnoses from meds
+      </div>
+      <div className="text-[10px] text-slate-400">
+        Click to accept. Suggestions are inactive until accepted.
+      </div>
+      <div className="flex flex-col gap-1">
+        {suggestions.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onAccept(s)}
+            data-testid="admin-review-med-derived-diagnosis-suggestion"
+            data-accept-testid="admin-review-accept-diagnosis-suggestion"
+            className="group text-left rounded-md border border-dashed border-blue-300 bg-blue-50/30 text-blue-800 px-2 py-1.5 hover:bg-blue-100 transition-colors"
+          >
+            <div className="flex items-center gap-1.5 text-xs">
+              <Lightbulb className="w-3 h-3 opacity-70" />
+              <span className="font-semibold">Suggest: {s.label}</span>
+              <span className="ml-auto text-[10px] opacity-60 group-hover:opacity-100"
+                data-testid="admin-review-accept-diagnosis-suggestion">
+                Accept
+              </span>
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">{s.reason}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function RawSourceCard({
   label,
@@ -2284,12 +3028,17 @@ function FactorChip({
   testId,
   removeTestId,
   inherited = false,
+  ruleSeeded = false,
   onRemove,
 }: {
   b: SupportingButton;
   testId: string;
   removeTestId?: string;
   inherited?: boolean;
+  // When true the chip is a rule-engine seed (not yet user-clicked);
+  // it renders with a dashed border and the seeded testId so QA can
+  // assert closed-bar chips are present.
+  ruleSeeded?: boolean;
   onRemove: () => void;
 }) {
   const toneClass =
@@ -2298,16 +3047,20 @@ function FactorChip({
       : b.kind === "medication"
         ? "bg-purple-50 text-purple-800 border-purple-200"
         : "bg-amber-50 text-amber-800 border-amber-200";
+  const dashed = ruleSeeded ? "border-dashed opacity-90" : "";
+  const finalTestId = ruleSeeded ? "admin-review-rule-engine-seeded-chip" : testId;
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${toneClass}`}
-      data-testid={testId}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${toneClass} ${dashed}`}
+      data-testid={finalTestId}
+      data-bar-testid={testId}
       data-chip-kind={b.kind}
       data-inherited={inherited ? "true" : "false"}
+      data-rule-seeded={ruleSeeded ? "true" : "false"}
     >
       <span>{b.icdCode ? `${b.icdCode} · ` : ""}{b.label}</span>
-      {inherited ? (
-        <span className="text-[9px] opacity-60" aria-hidden>↑</span>
+      {inherited || ruleSeeded ? (
+        <span className="text-[9px] opacity-60" aria-hidden>{ruleSeeded ? "rule" : "↑"}</span>
       ) : (
         <button
           type="button"

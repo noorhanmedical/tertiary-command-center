@@ -258,6 +258,39 @@ requireText("server/routes/patients.ts", [
   "priorQualifyingFactorsByTest",
 ]);
 
+// Rule engine: meds do NOT auto-create diagnoses; venous /
+// arterial / carotid / echo per-test ultrasound support helpers;
+// suggestions are inactive until accepted; missing ICD does not
+// block chip placement.
+requireText("shared/plexus-iq/adminReviewEvidence.ts", [
+  "isVenousUltrasoundTest",
+  "isArterialUltrasoundTest",
+  "isCarotidUltrasoundTest",
+  "isEchoUltrasoundTest",
+  "evidenceForUltrasoundTest",
+  "AdminDiagnosisSuggestion",
+  "COMMON_MEDICATION_SUGGESTIONS",
+  "venous",
+  "edema",
+  "hypertension",
+  "hyperlipidemia",
+  "diabetes",
+  "metformin",
+  "amlodipine",
+  "rosuvastatin",
+  "Medications do not auto-create diagnoses",
+  "Medication-derived diagnosis suggestions are inactive until accepted",
+  "requiresIcd does not block chip placement",
+]);
+
+// Rule-engine runner entrypoint must keep using the shared builder so
+// route handlers receive the new suggestions payload alongside
+// evidence + candidates.
+requireText("server/services/plexusIq/adminReviewRuleEngine.ts", [
+  "buildAdminReviewEvidence",
+  "AdminReviewRuleResult",
+]);
+
 if (failures.length) {
   console.error("Plexus IQ backend QA failed:");
   for (const failure of failures) console.error(`- ${failure}`);
