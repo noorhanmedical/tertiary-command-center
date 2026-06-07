@@ -59,7 +59,6 @@ requireFile(dayModal);
 requireText(page, [
   "PlexusIQAddPatientHub",
   "PlexusIQWorkspace",
-  "PlexusIQDashboardRow",
   "<PlexusIQAddPatientHub",
   "<PlexusIQWorkspace",
 ]);
@@ -234,10 +233,9 @@ for (const file of allFiles) {
 }
 
 // 8. Page must not be the calendar-first stats/day-panel/right-calendar
-// dashboard layout we just replaced.
-requireText(page, [
-  "PlexusIQDashboardRow",
-]);
+// dashboard layout we previously replaced — AND it must not re-render the
+// global dashboard / jobs / recent / recently-deleted panels on the first
+// overview surface (facility-first rule).
 const pageContent = read(page) ?? "";
 if (pageContent.includes("PlexusIQStatsRow")) {
   failures.push(
@@ -248,6 +246,18 @@ if (pageContent.includes("PlexusIQDayPanel")) {
   failures.push(
     `Page still references PlexusIQDayPanel — the canonical replacement is PlexusIQDayModal`,
   );
+}
+for (const panel of [
+  "<PlexusIQDashboardRow",
+  "<PlexusIQQualificationJobsStatus",
+  "<PlexusIQRecentQualificationCards",
+  "<PlexusIQRecentlyDeleted",
+]) {
+  if (pageContent.includes(panel)) {
+    failures.push(
+      `Plexus IQ overview must be facility-first: ${page} still renders ${panel}`,
+    );
+  }
 }
 
 // 9. Patient Card frontend recovery (Batch 3 — frontend-only).
@@ -600,9 +610,13 @@ requireText(cardsPane, [
 ]);
 
 // PlexusIQWorkspace must opt out of the pane's date grouping where it
-// already shows a date/facility header above the pane.
+// already shows a date/facility header above the pane. It must also
+// render the facility-first overview with the required testIds.
 requireText("client/src/components/plexus-iq/PlexusIQWorkspace.tsx", [
   "groupByDate={false}",
+  "plexus-iq-facility-overview",
+  "plexus-iq-facility-tile-grid",
+  "plexus-iq-facility-tile",
 ]);
 
 requireText(listRow, [
