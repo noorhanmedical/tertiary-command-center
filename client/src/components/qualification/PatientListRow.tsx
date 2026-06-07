@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import type { AuthUser } from "@/App";
 import { useToast } from "@/hooks/use-toast";
 import {
   DropdownMenu,
@@ -63,6 +64,13 @@ export function PatientListRow({
   const [adminReviewOpen, setAdminReviewOpen] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  // Admin Review is admin-only. Delete is available to Plexus IQ users.
+  const { data: currentUser } = useQuery<AuthUser>({
+    queryKey: ["/api/auth/me"],
+    staleTime: 5 * 60 * 1000,
+  });
+  const isAdmin = currentUser?.role === "admin";
 
   useEffect(() => {
     setLocalTests(patient.qualifyingTests || []);
@@ -257,20 +265,24 @@ export function PatientListRow({
               iconOnly
             />
           )}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setAdminReviewOpen(true);
-            }}
-            aria-label="Admin Review"
-            title="Admin Review"
-            className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
-            data-testid={`button-admin-review-list-row-${patient.id}`}
-            data-row-action="button-admin-review-list-row"
-          >
-            <ShieldCheck className="h-3.5 w-3.5" />
-          </button>
+          {/* Admin Review is admin-only — gated on currentUser.role === "admin". */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setAdminReviewOpen(true);
+              }}
+              aria-label="Admin Review"
+              title="Admin Review"
+              className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+              data-testid={`button-admin-review-list-row-${patient.id}`}
+              data-row-action="button-admin-review-list-row"
+              data-admin-only="Admin Review is admin-only"
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+            </button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -311,12 +323,14 @@ export function PatientListRow({
                 )}
                 {generateLabel}
               </DropdownMenuItem>
+              {/* Delete is available to Plexus IQ users — NOT admin-only. */}
               <DropdownMenuItem
                 onClick={(e) => {
                   e.stopPropagation();
                   if (confirm("Remove this patient?")) onDelete();
                 }}
                 data-testid={`menu-list-row-delete-${patient.id}`}
+                data-delete-action="plexus-iq-delete-patient"
                 className="text-rose-700"
               >
                 <Trash2 className="w-3.5 h-3.5 mr-2" />
