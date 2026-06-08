@@ -574,10 +574,16 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   // Rule-engine seeded chips appear inside closed bars + ultrasound
   // child rows.
   "admin-review-rule-engine-seeded-chip",
-  // Right-panel reorganized actions.
+  // Right-panel reorganized actions. Top PDF buttons match the PDF
+  // generator naming ("Plexus PDF" + "Clinician PDF") and surface both
+  // -pdf-preview-button-* and -pdf-action-* markers for QA.
   "admin-review-right-actions-panel",
-  "admin-review-pdf-preview-button-patient",
+  "admin-review-pdf-preview-button-plexus",
   "admin-review-pdf-preview-button-clinician",
+  "admin-review-pdf-action-plexus",
+  "admin-review-pdf-action-clinician",
+  "Plexus PDF",
+  "Clinician PDF",
   "admin-review-admin-note-icon-button",
   "admin-review-approve-button",
   "admin-review-pend-button",
@@ -841,6 +847,10 @@ requireText(bucketLabelsHost, [
   "Admin Review Pending",
   "Completed",
   "Sent to Engagement",
+  // Bucket order + Completed-as-default source markers.
+  "Completed is the default Plexus IQ facility bucket",
+  "Plexus IQ facility bucket order",
+  'useState<ClinicStatusFilter>("completed")',
 ]);
 // Old label phrasing must be gone.
 requireNotText(
@@ -848,6 +858,62 @@ requireNotText(
   ["Submitted / Sent to Engagement"],
   "Old 'Submitted / Sent to Engagement' label must be replaced with 'Sent to Engagement'",
 );
+
+// Bucket-order check: tiles array must list Completed before Missing
+// Info before Parsed (needs) before Admin Review Pending before Sent
+// to Engagement. We assert by checking the source-substring order of
+// the `id: "..."` lines in the tiles array.
+{
+  const wsSource = read(bucketLabelsHost) ?? "";
+  const order = ['id: "completed"', 'id: "missingInfo"', 'id: "needs"', 'id: "readyForEngagement"', 'id: "sentToEngagement"'];
+  let cursor = 0;
+  for (const token of order) {
+    const idx = wsSource.indexOf(token, cursor);
+    if (idx < 0) {
+      failures.push(`Plexus IQ facility bucket order: missing ${token} after position ${cursor} in ${bucketLabelsHost}`);
+      break;
+    }
+    cursor = idx + token.length;
+  }
+}
+
+// Admin Review regenerate error must be surfaced inline on each bar +
+// the payload must include priorQualifyingFactorsByTest + removedFactors.
+requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
+  "admin-review-regenerate-error",
+  "admin-review-regenerate-icon-button",
+  "admin-review-ultrasound-regenerate-icon-button",
+  "Admin Review regenerate error is surfaced",
+  "Admin Review regenerate payload includes priorQualifyingFactorsByTest",
+  "Admin Review regenerate payload includes removedFactors",
+  "extractRegenErrorMessage",
+  "regenErrors",
+]);
+
+// Top-right PDF buttons must not regress to "Patient Understanding" /
+// "Clinician Understanding" as PDF/action button labels. Those words
+// appear inside the canonical reasoning content area ("Clinician
+// Understanding" / "Patient Talking Points") and must NOT be on a
+// data-pdf-action button.
+{
+  const adminDialog =
+    read("client/src/components/qualification/AdminReviewDialog.tsx") ?? "";
+  const buttonHasUnderstandingLabel =
+    /<button[^>]*data-pdf-action[^>]*>[\s\S]*?(Clinician Understanding|Patient Understanding)[\s\S]*?<\/button>/.test(
+      adminDialog,
+    );
+  if (buttonHasUnderstandingLabel) {
+    failures.push(
+      'Admin Review top-right PDF/action button must not be labeled "Clinician Understanding" or "Patient Understanding"',
+    );
+  }
+  // Legacy testId should be gone so QA tools cannot click it by mistake.
+  if (adminDialog.includes('data-testid="admin-review-pdf-preview-button-patient"')) {
+    failures.push(
+      'Admin Review top-right PDF button must use -plexus testId, not the legacy -patient testId',
+    );
+  }
+}
 
 // Canonical qualifying factors must render as removable chips inside the
 // canonical reasoning card so the admin can selectively delete any factor.

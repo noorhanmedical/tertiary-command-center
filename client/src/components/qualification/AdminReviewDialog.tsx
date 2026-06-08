@@ -632,6 +632,31 @@ export function AdminReviewDialog({
   });
 
   const [regenInFlight, setRegenInFlight] = useState<Record<string, boolean>>({});
+  // Admin Review regenerate error is surfaced — per-ancillary /
+  // per-test error strings render inline on the bar so the user sees
+  // the actual cause (missing OpenAI key, route 5xx, invalid response).
+  // SOURCE MARKER: Admin Review regenerate error is surfaced
+  const [regenErrors, setRegenErrors] = useState<Record<string, string | null>>({});
+
+  // Extract a user-facing message from the raw apiRequest error. The
+  // throwIfResNotOk helper produces messages shaped like
+  //   "500: {\"error\":\"OpenAI universal ICD search failed: ...\"}"
+  // so try to JSON-parse the body and surface .error; fall back to
+  // the raw message.
+  function extractRegenErrorMessage(err: unknown): string {
+    if (!(err instanceof Error)) return "Unknown regenerate error";
+    const m = err.message.match(/^\d{3}:\s*([\s\S]+)$/);
+    const body = m ? m[1].trim() : err.message;
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed === "object" && typeof parsed.error === "string") {
+        return parsed.error;
+      }
+    } catch {
+      // not JSON, fall through.
+    }
+    return body || "Unknown regenerate error";
+  }
 
   // Suggestion acceptance — a med-derived diagnosis becomes a real
   // SupportingButton only after the admin clicks accept.
@@ -1567,6 +1592,8 @@ export function AdminReviewDialog({
       // server merge cannot lose it; removedFactors are subtracted so an
       // explicit user delete is honoured.
       // SOURCE MARKER: Regenerate uses visible qualifying chips
+      // SOURCE MARKER: Admin Review regenerate payload includes priorQualifyingFactorsByTest
+      // SOURCE MARKER: Admin Review regenerate payload includes removedFactors
       // Authoritative floor: send the current canonical qualifying_factors
       // straight from patient.reasoning so the server merge can't lose them
       // even if the stored shape is unusual.
@@ -1605,13 +1632,16 @@ export function AdminReviewDialog({
         "regenerate",
         `Regenerated ${categoryLabels[vars.ancillary]}`,
       );
+      setRegenErrors((prev) => ({ ...prev, [vars.ancillary]: null }));
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
       queryClient.invalidateQueries({ queryKey: ["admin-review-evidence", patient.id] });
     },
     onError: (err, vars) => {
+      const message = extractRegenErrorMessage(err);
+      setRegenErrors((prev) => ({ ...prev, [vars.ancillary]: message }));
       toast({
         title: `Could not regenerate ${categoryLabels[vars.ancillary]}`,
-        description: err?.message ?? "Unknown error",
+        description: message,
         variant: "destructive",
       });
     },
@@ -1667,12 +1697,15 @@ export function AdminReviewDialog({
         onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
       }
       recordAdminReviewUpdate("regenerate", `Regenerated ${vars.testName}`);
+      setRegenErrors((prev) => ({ ...prev, [`test:${vars.testName}`]: null }));
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
     },
     onError: (err, vars) => {
+      const message = extractRegenErrorMessage(err);
+      setRegenErrors((prev) => ({ ...prev, [`test:${vars.testName}`]: message }));
       toast({
         title: `Could not regenerate ${vars.testName}`,
-        description: err?.message ?? "Unknown error",
+        description: message,
         variant: "destructive",
       });
     },
@@ -2245,6 +2278,16 @@ export function AdminReviewDialog({
                         </div>
                       </div>
                     </div>
+                    {regenErrors[id] && (
+                      <div
+                        className="mx-4 my-2 rounded-md border border-rose-300 bg-rose-50 text-rose-800 text-[11px] px-3 py-2"
+                        data-testid="admin-review-regenerate-error"
+                        data-ancillary={id}
+                      >
+                        <span className="font-semibold">Regenerate failed:</span>{" "}
+                        {regenErrors[id]}
+                      </div>
+                    )}
                     {isOpen && (
                       <div
                         className="px-4 py-3 space-y-3 bg-white/60"
@@ -2396,6 +2439,16 @@ export function AdminReviewDialog({
                   </div>
                 </div>
 
+                {regenErrors.ultrasound && (
+                  <div
+                    className="mx-4 my-2 rounded-md border border-rose-300 bg-rose-50 text-rose-800 text-[11px] px-3 py-2"
+                    data-testid="admin-review-regenerate-error"
+                    data-ancillary="ultrasound"
+                  >
+                    <span className="font-semibold">Regenerate failed:</span>{" "}
+                    {regenErrors.ultrasound}
+                  </div>
+                )}
                 {expanded.ultrasound && (
                   <div className="px-4 py-3 space-y-3 bg-white/60">
                     {canonicalReasoningByAncillary.ultrasound.length === 0 ? (
@@ -2406,6 +2459,7 @@ export function AdminReviewDialog({
                       canonicalReasoningByAncillary.ultrasound.map((card) => {
                         const selected = ultrasoundChildSelected(card.testName);
                         const inFlight = !!regenInFlight[`test:${card.testName}`];
+                        const childError = regenErrors[`test:${card.testName}`];
                         // Per-child dropdown is collapsed by default; user clicks to expand.
                         const childOpen = !!ultrasoundChildExpanded[card.testName];
                         const removeInFlight = removeTestMutation.isPending && removeTestMutation.variables?.testName === card.testName;
@@ -2416,6 +2470,16 @@ export function AdminReviewDialog({
                             data-testid="admin-review-ultrasound-child-panel"
                             data-test-name={card.testName}
                           >
+                            {childError && (
+                              <div
+                                className="mx-2 mt-2 rounded-md border border-rose-300 bg-rose-50 text-rose-800 text-[11px] px-2 py-1.5"
+                                data-testid="admin-review-regenerate-error"
+                                data-test-name={card.testName}
+                              >
+                                <span className="font-semibold">Regenerate failed:</span>{" "}
+                                {childError}
+                              </div>
+                            )}
                             <div
                               className="rounded-xl border border-emerald-200 bg-white"
                               data-testid="admin-review-ultrasound-child-dropdown"
@@ -2569,16 +2633,24 @@ export function AdminReviewDialog({
                 className="space-y-2"
                 data-testid="admin-review-right-actions-panel"
               >
+              {/* Top-right PDF action buttons. Labels match the PDF
+                  generator naming: "Plexus PDF" (the canonical Plexus
+                  packet) and "Clinician PDF" (the clinician-facing
+                  packet). The reasoning content area below carries
+                  Clinician Understanding / Patient Talking Points
+                  labels — those belong inside the reasoning cards,
+                  not on PDF action buttons. */}
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => {
-                    recordAdminReviewUpdate("pdf_previewed", "Previewed Patient PDF", { kind: "plexus" });
+                    recordAdminReviewUpdate("pdf_previewed", "Previewed Plexus PDF", { kind: "plexus" });
                   }}
-                  data-testid="admin-review-pdf-preview-button-patient"
+                  data-testid="admin-review-pdf-preview-button-plexus"
+                  data-pdf-action="admin-review-pdf-action-plexus"
                   className="rounded-xl border border-white/20 bg-black/15 hover:bg-black/25 text-white px-3 py-2 text-xs font-semibold transition-colors"
                 >
-                  Patient PDF
+                  Plexus PDF
                 </button>
                 <button
                   type="button"
@@ -2586,6 +2658,7 @@ export function AdminReviewDialog({
                     recordAdminReviewUpdate("pdf_previewed", "Previewed Clinician PDF", { kind: "clinician" });
                   }}
                   data-testid="admin-review-pdf-preview-button-clinician"
+                  data-pdf-action="admin-review-pdf-action-clinician"
                   className="rounded-xl border border-white/20 bg-black/15 hover:bg-black/25 text-white px-3 py-2 text-xs font-semibold transition-colors"
                 >
                   Clinician PDF
