@@ -1539,11 +1539,13 @@ export function AdminReviewDialog({
           data-left-state={leftPanelOpen ? "admin-review-left-panel-open" : "admin-review-left-panel-collapsed"}
           data-right-state={rightPanelOpen ? "admin-review-right-panel-open" : "admin-review-right-panel-collapsed"}
         >
-            {/* ─── Column 1 — Team Portal blue, tabs, scrollable ─── */}
+            {/* ─── Column 1 — approved muted blue #7283B0, tabs, scrollable ─── */}
             <aside
-              className="bg-blue-900 text-white border-r border-blue-950/30 flex flex-col min-h-0"
+              className="bg-[#7283B0] text-white border-r border-black/10 flex flex-col min-h-0"
               data-testid="admin-review-left-column"
               data-panel-style="admin-review-blue-left-panel"
+              data-panel-color="#7283B0"
+              style={{ backgroundColor: "#7283B0" }}
             >
               {!leftPanelOpen ? (
                 <div
@@ -1569,41 +1571,41 @@ export function AdminReviewDialog({
                       className="w-full"
                       data-testid="admin-review-left-tabs"
                     >
-                      <TabsList className="bg-blue-950/40 text-white grid grid-cols-3 w-full">
+                      <TabsList className="bg-black/15 text-white grid grid-cols-3 w-full">
                         <TabsTrigger
                           value="source"
                           data-testid="admin-review-left-tab-source"
-                          className="text-[11px] data-[state=active]:bg-blue-700 data-[state=active]:text-white"
+                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Source
                         </TabsTrigger>
                         <TabsTrigger
                           value="patient-directory"
                           data-testid="admin-review-left-tab-patient-directory"
-                          className="text-[11px] data-[state=active]:bg-blue-700 data-[state=active]:text-white"
+                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Directory
                         </TabsTrigger>
                         <TabsTrigger
                           value="cooldown"
                           data-testid="admin-review-left-tab-cooldown"
-                          className="text-[11px] data-[state=active]:bg-blue-700 data-[state=active]:text-white"
+                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Cooldown
                         </TabsTrigger>
                       </TabsList>
-                      <TabsList className="bg-blue-950/40 text-white grid grid-cols-2 w-full mt-1">
+                      <TabsList className="bg-black/15 text-white grid grid-cols-2 w-full mt-1">
                         <TabsTrigger
                           value="insurance"
                           data-testid="admin-review-left-tab-insurance"
-                          className="text-[11px] data-[state=active]:bg-blue-700 data-[state=active]:text-white"
+                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Insurance
                         </TabsTrigger>
                         <TabsTrigger
                           value="history"
                           data-testid="admin-review-left-tab-history"
-                          className="text-[11px] data-[state=active]:bg-blue-700 data-[state=active]:text-white"
+                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           History
                         </TabsTrigger>
@@ -1649,7 +1651,7 @@ export function AdminReviewDialog({
                         </section>
 
                         <section
-                          className="space-y-1.5 rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3"
+                          className="space-y-1.5 rounded-2xl border border-white/15 bg-black/15 p-3"
                           data-testid="admin-review-icd-search-left"
                         >
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
@@ -1752,7 +1754,7 @@ export function AdminReviewDialog({
                         className="mt-3"
                         data-testid="admin-review-patient-directory-tab-content"
                       >
-                        <div className="rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3 space-y-2">
+                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-2">
                           <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
                             Patient Directory
                           </div>
@@ -1779,7 +1781,7 @@ export function AdminReviewDialog({
                         data-testid="admin-review-cooldown-tab-content"
                       >
                         <div
-                          className="rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3 space-y-1"
+                          className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1"
                           data-testid="admin-review-patient-cooldown-summary"
                         >
                           <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
@@ -1800,7 +1802,7 @@ export function AdminReviewDialog({
                         className="mt-3"
                         data-testid="admin-review-insurance-tab-content"
                       >
-                        <div className="rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3 space-y-1">
+                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1">
                           <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
                             Insurance
                           </div>
@@ -1817,7 +1819,7 @@ export function AdminReviewDialog({
                         className="mt-3"
                         data-testid="admin-review-history-tab-content"
                       >
-                        <div className="rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3 space-y-1">
+                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1">
                           <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
                             Patient History (chart)
                           </div>
@@ -2277,11 +2279,13 @@ export function AdminReviewDialog({
               </ScrollArea>
             </main>
 
-            {/* ─── Column 3 — Team Portal blue actions panel ─── */}
+            {/* ─── Column 3 — approved muted blue #7283B0 actions panel ─── */}
             <aside
-              className="bg-blue-900 text-white border-l border-blue-950/30 flex flex-col min-h-0"
+              className="bg-[#7283B0] text-white border-l border-black/10 flex flex-col min-h-0"
               data-testid="admin-review-right-column"
               data-panel-style="admin-review-blue-right-panel"
+              data-panel-color="#7283B0"
+              style={{ backgroundColor: "#7283B0" }}
             >
               {!rightPanelOpen ? (
                 <div
@@ -2312,7 +2316,7 @@ export function AdminReviewDialog({
                     recordAdminReviewUpdate("pdf_previewed", "Previewed Patient PDF", { kind: "plexus" });
                   }}
                   data-testid="admin-review-pdf-preview-button-patient"
-                  className="rounded-xl border border-blue-300/30 bg-blue-800/70 hover:bg-blue-800 text-white px-3 py-2 text-xs font-semibold transition-colors"
+                  className="rounded-xl border border-white/20 bg-black/15 hover:bg-black/25 text-white px-3 py-2 text-xs font-semibold transition-colors"
                 >
                   Patient PDF
                 </button>
@@ -2322,7 +2326,7 @@ export function AdminReviewDialog({
                     recordAdminReviewUpdate("pdf_previewed", "Previewed Clinician PDF", { kind: "clinician" });
                   }}
                   data-testid="admin-review-pdf-preview-button-clinician"
-                  className="rounded-xl border border-blue-300/30 bg-blue-800/70 hover:bg-blue-800 text-white px-3 py-2 text-xs font-semibold transition-colors"
+                  className="rounded-xl border border-white/20 bg-black/15 hover:bg-black/25 text-white px-3 py-2 text-xs font-semibold transition-colors"
                 >
                   Clinician PDF
                 </button>
@@ -2338,7 +2342,7 @@ export function AdminReviewDialog({
               </section>
 
               <section
-                className="space-y-2 rounded-2xl border border-blue-300/20 bg-blue-950/40 p-3"
+                className="space-y-2 rounded-2xl border border-white/15 bg-black/15 p-3"
                 data-testid="admin-review-right-panel-buttons"
               >
                 <div
@@ -2540,10 +2544,10 @@ export function AdminReviewDialog({
                       aria-label="Add admin note"
                       title={adminNote ? "Admin note recorded" : "Add admin note"}
                       data-testid="admin-review-admin-note-icon-button"
-                      className={`inline-flex items-center justify-center h-9 w-9 rounded-full border border-blue-300/40 transition-colors ${
+                      className={`inline-flex items-center justify-center h-9 w-9 rounded-full border border-white/30 transition-colors ${
                         adminNote
-                          ? "bg-blue-200 text-blue-900"
-                          : "bg-blue-800/60 text-white hover:bg-blue-800"
+                          ? "bg-white text-[#3d4a6b]"
+                          : "bg-black/15 text-white hover:bg-black/25"
                       }`}
                     >
                       <StickyNote className="w-4 h-4" />
