@@ -659,7 +659,34 @@ requireText("client/src/components/plexus-iq/PlexusIQWorkspace.tsx", [
   "plexus-iq-facility-overview",
   "plexus-iq-facility-tile-grid",
   "plexus-iq-facility-tile",
+  // The facility interior (ClinicDetailPackets) is the actual surface
+  // the user sees after clicking a clinic tile. It MUST render every
+  // date/group as a compact overlay-popover trigger (not a big tile)
+  // and MUST carry the visible delete-all-per-date control because
+  // groupByDate={false} prevents QualificationPatientCardsPane from
+  // emitting its own delete-all-per-date trash.
+  "plexus-iq-dropdown-trigger",
+  "plexus-iq-dropdown-overlay",
+  "plexus-iq-dropdown-panel",
+  "plexus-iq-delete-date-group",
+  "plexus-iq-delete-date-group-confirm",
+  // Default-closed helpers in the facility interior.
+  "defaultClosedDropdowns",
+  "isDropdownClosed",
+  "?? true",
+  // Source markers documenting the permission model + default-closed
+  // architecture in the facility interior.
+  "Delete all per date is available to Plexus IQ users",
 ]);
+
+// Forbidden in the facility interior: the patient pane must never be
+// wrapped in a "big tile" (the old rounded-xl bg-slate-50/40 p-3
+// container). Patients always live inside the overlay panel.
+requireNotText(
+  "client/src/components/plexus-iq/PlexusIQWorkspace.tsx",
+  ["rounded-xl border border-slate-100 bg-slate-50/40 p-3"],
+  "PlexusIQWorkspace facility interior must not wrap patient panes in the legacy big-tile container",
+);
 
 requireText(listRow, [
   "plexus-iq-patient-list-row",
@@ -675,6 +702,9 @@ requireText(listRow, [
   // Delete remains available to Plexus IQ users (NOT admin-only).
   "Delete is available to Plexus IQ users",
   "plexus-iq-delete-patient",
+  // Visible inline trash button (not just the More-menu item) so
+  // users can delete a patient without digging through a menu.
+  "button-delete-patient-list-row-",
 ]);
 
 // PatientCard mirrors the same permission rule for its in-card Admin
