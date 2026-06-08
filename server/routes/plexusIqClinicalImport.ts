@@ -64,6 +64,10 @@ function buildClinicalImportNotes(input: {
   return header || existing || null;
 }
 
+// BatchFlow imports phone and email into patient records — the
+// client parser extracts both (header-driven path and Start/End
+// path) and the wire payload carries them into patient_screenings.
+// SOURCE MARKER: BatchFlow imports phone and email into patient records
 const clinicalImportRowSchema = z.object({
   facility: z.string().optional(),
   scheduleDate: z
@@ -77,6 +81,10 @@ const clinicalImportRowSchema = z.object({
   age: z.string().optional(),
   sex: z.string().optional(),
   mrn: z.string().optional(),
+  phone: z.string().optional(),
+  email: z.string().optional(),
+  clinician: z.string().optional(),
+  dateAdded: z.string().optional(),
   diagnoses: z.string().optional(),
   history: z.string().optional(),
   medications: z.string().optional(),
@@ -303,7 +311,10 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
             age: ageNum,
             gender: r.sex?.trim() || null,
             dob: r.dob?.trim() || null,
-            phoneNumber: null as string | null,
+            // BatchFlow imports phone and email into patient records.
+            // SOURCE MARKER: BatchFlow imports phone and email into patient records
+            phoneNumber: r.phone?.trim() || null,
+            email: r.email?.trim() || null,
             insurance: r.insurance?.trim() || null,
             facility,
             diagnoses: r.diagnoses?.trim() || null,

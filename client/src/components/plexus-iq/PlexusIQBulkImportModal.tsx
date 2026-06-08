@@ -49,6 +49,7 @@ export type ParsedRow = {
   time?: string;
   dob?: string;
   phoneNumber?: string;
+  email?: string;
   insurance?: string;
   diagnoses?: string;
   history?: string;
@@ -393,6 +394,10 @@ export function PlexusIQBulkImportModal({
         name: r.name,
         time: r.time,
         dob: r.dob,
+        // BatchFlow surfaces phone + email on the preview card so
+        // reviewers can spot missing contact info before importing.
+        phoneNumber: r.phone,
+        email: r.email,
         insurance: r.insurance,
         diagnoses: r.diagnoses,
         history: r.history,
@@ -775,6 +780,7 @@ function PreviewCard({ index, row }: { index: number; row: ParsedRow }) {
   if (row.age) meta.push({ label: "Age", value: row.age });
   if (row.sex) meta.push({ label: "Sex", value: row.sex });
   if (row.phoneNumber) meta.push({ label: "Phone", value: row.phoneNumber });
+  if (row.email) meta.push({ label: "Email", value: row.email });
   if (row.insurance) meta.push({ label: "Insurance", value: row.insurance });
   if (row.time) meta.push({ label: "Time", value: row.time });
   if (row.previousAncillaries) meta.push({ label: "Ancillaries", value: row.previousAncillaries });

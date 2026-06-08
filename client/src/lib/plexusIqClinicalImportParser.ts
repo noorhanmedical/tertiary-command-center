@@ -448,6 +448,14 @@ function parseClinicalSpreadsheet(
     const medications = getCell(r, headerMap, "Rx", 9);
     const previousAncillaries = getCell(r, headerMap, "Ancillaries Completed", 10);
     const insurance = getCell(r, headerMap, "INSURANCE", 11);
+    // BatchFlow parses Phone column — header aliases include
+    // phone / phone number / mobile / cell / contact number.
+    // BatchFlow parses Email column — header aliases include
+    // email / email address.
+    // SOURCE MARKER: BatchFlow parses Phone column
+    // SOURCE MARKER: BatchFlow parses Email column
+    const phone = getCell(r, headerMap, "PHONE", -1);
+    const email = getCell(r, headerMap, "EMAIL", -1);
 
     out.push({
       rowIndex: r.rowIndex,
@@ -459,6 +467,8 @@ function parseClinicalSpreadsheet(
       age,
       sex,
       mrn,
+      phone,
+      email,
       diagnoses,
       history,
       medications,

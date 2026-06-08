@@ -140,6 +140,59 @@ requireText("server/routes/patients.ts", [
   "regenerateCanonicalReasoning",
 ]);
 
+// Admin Review approval must trigger the canonical scheduler routing
+// runtime (commitPatient → execution-case spine →
+// autoAssignSchedulerForExecutionCase). Source markers + the
+// commitPatient call site live on the admin-approval route.
+requireText("server/routes/patients.ts", [
+  "/api/patient-screenings/:id/admin-approval",
+  "Admin Review approval triggers scheduler routing",
+  "Scheduler settings lookup",
+  "Engagement assignment creation/update",
+  "Engagement Center source of truth",
+  "Scheduler assignment runtime",
+  "commitPatient(id, userId, { auto: true })",
+  "routedToEngagement",
+  "routedSchedulerName",
+]);
+
+// Scheduler routing runtime contract — execution case spine + auto-
+// assign helper called from commitPatient.
+requireText("server/services/patientCommitService.ts", [
+  "createOrUpdateExecutionCaseFromScreening",
+  "autoAssignSchedulerForExecutionCase",
+]);
+requireText("server/services/schedulerAutoAssign.ts", [
+  "autoAssignSchedulerForExecutionCase",
+  "patientExecutionCases",
+  "outreach_schedulers",
+]);
+
+// BatchFlow Phone / Email persistence: parser extracts both,
+// backend schema accepts both, insert writes both into
+// patient_screenings.phoneNumber + patient_screenings.email.
+requireText("client/src/lib/plexusIqClinicalImportParser.ts", [
+  "BatchFlow parses Phone column",
+  "BatchFlow parses Email column",
+  '"PHONE"',
+  '"EMAIL"',
+  '["phone", "phone number", "mobile", "cell", "contact number"]',
+  '["email", "email address"]',
+]);
+requireText("server/routes/plexusIqClinicalImport.ts", [
+  "BatchFlow imports phone and email into patient records",
+  "phone: z.string().optional()",
+  "email: z.string().optional()",
+  "phoneNumber: r.phone?.trim() || null",
+  "email: r.email?.trim() || null",
+]);
+// patient_screenings columns must exist for phone + email.
+requireText("shared/schema/screening.ts", [
+  "phoneNumber",
+  "email",
+  "phone_number",
+]);
+
 // PDFs must NOT render ICD codes anywhere in their HTML output.
 // The data type may still include icd10_codes (kept for Admin Review +
 // canonical patient.reasoning[testName] consumers) — only the render
