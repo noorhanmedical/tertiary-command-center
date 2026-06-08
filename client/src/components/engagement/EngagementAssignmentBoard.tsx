@@ -17,6 +17,11 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Loader2,
   UserCog,
   AlertCircle,
@@ -25,6 +30,7 @@ import {
   Users,
   Trash2,
   FileText,
+  Shuffle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { PatientScreening } from "@shared/schema";
@@ -441,7 +447,9 @@ export function EngagementAssignmentBoard() {
         });
         return;
       }
-      const batchName = `${validation.patients[0]?.facility ?? group.label} · ${validation.scheduleDate ?? "outreach"}`;
+      const batchName = `${validation.patients[0]?.facility ?? group.label} · ${
+        validation.isOutreachPacket ? "Outreach" : validation.scheduleDate
+      }`;
       if (mode === "plexus") {
         generatePlexusPDF(batchName, validation.patients, validation.scheduleDate, null);
       } else {
@@ -463,6 +471,118 @@ export function EngagementAssignmentBoard() {
     );
     if (!ok) return;
     cancelManyMutation.mutate({ executionCaseIds });
+  }
+
+  // Resolve selected execution cases → patientScreeningIds for the
+  // assign-many endpoint. Rows without a screening id are skipped
+  // (assignment-board flow can't reassign them).
+  function patientScreeningIdsForGroupSelection(
+    group: BoardGroup,
+    executionCaseIds: number[],
+  ): number[] {
+    const ids: number[] = [];
+    const index = new Map<number, BoardRow>();
+    for (const r of group.rows) index.set(r.executionCaseId, r);
+    for (const eid of executionCaseIds) {
+      const row = index.get(eid);
+      if (row?.patientScreeningId != null) ids.push(row.patientScreeningId);
+    }
+    return ids;
+  }
+
+  // Bulk-assign every selected row in a group to a single scheduler.
+  // Reuses the existing /api/engagement/assignment-board/assign route.
+  function assignSelectionToSingleScheduler(
+    group: BoardGroup,
+    executionCaseIds: number[],
+    schedulerId: number,
+  ) {
+    const screeningIds = patientScreeningIdsForGroupSelection(group, executionCaseIds);
+    if (screeningIds.length === 0) {
+      toast({
+        title: "Select patients first",
+        description: `Pick at least one patient under ${group.label}.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    assignMutation.mutate(
+      { patientScreeningIds: screeningIds, schedulerId },
+      {
+        onSuccess: () => {
+          setSelectedByGroup((prev) => ({ ...prev, [group.key]: new Set() }));
+        },
+      },
+    );
+  }
+
+  // Round-robin distribute every selected row in a group across N
+  // schedulers. Fires one assign-many call per scheduler with their
+  // slice. Each backend call appends its own patient_journey_events
+  // audit row so the trail documents the split.
+  async function distributeSelectionAcrossSchedulers(
+    group: BoardGroup,
+    executionCaseIds: number[],
+    schedulerIds: number[],
+  ) {
+    const screeningIds = patientScreeningIdsForGroupSelection(group, executionCaseIds);
+    if (screeningIds.length === 0 || schedulerIds.length === 0) {
+      toast({
+        title: "Pick patients + schedulers",
+        description: "Select patients and pick at least one scheduler to distribute to.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const buckets: Record<number, number[]> = {};
+    for (const sid of schedulerIds) buckets[sid] = [];
+    screeningIds.forEach((pid, i) => {
+      const sid = schedulerIds[i % schedulerIds.length];
+      buckets[sid].push(pid);
+    });
+    let totalAssigned = 0;
+    let totalFailed = 0;
+    for (const sidStr of Object.keys(buckets)) {
+      const sid = Number.parseInt(sidStr, 10);
+      const slice = buckets[sid];
+      if (slice.length === 0) continue;
+      try {
+        const res = await fetch("/api/engagement/assignment-board/assign", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            patientScreeningIds: slice,
+            schedulerId: sid,
+            reason: "Distributed evenly from Engagement Center",
+          }),
+        });
+        const text = await res.text();
+        let parsed: any = {};
+        try {
+          parsed = text ? JSON.parse(text) : {};
+        } catch {
+          /* noop */
+        }
+        if (!res.ok) {
+          totalFailed += slice.length;
+          continue;
+        }
+        totalAssigned += parsed?.updated?.length ?? 0;
+        totalFailed += parsed?.failed?.length ?? 0;
+      } catch {
+        totalFailed += slice.length;
+      }
+    }
+    toast({
+      title:
+        totalFailed === 0
+          ? `Distributed ${totalAssigned} across ${schedulerIds.length} scheduler${schedulerIds.length === 1 ? "" : "s"}`
+          : `Distributed ${totalAssigned}, failed ${totalFailed}`,
+      variant: totalFailed === 0 ? undefined : "destructive",
+    });
+    setSelectedByGroup((prev) => ({ ...prev, [group.key]: new Set() }));
+    invalidateBoard();
   }
 
   const allSelected = rows.length > 0 && rows.every((r) => r.patientScreeningId != null && selectedIds.has(r.patientScreeningId));
@@ -825,6 +945,16 @@ export function EngagementAssignmentBoard() {
                       <FileText className="h-3 w-3" />
                       Clinician PDF
                     </Button>
+                    <GroupAssignPopover
+                      group={group}
+                      selectedExecutionCaseIds={selectedList}
+                      schedulers={schedulers.data ?? []}
+                      busy={assignMutation.isPending}
+                      onAssignOne={(sid) => assignSelectionToSingleScheduler(group, selectedList, sid)}
+                      onDistribute={(sids) =>
+                        distributeSelectionAcrossSchedulers(group, selectedList, sids)
+                      }
+                    />
                     <Button
                       size="sm"
                       variant="outline"
@@ -977,6 +1107,167 @@ export function EngagementAssignmentBoard() {
       </Card>
       )}
     </div>
+  );
+}
+
+// Per-group bulk-assign popover. Two modes:
+//   1. Assign all selected to a single scheduler.
+//   2. Distribute selected evenly across N schedulers (round-robin).
+// Both routes through /api/engagement/assignment-board/assign — the
+// distribute path fires one call per chosen scheduler so the
+// existing audit + permission flow stays intact.
+//
+// SOURCE MARKER: Engagement Center bulk assign selected to one scheduler
+// SOURCE MARKER: Engagement Center distribute evenly across schedulers
+function GroupAssignPopover({
+  group,
+  selectedExecutionCaseIds,
+  schedulers,
+  busy,
+  onAssignOne,
+  onDistribute,
+}: {
+  group: { key: string; label: string; rows: Array<{ executionCaseId: number; patientScreeningId: number | null }> };
+  selectedExecutionCaseIds: number[];
+  schedulers: SchedulerOption[];
+  busy: boolean;
+  onAssignOne: (schedulerId: number) => void;
+  onDistribute: (schedulerIds: number[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pickedOne, setPickedOne] = useState<string>("");
+  const [pickedMany, setPickedMany] = useState<Set<number>>(new Set());
+  const disabled = selectedExecutionCaseIds.length === 0;
+  function togglePickedMany(id: number) {
+    setPickedMany((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled}
+          className="h-7 gap-1 px-2 text-[11px]"
+          data-testid="engagement-center-bulk-assign-trigger"
+          data-bar-testid={`engagement-center-${group.key}-bulk-assign-trigger`}
+          title={
+            disabled
+              ? "Select patients to assign"
+              : `Assign ${selectedExecutionCaseIds.length} selected`
+          }
+        >
+          <UserCog className="h-3 w-3" />
+          Assign…
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="w-[320px] p-3 space-y-3"
+        data-testid="engagement-center-bulk-assign-popover"
+      >
+        <div className="space-y-1.5">
+          <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Assign {selectedExecutionCaseIds.length} selected to one scheduler
+          </Label>
+          <div className="flex items-center gap-1.5">
+            <Select value={pickedOne} onValueChange={setPickedOne}>
+              <SelectTrigger
+                className="h-7 text-[11px] flex-1"
+                data-testid="engagement-center-bulk-assign-one-select"
+              >
+                <SelectValue placeholder="Pick a scheduler…" />
+              </SelectTrigger>
+              <SelectContent>
+                {schedulers.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    {s.name} · {s.facility}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              disabled={busy || !pickedOne}
+              onClick={() => {
+                const sid = Number.parseInt(pickedOne, 10);
+                if (Number.isFinite(sid)) {
+                  onAssignOne(sid);
+                  setOpen(false);
+                  setPickedOne("");
+                }
+              }}
+              className="h-7 px-2 text-[11px]"
+              data-testid="engagement-center-bulk-assign-one-save"
+            >
+              Assign
+            </Button>
+          </div>
+        </div>
+        <div className="space-y-1.5 border-t border-slate-100 pt-3">
+          <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Distribute evenly across multiple schedulers
+          </Label>
+          <div className="max-h-[180px] overflow-y-auto rounded-md border border-slate-200 bg-white">
+            {schedulers.length === 0 ? (
+              <div className="text-[11px] text-slate-400 italic px-2 py-1.5">
+                No schedulers configured.
+              </div>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {schedulers.map((s) => {
+                  const checked = pickedMany.has(s.id);
+                  return (
+                    <li
+                      key={s.id}
+                      className="flex items-center gap-2 px-2 py-1.5 text-[11px]"
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => togglePickedMany(s.id)}
+                        data-testid="engagement-center-distribute-scheduler-checkbox"
+                        data-scheduler-id={s.id}
+                      />
+                      <span className="min-w-0 truncate">
+                        {s.name} <span className="text-slate-400">· {s.facility}</span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+          <Button
+            size="sm"
+            disabled={busy || pickedMany.size === 0}
+            onClick={() => {
+              const sids = Array.from(pickedMany);
+              onDistribute(sids);
+              setOpen(false);
+              setPickedMany(new Set());
+            }}
+            className="h-7 w-full gap-1 px-2 text-[11px]"
+            data-testid="engagement-center-distribute-save"
+          >
+            <Shuffle className="h-3 w-3" />
+            Distribute evenly to {pickedMany.size} scheduler{pickedMany.size === 1 ? "" : "s"}
+          </Button>
+          <div
+            className="text-[10px] text-slate-500"
+            data-testid="engagement-center-distribute-preview"
+          >
+            {pickedMany.size > 0
+              ? `~${Math.ceil(selectedExecutionCaseIds.length / Math.max(pickedMany.size, 1))} patients each`
+              : "Pick schedulers to preview the split"}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
