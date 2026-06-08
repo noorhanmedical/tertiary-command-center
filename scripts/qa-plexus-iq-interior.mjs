@@ -733,6 +733,13 @@ requireText("client/src/components/plexus-iq/PlexusIQWorkspace.tsx", [
   // Source markers documenting the permission model + default-closed
   // architecture in the facility interior.
   "Delete all per date is available to Plexus IQ users",
+  // Team Portal-style overlay visuals: deep blue outer panel with a
+  // white patient-row surface inside, opened to the right of the
+  // date row (indented) so the row stays usable like a vertical tab.
+  "plexus-iq-dropdown-dark-panel",
+  "plexus-iq-dropdown-white-row",
+  "plexus-iq-dropdown-indented-panel",
+  'side="right"',
 ]);
 
 // Forbidden in the facility interior: the patient pane must never be

@@ -1368,11 +1368,20 @@ function ClinicDetailPackets({
               open={!collapsed}
               onOpenChange={(open) => setGroupOpen(key, open)}
             >
+              {/* Date row reads as a vertical tab: a 3px deep-blue
+                  rail on the left lights up when the overlay is open,
+                  so the user always sees which group is active. */}
               <div
-                className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl border border-slate-200/70 bg-white hover:bg-slate-50/80 transition-colors ${
-                  collapsed ? "" : "ring-1 ring-slate-200"
+                className={`relative flex flex-wrap items-center justify-between gap-2 pl-4 pr-3 py-2 rounded-xl border border-slate-200/70 bg-white hover:bg-slate-50/80 transition-colors ${
+                  collapsed ? "" : "ring-1 ring-blue-300/60 bg-blue-50/40"
                 }`}
               >
+                <span
+                  aria-hidden
+                  className={`absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full transition-colors ${
+                    collapsed ? "bg-slate-200" : "bg-blue-700"
+                  }`}
+                />
                 <PopoverTrigger asChild>
                   <button
                     type="button"
@@ -1457,30 +1466,54 @@ function ClinicDetailPackets({
                 </div>
               </div>
 
+              {/* Overlay opens to the right of the date row and is
+                  visually indented so the row stays usable like a
+                  vertical tab. Outer panel is the Team Portal deep
+                  muted blue; patient rows inside live on a clean
+                  white surface so they keep their normal contrast. */}
               <PopoverContent
+                side="right"
                 align="start"
-                sideOffset={6}
-                className="z-40 w-[min(1040px,calc(100vw-2rem))] max-h-[70vh] overflow-y-auto rounded-xl border border-slate-200/70 bg-white p-3 shadow-[0_10px_30px_rgba(15,23,42,0.10)]"
+                sideOffset={12}
+                collisionPadding={16}
+                avoidCollisions
+                className="z-40 w-[min(960px,calc(100vw-3rem))] max-h-[72vh] overflow-y-auto rounded-2xl border border-blue-950/40 bg-blue-900 text-white p-3 shadow-[0_18px_40px_rgba(15,23,42,0.35)] ml-2"
                 data-testid="plexus-iq-dropdown-overlay"
                 data-overlay-style="absolute-floating"
+                data-panel-style="plexus-iq-dropdown-dark-panel"
+                data-indent-style="plexus-iq-dropdown-indented-panel"
               >
                 <div
                   data-testid="plexus-iq-dropdown-panel"
                   data-date-key={key}
+                  className="space-y-2"
                 >
-                  <QualificationPatientCardsPane
-                    title={dateLabel}
-                    patients={group.patients}
-                    analyzingPatients={analyzingPatients}
-                    completedCount={eligibleCount}
-                    onUpdatePatient={onUpdatePatient}
-                    onDeletePatient={onDeletePatient}
-                    onAnalyzeOnePatient={onAnalyzeOnePatient}
-                    onOpenScheduleModal={() => { /* no per-patient appointment modal here */ }}
-                    schedulerName={null}
-                    batchScheduleDate={group.scheduleDate}
-                    groupByDate={false}
-                  />
+                  <div className="flex items-center gap-2 px-1 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200/80">
+                    <CalendarDays className="w-3 h-3 opacity-80" />
+                    <span className="truncate">{facility} · {dateLabel}</span>
+                    <span className="ml-auto text-blue-100/60 tabular-nums">
+                      {group.patients.length}
+                    </span>
+                  </div>
+                  <div
+                    className="rounded-xl bg-white p-2 shadow-[0_2px_6px_rgba(15,23,42,0.10)]"
+                    data-testid="plexus-iq-dropdown-white-row"
+                    data-row-surface="plexus-iq-dropdown-white-row"
+                  >
+                    <QualificationPatientCardsPane
+                      title={dateLabel}
+                      patients={group.patients}
+                      analyzingPatients={analyzingPatients}
+                      completedCount={eligibleCount}
+                      onUpdatePatient={onUpdatePatient}
+                      onDeletePatient={onDeletePatient}
+                      onAnalyzeOnePatient={onAnalyzeOnePatient}
+                      onOpenScheduleModal={() => { /* no per-patient appointment modal here */ }}
+                      schedulerName={null}
+                      batchScheduleDate={group.scheduleDate}
+                      groupByDate={false}
+                    />
+                  </div>
                 </div>
               </PopoverContent>
             </Popover>
