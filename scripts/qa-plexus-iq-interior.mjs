@@ -884,6 +884,40 @@ requireText(adminReviewDialogRemovals, [
   "admin-review-remove-ultrasound-child",
 ]);
 
+// Merged qualifying chips — closed-bar source of truth + premium
+// per-kind/per-origin testIds + canonical removal markers + unified
+// merge helpers + regenerate source markers.
+requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
+  // Merge helpers + source markers.
+  "getMergedQualifyingChipsForAncillary",
+  "getMergedQualifyingChipsForUltrasoundParent",
+  "getMergedQualifyingChipsForTest",
+  "handleRemoveMergedChip",
+  "Merged qualifying chips are the Admin Review bar source of truth",
+  "Canonical qualifying_factors are converted to bar chips",
+  "Closed bars render merged qualifying chips",
+  // Origin-aware chip testIds.
+  "admin-review-canonical-factor-chip",
+  "admin-review-closed-bar-factor-chip",
+  "admin-review-premium-factor-chip",
+  "admin-review-rule-engine-seeded-chip",
+  // Kind-aware chip testIds.
+  "admin-review-diagnosis-factor-chip",
+  "admin-review-medication-factor-chip",
+  "admin-review-symptom-factor-chip",
+  // Bar chip rows still present.
+  "admin-review-ancillary-factor-chip",
+  "admin-review-ultrasound-child-factor-chip",
+  // Canonical chip removal markers.
+  "admin-review-remove-canonical-factor-chip",
+  "Remove canonical qualifying factor",
+  "Removed factors are excluded from regenerate",
+  "Deleting a chip persists to patient.reasoning",
+  // Regenerate uses visible merged chips + additive merge contract.
+  "Regenerate uses visible qualifying chips",
+  "priorQualifyingFactorsByTest",
+]);
+
 // Final failure check — must be at the very end so every requireText /
 // requireNotText above contributes to the failure list.
 if (failures.length) {

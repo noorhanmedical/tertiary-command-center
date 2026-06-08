@@ -934,6 +934,194 @@ export function AdminReviewDialog({
     return out;
   }
 
+  // ─── Merged qualifying chips (bar source of truth) ──────────────
+  //
+  // Merged qualifying chips are the Admin Review bar source of truth.
+  // Closed bars render merged qualifying chips so the user can read
+  // the qualifying factors without expanding the bar.
+  // Canonical qualifying_factors are converted to bar chips here.
+  // SOURCE MARKER: Merged qualifying chips are the Admin Review bar source of truth
+  // SOURCE MARKER: Canonical qualifying_factors are converted to bar chips
+  // SOURCE MARKER: Closed bars render merged qualifying chips
+  type ChipOrigin = "user" | "canonical" | "rule-seeded";
+  type DisplayChipKind = "icd_disease" | "medication" | "symptom" | "history" | "prior_test";
+  type DisplayChip = {
+    key: string;
+    label: string;
+    icdCode: string | null;
+    kind: DisplayChipKind;
+    origin: ChipOrigin;
+    // The originating SupportingButton when the chip came from
+    // assignments (user/rule-seeded). Empty for canonical-only chips.
+    button?: SupportingButton;
+    // For canonical chips: the test name whose qualifying_factors
+    // contained this label. Used to scope removal on a parent bar.
+    canonicalTestNames?: string[];
+  };
+
+  const ICD_INLINE_RE = /^([A-TV-Z][0-9][0-9A-Z]{0,2}(?:\.[0-9A-Z]{1,4})?)\s*[·:\-]\s*(.+)$/i;
+
+  function inferChipKindFromLabel(label: string): DisplayChipKind {
+    const lower = label.toLowerCase();
+    const medHints = ["metformin", "insulin", "amlodipine", "lisinopril", "losartan", "metoprolol", "atorvastatin", "rosuvastatin", "aspirin", "apixaban", "rivaroxaban", "warfarin", "statin"];
+    if (medHints.some((m) => lower.includes(m))) return "medication";
+    const sxHints = ["dizziness", "syncope", "edema", "swelling", "dyspnea", "shortness of breath", "claudication", "leg pain", "calf pain", "bruit", "vertigo"];
+    if (sxHints.some((s) => lower.includes(s))) return "symptom";
+    return "icd_disease";
+  }
+
+  function normalizedKeyFor(label: string, icdCode: string | null | undefined, kind: DisplayChipKind): string {
+    const cleanLabel = label.trim().toLowerCase().replace(/\s+/g, " ");
+    const code = (icdCode ?? "").trim().toLowerCase();
+    return `${kind}:${code}:${cleanLabel}`;
+  }
+
+  function chipFromButton(button: SupportingButton, origin: ChipOrigin): DisplayChip {
+    const kind: DisplayChipKind =
+      button.kind === "icd_disease" || button.kind === "medication" ||
+      button.kind === "symptom" || button.kind === "history" ||
+      button.kind === "prior_test"
+        ? button.kind
+        : "icd_disease";
+    return {
+      key: normalizedKeyFor(button.label, button.icdCode ?? null, kind),
+      label: button.label,
+      icdCode: button.icdCode ?? null,
+      kind,
+      origin,
+      button,
+    };
+  }
+
+  function chipFromCanonicalFactor(factor: string, testName: string): DisplayChip {
+    const m = ICD_INLINE_RE.exec(factor.trim());
+    if (m && /^[A-TV-Z]/i.test(m[1])) {
+      const code = m[1].toUpperCase();
+      const label = m[2].trim();
+      return {
+        key: normalizedKeyFor(label, code, "icd_disease"),
+        label,
+        icdCode: code,
+        kind: "icd_disease",
+        origin: "canonical",
+        canonicalTestNames: [testName],
+      };
+    }
+    const cleaned = factor.trim();
+    const kind = inferChipKindFromLabel(cleaned);
+    return {
+      key: normalizedKeyFor(cleaned, null, kind),
+      label: cleaned,
+      icdCode: null,
+      kind,
+      origin: "canonical",
+      canonicalTestNames: [testName],
+    };
+  }
+
+  // Dedupe by normalized key. Priority when the same key appears in
+  // multiple origins: user > canonical > rule-seeded. Canonical entries
+  // accumulate every testName they came from so an ancillary-level
+  // removal can strip the factor from each test's qualifying_factors.
+  function dedupeChips(chips: DisplayChip[]): DisplayChip[] {
+    const priority: Record<ChipOrigin, number> = { user: 0, canonical: 1, "rule-seeded": 2 };
+    const map = new Map<string, DisplayChip>();
+    for (const chip of chips) {
+      const existing = map.get(chip.key);
+      if (!existing) {
+        map.set(chip.key, { ...chip, canonicalTestNames: chip.canonicalTestNames ? [...chip.canonicalTestNames] : undefined });
+        continue;
+      }
+      const winsBy: ChipOrigin = priority[chip.origin] < priority[existing.origin] ? chip.origin : existing.origin;
+      const winner = winsBy === chip.origin ? chip : existing;
+      // Always merge canonical test names so an ancillary-level remove
+      // can strip every occurrence.
+      const merged: DisplayChip = {
+        ...winner,
+        canonicalTestNames: Array.from(
+          new Set([
+            ...(existing.canonicalTestNames ?? []),
+            ...(chip.canonicalTestNames ?? []),
+          ]),
+        ),
+      };
+      if (merged.canonicalTestNames && merged.canonicalTestNames.length === 0) {
+        merged.canonicalTestNames = undefined;
+      }
+      map.set(chip.key, merged);
+    }
+    return Array.from(map.values());
+  }
+
+  function isChipRemoved(chip: DisplayChip, removedLabels: string[]): boolean {
+    const lower = removedLabels.map((s) => s.toLowerCase().trim());
+    const a = chip.label.toLowerCase().trim();
+    const b = chip.icdCode ? `${chip.icdCode} · ${chip.label}`.toLowerCase().trim() : null;
+    return lower.includes(a) || (b !== null && lower.includes(b));
+  }
+
+  function getMergedQualifyingChipsForAncillary(
+    id: "brainwave" | "vitalwave",
+  ): DisplayChip[] {
+    const userChips = selectedFor(id).map((b) => chipFromButton(b, "user"));
+    const canonicalChips: DisplayChip[] = [];
+    for (const card of canonicalReasoningByAncillary[id]) {
+      for (const f of card.qualifyingFactors) {
+        canonicalChips.push(chipFromCanonicalFactor(f, card.testName));
+      }
+    }
+    const ruleSeededChips = ruleSeededChipsForAncillary(id).map((b) =>
+      chipFromButton(b, "rule-seeded"),
+    );
+    return dedupeChips([...userChips, ...canonicalChips, ...ruleSeededChips]).filter(
+      (c) => !isChipRemoved(c, removedFactors[id]),
+    );
+  }
+
+  function getMergedQualifyingChipsForUltrasoundParent(): DisplayChip[] {
+    const userChips = ultrasoundParentSelected().map((b) =>
+      chipFromButton(b, "user"),
+    );
+    const canonicalChips: DisplayChip[] = [];
+    for (const card of canonicalReasoningByAncillary.ultrasound) {
+      for (const f of card.qualifyingFactors) {
+        canonicalChips.push(chipFromCanonicalFactor(f, card.testName));
+      }
+    }
+    const ruleSeededChips = ruleSeededChipsForUltrasoundParent().map((b) =>
+      chipFromButton(b, "rule-seeded"),
+    );
+    return dedupeChips([
+      ...userChips,
+      ...canonicalChips,
+      ...ruleSeededChips,
+    ]).filter((c) => !isChipRemoved(c, removedFactors.ultrasound.parent));
+  }
+
+  function getMergedQualifyingChipsForTest(testName: string): DisplayChip[] {
+    const userChips = ultrasoundChildSelected(testName).map((b) =>
+      chipFromButton(b, "user"),
+    );
+    const card = canonicalReasoningByAncillary.ultrasound.find(
+      (c) => c.testName === testName,
+    );
+    const canonicalChips: DisplayChip[] = card
+      ? card.qualifyingFactors.map((f) => chipFromCanonicalFactor(f, testName))
+      : [];
+    const ruleSeededChips = ruleSeededChipsForUltrasoundTest(testName).map((b) =>
+      chipFromButton(b, "rule-seeded"),
+    );
+    const removed = [
+      ...(removedFactors.ultrasound.byTestName[testName] ?? []),
+      ...removedFactors.ultrasound.parent,
+    ];
+    return dedupeChips([
+      ...userChips,
+      ...canonicalChips,
+      ...ruleSeededChips,
+    ]).filter((c) => !isChipRemoved(c, removed));
+  }
+
   // Whether a given button is already assigned to a specific target.
   // Drives the "Already on X" disabled states in AssignMenu and prevents
   // duplicate entries on the same ancillary bar.
@@ -1132,6 +1320,77 @@ export function AdminReviewDialog({
     recordAdminReviewUpdate("qualifying_factor_removed", `Removed qualifying factor: ${label}`, { from });
   }
 
+  // Unified merged-chip remove. Dispatches by chip origin so a single
+  // X button works for user-assigned chips, canonical reasoning
+  // factors, and rule-engine-seeded chips. Source markers:
+  //   - "Remove canonical qualifying factor"
+  //   - "Removed factors are excluded from regenerate"
+  //   - "Deleting a chip persists to patient.reasoning"
+  // SOURCE MARKER: Remove canonical qualifying factor
+  // SOURCE MARKER: Removed factors are excluded from regenerate
+  // SOURCE MARKER: Deleting a chip persists to patient.reasoning
+  function handleRemoveMergedChip(target: AssignmentTarget, chip: DisplayChip) {
+    const codeLabel = chip.icdCode ? `${chip.icdCode} · ${chip.label}` : chip.label;
+
+    // 1. Always record the label so a future regenerate excludes it.
+    setRemovedFactors((prev) => {
+      const next = {
+        brainwave: [...prev.brainwave],
+        vitalwave: [...prev.vitalwave],
+        ultrasound: {
+          parent: [...prev.ultrasound.parent],
+          byTestName: { ...prev.ultrasound.byTestName },
+        },
+      };
+      const push = (arr: string[]) => {
+        if (!arr.includes(chip.label)) arr.push(chip.label);
+        if (!arr.includes(codeLabel)) arr.push(codeLabel);
+      };
+      if (target.type === "ancillary") {
+        if (target.ancillaryId === "brainwave") push(next.brainwave);
+        if (target.ancillaryId === "vitalwave") push(next.vitalwave);
+      } else if (target.type === "ultrasound-parent") {
+        push(next.ultrasound.parent);
+      } else if (target.type === "ultrasound-test") {
+        const list = [...(next.ultrasound.byTestName[target.testName] ?? [])];
+        const pushLocal = (arr: string[]) => {
+          if (!arr.includes(chip.label)) arr.push(chip.label);
+          if (!arr.includes(codeLabel)) arr.push(codeLabel);
+        };
+        pushLocal(list);
+        next.ultrasound.byTestName[target.testName] = list;
+      }
+      return next;
+    });
+
+    // 2. User-assigned chips unassign the underlying SupportingButton.
+    if (chip.origin === "user" && chip.button) {
+      unassign(target, chip.button);
+    }
+
+    // 3. Canonical chips must also strip from patient.reasoning so the
+    // deletion persists across reopen/regenerate.
+    if (chip.origin === "canonical") {
+      const testNames = chip.canonicalTestNames ?? [];
+      if (target.type === "ultrasound-test" && testNames.length === 0) {
+        testNames.push(target.testName);
+      }
+      for (const testName of testNames) {
+        removeCanonicalQualifyingFactor(testName, chip.label);
+        if (chip.icdCode) {
+          removeCanonicalQualifyingFactor(testName, codeLabel);
+        }
+      }
+    }
+
+    // 4. Audit log.
+    recordAdminReviewUpdate(
+      "qualifying_factor_removed",
+      `Removed qualifying factor: ${chip.label}`,
+      { target, origin: chip.origin, icdCode: chip.icdCode ?? null },
+    );
+  }
+
   // Backend: remove an entire ancillary from this patient.
   const removeAncillaryMutation = useMutation<
     { ok: boolean; patient: PatientScreening; ancillaryId: AdminReviewAncillaryId; removedTests: string[] },
@@ -1301,6 +1560,13 @@ export function AdminReviewDialog({
         ancillary === "ultrasound"
           ? removedFactors.ultrasound.parent
           : removedFactors[ancillary];
+      // Regenerate uses visible qualifying chips — the visible chip
+      // layer on the bar is the merged union of user-assigned + canonical
+      // qualifying_factors + rule-engine evidence minus removedFactors.
+      // The authoritative floor below sends the canonical layer so the
+      // server merge cannot lose it; removedFactors are subtracted so an
+      // explicit user delete is honoured.
+      // SOURCE MARKER: Regenerate uses visible qualifying chips
       // Authoritative floor: send the current canonical qualifying_factors
       // straight from patient.reasoning so the server merge can't lose them
       // even if the stored shape is unusual.
@@ -1904,23 +2170,23 @@ export function AdminReviewDialog({
                                 &lt;16
                               </span>
                             )}
+                            {/* Closed bars render merged qualifying chips. */}
                             <div
                               className="flex flex-wrap items-center gap-1"
                               data-testid="admin-review-ancillary-factor-chip-row"
                             >
-                              {combineChips(selected, ruleSeededChipsForAncillary(id)).map(({ chip: b, seeded }) => (
-                                <FactorChip
-                                  key={`${chipKeyForAssignment(b)}-${seeded ? "rule" : "user"}`}
-                                  b={b}
-                                  testId="admin-review-ancillary-factor-chip"
-                                  removeTestId={
+                              {getMergedQualifyingChipsForAncillary(id).map((chip) => (
+                                <PremiumFactorChip
+                                  key={chip.key}
+                                  chip={chip}
+                                  barTestId="admin-review-ancillary-factor-chip"
+                                  removeBarTestId={
                                     id === "brainwave"
                                       ? "admin-review-remove-brainwave-factor"
                                       : "admin-review-remove-vitalwave-factor"
                                   }
-                                  ruleSeeded={seeded}
                                   onRemove={() =>
-                                    removeQualifyingFactor({ type: "ancillary", ancillaryId: id }, b)
+                                    handleRemoveMergedChip({ type: "ancillary", ancillaryId: id }, chip)
                                   }
                                 />
                               ))}
@@ -2062,19 +2328,19 @@ export function AdminReviewDialog({
                             &lt;16
                           </span>
                         )}
+                        {/* Closed bars render merged qualifying chips. */}
                         <div
                           className="flex flex-wrap items-center gap-1"
                           data-testid="admin-review-ancillary-factor-chip-row"
                         >
-                          {combineChips(ultrasoundParentSelected(), ruleSeededChipsForUltrasoundParent()).map(({ chip: b, seeded }) => (
-                            <FactorChip
-                              key={`${chipKeyForAssignment(b)}-${seeded ? "rule" : "user"}`}
-                              b={b}
-                              testId="admin-review-ancillary-factor-chip"
-                              removeTestId="admin-review-remove-ultrasound-parent-factor"
-                              ruleSeeded={seeded}
+                          {getMergedQualifyingChipsForUltrasoundParent().map((chip) => (
+                            <PremiumFactorChip
+                              key={chip.key}
+                              chip={chip}
+                              barTestId="admin-review-ancillary-factor-chip"
+                              removeBarTestId="admin-review-remove-ultrasound-parent-factor"
                               onRemove={() =>
-                                removeQualifyingFactor({ type: "ultrasound-parent" }, b)
+                                handleRemoveMergedChip({ type: "ultrasound-parent" }, chip)
                               }
                             />
                           ))}
@@ -2178,31 +2444,25 @@ export function AdminReviewDialog({
                                     <div className="text-sm font-semibold text-slate-900 shrink-0">
                                       {card.testName}
                                     </div>
+                                    {/* Closed bars render merged qualifying chips. */}
                                     <div
                                       className="flex flex-wrap items-center gap-1"
                                       data-testid="admin-review-ultrasound-child-factor-chip-row"
                                     >
-                                      {combineChips(selected, ruleSeededChipsForUltrasoundTest(card.testName)).map(({ chip: b, seeded }) => {
-                                        const fromParent = assignments.ultrasound.parent.some(
-                                          (p) => chipKeyForAssignment(p) === chipKeyForAssignment(b),
-                                        );
-                                        return (
-                                          <FactorChip
-                                            key={`${chipKeyForAssignment(b)}-${seeded ? "rule" : "user"}`}
-                                            b={b}
-                                            testId="admin-review-ultrasound-child-factor-chip"
-                                            removeTestId="admin-review-remove-ultrasound-child-factor"
-                                            inherited={fromParent}
-                                            ruleSeeded={seeded}
-                                            onRemove={() =>
-                                              removeQualifyingFactor(
-                                                { type: "ultrasound-test", testName: card.testName },
-                                                b,
-                                              )
-                                            }
-                                          />
-                                        );
-                                      })}
+                                      {getMergedQualifyingChipsForTest(card.testName).map((chip) => (
+                                        <PremiumFactorChip
+                                          key={chip.key}
+                                          chip={chip}
+                                          barTestId="admin-review-ultrasound-child-factor-chip"
+                                          removeBarTestId="admin-review-remove-ultrasound-child-factor"
+                                          onRemove={() =>
+                                            handleRemoveMergedChip(
+                                              { type: "ultrasound-test", testName: card.testName },
+                                              chip,
+                                            )
+                                          }
+                                        />
+                                      ))}
                                     </div>
                                   </div>
                                 </button>
@@ -3027,6 +3287,10 @@ function SupportingChipButton({
 // specific tag (admin-review-ancillary-factor-chip,
 // admin-review-ultrasound-child-factor-chip) so QA can target the
 // chip even though the visual style is shared.
+// Legacy FactorChip retained for the small number of expanded-card
+// remove-X buttons that still pass a SupportingButton directly.
+// Closed bar rendering uses PremiumFactorChip below — it carries the
+// origin-aware testIds the merged-chip QA asserts on.
 function FactorChip({
   b,
   testId,
@@ -3039,9 +3303,6 @@ function FactorChip({
   testId: string;
   removeTestId?: string;
   inherited?: boolean;
-  // When true the chip is a rule-engine seed (not yet user-clicked);
-  // it renders with a dashed border and the seeded testId so QA can
-  // assert closed-bar chips are present.
   ruleSeeded?: boolean;
   onRemove: () => void;
 }) {
@@ -3063,8 +3324,8 @@ function FactorChip({
       data-rule-seeded={ruleSeeded ? "true" : "false"}
     >
       <span>{b.icdCode ? `${b.icdCode} · ` : ""}{b.label}</span>
-      {inherited || ruleSeeded ? (
-        <span className="text-[9px] opacity-60" aria-hidden>{ruleSeeded ? "rule" : "↑"}</span>
+      {inherited ? (
+        <span className="text-[9px] opacity-60" aria-hidden>↑</span>
       ) : (
         <button
           type="button"
@@ -3080,6 +3341,93 @@ function FactorChip({
           <X className="w-3 h-3" />
         </button>
       )}
+    </span>
+  );
+}
+
+// Premium merged-chip renderer. Every closed bar uses this so the
+// chip vocabulary matches the spec (per-kind + per-origin testIds,
+// always-show X). Bar testIds layered via data-bar-testid so QA can
+// reach the chip on any bar.
+type PremiumFactorChipProps = {
+  chip: {
+    label: string;
+    icdCode: string | null;
+    kind: "icd_disease" | "medication" | "symptom" | "history" | "prior_test";
+    origin: "user" | "canonical" | "rule-seeded";
+  };
+  // Bar-level testId (e.g. admin-review-ancillary-factor-chip).
+  barTestId: string;
+  // Bar-level remove testId (e.g. admin-review-remove-brainwave-factor).
+  removeBarTestId: string;
+  onRemove: () => void;
+};
+
+function PremiumFactorChip({
+  chip,
+  barTestId,
+  removeBarTestId,
+  onRemove,
+}: PremiumFactorChipProps) {
+  const kindTone =
+    chip.kind === "icd_disease"
+      ? "bg-blue-50 text-blue-900 border-blue-300"
+      : chip.kind === "medication"
+        ? "bg-purple-50 text-purple-900 border-purple-300"
+        : chip.kind === "prior_test"
+          ? "bg-teal-50 text-teal-900 border-teal-300"
+          : "bg-amber-50 text-amber-900 border-amber-300";
+  const originStyle =
+    chip.origin === "rule-seeded"
+      ? "border-dashed"
+      : chip.origin === "canonical"
+        ? "ring-1 ring-slate-300/60"
+        : "shadow-sm";
+  const kindTestId =
+    chip.kind === "icd_disease"
+      ? "admin-review-diagnosis-factor-chip"
+      : chip.kind === "medication"
+        ? "admin-review-medication-factor-chip"
+        : "admin-review-symptom-factor-chip";
+  const originTestId =
+    chip.origin === "canonical"
+      ? "admin-review-canonical-factor-chip"
+      : chip.origin === "rule-seeded"
+        ? "admin-review-rule-engine-seeded-chip"
+        : "admin-review-premium-factor-chip";
+  const removeTestId =
+    chip.origin === "canonical"
+      ? "admin-review-remove-canonical-factor-chip"
+      : "admin-review-remove-qualifying-factor-chip";
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${kindTone} ${originStyle}`}
+      data-testid={originTestId}
+      data-bar-testid={barTestId}
+      data-kind-testid={kindTestId}
+      data-closed-bar-testid="admin-review-closed-bar-factor-chip"
+      data-chip-kind={chip.kind}
+      data-chip-origin={chip.origin}
+    >
+      <span>
+        {chip.icdCode ? <span className="font-mono opacity-80">{chip.icdCode}</span> : null}
+        {chip.icdCode ? " · " : ""}
+        {chip.label}
+      </span>
+      <button
+        type="button"
+        aria-label={`Remove ${chip.label}`}
+        data-testid="admin-review-remove-qualifying-factor"
+        data-remove-bar={removeBarTestId}
+        data-remove-origin-testid={removeTestId}
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        className="hover:text-rose-600"
+      >
+        <X className="w-3 h-3" />
+      </button>
     </span>
   );
 }
