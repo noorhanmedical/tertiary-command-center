@@ -590,8 +590,13 @@ export function PlexusIQWorkspace({
     | "readyForEngagement"
     | "sentToEngagement"
     | "all";
+  // Completed is the default Plexus IQ facility bucket — when a
+  // clinician opens a facility they should land on what's finished
+  // (the work signed off and ready for engagement) before triaging
+  // incomplete work.
+  // SOURCE MARKER: Completed is the default Plexus IQ facility bucket
   const [clinicStatusFilter, setClinicStatusFilter] =
-    useState<ClinicStatusFilter>("needs");
+    useState<ClinicStatusFilter>("completed");
 
   // Per-clinic counts. Each clinic aggregates across every batch
   // (facility/date group) inside it. Missing-info + ready-for-
@@ -700,18 +705,20 @@ export function PlexusIQWorkspace({
       const summary =
         clinicSummaries.find((c) => c.facility === selectedClinicFacility) ??
         null;
+      // Plexus IQ facility bucket order:
+      //   1. Completed
+      //   2. Missing Info
+      //   3. Parsed
+      //   4. Admin Review Pending
+      //   5. Sent to Engagement
+      //   6. All Patients
+      // SOURCE MARKER: Plexus IQ facility bucket order
       const tiles: Array<{
         id: ClinicStatusFilter;
         label: string;
         count: number;
         tone: "amber" | "emerald" | "rose" | "sky" | "slate";
       }> = [
-        {
-          id: "needs",
-          label: PLEXUS_IQ_BUCKET_LABELS.needs_completion,
-          count: summary?.incompleteCount ?? 0,
-          tone: "amber",
-        },
         {
           id: "completed",
           label: PLEXUS_IQ_BUCKET_LABELS.completed,
@@ -723,6 +730,12 @@ export function PlexusIQWorkspace({
           label: PLEXUS_IQ_BUCKET_LABELS.missing_info,
           count: summary?.missingInfoCount ?? 0,
           tone: "rose",
+        },
+        {
+          id: "needs",
+          label: PLEXUS_IQ_BUCKET_LABELS.needs_completion,
+          count: summary?.incompleteCount ?? 0,
+          tone: "amber",
         },
         {
           id: "readyForEngagement",
@@ -757,7 +770,7 @@ export function PlexusIQWorkspace({
               type="button"
               onClick={() => {
                 setSelectedClinicFacility(null);
-                setClinicStatusFilter("needs");
+                setClinicStatusFilter("completed");
               }}
               className="inline-flex items-center gap-1 rounded-full bg-slate-100 hover:bg-slate-200 px-3 py-1 text-xs font-medium text-slate-800"
               data-testid="button-plexus-iq-clinic-back"
@@ -860,9 +873,8 @@ export function PlexusIQWorkspace({
               type="button"
               onClick={() => {
                 setSelectedClinicFacility(c.facility);
-                setClinicStatusFilter(
-                  c.incompleteCount > 0 ? "needs" : "completed",
-                );
+                // Completed is the default Plexus IQ facility bucket.
+                setClinicStatusFilter("completed");
               }}
               className="group flex flex-col overflow-hidden rounded-2xl bg-white text-left shadow-[0_2px_8px_rgba(15,23,42,0.06)] hover:shadow-[0_6px_20px_rgba(15,23,42,0.10)] transition-shadow"
               data-testid="plexus-iq-facility-tile"

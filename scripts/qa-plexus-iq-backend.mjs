@@ -115,9 +115,29 @@ requireText("server/services/plexusIq/adminReviewIcdSearch.ts", [
 // Both regenerate functions construct their OpenAI client the same way.
 requireText("server/services/plexusIq/adminReviewAiRegeneration.ts", [
   "AI_INTEGRATIONS_OPENAI_BASE_URL",
+  "AI_INTEGRATIONS_OPENAI_API_KEY",
+  "OPENAI_API_KEY",
   "baseURL",
   "new OpenAI({",
   "...(baseURL ? { baseURL } : {})",
+  // The canonical regenerate fan-out + additive merge contract.
+  "regenerateCanonicalReasoning",
+  "priorQualifyingFactorsByTest",
+  "removedFactorsByTest",
+  "selectedSupportButtonsByTest",
+  "mergedQualifyingFactors",
+]);
+
+// Regenerate routes must accept the merged-chip payload shape that
+// the dialog sends today: priorQualifyingFactorsByTest, removedFactors
+// (per-ancillary), and assignedEvidence.
+requireText("server/routes/patients.ts", [
+  "/api/patient-screenings/:id/admin-review/regenerate-ancillary",
+  "/api/patient-screenings/:id/admin-review/regenerate-test",
+  "priorQualifyingFactorsByTest",
+  "removedFactorsByTest",
+  "selectedSupportButtonsByTest",
+  "regenerateCanonicalReasoning",
 ]);
 
 // PDFs must NOT render ICD codes anywhere in their HTML output.
