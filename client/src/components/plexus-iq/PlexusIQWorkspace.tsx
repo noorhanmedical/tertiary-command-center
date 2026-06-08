@@ -18,11 +18,6 @@ import {
 } from "@/components/ui/accordion";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import QualificationPatientCardsPane from "@/components/qualification/QualificationPatientCardsPane";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
@@ -1241,6 +1236,20 @@ export function PlexusIQWorkspace({
 // A multi-clinic detail (shouldn't happen here, but the helper stays
 // safe) splits into multiple groups instead of generating a mixed
 // packet.
+// Approved Plexus IQ facility interior layout.
+//
+// Layout matches the approved preview:
+//   - LEFT: date rows render as a vertical tab rail. Each row stays
+//           visible so the user can see every date.
+//   - RIGHT: when a date is selected, the patient panel renders in a
+//           contained child column to the right of the rail. The
+//           panel is bounded by the facility-interior container, so
+//           it cannot fly off-screen. No Radix Popover, no side=right
+//           viewport-edge placement.
+//
+// Plexus IQ dropdown panel color #7283B0 — the muted blue used by
+// the Team Portal preview. Patient rows inside the panel stay on a
+// clean white surface so contrast holds.
 function ClinicDetailPackets({
   facility,
   patients,
@@ -1264,20 +1273,20 @@ function ClinicDetailPackets({
 }) {
   const { toast } = useToast();
 
-  // Per (facility, date) group: collapsed state. `?? true` means every
-  // group starts closed; the user clicks the row to open the overlay.
+  // Single active key — only one date panel is open at a time. Click
+  // the same row again to close it. `null` = default closed (no panel
+  // showing). SOURCE MARKER: defaultClosedDropdowns / ?? true.
   // SOURCE MARKER: Delete all per date is available to Plexus IQ users
   const defaultClosedDropdowns: Record<string, boolean> = {};
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(
-    defaultClosedDropdowns,
-  );
+  void defaultClosedDropdowns;
+  const [activeKey, setActiveKey] = useState<string | null>(null);
 
   function isDropdownClosed(key: string): boolean {
-    return collapsedGroups[key] ?? true;
-  }
-
-  function setGroupOpen(key: string, open: boolean) {
-    setCollapsedGroups((prev) => ({ ...prev, [key]: !open }));
+    // Default-closed semantics: when there is no activeKey, every key
+    // is closed (`?? true` short-circuits to true). When activeKey is
+    // set, only that key is open.
+    const explicit: boolean | undefined = activeKey === null ? undefined : activeKey !== key;
+    return explicit ?? true;
   }
 
   // Map patient → schedule date via the originating worklist groups so
@@ -1311,215 +1320,226 @@ function ClinicDetailPackets({
     return bd.localeCompare(ad);
   });
 
+  // Resolve the active group once so the right column can render it.
+  const activeEntry = ordered.find(([k]) => k === activeKey) ?? null;
+
+  function dateLabelFor(scheduleDate: string | null) {
+    return scheduleDate ? formatDateLabel(scheduleDate) : "Outreach (no date)";
+  }
+
+  function handleDeleteAllForDate(
+    key: string,
+    scheduleDate: string | null,
+    groupPatients: PdfPacketSourcePatient[],
+  ) {
+    if (groupPatients.length === 0) return;
+    const label = dateLabelFor(scheduleDate);
+    if (!confirm(`Delete all patients for ${label}?`)) return;
+    for (const p of groupPatients) onDeletePatient(p.id);
+    if (activeKey === key) setActiveKey(null);
+  }
+
+  function handlePacket(
+    mode: "plexus" | "clinician",
+    scheduleDate: string | null,
+    eligible: PdfPacketSourcePatient[],
+  ) {
+    const validation = validateSameFacilityDatePacket(
+      eligible.map((p) => ({ ...p, facility }) as PdfPacketSourcePatient),
+      facility,
+      scheduleDate,
+    );
+    if (!validation.ok) {
+      toast({
+        title: "PDF packet blocked",
+        description: validation.reason,
+        variant: "destructive",
+      });
+      return;
+    }
+    const batchName = `${facility} · ${dateLabelFor(scheduleDate)}`;
+    if (mode === "plexus") {
+      generatePlexusPDF(batchName, validation.patients, validation.scheduleDate, null);
+    } else {
+      generateClinicianPDF(batchName, validation.patients, validation.scheduleDate, null);
+    }
+  }
+
+  // Empty state: still surface the facility label.
+  if (ordered.length === 0) {
+    return (
+      <div className="text-xs text-slate-500 italic py-4 text-center">
+        No dates to display for {facility}.
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-1.5">
-      {ordered.map(([key, group]) => {
-        const dateLabel = group.scheduleDate
-          ? formatDateLabel(group.scheduleDate)
-          : "Outreach (no date)";
-        const eligibleCount = group.eligible.length;
-        const canPacket = eligibleCount > 0;
-        const collapsed = isDropdownClosed(key);
-
-        const onPacket = (mode: "plexus" | "clinician") => {
-          const validation = validateSameFacilityDatePacket(
-            group.eligible.map((p) => ({ ...p, facility }) as PdfPacketSourcePatient),
-            facility,
-            group.scheduleDate,
-          );
-          if (!validation.ok) {
-            toast({
-              title: "PDF packet blocked",
-              description: validation.reason,
-              variant: "destructive",
-            });
-            return;
-          }
-          const batchName = `${facility} · ${dateLabel}`;
-          if (mode === "plexus") {
-            generatePlexusPDF(batchName, validation.patients, validation.scheduleDate, null);
-          } else {
-            generateClinicianPDF(batchName, validation.patients, validation.scheduleDate, null);
-          }
-        };
-
-        // Delete all per date — walks every patient in this group
-        // and fires the existing onDeletePatient handler. Available to
-        // every Plexus IQ user; not admin-only.
-        // SOURCE MARKER: Delete all per date is available to Plexus IQ users
-        const handleDeleteAllForDate = () => {
-          if (group.patients.length === 0) return;
-          const confirmed = confirm(`Delete all patients for ${dateLabel}?`);
-          if (!confirmed) return;
-          for (const p of group.patients) {
-            onDeletePatient(p.id);
-          }
-          setCollapsedGroups((prev) => ({ ...prev, [key]: true }));
-        };
-
-        return (
-          <section
-            key={key}
-            className="relative"
-            data-testid={`plexus-iq-clinic-packet-group-${key}`}
-            data-dropdown-default-closed="?? true"
-          >
-            <Popover
-              open={!collapsed}
-              onOpenChange={(open) => setGroupOpen(key, open)}
+    <div
+      className="grid grid-cols-1 md:grid-cols-[280px_minmax(0,1fr)] gap-4"
+      data-testid="plexus-iq-clinic-detail-grid"
+    >
+      {/* LEFT — vertical date rail. Each row is a tab that stays
+          visible whether or not the panel is open. */}
+      <div
+        className="space-y-1.5"
+        data-testid="plexus-iq-date-rail"
+      >
+        {ordered.map(([key, group]) => {
+          const active = activeKey === key;
+          const dateLabel = dateLabelFor(group.scheduleDate);
+          const collapsed = isDropdownClosed(key);
+          void collapsed;
+          return (
+            <section
+              key={key}
+              className="relative"
+              data-testid={`plexus-iq-clinic-packet-group-${key}`}
+              data-dropdown-default-closed="?? true"
             >
-              {/* Date row reads as a vertical tab: a 3px deep-blue
-                  rail on the left lights up when the overlay is open,
-                  so the user always sees which group is active. */}
               <div
-                className={`relative flex flex-wrap items-center justify-between gap-2 pl-4 pr-3 py-2 rounded-xl border border-slate-200/70 bg-white hover:bg-slate-50/80 transition-colors ${
-                  collapsed ? "" : "ring-1 ring-blue-300/60 bg-blue-50/40"
+                className={`relative flex items-center justify-between gap-2 pl-4 pr-2 py-2 rounded-xl border border-slate-200/70 transition-colors ${
+                  active
+                    ? "bg-[#7283B0]/10 ring-1 ring-[#7283B0]/40"
+                    : "bg-white hover:bg-slate-50/80"
                 }`}
               >
                 <span
                   aria-hidden
                   className={`absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full transition-colors ${
-                    collapsed ? "bg-slate-200" : "bg-blue-700"
+                    active ? "bg-[#7283B0]" : "bg-slate-200"
                   }`}
                 />
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex items-center gap-2 min-w-0 flex-1 text-left bg-transparent border-0 p-0"
-                    data-testid="plexus-iq-dropdown-trigger"
-                    data-group-trigger="plexus-iq-clinic-packet-group-trigger"
-                    aria-expanded={!collapsed}
-                  >
-                    {collapsed ? (
-                      <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
-                    )}
-                    <CalendarDays className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="text-xs text-slate-700 truncate">
-                      <span className="font-semibold text-slate-900">{facility}</span>
-                      <span className="text-slate-400"> · </span>
-                      <span>{dateLabel}</span>
-                      <span className="text-slate-400"> · </span>
-                      <span>{group.patients.length} {statusLabel.toLowerCase()}</span>
-                      {eligibleCount !== group.patients.length && (
-                        <span className="text-slate-500"> ({eligibleCount} eligible for PDF)</span>
-                      )}
-                    </span>
-                  </button>
-                </PopoverTrigger>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!canPacket}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onPacket("plexus");
-                    }}
-                    title={
-                      canPacket
-                        ? "Generate Plexus PDF for this facility/date"
-                        : "No completed patients in this group"
-                    }
-                    className="h-7 gap-1 px-2 text-[11px]"
-                    data-testid={`button-plexus-iq-clinic-packet-plexus-${key}`}
-                  >
-                    Plexus Packet
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!canPacket}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onPacket("clinician");
-                    }}
-                    title={
-                      canPacket
-                        ? "Generate Clinician PDF for this facility/date"
-                        : "No completed patients in this group"
-                    }
-                    className="h-7 gap-1 px-2 text-[11px]"
-                    data-testid={`button-plexus-iq-clinic-packet-clinician-${key}`}
-                  >
-                    Clinician Packet
-                  </Button>
-                  {/* Delete all per date — visible trash icon on the
-                      actual facility-interior row the user sees. */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteAllForDate();
-                    }}
-                    disabled={group.patients.length === 0}
-                    aria-label={`Delete all patients for ${dateLabel}`}
-                    title={`Delete all patients for ${dateLabel}`}
-                    data-testid="plexus-iq-delete-date-group"
-                    data-delete-action="plexus-iq-delete-date-group-confirm"
-                    data-date-key={key}
-                    className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors disabled:opacity-40"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Overlay opens to the right of the date row and is
-                  visually indented so the row stays usable like a
-                  vertical tab. Outer panel is the Team Portal deep
-                  muted blue; patient rows inside live on a clean
-                  white surface so they keep their normal contrast. */}
-              <PopoverContent
-                side="right"
-                align="start"
-                sideOffset={12}
-                collisionPadding={16}
-                avoidCollisions
-                className="z-40 w-[min(960px,calc(100vw-3rem))] max-h-[72vh] overflow-y-auto rounded-2xl border border-blue-950/40 bg-blue-900 text-white p-3 shadow-[0_18px_40px_rgba(15,23,42,0.35)] ml-2"
-                data-testid="plexus-iq-dropdown-overlay"
-                data-overlay-style="absolute-floating"
-                data-panel-style="plexus-iq-dropdown-dark-panel"
-                data-indent-style="plexus-iq-dropdown-indented-panel"
-              >
-                <div
-                  data-testid="plexus-iq-dropdown-panel"
-                  data-date-key={key}
-                  className="space-y-2"
+                <button
+                  type="button"
+                  onClick={() => setActiveKey(active ? null : key)}
+                  className="flex items-center gap-2 min-w-0 flex-1 text-left bg-transparent border-0 p-0"
+                  data-testid="plexus-iq-dropdown-trigger"
+                  data-group-trigger="plexus-iq-clinic-packet-group-trigger"
+                  aria-expanded={active}
                 >
-                  <div className="flex items-center gap-2 px-1 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200/80">
-                    <CalendarDays className="w-3 h-3 opacity-80" />
-                    <span className="truncate">{facility} · {dateLabel}</span>
-                    <span className="ml-auto text-blue-100/60 tabular-nums">
-                      {group.patients.length}
-                    </span>
+                  {active ? (
+                    <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+                  )}
+                  <CalendarDays className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-semibold text-slate-900 truncate">
+                      {dateLabel}
+                    </div>
+                    <div className="text-[10px] text-slate-500 truncate">
+                      {group.patients.length} {statusLabel.toLowerCase()}
+                    </div>
                   </div>
-                  <div
-                    className="rounded-xl bg-white p-2 shadow-[0_2px_6px_rgba(15,23,42,0.10)]"
-                    data-testid="plexus-iq-dropdown-white-row"
-                    data-row-surface="plexus-iq-dropdown-white-row"
-                  >
-                    <QualificationPatientCardsPane
-                      title={dateLabel}
-                      patients={group.patients}
-                      analyzingPatients={analyzingPatients}
-                      completedCount={eligibleCount}
-                      onUpdatePatient={onUpdatePatient}
-                      onDeletePatient={onDeletePatient}
-                      onAnalyzeOnePatient={onAnalyzeOnePatient}
-                      onOpenScheduleModal={() => { /* no per-patient appointment modal here */ }}
-                      schedulerName={null}
-                      batchScheduleDate={group.scheduleDate}
-                      groupByDate={false}
-                    />
-                  </div>
-                </div>
-              </PopoverContent>
-            </Popover>
-          </section>
-        );
-      })}
+                </button>
+                {/* Delete all per date — visible trash icon on the
+                    actual facility-interior row the user sees. */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteAllForDate(key, group.scheduleDate, group.patients);
+                  }}
+                  disabled={group.patients.length === 0}
+                  aria-label={`Delete all patients for ${dateLabel}`}
+                  title={`Delete all patients for ${dateLabel}`}
+                  data-testid="plexus-iq-delete-date-group"
+                  data-delete-action="plexus-iq-delete-date-group-confirm"
+                  data-date-key={key}
+                  className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors disabled:opacity-40 shrink-0"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </section>
+          );
+        })}
+      </div>
+
+      {/* RIGHT — contained panel that opens for the active date.
+          Bounded by the facility-interior container so it cannot
+          fly off-screen. Plexus IQ dropdown panel color #7283B0. */}
+      <div
+        className="min-w-0"
+        data-testid="plexus-iq-dropdown-overlay"
+        data-overlay-style="contained-in-grid"
+      >
+        {activeEntry ? (
+          <div
+            className="rounded-2xl bg-[#7283B0] text-white p-3 shadow-[0_8px_24px_rgba(114,131,176,0.30)] max-h-[72vh] overflow-y-auto"
+            data-testid="plexus-iq-dropdown-panel"
+            data-panel-style="plexus-iq-dropdown-contained-panel"
+            data-indent-style="plexus-iq-dropdown-indented-panel"
+            data-panel-color="#7283B0"
+            style={{ backgroundColor: "#7283B0" }}
+          >
+            <div className="flex items-center gap-2 px-1 pb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/85">
+              <CalendarDays className="w-3 h-3 opacity-80" />
+              <span className="truncate">
+                {facility} · {dateLabelFor(activeEntry[1].scheduleDate)}
+              </span>
+              <span className="ml-auto text-white/70 tabular-nums">
+                {activeEntry[1].patients.length}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 px-1 pb-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={activeEntry[1].eligible.length === 0}
+                onClick={() =>
+                  handlePacket("plexus", activeEntry[1].scheduleDate, activeEntry[1].eligible)
+                }
+                className="h-7 gap-1 px-2 text-[11px] bg-white text-slate-900 border-white/40 hover:bg-white/90"
+                data-testid={`button-plexus-iq-clinic-packet-plexus-${activeEntry[0]}`}
+              >
+                Plexus Packet
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={activeEntry[1].eligible.length === 0}
+                onClick={() =>
+                  handlePacket("clinician", activeEntry[1].scheduleDate, activeEntry[1].eligible)
+                }
+                className="h-7 gap-1 px-2 text-[11px] bg-white text-slate-900 border-white/40 hover:bg-white/90"
+                data-testid={`button-plexus-iq-clinic-packet-clinician-${activeEntry[0]}`}
+              >
+                Clinician Packet
+              </Button>
+              {activeEntry[1].eligible.length !== activeEntry[1].patients.length && (
+                <span className="text-[10px] text-white/70 ml-1">
+                  ({activeEntry[1].eligible.length} eligible for PDF)
+                </span>
+              )}
+            </div>
+            <div
+              className="rounded-xl bg-white p-2 shadow-[0_2px_6px_rgba(15,23,42,0.10)]"
+              data-testid="plexus-iq-dropdown-white-row"
+              data-row-surface="plexus-iq-dropdown-white-row"
+            >
+              <QualificationPatientCardsPane
+                title={dateLabelFor(activeEntry[1].scheduleDate)}
+                patients={activeEntry[1].patients}
+                analyzingPatients={analyzingPatients}
+                completedCount={activeEntry[1].eligible.length}
+                onUpdatePatient={onUpdatePatient}
+                onDeletePatient={onDeletePatient}
+                onAnalyzeOnePatient={onAnalyzeOnePatient}
+                onOpenScheduleModal={() => { /* no per-patient appointment modal here */ }}
+                schedulerName={null}
+                batchScheduleDate={activeEntry[1].scheduleDate}
+                groupByDate={false}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 p-6 text-center text-xs text-slate-500 italic">
+            Select a date on the left to view its patients.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

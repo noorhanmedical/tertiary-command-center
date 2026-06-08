@@ -560,7 +560,18 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "useState(true)",
   // Venous helper imported in the dialog for ultrasound child seeding.
   "evidenceForUltrasoundTest",
+  // Approved muted blue used by the side panels — the literal hex
+  // appears as both a className arbitrary value and a data marker.
+  "#7283B0",
 ]);
+
+// Admin Review side panels must use the approved #7283B0 muted blue,
+// not the previous navy. Forbid the navy class tokens.
+requireNotText(
+  "client/src/components/qualification/AdminReviewDialog.tsx",
+  ["bg-blue-900", "border-blue-950"],
+  "Admin Review side panels must use the approved #7283B0 muted blue, not navy",
+);
 
 // Admin Review forbidden visible copy. The simplified bars and the
 // new 3-button right panel must NOT carry helper labels, status copy,
@@ -733,22 +744,33 @@ requireText("client/src/components/plexus-iq/PlexusIQWorkspace.tsx", [
   // Source markers documenting the permission model + default-closed
   // architecture in the facility interior.
   "Delete all per date is available to Plexus IQ users",
-  // Team Portal-style overlay visuals: deep blue outer panel with a
-  // white patient-row surface inside, opened to the right of the
-  // date row (indented) so the row stays usable like a vertical tab.
-  "plexus-iq-dropdown-dark-panel",
-  "plexus-iq-dropdown-white-row",
+  // Approved Plexus IQ visuals (from the preview): muted blue
+  // #7283B0 panel CONTAINED inside the facility-interior grid (not
+  // a viewport-edge Popover that can fly off-screen). Date rows live
+  // in a left rail like vertical tabs; selected date opens to the
+  // right indented panel with white patient rows inside.
+  "plexus-iq-dropdown-contained-panel",
   "plexus-iq-dropdown-indented-panel",
-  'side="right"',
+  "plexus-iq-dropdown-white-row",
+  "#7283B0",
+  "Plexus IQ dropdown panel color #7283B0",
+  // Date rail container that holds the tab-style date rows.
+  "plexus-iq-date-rail",
 ]);
 
 // Forbidden in the facility interior: the patient pane must never be
 // wrapped in a "big tile" (the old rounded-xl bg-slate-50/40 p-3
-// container). Patients always live inside the overlay panel.
+// container), and the panel must NOT be dark navy or use a
+// viewport-edge popover that can fly off-screen.
 requireNotText(
   "client/src/components/plexus-iq/PlexusIQWorkspace.tsx",
-  ["rounded-xl border border-slate-100 bg-slate-50/40 p-3"],
-  "PlexusIQWorkspace facility interior must not wrap patient panes in the legacy big-tile container",
+  [
+    "rounded-xl border border-slate-100 bg-slate-50/40 p-3",
+    "bg-blue-900",
+    "border-blue-950",
+    'side="right"',
+  ],
+  "PlexusIQWorkspace facility interior must use the approved contained #7283B0 panel, not navy or off-screen popovers",
 );
 
 requireText(listRow, [
