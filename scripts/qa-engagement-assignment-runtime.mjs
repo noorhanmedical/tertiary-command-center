@@ -117,6 +117,12 @@ requireText(routeFile, [
   "Engagement Center delete removes assignment not patient record",
   "Engagement Center delete all is scoped to current group",
   "engagement_assignment_cancelled",
+  // No-duplicate-scheduler-per-date guard: assign route rejects an
+  // assignment that would land the same patient (name + DOB) with
+  // two different schedulers on the same scheduleDate.
+  "findConflictingActiveAssignment",
+  "Two schedulers cannot share the same patient for the same date",
+  "Duplicate scheduler per date guard",
 ]);
 
 // Engagement Center page UI: grouping toolbar, per-group actions,
