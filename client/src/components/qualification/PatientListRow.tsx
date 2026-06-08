@@ -46,6 +46,9 @@ interface PatientListRowProps {
   schedulerName?: string | null;
   batchScheduleDate?: string | null;
   sourceMode?: "visit" | "outreach";
+  // Sibling list for Admin Review dialog navigation.
+  adminReviewSiblings?: PatientScreening[];
+  adminReviewDateLabel?: string | null;
 }
 
 export function PatientListRow({
@@ -56,6 +59,8 @@ export function PatientListRow({
   onAnalyze,
   batchScheduleDate,
   sourceMode,
+  adminReviewSiblings,
+  adminReviewDateLabel,
 }: PatientListRowProps) {
   const serverTests = patient.qualifyingTests || [];
   const [localTests, setLocalTests] = useState<string[]>(serverTests);
@@ -384,6 +389,8 @@ export function PatientListRow({
         onUpdate={onUpdate}
         onAddTest={handleAddTest}
         onRemoveTest={handleRemoveTest}
+        siblings={adminReviewSiblings}
+        dateLabel={adminReviewDateLabel ?? batchScheduleDate ?? null}
       />
 
       <span title={generateTitle} className="hidden" aria-hidden />

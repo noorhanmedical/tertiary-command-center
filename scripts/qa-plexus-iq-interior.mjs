@@ -994,6 +994,35 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "Assigned by Scheduler Settings",
 ]);
 
+// Admin Review sibling navigation: the dialog renders Prev/Next
+// arrows + "N of M" counter when the caller passes a siblings list,
+// and auto-advances to the next sibling on Approve / Pend / Reject
+// so admins can triage a whole date group without re-opening.
+requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
+  "Admin Review sibling navigation",
+  "Admin Review auto-advances on approve when siblings exist",
+  "admin-review-sibling-nav",
+  "admin-review-sibling-prev",
+  "admin-review-sibling-next",
+  "admin-review-sibling-counter",
+  "siblings",
+  "dateLabel",
+]);
+// The callers (PatientCard / PatientListRow / QualificationPatientCardsPane)
+// thread the siblings list through so the navigation actually has data.
+requireText("client/src/components/qualification/QualificationPatientCardsPane.tsx", [
+  "adminReviewSiblings",
+  "adminReviewDateLabel",
+]);
+requireText("client/src/components/PatientCard.tsx", [
+  "adminReviewSiblings",
+  "adminReviewDateLabel",
+]);
+requireText("client/src/components/qualification/PatientListRow.tsx", [
+  "adminReviewSiblings",
+  "adminReviewDateLabel",
+]);
+
 // Merged qualifying chips — closed-bar source of truth + premium
 // per-kind/per-origin testIds + canonical removal markers + unified
 // merge helpers + regenerate source markers.
