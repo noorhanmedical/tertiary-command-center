@@ -313,8 +313,10 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
             dob: r.dob?.trim() || null,
             // BatchFlow imports phone and email into patient records.
             // SOURCE MARKER: BatchFlow imports phone and email into patient records
+            // SOURCE MARKER: BatchFlow imports MRN into patient records
             phoneNumber: r.phone?.trim() || null,
             email: r.email?.trim() || null,
+            mrn: r.mrn?.trim() || null,
             insurance: r.insurance?.trim() || null,
             facility,
             diagnoses: r.diagnoses?.trim() || null,

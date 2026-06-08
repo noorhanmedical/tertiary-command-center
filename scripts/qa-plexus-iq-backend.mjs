@@ -205,16 +205,61 @@ requireText("client/src/lib/plexusIqClinicalImportParser.ts", [
 ]);
 requireText("server/routes/plexusIqClinicalImport.ts", [
   "BatchFlow imports phone and email into patient records",
+  "BatchFlow imports MRN into patient records",
   "phone: z.string().optional()",
   "email: z.string().optional()",
   "phoneNumber: r.phone?.trim() || null",
   "email: r.email?.trim() || null",
+  "mrn: r.mrn?.trim() || null",
 ]);
-// patient_screenings columns must exist for phone + email.
+// patient_screenings columns must exist for phone + email + mrn.
 requireText("shared/schema/screening.ts", [
   "phoneNumber",
   "email",
   "phone_number",
+  'mrn: text("mrn")',
+  "Canonical Plexus IQ patient demographic fields",
+]);
+// MRN migration must add the column (column truly missing
+// before — task spec explicitly permits a schema migration in
+// that case).
+{
+  const fsMod = await import("node:fs");
+  const pathMod = await import("node:path");
+  let foundMrnMigration = false;
+  const migrationsPath = pathMod.join(root, "migrations");
+  if (fsMod.existsSync(migrationsPath)) {
+    for (const f of fsMod.readdirSync(migrationsPath)) {
+      if (!f.endsWith(".sql")) continue;
+      const sql = fsMod.readFileSync(pathMod.join(migrationsPath, f), "utf8");
+      if (sql.includes("ADD COLUMN") && /\bmrn\b/.test(sql) && sql.includes("patient_screenings")) {
+        foundMrnMigration = true;
+        break;
+      }
+    }
+  }
+  if (!foundMrnMigration) {
+    failures.push(
+      "Missing patient_screenings.mrn migration — expected ALTER TABLE patient_screenings ADD COLUMN mrn text",
+    );
+  }
+}
+
+// PATCH /api/patients/:id must accept email + mrn so Edit Patient
+// can persist them end-to-end.
+requireText("server/routes/helpers.ts", [
+  "email: z.string().nullable().optional()",
+  "mrn: z.string().nullable().optional()",
+  "Patient update route persists email",
+  "Patient update route persists phoneNumber",
+  "Patient update route persists MRN Patient ID",
+  "Canonical Plexus IQ patient demographic fields",
+]);
+requireText("server/routes/patients.ts", [
+  "updates.email = data.email",
+  "updates.mrn = data.mrn",
+  "Patient update route persists email",
+  "Patient update route persists MRN Patient ID",
 ]);
 
 // PDFs render full patient demographics under the patient name

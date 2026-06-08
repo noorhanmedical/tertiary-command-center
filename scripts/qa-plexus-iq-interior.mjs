@@ -994,6 +994,64 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "Assigned by Scheduler Settings",
 ]);
 
+// Canonical Plexus IQ patient demographic fields. Edit Patient
+// must surface every field BatchFlow Import Preview surfaces so
+// the saved patient_screenings row matches the imported preview
+// matches the editable form matches the display surfaces.
+requireText("client/src/components/PatientEditDialog.tsx", [
+  "Canonical Plexus IQ patient demographic fields",
+  "Import Preview and Edit Patient share canonical fields",
+  "Edit Patient uses same fields as BatchFlow preview",
+  "Import Preview fields match Edit Patient fields",
+  "Edit Patient persists email",
+  "Edit Patient persists phoneNumber",
+  "Edit Patient persists MRN Patient ID",
+  // Per-field testIds + wrappers.
+  "edit-patient-email",
+  "edit-patient-email-input",
+  "edit-patient-phone",
+  "edit-patient-phone-input",
+  "edit-patient-mrn",
+  "edit-patient-mrn-input",
+  "edit-patient-patient-id",
+  "edit-patient-patient-id-input",
+  "edit-patient-name-input",
+  "edit-patient-dob-input",
+  "edit-patient-age-input",
+  "edit-patient-sex-input",
+  "edit-patient-insurance-input",
+]);
+
+// Clinical Hx / Dx / Rx inputs surfaced inside Edit Patient via
+// ClinicalDataEditor — same canonical-field testIds.
+requireText("client/src/components/ClinicalDataEditor.tsx", [
+  "edit-patient-history-input",
+  "edit-patient-diagnoses-input",
+  "edit-patient-medications-input",
+]);
+
+// Import Preview carries import-preview-* testIds keyed to the
+// same fields Edit Patient surfaces.
+requireText("client/src/components/plexus-iq/PlexusIQBulkImportModal.tsx", [
+  "import-preview-phone",
+  "import-preview-email",
+  "import-preview-mrn",
+  "Import Preview fields match Edit Patient fields",
+]);
+
+// Patient card + Admin Review Directory display the same canonical
+// demographics (MRN / DOB / age / sex / phone / email / insurance).
+requireText("client/src/components/PatientCard.tsx", [
+  "Patient card uses canonical demographics",
+  "patient.mrn",
+  "patient.email",
+]);
+requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
+  "Admin Review Directory uses canonical demographics",
+  "patient.mrn",
+  "patient.email",
+]);
+
 // Admin Review sibling navigation: the dialog renders Prev/Next
 // arrows + "N of M" counter when the caller passes a siblings list,
 // and auto-advances to the next sibling on Approve / Pend / Reject

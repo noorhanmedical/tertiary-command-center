@@ -138,6 +138,14 @@ export const addPatientSchema = z.object({
   notes: z.string().optional(),
 });
 
+// Canonical Plexus IQ patient demographic fields. The schema must
+// accept every field surfaced by BatchFlow Import Preview so the
+// Edit Patient popup, the patient card / list row, and the Admin
+// Review Directory tab can all read AND persist the same data.
+// SOURCE MARKER: Canonical Plexus IQ patient demographic fields
+// SOURCE MARKER: Patient update route persists email
+// SOURCE MARKER: Patient update route persists phoneNumber
+// SOURCE MARKER: Patient update route persists MRN Patient ID
 export const updatePatientSchema = z.object({
   name: z.string().optional(),
   time: z.string().nullable().optional(),
@@ -145,6 +153,8 @@ export const updatePatientSchema = z.object({
   gender: z.string().nullable().optional(),
   dob: z.string().nullable().optional(),
   phoneNumber: z.string().nullable().optional(),
+  email: z.string().nullable().optional(),
+  mrn: z.string().nullable().optional(),
   insurance: z.string().nullable().optional(),
   diagnoses: z.string().nullable().optional(),
   history: z.string().nullable().optional(),

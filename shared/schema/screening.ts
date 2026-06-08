@@ -38,6 +38,13 @@ export const patientScreenings = pgTable("patient_screenings", {
   dob: text("dob"),
   phoneNumber: text("phone_number"),
   email: text("email"),
+  // Patient ID / MRN — canonical identifier from BatchFlow's
+  // clinical-import parser. Persisted as its own column (was
+  // previously buried inside the notes text blob) so it can be
+  // shown in Edit Patient, Plexus IQ cards/lists, and the
+  // Admin Review Directory tab.
+  // SOURCE MARKER: Canonical Plexus IQ patient demographic fields
+  mrn: text("mrn"),
   insurance: text("insurance"),
   facility: text("facility"),
   diagnoses: text("diagnoses"),

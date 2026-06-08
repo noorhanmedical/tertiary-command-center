@@ -96,6 +96,16 @@ export function PatientEditDialog({
   const [localTime, setLocalTime] = useState(patient.time || "");
   const [localDob, setLocalDob] = useState(patient.dob || "");
   const [localPhone, setLocalPhone] = useState(patient.phoneNumber || "");
+  // Canonical Plexus IQ patient demographic fields: Email, MRN /
+  // Patient ID, and Sex are now first-class on the Edit Patient
+  // dialog so the form matches the BatchFlow Import Preview.
+  // SOURCE MARKER: Canonical Plexus IQ patient demographic fields
+  // SOURCE MARKER: Import Preview and Edit Patient share canonical fields
+  // SOURCE MARKER: Edit Patient uses same fields as BatchFlow preview
+  // SOURCE MARKER: Import Preview fields match Edit Patient fields
+  const [localEmail, setLocalEmail] = useState(patient.email || "");
+  const [localMrn, setLocalMrn] = useState(patient.mrn || "");
+  const [localSex, setLocalSex] = useState(patient.gender || "");
   const [localInsurance, setLocalInsurance] = useState(patient.insurance || "");
   const [localDx, setLocalDx] = useState(patient.diagnoses || "");
   const [localHx, setLocalHx] = useState(patient.history || "");
@@ -108,6 +118,9 @@ export function PatientEditDialog({
   useEffect(() => { setLocalTime(patient.time || ""); }, [patient.time]);
   useEffect(() => { setLocalDob(patient.dob || ""); }, [patient.dob]);
   useEffect(() => { setLocalPhone(patient.phoneNumber || ""); }, [patient.phoneNumber]);
+  useEffect(() => { setLocalEmail(patient.email || ""); }, [patient.email]);
+  useEffect(() => { setLocalMrn(patient.mrn || ""); }, [patient.mrn]);
+  useEffect(() => { setLocalSex(patient.gender || ""); }, [patient.gender]);
   useEffect(() => { setLocalInsurance(patient.insurance || ""); }, [patient.insurance]);
   useEffect(() => { setLocalDx(patient.diagnoses || ""); }, [patient.diagnoses]);
   useEffect(() => { setLocalHx(patient.history || ""); }, [patient.history]);
@@ -190,7 +203,8 @@ export function PatientEditDialog({
                   if (localName !== (patient.name || "")) onUpdate("name", localName);
                 }}
                 className="h-9 text-sm font-medium mt-1"
-                data-testid={`dialog-input-patient-name-${patient.id}`}
+                data-testid="edit-patient-name-input"
+                data-bar-testid={`dialog-input-patient-name-${patient.id}`}
               />
             </div>
 
@@ -207,7 +221,8 @@ export function PatientEditDialog({
                     if (localDob !== (patient.dob || "")) onUpdate("dob", localDob);
                   }}
                   className="h-8 text-xs mt-1"
-                  data-testid={`dialog-input-patient-dob-${patient.id}`}
+                  data-testid="edit-patient-dob-input"
+                  data-bar-testid={`dialog-input-patient-dob-${patient.id}`}
                 />
               </div>
               <div>
@@ -220,7 +235,8 @@ export function PatientEditDialog({
                   readOnly
                   tabIndex={-1}
                   className="h-8 text-xs bg-finance-bg-soft mt-1"
-                  data-testid={`dialog-input-patient-age-${patient.id}`}
+                  data-testid="edit-patient-age-input"
+                  data-bar-testid={`dialog-input-patient-age-${patient.id}`}
                 />
               </div>
               <div>
@@ -235,7 +251,8 @@ export function PatientEditDialog({
                     if (localInsurance !== (patient.insurance || "")) onUpdate("insurance", localInsurance);
                   }}
                   className="h-8 text-xs mt-1"
-                  data-testid={`dialog-input-patient-insurance-${patient.id}`}
+                  data-testid="edit-patient-insurance-input"
+                  data-bar-testid={`dialog-input-patient-insurance-${patient.id}`}
                 />
               </div>
               <div>
@@ -250,7 +267,9 @@ export function PatientEditDialog({
                     if (localPhone !== (patient.phoneNumber || "")) onUpdate("phoneNumber", localPhone);
                   }}
                   className="h-8 text-xs mt-1"
-                  data-testid={`dialog-input-patient-phone-${patient.id}`}
+                  data-testid="edit-patient-phone-input"
+                  data-phone-wrapper="edit-patient-phone"
+                  data-bar-testid={`dialog-input-patient-phone-${patient.id}`}
                 />
               </div>
               {showTime && (
@@ -270,6 +289,67 @@ export function PatientEditDialog({
                   />
                 </div>
               )}
+            </div>
+
+            {/* Canonical demographics row 2 — MRN / Email / Sex. The
+                BatchFlow Import Preview surfaces these same three
+                fields, so Edit Patient now matches end-to-end.
+                SOURCE MARKER: Edit Patient persists email
+                SOURCE MARKER: Edit Patient persists phoneNumber
+                SOURCE MARKER: Edit Patient persists MRN Patient ID */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2"
+              data-testid={`dialog-edit-patient-identity-row-${patient.id}`}
+            >
+              <div data-testid="edit-patient-mrn" data-patient-id-field="edit-patient-patient-id">
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-finance-text-muted">
+                  Patient ID / MRN
+                </label>
+                <Input
+                  placeholder="MRN / external Patient ID"
+                  value={localMrn}
+                  onChange={(e) => setLocalMrn(e.target.value)}
+                  onBlur={() => {
+                    if (localMrn !== (patient.mrn || "")) onUpdate("mrn", localMrn);
+                  }}
+                  className="h-8 text-xs mt-1"
+                  data-testid="edit-patient-mrn-input"
+                  data-bar-testid={`dialog-input-patient-mrn-${patient.id}`}
+                  data-patient-id-input="edit-patient-patient-id-input"
+                />
+              </div>
+              <div data-testid="edit-patient-email">
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-finance-text-muted">
+                  Email
+                </label>
+                <Input
+                  type="email"
+                  placeholder="patient@email.com"
+                  value={localEmail}
+                  onChange={(e) => setLocalEmail(e.target.value)}
+                  onBlur={() => {
+                    if (localEmail !== (patient.email || "")) onUpdate("email", localEmail);
+                  }}
+                  className="h-8 text-xs mt-1"
+                  data-testid="edit-patient-email-input"
+                  data-bar-testid={`dialog-input-patient-email-${patient.id}`}
+                />
+              </div>
+              <div data-testid="edit-patient-sex">
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-finance-text-muted">
+                  Sex
+                </label>
+                <Input
+                  placeholder="M / F / X"
+                  value={localSex}
+                  onChange={(e) => setLocalSex(e.target.value)}
+                  onBlur={() => {
+                    if (localSex !== (patient.gender || "")) onUpdate("gender", localSex);
+                  }}
+                  className="h-8 text-xs mt-1"
+                  data-testid="edit-patient-sex-input"
+                  data-bar-testid={`dialog-input-patient-sex-${patient.id}`}
+                />
+              </div>
             </div>
           </section>
 

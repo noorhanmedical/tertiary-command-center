@@ -208,7 +208,8 @@ export function ClinicalDataEditor({
             onBlur={() => {
               if (localDx !== (patient.diagnoses || "")) onUpdate("diagnoses", localDx);
             }}
-            data-testid={`input-dx-${patient.id}`}
+            data-testid="edit-patient-diagnoses-input"
+            data-bar-testid={`input-dx-${patient.id}`}
           />
         </div>
         <div>
@@ -223,7 +224,8 @@ export function ClinicalDataEditor({
             onBlur={() => {
               if (localHx !== (patient.history || "")) onUpdate("history", localHx);
             }}
-            data-testid={`input-hx-${patient.id}`}
+            data-testid="edit-patient-history-input"
+            data-bar-testid={`input-hx-${patient.id}`}
           />
         </div>
         <div>
@@ -238,7 +240,8 @@ export function ClinicalDataEditor({
             onBlur={() => {
               if (localRx !== (patient.medications || "")) onUpdate("medications", localRx);
             }}
-            data-testid={`input-rx-${patient.id}`}
+            data-testid="edit-patient-medications-input"
+            data-bar-testid={`input-rx-${patient.id}`}
           />
         </div>
       </div>

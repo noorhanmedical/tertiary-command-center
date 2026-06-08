@@ -211,11 +211,18 @@ export function PatientCard({
     return String(age);
   })();
 
+  // Patient card uses canonical demographics — MRN / DOB / age /
+  // sex / insurance / phone / email — the same set BatchFlow
+  // Import Preview and Edit Patient surface.
+  // SOURCE MARKER: Patient card uses canonical demographics
   const metaParts: string[] = [];
+  if (patient.mrn) metaParts.push(`MRN ${patient.mrn}`);
   if (patient.dob) metaParts.push(`DOB ${patient.dob}`);
   if (ageDisplay) metaParts.push(`${ageDisplay} yo`);
+  if (patient.gender) metaParts.push(patient.gender);
   if (patient.insurance) metaParts.push(patient.insurance);
   if (patient.phoneNumber) metaParts.push(patient.phoneNumber);
+  if (patient.email) metaParts.push(patient.email);
   const displayName = (patient.name || "").trim() || "Unnamed patient";
 
   const showTimeInBanner = typeLabel === "Visit" && !!patient.time;

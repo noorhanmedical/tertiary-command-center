@@ -2398,15 +2398,36 @@ export function AdminReviewDialog({
                         className="mt-3"
                         data-testid="admin-review-patient-directory-tab-content"
                       >
-                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-2">
+                        {/* Admin Review Directory uses canonical
+                            demographics — same field set as the
+                            BatchFlow Import Preview and the Edit
+                            Patient dialog (name, MRN, DOB, sex,
+                            phone, email, insurance, facility).
+                            SOURCE MARKER: Admin Review Directory uses canonical demographics */}
+                        <div
+                          className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-2"
+                          data-canonical-fields="Canonical Plexus IQ patient demographic fields"
+                        >
                           <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
                             Patient Directory
                           </div>
-                          <div className="text-xs text-white/80">
+                          <div className="text-xs text-white/80 space-y-0.5">
                             <div>{patient.name || "Unnamed patient"}</div>
+                            {patient.mrn && (
+                              <div className="text-white/60">MRN {patient.mrn}</div>
+                            )}
                             {patient.dob && <div className="text-white/60">DOB {patient.dob}</div>}
+                            {patient.gender && (
+                              <div className="text-white/60">Sex {patient.gender}</div>
+                            )}
                             {patient.phoneNumber && (
                               <div className="text-white/60">{patient.phoneNumber}</div>
+                            )}
+                            {patient.email && (
+                              <div className="text-white/60">{patient.email}</div>
+                            )}
+                            {patient.insurance && (
+                              <div className="text-white/60">{patient.insurance}</div>
                             )}
                             {patient.facility && (
                               <div className="text-white/60">{patient.facility}</div>

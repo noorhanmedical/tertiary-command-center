@@ -88,6 +88,10 @@ export function registerPatientRoutes(
       if (data.gender !== undefined) updates.gender = data.gender || null;
       if (data.dob !== undefined) updates.dob = data.dob || null;
       if (data.phoneNumber !== undefined) updates.phoneNumber = data.phoneNumber || null;
+      // SOURCE MARKER: Patient update route persists email
+      // SOURCE MARKER: Patient update route persists MRN Patient ID
+      if (data.email !== undefined) updates.email = data.email || null;
+      if (data.mrn !== undefined) updates.mrn = data.mrn || null;
       if (data.insurance !== undefined) updates.insurance = data.insurance || null;
       if (data.diagnoses !== undefined) updates.diagnoses = data.diagnoses || null;
       if (data.history !== undefined) updates.history = data.history || null;

@@ -811,12 +811,30 @@ function PreviewCard({ index, row }: { index: number; row: ParsedRow }) {
       </div>
       {meta.length > 0 && (
         <dl className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[11px]">
-          {meta.map((m) => (
-            <div key={m.label} className="rounded-md bg-slate-50 px-2 py-1">
-              <dt className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">{m.label}</dt>
-              <dd className="text-slate-900 truncate">{m.value}</dd>
-            </div>
-          ))}
+          {meta.map((m) => {
+            // Preview cells carry canonical-field testIds so QA can
+            // confirm Import Preview matches the Edit Patient form.
+            // SOURCE MARKER: Import Preview fields match Edit Patient fields
+            const previewTestId =
+              m.label === "Phone"
+                ? "import-preview-phone"
+                : m.label === "Email"
+                  ? "import-preview-email"
+                  : m.label === "MRN"
+                    ? "import-preview-mrn"
+                    : undefined;
+            return (
+              <div
+                key={m.label}
+                className="rounded-md bg-slate-50 px-2 py-1"
+                {...(previewTestId ? { "data-testid": previewTestId } : {})}
+                data-preview-field={m.label}
+              >
+                <dt className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">{m.label}</dt>
+                <dd className="text-slate-900 truncate">{m.value}</dd>
+              </div>
+            );
+          })}
         </dl>
       )}
       {(row.diagnoses || row.history || row.medications) && (
