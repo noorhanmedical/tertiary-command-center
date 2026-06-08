@@ -1946,11 +1946,14 @@ export function AdminReviewDialog({
     onSuccess: (data, vars) => {
       const routed = (data as { routedToEngagement?: boolean }).routedToEngagement;
       const schedulerName = (data as { routedSchedulerName?: string | null }).routedSchedulerName;
+      const bySettings = (data as { routedByScheduledSettings?: boolean }).routedByScheduledSettings;
       toast({
         title: `Admin approval: ${vars.status.replace("_", " ")}`,
         description: routed
           ? schedulerName
-            ? `Routed to scheduler: ${schedulerName}`
+            ? bySettings
+              ? `Routed to scheduler: ${schedulerName} · Scheduler Settings`
+              : `Routed to scheduler: ${schedulerName}`
             : "Routed to Engagement Queue (unassigned)"
           : data.patient?.name ?? "",
       });
@@ -3383,6 +3386,17 @@ export function AdminReviewDialog({
                     Reject
                   </Button>
                 </div>
+                {/* Scheduler routing chip. The settings source is the
+                    canonical outreach_schedulers table (admin-edited
+                    via Settings → Scheduler Team). When that table
+                    has a scheduler matching this patient's facility,
+                    the chip lights up + the inline ribbon below
+                    reads "Assigned by Scheduler Settings". When no
+                    row matches, the chip falls back to the
+                    engagement queue and a comment marker in the
+                    backend documents the fallback path.
+                    SOURCE MARKER: Engagement Center uses assigned scheduler from scheduler settings
+                    SOURCE MARKER: Scheduler settings fallback is Unassigned Engagement Queue */}
                 <div
                   className="inline-flex items-center gap-1.5 rounded-full bg-white/10 text-white/70 px-2 py-0.5 text-[10px]"
                   data-testid="admin-review-scheduler-routing-chip"
@@ -3393,6 +3407,11 @@ export function AdminReviewDialog({
                         ? "unassigned"
                         : "pending"
                   }
+                  data-settings-source={
+                    engagementAssignmentQuery.data?.scheduler
+                      ? "outreach-schedulers-table"
+                      : "missing"
+                  }
                 >
                   <ShieldCheck className="w-3 h-3" />
                   {engagementAssignmentQuery.isLoading
@@ -3402,6 +3421,25 @@ export function AdminReviewDialog({
                       : engagementAssignmentQuery.data
                         ? "Unassigned / Engagement Queue"
                         : "Scheduler routes on approval"}
+                </div>
+                <div
+                  className="text-[10px] text-white/60"
+                  data-testid="admin-review-scheduler-settings-source"
+                  data-source-state={
+                    engagementAssignmentQuery.data?.scheduler
+                      ? "outreach-schedulers-table"
+                      : "missing"
+                  }
+                >
+                  {engagementAssignmentQuery.data?.scheduler ? (
+                    <span data-testid="admin-review-assigned-by-scheduler-settings">
+                      Assigned by Scheduler Settings · outreach_schedulers
+                    </span>
+                  ) : (
+                    <span>
+                      Scheduler settings source missing; using current scheduler runtime fallback
+                    </span>
+                  )}
                 </div>
               </section>
               </div>

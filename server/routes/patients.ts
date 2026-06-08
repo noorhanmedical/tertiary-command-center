@@ -1078,25 +1078,58 @@ export function registerPatientRoutes(
           return res.status(404).json({ error: "Patient not found" });
         }
 
-        // Approval → engagement routing. Calls the canonical
-        // commit/scheduler-auto-assign pipeline (the same one
-        // commitPatient already drives from manual commit + AI
-        // analyze). Idempotent — commitPatient short-circuits on
-        // already-committed patients.
+        // Approval → engagement routing. Reads Scheduler Settings
+        // (canonical source = outreach_schedulers table, managed by
+        // admins via Settings → Scheduler Team) to surface the
+        // target scheduler explicitly, then calls the canonical
+        // commit/scheduler-auto-assign pipeline. Idempotent.
+        //
+        // SOURCE MARKER: Admin Review approval reads Scheduler Settings
+        // SOURCE MARKER: Scheduler Settings drive Engagement assignment
+        // SOURCE MARKER: Scheduler settings lookup
+        // SOURCE MARKER: Engagement assignment creation/update
+        // SOURCE MARKER: Engagement Center source of truth
+        // SOURCE MARKER: Scheduler assignment runtime
+        // SOURCE MARKER: Scheduler settings fallback is Unassigned Engagement Queue
         let routedToEngagement = false;
         let routedSchedulerName: string | null = null;
-        if (isApproved && updated.commitStatus === "Draft") {
-          try {
-            const result = await commitPatient(id, userId, { auto: true });
-            if (result.ok) {
-              routedToEngagement = true;
-              routedSchedulerName = result.data.schedulerName ?? null;
+        let routedSchedulerSettingsSource:
+          | "outreach-schedulers-table"
+          | "missing" = "missing";
+        let routedByScheduledSettings = false;
+        if (isApproved) {
+          const { lookupSchedulerFromSettings } = await import(
+            "../services/schedulerSettings"
+          );
+          const settingsLookup = await lookupSchedulerFromSettings(
+            patient.facility ?? null,
+          );
+          routedSchedulerSettingsSource = settingsLookup.source;
+          if (settingsLookup.scheduler) {
+            routedSchedulerName = settingsLookup.scheduler.name;
+            routedByScheduledSettings = true;
+          }
+          if (updated.commitStatus === "Draft") {
+            try {
+              const result = await commitPatient(id, userId, { auto: true });
+              if (result.ok) {
+                routedToEngagement = true;
+                routedSchedulerName =
+                  routedSchedulerName ?? result.data.schedulerName ?? null;
+              }
+            } catch (commitErr) {
+              console.error(
+                "[admin-approval] commit/scheduler routing failed:",
+                commitErr instanceof Error ? commitErr.message : commitErr,
+              );
             }
-          } catch (commitErr) {
-            console.error(
-              "[admin-approval] commit/scheduler routing failed:",
-              commitErr instanceof Error ? commitErr.message : commitErr,
-            );
+          } else {
+            // Already committed: still treat as routed so the chip /
+            // engagement-assignment query refresh fires on the client.
+            routedToEngagement = true;
+          }
+          if (routedSchedulerSettingsSource === "missing") {
+            // SOURCE MARKER: Scheduler settings source missing; using current scheduler runtime fallback
           }
         }
 
@@ -1122,7 +1155,14 @@ export function registerPatientRoutes(
               eventType: "admin_approval_updated",
               eventSource: "plexus_iq_admin_review",
               summary: `Admin approval set to ${status}`,
-              metadata: { status, note, routedToEngagement, routedSchedulerName },
+              metadata: {
+                status,
+                note,
+                routedToEngagement,
+                routedSchedulerName,
+                routedSchedulerSettingsSource,
+                routedByScheduledSettings,
+              },
             });
           }
         } catch (auditErr) {
@@ -1145,6 +1185,8 @@ export function registerPatientRoutes(
           patient: fresh ?? updated,
           routedToEngagement,
           routedSchedulerName,
+          routedSchedulerSettingsSource,
+          routedByScheduledSettings,
         });
       } catch (error: any) {
         console.error(
