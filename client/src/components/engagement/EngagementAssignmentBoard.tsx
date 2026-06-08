@@ -877,6 +877,19 @@ export function EngagementAssignmentBoard() {
                           </div>
                           <div>{fmtRel(r.lastActivityAt)}</div>
                         </div>
+                        <InlineSchedulerPicker
+                          executionCaseId={r.executionCaseId}
+                          patientScreeningId={r.patientScreeningId}
+                          currentSchedulerId={r.assignedTeamMemberId}
+                          currentSchedulerName={r.assignedName}
+                          schedulers={schedulers.data ?? []}
+                          busy={assignMutation.isPending}
+                          onAssign={(schedulerId) => {
+                            if (r.patientScreeningId != null) {
+                              submitOne(r.patientScreeningId, schedulerId);
+                            }
+                          }}
+                        />
                         <Button
                           size="sm"
                           variant="ghost"
@@ -964,6 +977,100 @@ export function EngagementAssignmentBoard() {
       </Card>
       )}
     </div>
+  );
+}
+
+// Compact per-row "Change" picker used in the grouped views.
+// Same behavior as the flat-table RowItem Change column: click to
+// open, pick a scheduler, Save calls assignMutation via the
+// existing submitOne path. Disabled when the row has no
+// patientScreeningId (i.e. the execution case is detached from a
+// screening — assignment-board flow can't reassign it).
+function InlineSchedulerPicker({
+  executionCaseId,
+  patientScreeningId,
+  currentSchedulerId,
+  currentSchedulerName,
+  schedulers,
+  busy,
+  onAssign,
+}: {
+  executionCaseId: number;
+  patientScreeningId: number | null;
+  currentSchedulerId: number | null;
+  currentSchedulerName: string | null;
+  schedulers: SchedulerOption[];
+  busy: boolean;
+  onAssign: (schedulerId: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<string>(
+    currentSchedulerId != null ? String(currentSchedulerId) : "",
+  );
+  if (open) {
+    return (
+      <div className="flex items-center gap-1.5 shrink-0">
+        <Select value={picked} onValueChange={setPicked}>
+          <SelectTrigger
+            className="h-7 text-[10px] w-[170px]"
+            data-testid={`select-engagement-board-pick-${executionCaseId}`}
+            data-grouped-row-testid="engagement-center-change-assignment-select"
+          >
+            <SelectValue placeholder="Team member" />
+          </SelectTrigger>
+          <SelectContent>
+            {schedulers.map((s) => (
+              <SelectItem key={s.id} value={String(s.id)}>
+                {s.name} · {s.facility}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 px-2 text-[10px]"
+          disabled={busy || !picked}
+          onClick={() => {
+            const sid = Number.parseInt(picked, 10);
+            if (Number.isFinite(sid)) {
+              onAssign(sid);
+              setOpen(false);
+            }
+          }}
+          data-testid={`button-engagement-board-save-${executionCaseId}`}
+          data-grouped-row-testid="engagement-center-change-assignment-save"
+        >
+          Save
+        </Button>
+        <button
+          type="button"
+          className="text-[10px] text-slate-500 hover:text-slate-700"
+          onClick={() => setOpen(false)}
+        >
+          cancel
+        </button>
+      </div>
+    );
+  }
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-7 px-2 text-[10px] gap-1 shrink-0"
+      onClick={() => setOpen(true)}
+      disabled={patientScreeningId == null}
+      title={
+        currentSchedulerName
+          ? `Reassign from ${currentSchedulerName}`
+          : "Assign a scheduler"
+      }
+      data-testid={`button-engagement-board-change-${executionCaseId}`}
+      data-grouped-row-testid="engagement-center-change-assignment"
+    >
+      <UserCog className="h-3 w-3" />
+      Change
+    </Button>
   );
 }
 

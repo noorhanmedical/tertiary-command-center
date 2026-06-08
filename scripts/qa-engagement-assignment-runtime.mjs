@@ -170,6 +170,13 @@ requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
   "validateSameFacilityDatePacket",
   // Cancel-many wire endpoint.
   "/api/engagement/assignment-board/cancel-many",
+  // Change-assignment picker must live on grouped rows as well as
+  // the flat table — the grouped views are the default surface so
+  // a regression here removes the picker from view entirely.
+  "InlineSchedulerPicker",
+  "engagement-center-change-assignment",
+  "engagement-center-change-assignment-select",
+  "engagement-center-change-assignment-save",
 ]);
 
 requireText("server/routes.ts", [
