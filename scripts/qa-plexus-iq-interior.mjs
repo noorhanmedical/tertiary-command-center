@@ -506,6 +506,60 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "BrainWave",
   "VitalWave",
   "Ultrasound Studies",
+  // Layout: Team Portal blue panels, white middle, smoke header,
+  // collapsible side panels, scrollable left/right.
+  "admin-review-smoke-header",
+  "admin-review-blue-left-panel",
+  "admin-review-blue-right-panel",
+  "admin-review-ancillary-playground",
+  "admin-review-ancillary-playground-pill",
+  "admin-review-ancillary-playground-white-panel",
+  "admin-review-left-panel-scroll",
+  "admin-review-right-panel-scroll",
+  "admin-review-left-panel-toggle",
+  "admin-review-right-panel-toggle",
+  "admin-review-left-panel-open",
+  "admin-review-right-panel-open",
+  "admin-review-left-panel-collapsed",
+  "admin-review-right-panel-collapsed",
+  // Left tabs: Source default + Patient Directory + cooldown +
+  // insurance + history.
+  "admin-review-left-tabs",
+  "admin-review-left-tab-source",
+  "admin-review-left-tab-patient-directory",
+  "admin-review-left-tab-cooldown",
+  "admin-review-left-tab-insurance",
+  "admin-review-left-tab-history",
+  "admin-review-source-tab-content",
+  "admin-review-patient-directory-tab-content",
+  "admin-review-patient-cooldown-summary",
+  // Diagnosis suggestions (inactive until accepted) live inside the
+  // Diagnosis popover + a dedicated Suggestions popover button.
+  "admin-review-diagnosis-suggestions",
+  "admin-review-med-derived-diagnosis-suggestion",
+  "admin-review-accept-diagnosis-suggestion",
+  "admin-review-right-button-suggestions",
+  "admin-review-right-popover-suggestions",
+  // Rule-engine seeded chips appear inside closed bars + ultrasound
+  // child rows.
+  "admin-review-rule-engine-seeded-chip",
+  // Right-panel reorganized actions.
+  "admin-review-right-actions-panel",
+  "admin-review-pdf-preview-button-patient",
+  "admin-review-pdf-preview-button-clinician",
+  "admin-review-admin-note-icon-button",
+  "admin-review-approve-button",
+  "admin-review-pend-button",
+  "admin-review-scheduler-routing-chip",
+  // Bottom audit box + record helper.
+  "admin-review-updates-made-box",
+  "admin-review-updates-made-item",
+  "admin-review-record-update",
+  "recordAdminReviewUpdate",
+  // Default-open state for layout panels.
+  "useState(true)",
+  // Venous helper imported in the dialog for ultrasound child seeding.
+  "evidenceForUltrasoundTest",
 ]);
 
 // Admin Review forbidden visible copy. The simplified bars and the
@@ -520,6 +574,8 @@ requireNotText(
     "Services:",
     "Selected:",
     "Supporting:",
+    "Needs Info",
+    "click to expand",
     "No supporting items selected",
     "supporting · click to expand",
   ],
