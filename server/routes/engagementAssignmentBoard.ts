@@ -59,6 +59,19 @@ const assignBoardSchema = z.object({
   reason: z.string().optional(),
 });
 
+// Engagement Center delete removes assignment not patient record.
+// Cancel-many flips patient_execution_cases.lifecycleStatus +
+// engagementStatus to cancelled and appends a journey-event row;
+// the underlying patient_screenings row stays intact so the patient
+// can be reopened/recommitted later from Plexus IQ.
+//
+// SOURCE MARKER: Engagement Center delete removes assignment not patient record
+// SOURCE MARKER: Engagement Center delete all is scoped to current group
+const cancelManySchema = z.object({
+  executionCaseIds: z.array(z.number().int().positive()).min(1),
+  reason: z.string().optional(),
+});
+
 function computeMissingInfo(
   screening: typeof patientScreenings.$inferSelect | undefined,
 ): string[] {
@@ -460,6 +473,109 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
         res.status(500).json({
           error:
             error instanceof Error ? error.message : "Failed to bulk assign",
+        });
+      }
+    },
+  );
+
+  // ─── Bulk cancel / delete group ───────────────────────────────────
+  //
+  // Removes the assignment + closes the execution case for the
+  // supplied execution case IDs. Does NOT delete the underlying
+  // patient_screenings row — Plexus IQ can still see / re-commit /
+  // re-import the patient. Mirrors the assign-many envelope:
+  // appends a journey-event row per case so the audit trail
+  // documents who cancelled the assignment and when.
+  app.post(
+    "/api/engagement/assignment-board/cancel-many",
+    async (req: Request, res: Response) => {
+      const parsed = cancelManySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      try {
+        const { executionCaseIds, reason } = parsed.data;
+        const cancelled: Array<{
+          executionCaseId: number;
+          patientScreeningId: number | null;
+          previousEngagementStatus: string | null;
+          previousLifecycleStatus: string | null;
+        }> = [];
+        const failed: Array<{ executionCaseId: number; reason: string }> = [];
+
+        for (const caseId of executionCaseIds) {
+          const [execCase] = await db
+            .select()
+            .from(patientExecutionCases)
+            .where(eq(patientExecutionCases.id, caseId))
+            .limit(1);
+          if (!execCase) {
+            failed.push({ executionCaseId: caseId, reason: "Execution case not found" });
+            continue;
+          }
+          const previousEngagementStatus = execCase.engagementStatus ?? null;
+          const previousLifecycleStatus = execCase.lifecycleStatus ?? null;
+          await db
+            .update(patientExecutionCases)
+            .set({
+              engagementStatus: "cancelled",
+              lifecycleStatus: "cancelled",
+              assignedTeamMemberId: null,
+            })
+            .where(eq(patientExecutionCases.id, caseId));
+
+          try {
+            await db.insert(patientJourneyEvents).values({
+              patientScreeningId: execCase.patientScreeningId ?? null,
+              executionCaseId: execCase.id,
+              actorUserId: (req.session as any)?.userId ?? null,
+              patientName: execCase.patientName ?? null,
+              patientDob: execCase.patientDob ?? null,
+              eventType: "engagement_assignment_cancelled",
+              eventSource: "engagement_assignment_board",
+              summary: `Engagement assignment cancelled from Engagement Center`,
+              metadata: {
+                previousEngagementStatus,
+                previousLifecycleStatus,
+                reason: reason ?? null,
+                batch: executionCaseIds.length > 1,
+              },
+            });
+          } catch (auditErr) {
+            console.error(
+              "[engagement/assignment-board:cancel-many] audit append failed:",
+              auditErr instanceof Error ? auditErr.message : auditErr,
+            );
+          }
+
+          cancelled.push({
+            executionCaseId: execCase.id,
+            patientScreeningId: execCase.patientScreeningId ?? null,
+            previousEngagementStatus,
+            previousLifecycleStatus,
+          });
+        }
+
+        res.json({
+          ok: failed.length === 0,
+          cancelled,
+          failed,
+          summary: {
+            requested: executionCaseIds.length,
+            cancelled: cancelled.length,
+            failed: failed.length,
+          },
+        });
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/assignment-board:cancel-many] error:",
+          error instanceof Error ? error.message : error,
+        );
+        res.status(500).json({
+          error:
+            error instanceof Error ? error.message : "Failed to cancel assignments",
         });
       }
     },

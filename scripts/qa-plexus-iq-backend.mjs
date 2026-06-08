@@ -217,6 +217,52 @@ requireText("shared/schema/screening.ts", [
   "phone_number",
 ]);
 
+// PDFs render full patient demographics under the patient name
+// (DOB / age / sex / phone / email / insurance / facility / schedule
+// date) in BOTH Plexus and Clinician packets. Clinical text (Hx /
+// Dx / Rx) wraps and paginates instead of clipping. PDF generation
+// uses html2pdf so the browser print-dialog "about:blank" URL
+// footer never appears in the saved file.
+requireText("client/src/lib/pdfGeneration.ts", [
+  "buildPatientDemoBlock",
+  "Phone:",
+  "Email:",
+  "Schedule Date:",
+  "phoneNumber",
+  "email",
+  "page-break-inside",
+  "html2pdf",
+  "Plexus PDF renders demographics under patient name",
+  "Clinician PDF renders demographics under patient name",
+  "PDF demographics include phone and email",
+  "Plexus PDF does not cut off Hx Dx Rx",
+  "Clinician PDF does not cut off Hx Dx Rx",
+  "PDF clinical text wraps and paginates",
+  "PDF footer does not render about blank",
+]);
+// Forbid the broken footer copy in any PDF template.
+{
+  const pdfSource = read("client/src/lib/pdfGeneration.ts") ?? "";
+  for (const banned of [
+    "about undefined",
+    "about null",
+    "about [blank]",
+    "about ${",
+  ]) {
+    if (pdfSource.includes(banned)) {
+      failures.push(
+        `pdfGeneration.ts must not render "${banned}" anywhere in the template`,
+      );
+    }
+  }
+  // Drop the legacy overflow:hidden on the Clinician .page container.
+  if (pdfSource.includes('overflow:hidden;">')) {
+    failures.push(
+      'pdfGeneration.ts must not use overflow:hidden on the Clinician .page container — it clips Hx/Dx/Rx',
+    );
+  }
+}
+
 // PDFs must NOT render ICD codes anywhere in their HTML output.
 // The data type may still include icd10_codes (kept for Admin Review +
 // canonical patient.reasoning[testName] consumers) — only the render

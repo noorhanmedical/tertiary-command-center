@@ -110,6 +110,66 @@ requireText(routeFile, [
   "registerEngagementAssignmentBoardRoutes",
   '"/api/engagement/assignment-board"',
   '"/api/engagement/assignment-board/assign"',
+  // Cancel-many route: Engagement Center delete removes assignment
+  // not patient record; scoped to the current group via the bulk
+  // executionCaseIds payload.
+  '"/api/engagement/assignment-board/cancel-many"',
+  "Engagement Center delete removes assignment not patient record",
+  "Engagement Center delete all is scoped to current group",
+  "engagement_assignment_cancelled",
+]);
+
+// Engagement Center page UI: grouping toolbar, per-group actions,
+// scheduler PDFs, delete controls. Mirrors the Admin Review tab.
+requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
+  // Toolbar + group modes.
+  "engagement-center-grouped-board",
+  "engagement-center-group-mode-date",
+  "engagement-center-group-mode-facility",
+  "engagement-center-group-mode-scheduler",
+  // Per-group sections + actions (Date / Facility / Scheduler).
+  "engagement-center-date-group",
+  "engagement-center-date-group-patient",
+  "engagement-center-date-select-all",
+  "engagement-center-date-plexus-pdf",
+  "engagement-center-date-clinician-pdf",
+  "engagement-center-date-delete-all",
+  "engagement-center-facility-group",
+  "engagement-center-facility-group-patient",
+  "engagement-center-facility-select-all",
+  "engagement-center-facility-plexus-pdf",
+  "engagement-center-facility-clinician-pdf",
+  "engagement-center-facility-delete-all",
+  "engagement-center-scheduler-group",
+  "engagement-center-scheduler-group-patient",
+  "engagement-center-scheduler-select-all",
+  "engagement-center-scheduler-plexus-pdf",
+  "engagement-center-scheduler-clinician-pdf",
+  "engagement-center-scheduler-delete-all",
+  // Cross-cutting selection + delete + PDF testIds.
+  "engagement-center-select-patient",
+  "engagement-center-select-all-patients",
+  "engagement-center-selected-count",
+  "engagement-center-delete-patient",
+  "engagement-center-delete-group",
+  "engagement-center-delete-group-confirm",
+  "engagement-center-plexus-pdf",
+  "engagement-center-clinician-pdf",
+  // Source markers documenting the contract.
+  "Engagement Center can group by date facility scheduler",
+  "Engagement Center scheduler PDFs are scoped to assigned scheduler",
+  "Engagement Center call lists grouped by scheduler",
+  "PDF by team member uses assigned scheduler group",
+  "Engagement Center delete removes assignment not patient record",
+  "Engagement Center delete all is scoped to current group",
+  "Engagement Center PDF packets use selected patients only",
+  "Engagement Center PDFs validate facility date packet",
+  // Canonical PDF helpers reused as-is.
+  "generatePlexusPDF",
+  "generateClinicianPDF",
+  "validateSameFacilityDatePacket",
+  // Cancel-many wire endpoint.
+  "/api/engagement/assignment-board/cancel-many",
 ]);
 
 requireText("server/routes.ts", [

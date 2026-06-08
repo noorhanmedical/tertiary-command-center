@@ -98,35 +98,119 @@ const PDF_BASE_STYLES = `
   .patient-header { border-bottom:2px solid #1a365d; padding-bottom:14px; margin-bottom:18px; }
   .patient-name { font-size:20px; font-weight:800; color:#1a365d; margin:0 0 4px; }
   .patient-meta { font-size:12px; color:#64748b; }
-  .clinical-box { background:#f1f5f9; border-radius:8px; padding:14px; margin-bottom:16px; }
+  /* Demographics rendered under every patient name in both PDFs.
+     SOURCE MARKER: Plexus PDF renders demographics under patient name
+     SOURCE MARKER: Clinician PDF renders demographics under patient name
+     SOURCE MARKER: PDF demographics include phone and email */
+  .patient-demo-block { font-size:11px; color:#475569; line-height:1.45; margin-top:2px; }
+  .patient-demo-row { white-space:normal; }
+  /* PDF clinical text wraps and paginates.
+     SOURCE MARKER: Plexus PDF does not cut off Hx Dx Rx
+     SOURCE MARKER: Clinician PDF does not cut off Hx Dx Rx
+     SOURCE MARKER: PDF clinical text wraps and paginates */
+  .clinical-box { background:#f1f5f9; border-radius:8px; padding:14px; margin-bottom:16px; page-break-inside:avoid; break-inside:avoid; }
   .clinical-label { font-size:10px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px; }
   .clinical-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
   .clinical-field-label { font-size:10px; font-weight:700; color:#475569; margin-bottom:3px; }
-  .clinical-field-val { font-size:11px; color:#1e293b; line-height:1.55; }
+  .clinical-field-val { font-size:11px; color:#1e293b; line-height:1.55; word-wrap:break-word; overflow-wrap:anywhere; }
+  .clinical-clinical-text { word-wrap:break-word; overflow-wrap:anywhere; white-space:normal; }
   .section-heading { font-size:11px; font-weight:700; color:#1e293b; margin:0 0 10px; text-transform:uppercase; letter-spacing:0.05em; }
+  /* PDF footer does not render about blank — html2pdf produces a
+     real PDF file so the browser print-dialog URL footer
+     ("about:blank") never appears.
+     SOURCE MARKER: PDF footer does not render about blank */
 `;
 
-export function buildPrintWindow(title: string, bodyHtml: string, options?: { injectScript?: string }): void {
-  const win = window.open("", "_blank");
-  if (!win) { alert("Please allow pop-ups to generate PDFs."); return; }
-  const scriptTag = options?.injectScript ? `<script>${options.injectScript}<\/script>` : "";
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PDF_BASE_STYLES}</style></head><body>${bodyHtml}${scriptTag}</body></html>`);
-  win.document.close();
-  win.focus();
-  if (!options?.injectScript) {
-    setTimeout(() => win.print(), 600);
+// Render the assembled HTML through html2pdf.js (already a runtime
+// dependency, used by invoices). A real PDF file is produced and
+// downloaded — no browser print dialog and therefore no "about:blank"
+// URL footer in the saved file.
+// SOURCE MARKER: PDF footer does not render about blank
+async function renderHtml2Pdf(title: string, bodyHtml: string): Promise<void> {
+  const html2pdfModule = await import("html2pdf.js");
+  const html2pdf = (html2pdfModule as { default: any }).default;
+  const container = document.createElement("div");
+  container.style.cssText = "width:8.5in;background:#ffffff;color:#1e293b;";
+  container.innerHTML = `<style>${PDF_BASE_STYLES}</style>${bodyHtml}`;
+  // html2pdf needs the node in the DOM for layout measurement.
+  document.body.appendChild(container);
+  try {
+    const filename = `${title.replace(/[^A-Za-z0-9._-]+/g, "_")}.pdf`;
+    const options = {
+      margin: [0.5, 0.4, 0.5, 0.4],
+      filename,
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, windowWidth: 1100 },
+      jsPDF: { unit: "in", format: "letter", orientation: "portrait" },
+      pagebreak: { mode: ["css", "legacy"] },
+    } as Record<string, unknown>;
+    await html2pdf().set(options).from(container).save();
+  } finally {
+    container.remove();
   }
+}
+
+export function buildPrintWindow(title: string, bodyHtml: string, options?: { injectScript?: string }): void {
+  // injectScript is a legacy hook for callers that needed a custom
+  // print/script flow — preserve it via the print-window path. Default
+  // path now produces a real PDF via html2pdf.
+  if (options?.injectScript) {
+    const win = window.open("", "_blank");
+    if (!win) { alert("Please allow pop-ups to generate PDFs."); return; }
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PDF_BASE_STYLES}</style></head><body>${bodyHtml}<script>${options.injectScript}<\/script></body></html>`);
+    win.document.close();
+    win.focus();
+    return;
+  }
+  void renderHtml2Pdf(title, bodyHtml).catch((err) => {
+    console.error("[pdfGeneration] html2pdf export failed:", err);
+    alert("PDF export failed. Check console for details.");
+  });
+}
+
+// Build the per-patient demographics block rendered directly under
+// the patient name in BOTH Plexus PDF and Clinician PDF.
+// Includes DOB, age, sex, phone, email, insurance, facility,
+// scheduleDate, and (when supplied) the assigned scheduler.
+// SOURCE MARKER: PDF demographics include phone and email
+export function buildPatientDemoBlock(
+  p: PatientScreening,
+  opts?: { scheduleDate?: string | null; schedulerName?: string | null },
+): string {
+  const ageText = p.age != null && p.age !== ("" as unknown) ? `${p.age} yo` : "";
+  const sex = (p.gender ?? "").trim();
+  const row1Parts: string[] = [];
+  if (p.dob) row1Parts.push(`DOB: ${esc(String(p.dob))}`);
+  if (ageText) row1Parts.push(`Age: ${esc(ageText)}`);
+  if (sex) row1Parts.push(`Sex: ${esc(sex)}`);
+  const row2Parts: string[] = [];
+  if (p.phoneNumber) row2Parts.push(`Phone: ${esc(p.phoneNumber)}`);
+  if (p.email) row2Parts.push(`Email: ${esc(p.email)}`);
+  const row3Parts: string[] = [];
+  if (p.insurance) row3Parts.push(`Insurance: ${esc(p.insurance)}`);
+  if (p.facility) row3Parts.push(`Facility: ${esc(p.facility)}`);
+  const row4Parts: string[] = [];
+  const date = opts?.scheduleDate ?? null;
+  if (date) row4Parts.push(`Schedule Date: ${esc(date)}`);
+  if (opts?.schedulerName) row4Parts.push(`Scheduler: ${esc(opts.schedulerName)}`);
+  const rows = [row1Parts, row2Parts, row3Parts, row4Parts]
+    .filter((r) => r.length > 0)
+    .map((r) => `<div class="patient-demo-row">${r.join(" · ")}</div>`)
+    .join("");
+  return `<div class="patient-demo-block">${rows}</div>`;
 }
 
 export function buildPatientTop(p: PatientScreening, batchName: string, date: string, reportLabel: string): string {
   const demoLine = [p.time, p.age ? `${p.age}yo` : "", p.gender, p.insurance].filter(Boolean).map(esc).join(" · ");
+  const demoBlock = buildPatientDemoBlock(p, { scheduleDate: date });
+  // SOURCE MARKER: PDF clinical text wraps and paginates
   const clinicalBlock = (p.diagnoses || p.history || p.medications) ? `
     <div class="clinical-box">
       <div class="clinical-label">Clinical Summary</div>
       <div class="clinical-grid">
-        ${p.diagnoses ? `<div><div class="clinical-field-label">Diagnoses</div><div class="clinical-field-val">${esc(p.diagnoses)}</div></div>` : ""}
-        ${p.history ? `<div><div class="clinical-field-label">History</div><div class="clinical-field-val">${esc(p.history)}</div></div>` : ""}
-        ${p.medications ? `<div><div class="clinical-field-label">Medications</div><div class="clinical-field-val">${esc(p.medications)}</div></div>` : ""}
+        ${p.diagnoses ? `<div><div class="clinical-field-label">Dx</div><div class="clinical-field-val clinical-clinical-text">${esc(p.diagnoses)}</div></div>` : ""}
+        ${p.history ? `<div><div class="clinical-field-label">Hx</div><div class="clinical-field-val clinical-clinical-text">${esc(p.history)}</div></div>` : ""}
+        ${p.medications ? `<div><div class="clinical-field-label">Rx</div><div class="clinical-field-val clinical-clinical-text">${esc(p.medications)}</div></div>` : ""}
       </div>
     </div>` : "";
   return `
@@ -137,6 +221,7 @@ export function buildPatientTop(p: PatientScreening, batchName: string, date: st
     <div class="patient-header">
       <div class="patient-name">${esc(p.name)}</div>
       <div class="patient-meta">${demoLine}</div>
+      ${demoBlock}
     </div>
     ${clinicalBlock}`;
 }
@@ -252,13 +337,14 @@ export function generateClinicianPDF(batchName: string, patients: PatientScreeni
     const ancillaryColor: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#dc2626" };
 
     const prevSign = getPrevTestsSign(p.insurance, p.previousTests, scheduleDate || new Date().toISOString().slice(0, 10));
+    // SOURCE MARKER: PDF clinical text wraps and paginates
     const chartReview = (p.diagnoses || p.history || p.medications || p.previousTests || p.previousTestsDate) ? `
-      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;margin-bottom:8px;">
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;margin-bottom:8px;page-break-inside:avoid;break-inside:avoid;">
         <div style="font-size:8px;font-weight:700;color:#1a365d;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:5px;">${esc(p.name)} Chart Review</div>
-        ${p.diagnoses ? `<div style="display:flex;gap:6px;margin-bottom:2px;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Dx</span><span style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.diagnoses)}</span></div>` : ""}
-        ${p.history ? `<div style="display:flex;gap:6px;margin-bottom:2px;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Hx</span><span style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.history)}</span></div>` : ""}
-        ${p.medications ? `<div style="display:flex;gap:6px;margin-bottom:2px;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Rx</span><span style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.medications)}</span></div>` : ""}
-        ${p.previousTests || p.previousTestsDate ? `<div style="display:flex;gap:6px;background:#fef9c3;border-radius:4px;padding:3px 5px;margin-top:2px;"><span style="font-size:7.5px;font-weight:700;color:#78350f;letter-spacing:0.05em;min-width:70px;padding-top:1px;white-space:nowrap;">${prevSign}Previous Tests</span><span style="font-size:8.5px;font-weight:700;color:#334155;line-height:1.4;">${p.previousTests ? esc(p.previousTests) : ""}${p.previousTestsDate ? `${p.previousTests ? " — " : ""}Date: ${esc(p.previousTestsDate)}` : ""}</span></div>` : ""}
+        ${p.diagnoses ? `<div style="display:flex;gap:6px;margin-bottom:2px;page-break-inside:avoid;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Dx</span><span class="clinical-clinical-text" style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.diagnoses)}</span></div>` : ""}
+        ${p.history ? `<div style="display:flex;gap:6px;margin-bottom:2px;page-break-inside:avoid;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Hx</span><span class="clinical-clinical-text" style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.history)}</span></div>` : ""}
+        ${p.medications ? `<div style="display:flex;gap:6px;margin-bottom:2px;page-break-inside:avoid;"><span style="font-size:7.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;min-width:16px;padding-top:1px;">Rx</span><span class="clinical-clinical-text" style="font-size:8.5px;color:#334155;line-height:1.4;">${esc(p.medications)}</span></div>` : ""}
+        ${p.previousTests || p.previousTestsDate ? `<div style="display:flex;gap:6px;background:#fef9c3;border-radius:4px;padding:3px 5px;margin-top:2px;page-break-inside:avoid;"><span style="font-size:7.5px;font-weight:700;color:#78350f;letter-spacing:0.05em;min-width:70px;padding-top:1px;white-space:nowrap;">${prevSign}Previous Tests</span><span class="clinical-clinical-text" style="font-size:8.5px;font-weight:700;color:#334155;line-height:1.4;">${p.previousTests ? esc(p.previousTests) : ""}${p.previousTestsDate ? `${p.previousTests ? " — " : ""}Date: ${esc(p.previousTestsDate)}` : ""}</span></div>` : ""}
       </div>` : "";
 
     const leftHtml = ancillaryTests.length === 0
@@ -302,8 +388,9 @@ export function generateClinicianPDF(batchName: string, patients: PatientScreeni
             </div>`;
         }).join("");
 
+    const demoBlock = buildPatientDemoBlock(p, { scheduleDate: date });
     return `
-      <div class="page" style="padding:14px 20px;overflow:hidden;">
+      <div class="page" style="padding:14px 20px;">
         <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:4px;margin-bottom:6px;border-bottom:1px solid #cbd5e1;">
           <span style="font-size:9.5px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
           <span style="font-size:8.5px;color:#94a3b8;">Clinician Summary — ${esc(date)}</span>
@@ -312,7 +399,8 @@ export function generateClinicianPDF(batchName: string, patients: PatientScreeni
           <span style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.09em;">Plexus Qualifying Ancillaries</span>
           <span style="font-size:18px;font-weight:800;color:#1a365d;">${esc(p.name)}</span>
         </div>
-        <div style="font-size:8.5px;color:#94a3b8;text-align:right;margin-bottom:7px;">${demoLine}</div>
+        <div style="font-size:8.5px;color:#94a3b8;text-align:right;margin-bottom:4px;">${demoLine}</div>
+        ${demoBlock}
         ${chartReview}
         <div style="font-size:17px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;text-align:center;margin-top:6px;margin-bottom:10px;">Qualified Ancillary Tests for ${esc(firstName)}</div>
         <div style="display:grid;grid-template-columns:38% 1fr;gap:10px;border-top:2px solid #e2e8f0;padding-top:10px;">
