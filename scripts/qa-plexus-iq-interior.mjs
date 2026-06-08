@@ -950,6 +950,39 @@ requireText(adminReviewDialogRemovals, [
   "admin-review-remove-ultrasound-child",
 ]);
 
+// Admin Review left-panel Engagement tab + scheduler-grouped call
+// lists + scheduler-scoped Plexus / Clinician PDF packets. Source
+// markers + testIds asserted here.
+requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
+  // Engagement tab + content.
+  "admin-review-left-tab-engagement",
+  "admin-review-engagement-tab-content",
+  // Scheduler-grouped call list rendering + per-row markers.
+  "admin-review-scheduler-call-lists",
+  "admin-review-scheduler-call-list",
+  "admin-review-scheduler-call-list-patient",
+  "admin-review-current-patient-in-call-list",
+  // Scheduler routing chip is wired to /api/patients/:id/engagement-assignment.
+  "admin-review-scheduler-routing-chip",
+  "engagement-assignment",
+  // Scheduler-scoped PDF packet controls.
+  "admin-review-select-scheduler-patient",
+  "admin-review-select-all-scheduler-patients",
+  "admin-review-scheduler-selected-count",
+  "admin-review-scheduler-plexus-pdf",
+  "admin-review-scheduler-clinician-pdf",
+  // Source markers documenting the contract.
+  "Engagement Center source of truth",
+  "Scheduler call lists grouped by scheduler",
+  "Scheduler PDF packets are scoped to assigned scheduler",
+  "Plexus PDF by scheduler assignment",
+  "Clinician PDF by scheduler assignment",
+  // PDF helper integration (existing canonical generators).
+  "generatePlexusPDF",
+  "generateClinicianPDF",
+  "validateSameFacilityDatePacket",
+]);
+
 // Merged qualifying chips — closed-bar source of truth + premium
 // per-kind/per-origin testIds + canonical removal markers + unified
 // merge helpers + regenerate source markers.

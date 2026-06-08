@@ -1031,6 +1031,20 @@ export function registerPatientRoutes(
   // Journey-event append is best-effort; if patient_journey_events /
   // patient_execution_cases aren't deployed yet the audit row is
   // dropped silently and the primary column update still succeeds.
+  //
+  // Admin Review approval triggers scheduler routing — on "approved"
+  // we also invoke commitPatient(auto: true) so the canonical
+  // execution-case spine fires (createOrUpdateExecutionCaseFromScreening
+  // → autoAssignSchedulerForExecutionCase → outreach_schedulers
+  // lookup by facility). The auto path skips the manual contact-info
+  // gate; admins are the qualifier and contact gaps surface later
+  // via the engagement assignment board.
+  //
+  // SOURCE MARKER: Admin Review approval triggers scheduler routing
+  // SOURCE MARKER: Scheduler settings lookup
+  // SOURCE MARKER: Engagement assignment creation/update
+  // SOURCE MARKER: Engagement Center source of truth
+  // SOURCE MARKER: Scheduler assignment runtime
   app.post(
     "/api/patient-screenings/:id/admin-approval",
     async (req, res) => {
@@ -1064,6 +1078,28 @@ export function registerPatientRoutes(
           return res.status(404).json({ error: "Patient not found" });
         }
 
+        // Approval → engagement routing. Calls the canonical
+        // commit/scheduler-auto-assign pipeline (the same one
+        // commitPatient already drives from manual commit + AI
+        // analyze). Idempotent — commitPatient short-circuits on
+        // already-committed patients.
+        let routedToEngagement = false;
+        let routedSchedulerName: string | null = null;
+        if (isApproved && updated.commitStatus === "Draft") {
+          try {
+            const result = await commitPatient(id, userId, { auto: true });
+            if (result.ok) {
+              routedToEngagement = true;
+              routedSchedulerName = result.data.schedulerName ?? null;
+            }
+          } catch (commitErr) {
+            console.error(
+              "[admin-approval] commit/scheduler routing failed:",
+              commitErr instanceof Error ? commitErr.message : commitErr,
+            );
+          }
+        }
+
         try {
           const { db } = await import("../db");
           const schema = await import("@shared/schema") as Record<string, unknown>;
@@ -1086,7 +1122,7 @@ export function registerPatientRoutes(
               eventType: "admin_approval_updated",
               eventSource: "plexus_iq_admin_review",
               summary: `Admin approval set to ${status}`,
-              metadata: { status, note },
+              metadata: { status, note, routedToEngagement, routedSchedulerName },
             });
           }
         } catch (auditErr) {
@@ -1099,9 +1135,17 @@ export function registerPatientRoutes(
         void logAudit(req, "update", "patient", id, {
           adminApprovalStatus: status,
           note,
+          routedToEngagement,
+          routedSchedulerName,
         });
         invalidatePatientDatabase();
-        res.json({ ok: true, patient: updated });
+        const fresh = routedToEngagement ? await storage.getPatientScreening(id) : updated;
+        res.json({
+          ok: true,
+          patient: fresh ?? updated,
+          routedToEngagement,
+          routedSchedulerName,
+        });
       } catch (error: any) {
         console.error(
           "[admin-approval] error:",

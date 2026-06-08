@@ -44,6 +44,14 @@ import type { PatientScreening } from "@shared/schema";
 import { computeAdminReview, type AdminApprovalStatus } from "@/lib/adminReviewStatus";
 import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
 import {
+  generatePlexusPDF,
+  generateClinicianPDF,
+} from "@/lib/pdfGeneration";
+import {
+  validateSameFacilityDatePacket,
+  type PdfPacketSourcePatient,
+} from "@/lib/pdfPacketGrouping";
+import {
   categoryIcons,
   categoryLabels,
   categoryStyles,
@@ -667,8 +675,216 @@ export function AdminReviewDialog({
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [leftTab, setLeftTab] = useState<
-    "source" | "patient-directory" | "cooldown" | "insurance" | "history"
+    "source" | "patient-directory" | "cooldown" | "insurance" | "history" | "engagement"
   >("source");
+
+  // Engagement assignment for THIS patient — drives the scheduler
+  // routing chip on the right panel and the highlight in the
+  // Engagement tab call list.
+  type EngagementAssignment = {
+    patientScreeningId: number;
+    executionCaseId: number | null;
+    commitStatus: string | null;
+    engagementStatus: string | null;
+    engagementBucket: string | null;
+    assignedRole: string | null;
+    assignedTeamMemberId: number | null;
+    scheduler: { id: number; name: string; facility: string } | null;
+  };
+  const engagementAssignmentQuery = useQuery<EngagementAssignment | null>({
+    queryKey: ["/api/patients", patient.id, "engagement-assignment"],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/patients/${patient.id}/engagement-assignment`,
+        { credentials: "include" },
+      );
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`engagement-assignment ${res.status}`);
+      return res.json();
+    },
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  // Scheduler-grouped call list — backed by /api/engagement/assignment-board,
+  // grouped CLIENT-SIDE by assignedName since the backend returns a flat
+  // list (no scheduler-grouped endpoint exists today). Patients filtered
+  // to the current patient's facility so the call list shows the
+  // scheduler context the admin is actually reviewing.
+  //
+  // SOURCE MARKER: Engagement Center source of truth
+  // SOURCE MARKER: Scheduler call lists grouped by scheduler
+  type EngagementBoardRow = {
+    patientScreeningId: number | null;
+    executionCaseId: number;
+    patientName: string;
+    patientDob: string | null;
+    phoneNumber: string | null;
+    facility: string | null;
+    scheduleDate: string | null;
+    patientType: string | null;
+    engagementBucket: string | null;
+    engagementStatus: string | null;
+    commitStatus: string | null;
+    assignedTeamMemberId: number | null;
+    assignedRole: string | null;
+    assignedName: string | null;
+    assignedFacility: string | null;
+    nextActionAt: string | null;
+    lastActivityAt: string | null;
+    lastActivitySummary: string | null;
+    missingInfo: string[];
+    selectedServiceList: string[];
+  };
+  const engagementBoardQuery = useQuery<{ rows: EngagementBoardRow[] }>({
+    queryKey: [
+      "/api/engagement/assignment-board",
+      patient.facility ?? "_all_",
+    ],
+    queryFn: async () => {
+      const url = patient.facility
+        ? `/api/engagement/assignment-board?facility=${encodeURIComponent(patient.facility)}`
+        : `/api/engagement/assignment-board`;
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error(`assignment-board ${res.status}`);
+      return res.json();
+    },
+    enabled: open && leftTab === "engagement",
+    staleTime: 30_000,
+  });
+
+  type SchedulerGroup = {
+    schedulerKey: string;
+    schedulerName: string;
+    rows: EngagementBoardRow[];
+  };
+
+  const schedulerGroups: SchedulerGroup[] = useMemo(() => {
+    const rows = engagementBoardQuery.data?.rows ?? [];
+    const map = new Map<string, SchedulerGroup>();
+    for (const r of rows) {
+      const key = r.assignedTeamMemberId != null
+        ? `id:${r.assignedTeamMemberId}`
+        : "__unassigned__";
+      const name = r.assignedName?.trim() || "Unassigned / Engagement Queue";
+      const existing = map.get(key);
+      if (existing) existing.rows.push(r);
+      else map.set(key, { schedulerKey: key, schedulerName: name, rows: [r] });
+    }
+    const ordered = Array.from(map.values());
+    ordered.sort((a, b) => {
+      if (a.schedulerKey === "__unassigned__") return 1;
+      if (b.schedulerKey === "__unassigned__") return -1;
+      return a.schedulerName.localeCompare(b.schedulerName);
+    });
+    return ordered;
+  }, [engagementBoardQuery.data]);
+
+  // Per-scheduler selected patient IDs (patient_screenings.id) for the
+  // scheduler-scoped Plexus / Clinician PDF buttons.
+  // SOURCE MARKER: Scheduler PDF packets are scoped to assigned scheduler
+  const [selectedByScheduler, setSelectedByScheduler] = useState<
+    Record<string, Set<number>>
+  >({});
+
+  function toggleSelectedForScheduler(schedulerKey: string, patientId: number) {
+    setSelectedByScheduler((prev) => {
+      const next = new Set(prev[schedulerKey] ?? []);
+      if (next.has(patientId)) next.delete(patientId);
+      else next.add(patientId);
+      return { ...prev, [schedulerKey]: next };
+    });
+  }
+
+  function setAllSelectedForScheduler(group: SchedulerGroup) {
+    setSelectedByScheduler((prev) => {
+      const existing = prev[group.schedulerKey] ?? new Set<number>();
+      const allIds = group.rows
+        .map((r) => r.patientScreeningId)
+        .filter((id): id is number => id != null);
+      // If everyone is already selected, clear. Otherwise select all.
+      const allSelected = allIds.length > 0 && allIds.every((id) => existing.has(id));
+      const next = new Set<number>(allSelected ? [] : allIds);
+      return { ...prev, [group.schedulerKey]: next };
+    });
+  }
+
+  // Scheduler-scoped PDF packet generation. Pulls full patient
+  // records for the selected ids, then defers to the canonical
+  // generatePlexusPDF / generateClinicianPDF helpers + same
+  // facility/date validation. If the selection spans multiple
+  // facilities or dates the helper blocks the export and we surface
+  // a toast — no fake/mixed packet is ever produced.
+  // SOURCE MARKER: Scheduler PDF packets are scoped to assigned scheduler
+  async function generateSchedulerScopedPdf(
+    group: SchedulerGroup,
+    patientIds: number[],
+    mode: "plexus" | "clinician",
+  ) {
+    if (patientIds.length === 0) {
+      toast({
+        title: "Select patients first",
+        description: `Pick at least one patient under ${group.schedulerName} to generate a packet.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      const fetched = await Promise.all(
+        patientIds.map(async (id) => {
+          const res = await fetch(`/api/patients/${id}`, { credentials: "include" });
+          if (!res.ok) return null;
+          return (await res.json()) as PatientScreening;
+        }),
+      );
+      const fullPatients = fetched.filter((p): p is PatientScreening => p != null);
+      if (fullPatients.length === 0) {
+        toast({
+          title: "PDF packet blocked",
+          description: "Could not load any of the selected patients.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const validation = validateSameFacilityDatePacket(
+        fullPatients as PdfPacketSourcePatient[],
+        patient.facility ?? null,
+        scheduleDate ?? null,
+      );
+      if (!validation.ok) {
+        toast({
+          title: "PDF packet blocked",
+          description: validation.reason,
+          variant: "destructive",
+        });
+        return;
+      }
+      const batchName = `${validation.patients[0]?.facility ?? group.schedulerName} · ${
+        validation.scheduleDate ?? "outreach"
+      }`;
+      if (mode === "plexus") {
+        generatePlexusPDF(batchName, validation.patients, validation.scheduleDate, null);
+        recordAdminReviewUpdate(
+          "pdf_previewed",
+          `Generated Plexus PDF for ${group.schedulerName} (${fullPatients.length})`,
+          { scheduler: group.schedulerName, kind: "plexus" },
+        );
+      } else {
+        generateClinicianPDF(batchName, validation.patients, validation.scheduleDate, null);
+        recordAdminReviewUpdate(
+          "pdf_previewed",
+          `Generated Clinician PDF for ${group.schedulerName} (${fullPatients.length})`,
+          { scheduler: group.schedulerName, kind: "clinician" },
+        );
+      }
+    } catch (err) {
+      toast({
+        title: "PDF packet failed",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    }
+  }
 
   // Audit log. Seeded from patient.reasoning["adminReview:updates"]
   // so prior persisted entries survive a dialog reopen. New entries
@@ -1728,11 +1944,25 @@ export function AdminReviewDialog({
       return res.json();
     },
     onSuccess: (data, vars) => {
+      const routed = (data as { routedToEngagement?: boolean }).routedToEngagement;
+      const schedulerName = (data as { routedSchedulerName?: string | null }).routedSchedulerName;
       toast({
         title: `Admin approval: ${vars.status.replace("_", " ")}`,
-        description: data.patient?.name ?? "",
+        description: routed
+          ? schedulerName
+            ? `Routed to scheduler: ${schedulerName}`
+            : "Routed to Engagement Queue (unassigned)"
+          : data.patient?.name ?? "",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+      // Refresh the scheduler routing chip + engagement tab call list
+      // so the post-approval scheduler assignment shows immediately.
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patients", patient.id, "engagement-assignment"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/engagement/assignment-board", patient.facility ?? "_all_"],
+      });
       onOpenChange(false);
     },
     onError: (err) => {
@@ -1907,6 +2137,15 @@ export function AdminReviewDialog({
                           className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           History
+                        </TabsTrigger>
+                      </TabsList>
+                      <TabsList className="bg-black/15 text-white grid grid-cols-1 w-full mt-1">
+                        <TabsTrigger
+                          value="engagement"
+                          data-testid="admin-review-left-tab-engagement"
+                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                        >
+                          Engagement
                         </TabsTrigger>
                       </TabsList>
 
@@ -2127,6 +2366,180 @@ export function AdminReviewDialog({
                               <span className="italic text-white/50">No history entered</span>
                             )}
                           </div>
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent
+                        value="engagement"
+                        className="mt-3"
+                        data-testid="admin-review-engagement-tab-content"
+                      >
+                        {/* Engagement Center source of truth: client-side
+                            grouping of /api/engagement/assignment-board
+                            (no dedicated grouped endpoint exists). Each
+                            scheduler group supports Select All + Plexus
+                            PDF + Clinician PDF scoped to selected rows.
+                            SOURCE MARKER: Engagement Center source of truth
+                            SOURCE MARKER: Scheduler call lists grouped by scheduler
+                            SOURCE MARKER: Plexus PDF by scheduler assignment
+                            SOURCE MARKER: Clinician PDF by scheduler assignment */}
+                        <div
+                          className="space-y-3"
+                          data-testid="admin-review-scheduler-call-lists"
+                        >
+                          {engagementBoardQuery.isLoading && (
+                            <div className="text-[11px] text-white/60 italic">
+                              Loading Engagement assignments…
+                            </div>
+                          )}
+                          {engagementBoardQuery.isError && (
+                            <div className="text-[11px] text-rose-200">
+                              Could not load Engagement Center: {String(engagementBoardQuery.error)}
+                            </div>
+                          )}
+                          {!engagementBoardQuery.isLoading &&
+                            !engagementBoardQuery.isError &&
+                            schedulerGroups.length === 0 && (
+                              <div className="text-[11px] text-white/60 italic">
+                                No Engagement assignment found for this facility yet.
+                              </div>
+                            )}
+                          {schedulerGroups.map((group) => {
+                            const selected = selectedByScheduler[group.schedulerKey] ?? new Set<number>();
+                            const eligibleIds = group.rows
+                              .map((r) => r.patientScreeningId)
+                              .filter((id): id is number => id != null);
+                            const allSelected =
+                              eligibleIds.length > 0 && eligibleIds.every((id) => selected.has(id));
+                            const selectedCount = selected.size;
+                            return (
+                              <section
+                                key={group.schedulerKey}
+                                className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-2"
+                                data-testid="admin-review-scheduler-call-list"
+                                data-scheduler-name={group.schedulerName}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="text-[11px] font-semibold text-white">
+                                    {group.schedulerName}
+                                    <span className="ml-1.5 text-white/60 font-normal">
+                                      ({group.rows.length})
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setAllSelectedForScheduler(group)}
+                                    data-testid="admin-review-select-all-scheduler-patients"
+                                    className="text-[10px] uppercase tracking-wider text-white/80 hover:text-white"
+                                  >
+                                    {allSelected ? "Clear" : "Select All"}
+                                  </button>
+                                </div>
+                                <div
+                                  className="text-[10px] text-white/60"
+                                  data-testid="admin-review-scheduler-selected-count"
+                                >
+                                  {selectedCount} selected
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={selectedCount === 0}
+                                    onClick={() =>
+                                      generateSchedulerScopedPdf(
+                                        group,
+                                        Array.from(selected),
+                                        "plexus",
+                                      )
+                                    }
+                                    data-testid="admin-review-scheduler-plexus-pdf"
+                                    className="rounded-md border border-white/30 bg-white/15 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 text-[11px] font-semibold transition-colors"
+                                  >
+                                    Plexus PDF
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={selectedCount === 0}
+                                    onClick={() =>
+                                      generateSchedulerScopedPdf(
+                                        group,
+                                        Array.from(selected),
+                                        "clinician",
+                                      )
+                                    }
+                                    data-testid="admin-review-scheduler-clinician-pdf"
+                                    className="rounded-md border border-white/30 bg-white/15 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 text-[11px] font-semibold transition-colors"
+                                  >
+                                    Clinician PDF
+                                  </button>
+                                </div>
+                                <ul className="space-y-1">
+                                  {group.rows.map((r) => {
+                                    const isCurrent =
+                                      r.patientScreeningId === patient.id;
+                                    const isChecked = r.patientScreeningId != null
+                                      ? selected.has(r.patientScreeningId)
+                                      : false;
+                                    return (
+                                      <li
+                                        key={r.executionCaseId}
+                                        className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-[11px] ${
+                                          isCurrent
+                                            ? "border-white/40 bg-white/15"
+                                            : "border-white/10 bg-black/10"
+                                        }`}
+                                        data-testid="admin-review-scheduler-call-list-patient"
+                                        data-patient-id={r.patientScreeningId ?? ""}
+                                        data-is-current={isCurrent ? "true" : "false"}
+                                        {...(isCurrent
+                                          ? { "data-current-marker": "admin-review-current-patient-in-call-list" }
+                                          : {})}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          disabled={r.patientScreeningId == null}
+                                          onChange={() => {
+                                            if (r.patientScreeningId != null) {
+                                              toggleSelectedForScheduler(
+                                                group.schedulerKey,
+                                                r.patientScreeningId,
+                                              );
+                                            }
+                                          }}
+                                          data-testid="admin-review-select-scheduler-patient"
+                                          className="mt-0.5"
+                                        />
+                                        <div className="min-w-0 flex-1">
+                                          <div className="font-medium text-white truncate">
+                                            {r.patientName}
+                                            {isCurrent && (
+                                              <span
+                                                className="ml-1 text-[9px] uppercase tracking-wider text-white/70"
+                                                data-testid="admin-review-current-patient-in-call-list"
+                                              >
+                                                · current
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="text-white/60 truncate">
+                                            {[r.facility, r.scheduleDate, r.engagementStatus]
+                                              .filter(Boolean)
+                                              .join(" · ")}
+                                          </div>
+                                          {r.selectedServiceList?.length ? (
+                                            <div className="text-white/50 truncate">
+                                              {r.selectedServiceList.join(", ")}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              </section>
+                            );
+                          })}
                         </div>
                       </TabsContent>
                     </Tabs>
@@ -2973,9 +3386,22 @@ export function AdminReviewDialog({
                 <div
                   className="inline-flex items-center gap-1.5 rounded-full bg-white/10 text-white/70 px-2 py-0.5 text-[10px]"
                   data-testid="admin-review-scheduler-routing-chip"
+                  data-scheduler-state={
+                    engagementAssignmentQuery.data?.scheduler
+                      ? "assigned"
+                      : engagementAssignmentQuery.data
+                        ? "unassigned"
+                        : "pending"
+                  }
                 >
                   <ShieldCheck className="w-3 h-3" />
-                  Scheduler routing wires here when available
+                  {engagementAssignmentQuery.isLoading
+                    ? "Loading scheduler routing…"
+                    : engagementAssignmentQuery.data?.scheduler
+                      ? `Scheduler: ${engagementAssignmentQuery.data.scheduler.name}`
+                      : engagementAssignmentQuery.data
+                        ? "Unassigned / Engagement Queue"
+                        : "Scheduler routes on approval"}
                 </div>
               </section>
               </div>
