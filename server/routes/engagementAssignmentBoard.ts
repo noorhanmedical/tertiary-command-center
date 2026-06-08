@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, isNotNull, ne, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import {
@@ -10,6 +10,82 @@ import {
   screeningBatches,
   outreachSchedulers,
 } from "@shared/schema";
+
+// No-duplicate-scheduler-per-date guard.
+//
+// Two schedulers cannot both have the same patient assigned for the
+// same scheduleDate. The same patient (matched by name + DOB) may
+// have multiple patient_execution_cases rows because BatchFlow can
+// re-import the same person across batches. The guard below walks
+// every sibling active execution case for the same name/DOB and
+// rejects an assignment that would create divergence across
+// different schedulers on the same date.
+//
+// Outreach (scheduleDate == null) is intentionally skipped — there
+// is no "same date" anchor to enforce on outreach lists.
+//
+// SOURCE MARKER: Two schedulers cannot share the same patient for the same date
+// SOURCE MARKER: Duplicate scheduler per date guard
+async function findConflictingActiveAssignment(
+  excludeExecutionCaseId: number,
+  patientName: string | null | undefined,
+  patientDob: string | null | undefined,
+  scheduleDate: string | null,
+  proposedSchedulerId: number,
+): Promise<
+  | { schedulerId: number; schedulerName: string | null; otherExecutionCaseId: number; scheduleDate: string }
+  | null
+> {
+  if (!scheduleDate) return null;
+  const normalizedName = (patientName ?? "").trim().toLowerCase();
+  if (!normalizedName) return null;
+  // Active sibling cases for the same person already assigned to a
+  // DIFFERENT scheduler. We still have to confirm the scheduleDate
+  // matches by joining the screening's batch (the execution case
+  // itself doesn't carry the date).
+  const candidates = await db
+    .select({
+      id: patientExecutionCases.id,
+      patientScreeningId: patientExecutionCases.patientScreeningId,
+      assignedTeamMemberId: patientExecutionCases.assignedTeamMemberId,
+    })
+    .from(patientExecutionCases)
+    .where(
+      and(
+        ne(patientExecutionCases.id, excludeExecutionCaseId),
+        eq(sql`lower(${patientExecutionCases.patientName})`, normalizedName),
+        patientDob
+          ? eq(patientExecutionCases.patientDob, patientDob)
+          : isNull(patientExecutionCases.patientDob),
+        or(
+          isNull(patientExecutionCases.lifecycleStatus),
+          eq(patientExecutionCases.lifecycleStatus, "active"),
+        ),
+        isNotNull(patientExecutionCases.assignedTeamMemberId),
+        ne(patientExecutionCases.assignedTeamMemberId, proposedSchedulerId),
+      ),
+    );
+  if (candidates.length === 0) return null;
+  const allSchedulers = await storage.getOutreachSchedulers();
+  for (const c of candidates) {
+    if (c.patientScreeningId == null) continue;
+    const screening = await storage.getPatientScreening(c.patientScreeningId);
+    if (!screening) continue;
+    const batch = await storage.getScreeningBatch(screening.batchId);
+    if (!batch?.scheduleDate) continue;
+    if (batch.scheduleDate !== scheduleDate) continue;
+    const conflictScheduler = allSchedulers.find(
+      (s) => s.id === c.assignedTeamMemberId,
+    );
+    return {
+      schedulerId: c.assignedTeamMemberId as number,
+      schedulerName: conflictScheduler?.name ?? null,
+      otherExecutionCaseId: c.id,
+      scheduleDate,
+    };
+  }
+  return null;
+}
 
 // Engagement Assignment Board — read + write endpoints powering the
 // new "Assignments" surface in Engagement Center. The board is the
@@ -396,6 +472,29 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             failed.push({
               patientScreeningId: pid,
               reason: "Patient has no engagement case yet — commit first",
+            });
+            continue;
+          }
+          // No-duplicate-scheduler-per-date guard. If a sibling
+          // execution case for the same patient (by name + DOB) on
+          // the same scheduleDate is already assigned to a
+          // different scheduler, reject this assignment so two
+          // schedulers cannot both have the same patient for the
+          // same date.
+          // SOURCE MARKER: Two schedulers cannot share the same patient for the same date
+          const batch = await storage.getScreeningBatch(patient.batchId);
+          const scheduleDate = batch?.scheduleDate ?? null;
+          const conflict = await findConflictingActiveAssignment(
+            execCase.id,
+            patient.name,
+            patient.dob ?? null,
+            scheduleDate,
+            newScheduler.id,
+          );
+          if (conflict) {
+            failed.push({
+              patientScreeningId: pid,
+              reason: `Already assigned to ${conflict.schedulerName ?? "another scheduler"} for ${conflict.scheduleDate}. Two schedulers cannot share the same patient for the same date.`,
             });
             continue;
           }
