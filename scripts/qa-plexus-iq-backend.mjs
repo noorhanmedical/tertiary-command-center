@@ -143,17 +143,41 @@ requireText("server/routes/patients.ts", [
 // Admin Review approval must trigger the canonical scheduler routing
 // runtime (commitPatient → execution-case spine →
 // autoAssignSchedulerForExecutionCase). Source markers + the
-// commitPatient call site live on the admin-approval route.
+// commitPatient call site live on the admin-approval route. The
+// route also reads Scheduler Settings (canonical source =
+// outreach_schedulers table managed by the Settings page) via
+// the lookupSchedulerFromSettings helper.
 requireText("server/routes/patients.ts", [
   "/api/patient-screenings/:id/admin-approval",
   "Admin Review approval triggers scheduler routing",
+  "Admin Review approval reads Scheduler Settings",
+  "Scheduler Settings drive Engagement assignment",
   "Scheduler settings lookup",
+  "Scheduler settings fallback is Unassigned Engagement Queue",
   "Engagement assignment creation/update",
   "Engagement Center source of truth",
   "Scheduler assignment runtime",
   "commitPatient(id, userId, { auto: true })",
+  "lookupSchedulerFromSettings",
   "routedToEngagement",
   "routedSchedulerName",
+  "routedSchedulerSettingsSource",
+  "routedByScheduledSettings",
+]);
+
+// Scheduler Settings helper — the lookup that surfaces the
+// canonical outreach_schedulers row matching the patient's
+// facility. Used by the admin-approval route so the chain
+// admin-approval → settings lookup → commit → auto-assign is
+// explicit.
+requireText("server/services/schedulerSettings.ts", [
+  "lookupSchedulerFromSettings",
+  "getOutreachSchedulers",
+  "outreach-schedulers-table",
+  "Scheduler Settings drive Engagement assignment",
+  "Engagement Center uses assigned scheduler from scheduler settings",
+  "Scheduler settings fallback is Unassigned Engagement Queue",
+  "Scheduler settings source missing; using current scheduler runtime fallback",
 ]);
 
 // Scheduler routing runtime contract — execution case spine + auto-

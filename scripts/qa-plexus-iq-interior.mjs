@@ -981,6 +981,17 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "generatePlexusPDF",
   "generateClinicianPDF",
   "validateSameFacilityDatePacket",
+  // Scheduler Settings source markers + UI ribbons. Today's
+  // settings source is the outreach_schedulers table (admin-edited
+  // via Settings → Scheduler Team); the chip falls back to
+  // "Scheduler settings source missing; using current scheduler
+  // runtime fallback" when no row matches.
+  "admin-review-scheduler-settings-source",
+  "admin-review-assigned-by-scheduler-settings",
+  "Engagement Center uses assigned scheduler from scheduler settings",
+  "Scheduler settings fallback is Unassigned Engagement Queue",
+  "Scheduler settings source missing; using current scheduler runtime fallback",
+  "Assigned by Scheduler Settings",
 ]);
 
 // Merged qualifying chips — closed-bar source of truth + premium
