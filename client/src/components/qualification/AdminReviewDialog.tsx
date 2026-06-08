@@ -860,7 +860,7 @@ export function AdminReviewDialog({
         return;
       }
       const batchName = `${validation.patients[0]?.facility ?? group.schedulerName} · ${
-        validation.scheduleDate ?? "outreach"
+        validation.isOutreachPacket ? "Outreach" : validation.scheduleDate
       }`;
       if (mode === "plexus") {
         generatePlexusPDF(batchName, validation.patients, validation.scheduleDate, null);

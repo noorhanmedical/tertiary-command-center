@@ -177,6 +177,29 @@ requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
   "engagement-center-change-assignment",
   "engagement-center-change-assignment-select",
   "engagement-center-change-assignment-save",
+  // Per-group bulk assign + distribute-across-schedulers. The
+  // popover lives on every grouped section's action cluster.
+  "GroupAssignPopover",
+  "engagement-center-bulk-assign-trigger",
+  "engagement-center-bulk-assign-popover",
+  "engagement-center-bulk-assign-one-select",
+  "engagement-center-bulk-assign-one-save",
+  "engagement-center-distribute-scheduler-checkbox",
+  "engagement-center-distribute-save",
+  "engagement-center-distribute-preview",
+  "Engagement Center bulk assign selected to one scheduler",
+  "Engagement Center distribute evenly across schedulers",
+]);
+
+// Outreach (no-date) packets must be allowed by the PDF validator
+// so a group of outreach patients sharing one facility produces a
+// real Plexus / Clinician packet. The validator returns
+// isOutreachPacket = true and consumers render "Outreach" in the
+// batch label.
+requireText("client/src/lib/pdfPacketGrouping.ts", [
+  "isOutreachPacket",
+  "outreach call-list packet",
+  "all-outreach patients",
 ]);
 
 requireText("server/routes.ts", [

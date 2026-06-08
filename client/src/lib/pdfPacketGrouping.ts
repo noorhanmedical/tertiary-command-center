@@ -38,7 +38,15 @@ export type PdfPacketValidation =
   | {
       ok: true;
       facility: string;
-      scheduleDate: string;
+      // null when the packet is an outreach group (single facility,
+      // every patient has no scheduleDate). Consumers should render
+      // "Outreach" in batch labels for this case.
+      scheduleDate: string | null;
+      // True when the packet is a single-facility group of
+      // outreach patients (no scheduleDate). The PDF template
+      // still renders a real packet; the date label falls back to
+      // "Outreach" at the consumer site.
+      isOutreachPacket: boolean;
       patients: PdfPacketSourcePatient[];
     }
   | {
@@ -51,10 +59,16 @@ export type PdfPacketValidation =
       }>;
     };
 
-// Validate a set of patients for combined-packet generation. All
-// patients must share the same facility AND the same scheduleDate.
-// Missing facility/date is treated as a fatal mismatch; the caller
-// should use individual PDFs for those rows.
+// Validate a set of patients for combined-packet generation.
+//
+// Acceptable single-group shapes:
+//   - same facility + same scheduleDate (a dated visit packet)
+//   - same facility + every patient has no scheduleDate (an
+//     outreach call-list packet) — scheduleDate is returned as
+//     null and the caller renders "Outreach" in the batch label
+//
+// Rejected: missing facility, mixed facilities, mixed dates, or
+// a mix of dated + outreach patients.
 export function validateSameFacilityDatePacket(
   patients: PdfPacketSourcePatient[],
   fallbackFacility: string | null = null,
@@ -83,18 +97,22 @@ export function validateSameFacilityDatePacket(
 
   if (groups.size === 1) {
     const only = groups.values().next().value!;
-    if (only.facility === "(no facility)" || only.scheduleDate === "(no date)") {
+    if (only.facility === "(no facility)") {
       return {
         ok: false,
         reason:
-          "PDF packet requires one facility and one date. Generate individual PDFs for these patients instead.",
+          "PDF packet requires a facility. Generate individual PDFs for these patients instead.",
         groups: Array.from(groups.values()),
       };
     }
+    // Outreach group: one facility, every patient has no
+    // scheduleDate. Treat as valid outreach packet.
+    const isOutreachPacket = only.scheduleDate === "(no date)";
     return {
       ok: true,
       facility: only.facility,
-      scheduleDate: only.scheduleDate,
+      scheduleDate: isOutreachPacket ? null : only.scheduleDate,
+      isOutreachPacket,
       patients: only.patients,
     };
   }
@@ -102,7 +120,7 @@ export function validateSameFacilityDatePacket(
   return {
     ok: false,
     reason:
-      "PDF packet requires one facility and one date. Pick a facility/date group below.",
+      "PDF packet requires one facility and one date (or one facility with all-outreach patients). Pick a facility/date group below.",
     groups: Array.from(groups.values()),
   };
 }
