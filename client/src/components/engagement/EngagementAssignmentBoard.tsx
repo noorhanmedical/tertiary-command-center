@@ -35,8 +35,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import type { PatientScreening } from "@shared/schema";
 import {
-  generatePlexusPDF,
-  generateClinicianPDF,
+  generatePlexusPDFAsync,
+  generateClinicianPDFAsync,
 } from "@/lib/pdfGeneration";
 import {
   validateSameFacilityDatePacket,
@@ -130,6 +130,17 @@ export function EngagementAssignmentBoard() {
   // groupings cannot create cross-group selections.
   const [selectedByGroup, setSelectedByGroup] = useState<
     Record<string, Set<number>>
+  >({});
+  // Per-group PDF error surface. Two failure modes are tracked
+  // separately so the inline UI can distinguish them:
+  // - "validation" → packet validator (e.g. mixed facilities, mixed
+  //    dates, mixed dated+outreach) — fix the selection.
+  // - "generation" → fetch failure, missing patientScreeningId rows,
+  //    or html2pdf error — fix the data / retry.
+  // SOURCE MARKER: Engagement Center PDF generation error is surfaced
+  type PdfErrorKind = "validation" | "generation";
+  const [pdfErrorByGroup, setPdfErrorByGroup] = useState<
+    Record<string, { kind: PdfErrorKind; message: string } | null>
   >({});
 
   const board = useQuery<BoardResponse>({
@@ -386,81 +397,135 @@ export function EngagementAssignmentBoard() {
   // SOURCE MARKER: Engagement Center PDF packets use selected patients only
   // SOURCE MARKER: Engagement Center PDFs validate facility date packet
   // SOURCE MARKER: Engagement Center scheduler PDFs are scoped to assigned scheduler
+  // SOURCE MARKER: Engagement Center PDF maps execution cases to patient screenings
+  // SOURCE MARKER: Engagement Center PDFs require patientScreeningId
+  // SOURCE MARKER: Engagement Center PDF fetches full patient records
+  // SOURCE MARKER: Engagement Center PDF generation error is surfaced
   async function generateGroupPdf(
     group: BoardGroup,
     executionCaseIds: number[],
     mode: "plexus" | "clinician",
   ) {
+    // Reset any previous error for this group on every attempt so the
+    // inline surface either disappears (success) or replaces itself
+    // with the latest reason (new failure).
+    setPdfErrorByGroup((prev) => ({ ...prev, [group.key]: null }));
+
+    const reportGenerationError = (message: string) => {
+      setPdfErrorByGroup((prev) => ({
+        ...prev,
+        [group.key]: { kind: "generation", message },
+      }));
+      toast({ title: "PDF packet failed", description: message, variant: "destructive" });
+    };
+    const reportValidationError = (message: string) => {
+      setPdfErrorByGroup((prev) => ({
+        ...prev,
+        [group.key]: { kind: "validation", message },
+      }));
+      toast({ title: "PDF packet blocked", description: message, variant: "destructive" });
+    };
+
     if (executionCaseIds.length === 0) {
-      toast({
-        title: "Select patients first",
-        description: `Pick at least one patient under ${group.label}.`,
-        variant: "destructive",
-      });
+      reportValidationError(`Pick at least one patient under ${group.label}.`);
       return;
     }
+
     // Map executionCaseId → patientScreeningId via the in-memory rows.
+    // Track rows that have no patient screening so the user sees the
+    // *count* of dropped rows instead of a silent partial export.
     const idIndex = new Map<number, BoardRow>();
     for (const r of group.rows) idIndex.set(r.executionCaseId, r);
     const screeningIds: number[] = [];
+    const missingScreeningExecIds: number[] = [];
     for (const execId of executionCaseIds) {
       const row = idIndex.get(execId);
-      if (row?.patientScreeningId != null) screeningIds.push(row.patientScreeningId);
+      if (row?.patientScreeningId != null) {
+        screeningIds.push(row.patientScreeningId);
+      } else {
+        missingScreeningExecIds.push(execId);
+      }
     }
     if (screeningIds.length === 0) {
-      toast({
-        title: "PDF packet blocked",
-        description: "Selected execution cases have no patient screening records.",
-        variant: "destructive",
-      });
+      reportGenerationError(
+        `None of the ${executionCaseIds.length} selected execution case${executionCaseIds.length === 1 ? "" : "s"} maps to a patient screening record — PDF packets require patientScreeningId.`,
+      );
       return;
     }
+
+    let fullPatients: PatientScreening[] = [];
     try {
       const fetched = await Promise.all(
         screeningIds.map(async (id) => {
-          const res = await fetch(`/api/patients/${id}`, { credentials: "include" });
-          if (!res.ok) return null;
-          return (await res.json()) as PatientScreening;
+          try {
+            const res = await fetch(`/api/patients/${id}`, { credentials: "include" });
+            if (!res.ok) {
+              return { id, ok: false as const, reason: `HTTP ${res.status}` };
+            }
+            const body = (await res.json()) as PatientScreening;
+            return { id, ok: true as const, patient: body };
+          } catch (err) {
+            return {
+              id,
+              ok: false as const,
+              reason: err instanceof Error ? err.message : "network error",
+            };
+          }
         }),
       );
-      const fullPatients = fetched.filter((p): p is PatientScreening => p != null);
+      const failures = fetched.filter((r) => !r.ok) as Array<{ id: number; ok: false; reason: string }>;
+      fullPatients = fetched
+        .filter((r): r is { id: number; ok: true; patient: PatientScreening } => r.ok)
+        .map((r) => r.patient);
       if (fullPatients.length === 0) {
-        toast({
-          title: "PDF packet blocked",
-          description: "Could not load any of the selected patients.",
-          variant: "destructive",
-        });
+        const detail = failures.length > 0 ? ` (${failures[0].reason})` : "";
+        reportGenerationError(`Could not load any of the selected patient records${detail}.`);
         return;
       }
-      const fallbackFacility = group.rows[0]?.facility ?? null;
-      const fallbackDate = group.rows[0]?.scheduleDate ?? null;
-      const validation = validateSameFacilityDatePacket(
-        fullPatients as PdfPacketSourcePatient[],
-        fallbackFacility,
-        fallbackDate,
-      );
-      if (!validation.ok) {
+      if (failures.length > 0) {
+        // Partial fetch — surface the count but continue so the
+        // operator still gets a packet for the records that loaded.
         toast({
-          title: "PDF packet blocked",
-          description: validation.reason,
-          variant: "destructive",
+          title: `Skipped ${failures.length} patient${failures.length === 1 ? "" : "s"}`,
+          description: `Could not load ${failures.length} of ${screeningIds.length} records (${failures[0].reason}).`,
         });
-        return;
-      }
-      const batchName = `${validation.patients[0]?.facility ?? group.label} · ${
-        validation.isOutreachPacket ? "Outreach" : validation.scheduleDate
-      }`;
-      if (mode === "plexus") {
-        generatePlexusPDF(batchName, validation.patients, validation.scheduleDate, null);
-      } else {
-        generateClinicianPDF(batchName, validation.patients, validation.scheduleDate, null);
       }
     } catch (err) {
+      reportGenerationError(err instanceof Error ? err.message : "Unknown fetch error");
+      return;
+    }
+
+    const fallbackFacility = group.rows[0]?.facility ?? null;
+    const fallbackDate = group.rows[0]?.scheduleDate ?? null;
+    const validation = validateSameFacilityDatePacket(
+      fullPatients as PdfPacketSourcePatient[],
+      fallbackFacility,
+      fallbackDate,
+    );
+    if (!validation.ok) {
+      // SOURCE MARKER: Engagement Center PDF validation error is surfaced
+      reportValidationError(validation.reason);
+      return;
+    }
+
+    if (missingScreeningExecIds.length > 0) {
       toast({
-        title: "PDF packet failed",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "destructive",
+        title: `Skipped ${missingScreeningExecIds.length} row${missingScreeningExecIds.length === 1 ? "" : "s"}`,
+        description: `${missingScreeningExecIds.length} of ${executionCaseIds.length} selected execution case${executionCaseIds.length === 1 ? " has" : "s have"} no patientScreeningId and were dropped from the packet.`,
       });
+    }
+
+    const batchName = `${validation.patients[0]?.facility ?? group.label} · ${
+      validation.isOutreachPacket ? "Outreach" : validation.scheduleDate
+    }`;
+    try {
+      if (mode === "plexus") {
+        await generatePlexusPDFAsync(batchName, validation.patients, validation.scheduleDate, null);
+      } else {
+        await generateClinicianPDFAsync(batchName, validation.patients, validation.scheduleDate, null);
+      }
+    } catch (err) {
+      reportGenerationError(err instanceof Error ? err.message : "Unknown PDF export error");
     }
   }
 
@@ -883,6 +948,7 @@ export function EngagementAssignmentBoard() {
             const allSel = allIds.length > 0 && allIds.every((id) => selected.has(id));
             const selectedList = Array.from(selected);
             const selectedCount = selected.size;
+            const pdfError = pdfErrorByGroup[group.key] ?? null;
             const groupSection =
               groupMode === "date"
                 ? "engagement-center-date-group"
@@ -1000,6 +1066,21 @@ export function EngagementAssignmentBoard() {
                     </Button>
                   </div>
                 </div>
+                {pdfError && (
+                  <div
+                    role="alert"
+                    className="flex items-start gap-2 border-b border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700"
+                    data-testid={
+                      pdfError.kind === "validation"
+                        ? "engagement-center-pdf-validation-error"
+                        : "engagement-center-pdf-generation-error"
+                    }
+                    data-group-key={group.key}
+                  >
+                    <AlertCircle className="mt-[1px] h-3 w-3 flex-shrink-0" />
+                    <span className="leading-snug">{pdfError.message}</span>
+                  </div>
+                )}
                 <ul className="divide-y divide-slate-100">
                   {group.rows.map((r) => {
                     const isSelected = selected.has(r.executionCaseId);
