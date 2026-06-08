@@ -161,6 +161,12 @@ requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
   "engagement-center-delete-group-confirm",
   "engagement-center-plexus-pdf",
   "engagement-center-clinician-pdf",
+  // PDF failure surface — every failure path (no selection, no
+  // patientScreeningId, fetch failure, validator rejection,
+  // html2pdf crash, empty body) must produce a visible reason
+  // through one of these two inline alerts.
+  "engagement-center-pdf-generation-error",
+  "engagement-center-pdf-validation-error",
   // Source markers documenting the contract.
   "Engagement Center can group by date facility scheduler",
   "Engagement Center scheduler PDFs are scoped to assigned scheduler",
@@ -170,9 +176,16 @@ requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
   "Engagement Center delete all is scoped to current group",
   "Engagement Center PDF packets use selected patients only",
   "Engagement Center PDFs validate facility date packet",
-  // Canonical PDF helpers reused as-is.
-  "generatePlexusPDF",
-  "generateClinicianPDF",
+  "Engagement Center PDF maps execution cases to patient screenings",
+  "Engagement Center PDFs require patientScreeningId",
+  "Engagement Center PDF fetches full patient records",
+  "Engagement Center PDF generation error is surfaced",
+  "Engagement Center PDF validation error is surfaced",
+  // Canonical PDF helpers reused as-is — awaitable variants are
+  // required so the inline error surface can show the real reason
+  // instead of the fire-and-forget alert fallback.
+  "generatePlexusPDFAsync",
+  "generateClinicianPDFAsync",
   "validateSameFacilityDatePacket",
   // Cancel-many wire endpoint.
   "/api/engagement/assignment-board/cancel-many",
@@ -211,6 +224,22 @@ requireText("client/src/lib/pdfPacketGrouping.ts", [
   "isOutreachPacket",
   "outreach call-list packet",
   "all-outreach patients",
+]);
+
+// PDF generation library must expose awaitable variants so callers
+// can surface the real failure reason (selection / fetch / validator
+// / html2pdf) instead of swallowing it through the fire-and-forget
+// alert path. The html2pdf path must also fall back to a print
+// window when html2pdf itself crashes (sandboxed embed, dynamic
+// import failure, etc.) so the operator can still print to PDF.
+requireText("client/src/lib/pdfGeneration.ts", [
+  "generatePlexusPDFAsync",
+  "generateClinicianPDFAsync",
+  "exportPdfDocument",
+  "html2pdf PDF export error is surfaced",
+  "PDF export falls back when html2pdf fails",
+  "Plexus PDF export is awaitable",
+  "Clinician PDF export is awaitable",
 ]);
 
 requireText("server/routes.ts", [

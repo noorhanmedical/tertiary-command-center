@@ -129,6 +129,9 @@ const PDF_BASE_STYLES = `
 async function renderHtml2Pdf(title: string, bodyHtml: string): Promise<void> {
   const html2pdfModule = await import("html2pdf.js");
   const html2pdf = (html2pdfModule as { default: any }).default;
+  if (typeof html2pdf !== "function") {
+    throw new Error("html2pdf module did not load");
+  }
   const container = document.createElement("div");
   container.style.cssText = "width:8.5in;background:#ffffff;color:#1e293b;";
   container.innerHTML = `<style>${PDF_BASE_STYLES}</style>${bodyHtml}`;
@@ -150,6 +153,43 @@ async function renderHtml2Pdf(title: string, bodyHtml: string): Promise<void> {
   }
 }
 
+// Fallback path: open a print window with the assembled HTML so the
+// user can still get the document out as a PDF via the browser print
+// dialog if html2pdf cannot execute (e.g. dynamic-import failure,
+// html2canvas throwing on a sandboxed embed, etc.).
+// SOURCE MARKER: PDF export falls back when html2pdf fails
+function openPrintWindowFallback(title: string, bodyHtml: string): boolean {
+  const win = window.open("", "_blank");
+  if (!win) return false;
+  win.document.write(
+    `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PDF_BASE_STYLES}</style></head><body>${bodyHtml}<script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script></body></html>`,
+  );
+  win.document.close();
+  win.focus();
+  return true;
+}
+
+// Awaitable PDF export. Throws when no body is supplied so callers can
+// surface a real error message instead of producing a silent blank PDF.
+// SOURCE MARKER: html2pdf PDF export error is surfaced
+export async function exportPdfDocument(title: string, bodyHtml: string): Promise<void> {
+  if (!bodyHtml || bodyHtml.trim().length === 0) {
+    throw new Error("PDF body is empty — nothing to render");
+  }
+  try {
+    await renderHtml2Pdf(title, bodyHtml);
+  } catch (err) {
+    console.error("[pdfGeneration] html2pdf export failed:", err);
+    // SOURCE MARKER: PDF export falls back when html2pdf fails
+    const fellBack = openPrintWindowFallback(title, bodyHtml);
+    if (!fellBack) {
+      throw err instanceof Error
+        ? err
+        : new Error("PDF export failed and the print-window fallback was blocked");
+    }
+  }
+}
+
 export function buildPrintWindow(title: string, bodyHtml: string, options?: { injectScript?: string }): void {
   // injectScript is a legacy hook for callers that needed a custom
   // print/script flow — preserve it via the print-window path. Default
@@ -162,9 +202,9 @@ export function buildPrintWindow(title: string, bodyHtml: string, options?: { in
     win.focus();
     return;
   }
-  void renderHtml2Pdf(title, bodyHtml).catch((err) => {
-    console.error("[pdfGeneration] html2pdf export failed:", err);
-    alert("PDF export failed. Check console for details.");
+  void exportPdfDocument(title, bodyHtml).catch((err) => {
+    console.error("[pdfGeneration] PDF export failed:", err);
+    alert(`PDF export failed: ${err instanceof Error ? err.message : "unknown error"}`);
   });
 }
 
@@ -293,6 +333,17 @@ export function getPrevTestsSign(_insurance: string | null | undefined, _previou
 }
 
 export function generateClinicianPDF(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): void {
+  void generateClinicianPDFAsync(batchName, patients, scheduleDate, createdAt).catch((err) => {
+    console.error("[pdfGeneration] Clinician PDF failed:", err);
+    alert(`PDF export failed: ${err instanceof Error ? err.message : "unknown error"}`);
+  });
+}
+
+// Awaitable variant — throws on failure so callers (e.g. Engagement
+// Center) can surface the real reason in their own toast/UI instead of
+// relying on the bare alert fallback used by fire-and-forget callers.
+// SOURCE MARKER: Clinician PDF export is awaitable
+export async function generateClinicianPDFAsync(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): Promise<void> {
   const date = formatScheduleDate(scheduleDate, createdAt);
 
   const oneSentence = (text: string | null | undefined): string => {
@@ -414,10 +465,24 @@ export function generateClinicianPDF(batchName: string, patients: PatientScreeni
       </div>`;
   }).join("");
 
-  buildPrintWindow(`Clinician Report — ${batchName}`, pages);
+  await exportPdfDocument(`Clinician Report — ${batchName}`, pages);
 }
 
 export function generatePlexusPDF(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): void {
+  void generatePlexusPDFAsync(batchName, patients, scheduleDate, createdAt).catch((err) => {
+    console.error("[pdfGeneration] Plexus PDF failed:", err);
+    alert(`PDF export failed: ${err instanceof Error ? err.message : "unknown error"}`);
+  });
+}
+
+// Awaitable variant — throws on failure so callers (e.g. Engagement
+// Center) can surface the real reason. Also throws if the patient set
+// produces zero pages (which happens when every patient is missing
+// qualifying tests — e.g. an outreach packet where qualification
+// hasn't run yet); a Plexus packet with no qualified tests has nothing
+// to say to the call team.
+// SOURCE MARKER: Plexus PDF export is awaitable
+export async function generatePlexusPDFAsync(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): Promise<void> {
   const date = formatScheduleDate(scheduleDate, createdAt);
   const catAccent: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#be123c", ultrasound: "#047857", other: "#475569" };
 
@@ -533,5 +598,10 @@ export function generatePlexusPDF(batchName: string, patients: PatientScreening[
     return [`<div class="page" style="padding:16px 20px;">${buildCompactTop(p)}${sections.join("")}</div>`];
   });
 
-  buildPrintWindow(`Plexus Team Script — ${batchName}`, pages.join(""));
+  if (pages.length === 0) {
+    throw new Error(
+      "Plexus packet has no qualifying tests for any selected patient. Run qualification or pick a Clinician PDF for an outreach call list.",
+    );
+  }
+  await exportPdfDocument(`Plexus Team Script — ${batchName}`, pages.join(""));
 }
