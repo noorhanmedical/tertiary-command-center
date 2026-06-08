@@ -283,6 +283,24 @@ export function PatientListRow({
               <ShieldCheck className="h-3.5 w-3.5" />
             </button>
           )}
+          {/* Delete is available to Plexus IQ users — NOT admin-only.
+              Inline visible trash so users do not have to dig through
+              the More menu to remove a patient. */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirm("Remove this patient?")) onDelete();
+            }}
+            aria-label="Remove patient"
+            title="Remove patient"
+            className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors"
+            data-testid={`button-delete-patient-list-row-${patient.id}`}
+            data-row-action="plexus-iq-delete-patient"
+            data-delete-action="plexus-iq-delete-patient"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
