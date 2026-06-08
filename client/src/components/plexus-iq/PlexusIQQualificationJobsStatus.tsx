@@ -40,6 +40,46 @@ function statusIcon(s: string | undefined) {
   return <Loader2 className="h-4 w-4 animate-spin text-slate-500" />;
 }
 
+// Map raw job state → the user-facing vocabulary the page should
+// surface: Qualifying patients / Qualified / Qualified · Needs Review
+// / Failed. Cancelled keeps its own label since the user explicitly
+// cancelled.
+type FriendlyLabel = {
+  text: string;
+  testId:
+    | "plexus-iq-qualification-status-qualifying"
+    | "plexus-iq-qualification-status-qualified"
+    | "plexus-iq-qualification-status-needs-review"
+    | "plexus-iq-qualification-status-failed"
+    | "plexus-iq-qualification-status-cancelled";
+};
+
+function friendlyJobLabel(
+  status: string | undefined,
+  failedCount: number,
+): FriendlyLabel {
+  if (status === "failed") {
+    return { text: "Failed", testId: "plexus-iq-qualification-status-failed" };
+  }
+  if (status === "cancelled") {
+    return { text: "Cancelled", testId: "plexus-iq-qualification-status-cancelled" };
+  }
+  if (status === "completed") {
+    if (failedCount > 0) {
+      return {
+        text: "Qualified · Needs Review",
+        testId: "plexus-iq-qualification-status-needs-review",
+      };
+    }
+    return { text: "Qualified", testId: "plexus-iq-qualification-status-qualified" };
+  }
+  // queued / processing / undefined → still in progress.
+  return {
+    text: "Qualifying patients",
+    testId: "plexus-iq-qualification-status-qualifying",
+  };
+}
+
 export function PlexusIQQualificationJobsStatus({
   jobs,
   onJobsChange,
@@ -111,6 +151,25 @@ export function PlexusIQQualificationJobsStatus({
 
   if (jobs.length === 0) return null;
 
+  // Aggregate label uses the same vocabulary as per-job rows. The
+  // header reflects: still running → "Qualifying patients";
+  // every job terminal + any whole job failed → "Failed";
+  // every job terminal + no whole job failed + any patient errored →
+  // "Qualified · Needs Review"; otherwise → "Qualified".
+  const aggregateLabel: FriendlyLabel = aggregate.allTerminal
+    ? aggregate.headerStatus === "failed"
+      ? { text: "Failed", testId: "plexus-iq-qualification-status-failed" }
+      : aggregate.failed > 0
+        ? {
+            text: "Qualified · Needs Review",
+            testId: "plexus-iq-qualification-status-needs-review",
+          }
+        : { text: "Qualified", testId: "plexus-iq-qualification-status-qualified" }
+    : {
+        text: "Qualifying patients",
+        testId: "plexus-iq-qualification-status-qualifying",
+      };
+
   return (
     <Card
       className="border border-slate-200 bg-white px-4 py-3"
@@ -128,9 +187,10 @@ export function PlexusIQQualificationJobsStatus({
             </div>
             <span
               className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-700"
-              data-testid="qualification-jobs-overall-status"
+              data-testid={aggregateLabel.testId}
+              data-aggregate-status="qualification-jobs-overall-status"
             >
-              {aggregate.headerStatus}
+              {aggregateLabel.text}
             </span>
           </div>
 
@@ -179,7 +239,8 @@ export function PlexusIQQualificationJobsStatus({
             onClick={onDismiss}
             className="h-7 w-7 p-0"
             aria-label="Dismiss"
-            data-testid="button-qualification-jobs-dismiss"
+            data-testid="plexus-iq-qualification-status-dismiss"
+            data-legacy-testid="button-qualification-jobs-dismiss"
           >
             <X className="h-3.5 w-3.5" />
           </Button>
@@ -299,11 +360,18 @@ function JobRow({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
-          {status?.status && (
-            <span className="rounded-full bg-white border border-slate-200 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-slate-600">
-              {status.status}
-            </span>
-          )}
+          {(() => {
+            const label = friendlyJobLabel(status?.status, failed);
+            return (
+              <span
+                className="rounded-full bg-white border border-slate-200 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-slate-600"
+                data-testid={label.testId}
+                data-row-status="qualification-job-row-status"
+              >
+                {label.text}
+              </span>
+            );
+          })()}
           {showRetry && (
             <Button
               type="button"

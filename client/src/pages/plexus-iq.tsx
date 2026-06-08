@@ -41,7 +41,10 @@ import {
   startPlexusIqQualificationJob,
 } from "@/lib/plexusIqClinicalImportApi";
 import type { PlexusIqClinicalImportRow } from "@/lib/plexusIqClinicalImportParser";
-import type { ActiveQualificationJob } from "@/components/plexus-iq/PlexusIQQualificationJobsStatus";
+import {
+  PlexusIQQualificationJobsStatus,
+  type ActiveQualificationJob,
+} from "@/components/plexus-iq/PlexusIQQualificationJobsStatus";
 
 // LocalStorage key for the active clinical-import qualification job
 // banner. Bumping the suffix (`.v1`) is the migration story if the
@@ -772,12 +775,28 @@ export default function PlexusIQPage() {
         className="flex-1 min-h-0 overflow-auto bg-slate-50/40"
       >
         {/* Facility-first overview: the first Plexus IQ surface shows
-            facility tiles only. Global stat cards, qualification jobs,
-            recent qualification cards, and recently-deleted panels were
-            removed from the overview per the facility-first rule.
-            Their components (PlexusIQDashboardRow / *JobsStatus /
-            *RecentQualificationCards / *RecentlyDeleted) remain on disk
-            for future reuse. */}
+            facility tiles only. Global stat cards, recent qualification
+            cards, and recently-deleted panels (PlexusIQDashboardRow /
+            PlexusIQRecentQualificationCards / PlexusIQRecentlyDeleted)
+            remain off the overview per the facility-first rule. */}
+        {/* BatchFlow qualification status — only renders WHILE jobs are
+            active. Conditional on activeQualificationJobs.length > 0 so
+            it never becomes a permanent dashboard panel. State is
+            backed by localStorage so it survives a refresh while jobs
+            are still running on the server. */}
+        {activeQualificationJobs.length > 0 && (
+          <div
+            className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-3"
+            data-testid="plexus-iq-qualification-status-strip"
+            data-mount-gate="activeQualificationJobs.length > 0"
+          >
+            <PlexusIQQualificationJobsStatus
+              jobs={activeQualificationJobs}
+              onJobsChange={setActiveQualificationJobs}
+              onDismiss={() => setActiveQualificationJobs([])}
+            />
+          </div>
+        )}
         <PlexusIQWorkspace
           summary={summary}
           batchDetails={batchDetails}

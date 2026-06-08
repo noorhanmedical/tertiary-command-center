@@ -247,9 +247,12 @@ if (pageContent.includes("PlexusIQDayPanel")) {
     `Page still references PlexusIQDayPanel — the canonical replacement is PlexusIQDayModal`,
   );
 }
+// Global dashboard / recent / recently-deleted panels stay off the
+// facility-first overview. The qualification-jobs status banner is
+// allowed BUT only behind an explicit activeQualificationJobs.length > 0
+// gate, so it never becomes a permanent dashboard panel.
 for (const panel of [
   "<PlexusIQDashboardRow",
-  "<PlexusIQQualificationJobsStatus",
   "<PlexusIQRecentQualificationCards",
   "<PlexusIQRecentlyDeleted",
 ]) {
@@ -259,6 +262,34 @@ for (const panel of [
     );
   }
 }
+
+// BatchFlow qualification status: the component must be mounted
+// AND the mount must be gated on activeQualificationJobs.length > 0
+// so it disappears when no jobs are active.
+requireText(page, [
+  "<PlexusIQQualificationJobsStatus",
+  "activeQualificationJobs.length > 0",
+  "plexus-iq-qualification-status-strip",
+]);
+
+// The status component itself must surface the user-facing labels
+// (Qualifying patients / Qualified / Needs Review) and the new
+// per-state testIds + dismiss testId. Keeps the existing aggregate
+// + per-job structure intact.
+requireText(
+  "client/src/components/plexus-iq/PlexusIQQualificationJobsStatus.tsx",
+  [
+    "Qualifying patients",
+    "Qualified",
+    "Needs Review",
+    "Failed",
+    "plexus-iq-qualification-status-qualifying",
+    "plexus-iq-qualification-status-qualified",
+    "plexus-iq-qualification-status-needs-review",
+    "plexus-iq-qualification-status-failed",
+    "plexus-iq-qualification-status-dismiss",
+  ],
+);
 
 // 9. Patient Card frontend recovery (Batch 3 — frontend-only).
 const pdfActions = "client/src/components/qualification/PatientPdfActions.tsx";
