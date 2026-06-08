@@ -25,6 +25,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Lightbulb,
   PanelLeftClose,
@@ -78,6 +79,15 @@ export type AdminReviewDialogProps = {
   ) => void;
   onAddTest?: (test: string) => void;
   onRemoveTest?: (test: string) => void;
+  // Sibling navigation. When the caller passes the full list of
+  // patients for the surrounding date/group, the dialog renders
+  // Prev / Next arrows + a "N of M" counter and auto-advances to
+  // the next sibling on Approve / Pend / Reject. If `siblings` is
+  // omitted, the dialog falls back to single-patient behaviour
+  // (close on approve).
+  // SOURCE MARKER: Admin Review sibling navigation
+  siblings?: PatientScreening[];
+  dateLabel?: string | null;
 };
 
 const ANCILLARIES: AdminReviewAncillaryId[] = ["brainwave", "vitalwave", "ultrasound"];
@@ -555,13 +565,52 @@ type EvidencePayload = AdminReviewRuleResult & { ok?: boolean; patientId?: numbe
 export function AdminReviewDialog({
   open,
   onOpenChange,
-  patient,
+  patient: initialPatient,
   facility,
   scheduleDate,
   onUpdate,
+  siblings,
+  dateLabel,
 }: AdminReviewDialogProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  // Sibling navigation — the caller can pass the full date / group
+  // list; this dialog walks it via Prev / Next arrows and
+  // auto-advances after Approve / Pend / Reject. When `siblings`
+  // is empty/undefined the dialog falls back to single-patient
+  // behaviour (close on approve).
+  // SOURCE MARKER: Admin Review sibling navigation
+  // SOURCE MARKER: Admin Review auto-advances on approve when siblings exist
+  const siblingList: PatientScreening[] =
+    siblings && siblings.length > 0 ? siblings : [initialPatient];
+  const [activeIndex, setActiveIndex] = useState<number>(() => {
+    const i = siblingList.findIndex((p) => p.id === initialPatient.id);
+    return i >= 0 ? i : 0;
+  });
+  // Re-anchor when the caller swaps the trigger patient (e.g. user
+  // opens the dialog from a different row).
+  useEffect(() => {
+    const i = siblingList.findIndex((p) => p.id === initialPatient.id);
+    setActiveIndex(i >= 0 ? i : 0);
+    // Intentionally not depending on siblingList identity (array
+    // reference changes every render); key off the trigger id +
+    // sibling count which capture the meaningful changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPatient.id, siblingList.length]);
+  const patient: PatientScreening =
+    siblingList[activeIndex] ?? initialPatient;
+  const hasPrev = siblings != null && siblings.length > 0 && activeIndex > 0;
+  const hasNext =
+    siblings != null && siblings.length > 0 && activeIndex < siblingList.length - 1;
+  const totalSiblings = siblings?.length ?? 1;
+  const remainingAfter = Math.max(0, siblingList.length - activeIndex - 1);
+
+  function goToSibling(delta: number) {
+    const next = activeIndex + delta;
+    if (next < 0 || next >= siblingList.length) return;
+    setActiveIndex(next);
+  }
 
   const evidenceQuery = useQuery<EvidencePayload>({
     queryKey: ["admin-review-evidence", patient.id],
@@ -1966,7 +2015,14 @@ export function AdminReviewDialog({
       queryClient.invalidateQueries({
         queryKey: ["/api/engagement/assignment-board", patient.facility ?? "_all_"],
       });
-      onOpenChange(false);
+      // Auto-advance to the next sibling when the caller passed a
+      // siblings list and there's another patient in the group;
+      // otherwise close the dialog as before.
+      if (hasNext) {
+        setActiveIndex((i) => Math.min(i + 1, siblingList.length - 1));
+      } else {
+        onOpenChange(false);
+      }
     },
     onError: (err) => {
       toast({
@@ -2033,7 +2089,54 @@ export function AdminReviewDialog({
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-2">
+              {/* Sibling navigation — Prev / counter / Next. Visible
+                  only when the caller passed a siblings list. Auto-
+                  advance on approve is handled in approvalMutation's
+                  onSuccess.
+                  SOURCE MARKER: Admin Review sibling navigation */}
+              {siblings && siblings.length > 1 && (
+                <div
+                  className="inline-flex items-center gap-1 rounded-md bg-white/10 px-1 py-0.5"
+                  data-testid="admin-review-sibling-nav"
+                  data-active-index={activeIndex}
+                  data-total={totalSiblings}
+                >
+                  <button
+                    type="button"
+                    onClick={() => goToSibling(-1)}
+                    disabled={!hasPrev}
+                    aria-label="Previous patient"
+                    title="Previous patient"
+                    data-testid="admin-review-sibling-prev"
+                    className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span
+                    className="text-[11px] font-medium text-white/85 tabular-nums px-1"
+                    data-testid="admin-review-sibling-counter"
+                  >
+                    {activeIndex + 1} of {totalSiblings}
+                    {dateLabel ? ` · ${dateLabel}` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => goToSibling(1)}
+                    disabled={!hasNext}
+                    aria-label="Next patient"
+                    title={
+                      hasNext
+                        ? `Next patient (${remainingAfter} more${dateLabel ? ` in ${dateLabel}` : ""})`
+                        : "No more patients"
+                    }
+                    data-testid="admin-review-sibling-next"
+                    className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => setLeftPanelOpen((v) => !v)}

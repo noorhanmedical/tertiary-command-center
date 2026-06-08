@@ -59,6 +59,11 @@ interface PatientCardProps {
   batchScheduleDate?: string | null;
   asOfDate?: string | null;
   sourceMode?: "visit" | "outreach";
+  // Sibling list for Admin Review dialog navigation — the full
+  // date/group patient list the admin should cycle through. The
+  // dialog renders Prev/Next arrows + auto-advances on approve.
+  adminReviewSiblings?: PatientScreening[];
+  adminReviewDateLabel?: string | null;
 }
 
 export function PatientCard({
@@ -67,6 +72,8 @@ export function PatientCard({
   onUpdate,
   onDelete,
   onAnalyze,
+  adminReviewSiblings,
+  adminReviewDateLabel,
   batchScheduleDate,
   asOfDate,
   sourceMode,
@@ -625,6 +632,8 @@ export function PatientCard({
       patient={patient}
       facility={patient.facility ?? null}
       scheduleDate={batchScheduleDate ?? null}
+      siblings={adminReviewSiblings}
+      dateLabel={adminReviewDateLabel ?? batchScheduleDate ?? null}
       onUpdate={onUpdate}
       onAddTest={handleAddTest}
       onRemoveTest={handleRemoveTest}

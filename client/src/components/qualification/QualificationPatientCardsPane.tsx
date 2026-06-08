@@ -271,19 +271,28 @@ export default function QualificationPatientCardsPane({
                         data-testid="plexus-iq-dropdown-panel"
                         data-date-key={dateKey}
                       >
-                        {renderPatientGroup(groupPatients)}
+                        {renderPatientGroup(groupPatients, formatDateHeader(dateKey))}
                       </div>
                     </PopoverContent>
                   </Popover>
                 </section>
               );
             })
-          : renderPatientGroup(patients as PatientScreening[])}
+          : renderPatientGroup(
+              patients as PatientScreening[],
+              batchScheduleDate ? formatDateHeader(batchScheduleDate.slice(0, 10)) : null,
+            )}
       </div>
     </section>
   );
 
-  function renderPatientGroup(groupPatients: PatientScreening[]) {
+  // Sibling list passed to Admin Review so the dialog can render
+  // Prev/Next arrows + auto-advance on approve through the current
+  // date/group context. SOURCE MARKER: Admin Review sibling navigation
+  function renderPatientGroup(
+    groupPatients: PatientScreening[],
+    dateLabelForGroup: string | null,
+  ) {
     if (displayMode === "cards") {
       return (
         <div
@@ -304,6 +313,8 @@ export default function QualificationPatientCardsPane({
               schedulerName={schedulerName}
               batchScheduleDate={batchScheduleDate}
               sourceMode={sourceMode}
+              adminReviewSiblings={groupPatients}
+              adminReviewDateLabel={dateLabelForGroup}
             />
           ))}
         </div>
@@ -327,6 +338,8 @@ export default function QualificationPatientCardsPane({
             schedulerName={schedulerName}
             batchScheduleDate={batchScheduleDate}
             sourceMode={sourceMode}
+            adminReviewSiblings={groupPatients}
+            adminReviewDateLabel={dateLabelForGroup}
           />
         ))}
       </div>
