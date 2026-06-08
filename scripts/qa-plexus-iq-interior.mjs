@@ -851,6 +851,9 @@ requireText(bucketLabelsHost, [
   "Completed is the default Plexus IQ facility bucket",
   "Plexus IQ facility bucket order",
   'useState<ClinicStatusFilter>("completed")',
+  // Stability pass — bucket grouping memo + lazy heavy content.
+  "Platform performance pass memoizes Plexus IQ bucket groups",
+  "Plexus IQ avoids rendering inactive heavy group content",
 ]);
 // Old label phrasing must be gone.
 requireNotText(

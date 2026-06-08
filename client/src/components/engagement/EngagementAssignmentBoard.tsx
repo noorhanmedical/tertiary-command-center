@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -142,6 +142,28 @@ export function EngagementAssignmentBoard() {
   const [pdfErrorByGroup, setPdfErrorByGroup] = useState<
     Record<string, { kind: PdfErrorKind; message: string } | null>
   >({});
+  // Per-group PDF pending state. Both PDF buttons in a group disable
+  // while that group is generating; other groups stay enabled so one
+  // slow packet does not block unrelated work.
+  // SOURCE MARKER: PDF generation pending state is group scoped
+  // SOURCE MARKER: Engagement Center PDF buttons are disabled while generating
+  // SOURCE MARKER: PDF generation runs on demand
+  const [pdfGeneratingByGroup, setPdfGeneratingByGroup] = useState<
+    Record<string, boolean>
+  >({});
+
+  // Switching group mode invalidates both the per-group selection
+  // (the group keys don't exist in the new mode) and any inline PDF
+  // error pinned to a now-vanished group. Clearing both prevents the
+  // "ghost selection / ghost error" flashes after toggling Date /
+  // Facility / Scheduler.
+  // SOURCE MARKER: Engagement Center clears stale selection when group mode changes
+  // SOURCE MARKER: Engagement Center clears stale PDF errors when group mode changes
+  useEffect(() => {
+    setSelectedByGroup({});
+    setPdfErrorByGroup({});
+    setPdfGeneratingByGroup({});
+  }, [groupMode]);
 
   const board = useQuery<BoardResponse>({
     queryKey: [
@@ -179,6 +201,16 @@ export function EngagementAssignmentBoard() {
     },
   });
 
+  // SOURCE MARKER: Assignment updates only invalidate assignment board
+  // Narrowed from a six-cache fan-out (board, engagement-assignment,
+  // team-workspace-call-list, screening-batches, schedule/dashboard,
+  // portal-command-center predicate) down to the surfaces that
+  // genuinely reflect a board mutation: the board itself, the per-
+  // patient engagement chip query, and the team-portal call list.
+  // Scheduler-board mutations do not change patient screening rows or
+  // the global schedule dashboard, so those caches stay warm and the
+  // user no longer eats a full board+dashboard refetch on every
+  // assign/distribute/cancel.
   const invalidateBoard = () => {
     queryClient.invalidateQueries({
       predicate: (qq) =>
@@ -187,12 +219,6 @@ export function EngagementAssignmentBoard() {
     });
     queryClient.invalidateQueries({ queryKey: ["engagement-assignment"] });
     queryClient.invalidateQueries({ queryKey: ["team-workspace-call-list"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/schedule/dashboard"] });
-    queryClient.invalidateQueries({
-      predicate: (qq) =>
-        Array.isArray(qq.queryKey) && qq.queryKey[0] === "portal-command-center",
-    });
   };
 
   const assignMutation = useMutation({
@@ -328,8 +354,19 @@ export function EngagementAssignmentBoard() {
   // a stable key + label + the rows that fall into it. Unassigned /
   // missing values roll up into "No Date" / "No Facility" /
   // "Unassigned / Engagement Queue".
+  //
+  // Memoized on `rows` + `groupMode` so toolbar / filter / selection
+  // state updates do not rebuild the group map. The downstream
+  // grouped.map() reads constant references on every parent render
+  // for the same board snapshot.
   // SOURCE MARKER: Engagement Center call lists grouped by scheduler
   // SOURCE MARKER: PDF by team member uses assigned scheduler group
+  // SOURCE MARKER: Platform performance pass memoizes Engagement Center groups
+  // SOURCE MARKER: Engagement Center avoids rendering inactive heavy group content
+  // (GroupAssignPopover + InlineSchedulerPicker only render their
+  // PopoverContent when open via Radix's default mount-on-open;
+  // scheduler list iteration is therefore deferred until the operator
+  // actually opens the picker.)
   type BoardGroup = { key: string; label: string; rows: BoardRow[]; tone: "date" | "facility" | "scheduler" };
   const grouped: BoardGroup[] = useMemo(() => {
     if (groupMode === "none") return [];
@@ -406,9 +443,29 @@ export function EngagementAssignmentBoard() {
     executionCaseIds: number[],
     mode: "plexus" | "clinician",
   ) {
+    // Double-click guard — the group is already generating, do nothing.
+    if (pdfGeneratingByGroup[group.key]) return;
+    setPdfGeneratingByGroup((prev) => ({ ...prev, [group.key]: true }));
+    try {
+      await runGroupPdf(group, executionCaseIds, mode);
+    } finally {
+      setPdfGeneratingByGroup((prev) => {
+        const next = { ...prev };
+        delete next[group.key];
+        return next;
+      });
+    }
+  }
+
+  async function runGroupPdf(
+    group: BoardGroup,
+    executionCaseIds: number[],
+    mode: "plexus" | "clinician",
+  ) {
     // Reset any previous error for this group on every attempt so the
     // inline surface either disappears (success) or replaces itself
     // with the latest reason (new failure).
+    // SOURCE MARKER: PDF generation clears stale error on success
     setPdfErrorByGroup((prev) => ({ ...prev, [group.key]: null }));
 
     const reportGenerationError = (message: string) => {
@@ -949,6 +1006,7 @@ export function EngagementAssignmentBoard() {
             const selectedList = Array.from(selected);
             const selectedCount = selected.size;
             const pdfError = pdfErrorByGroup[group.key] ?? null;
+            const pdfGenerating = pdfGeneratingByGroup[group.key] === true;
             const groupSection =
               groupMode === "date"
                 ? "engagement-center-date-group"
@@ -1020,32 +1078,43 @@ export function EngagementAssignmentBoard() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={selectedCount === 0}
+                      disabled={selectedCount === 0 || pdfGenerating}
                       onClick={() => generateGroupPdf(group, selectedList, "plexus")}
                       className="h-7 gap-1 px-2 text-[11px]"
                       data-testid={groupPlexus}
                       data-bar-testid="engagement-center-plexus-pdf"
+                      data-pdf-generating={pdfGenerating ? "true" : "false"}
                     >
-                      <FileText className="h-3 w-3" />
-                      Plexus PDF
+                      {pdfGenerating ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <FileText className="h-3 w-3" />
+                      )}
+                      {pdfGenerating ? "Generating…" : "Plexus PDF"}
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={selectedCount === 0}
+                      disabled={selectedCount === 0 || pdfGenerating}
                       onClick={() => generateGroupPdf(group, selectedList, "clinician")}
                       className="h-7 gap-1 px-2 text-[11px]"
                       data-testid={groupClinician}
                       data-bar-testid="engagement-center-clinician-pdf"
+                      data-pdf-generating={pdfGenerating ? "true" : "false"}
                     >
-                      <FileText className="h-3 w-3" />
-                      Clinician PDF
+                      {pdfGenerating ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <FileText className="h-3 w-3" />
+                      )}
+                      {pdfGenerating ? "Generating…" : "Clinician PDF"}
                     </Button>
+                    {/* SOURCE MARKER: Engagement Center assign controls are disabled while pending */}
                     <GroupAssignPopover
                       group={group}
                       selectedExecutionCaseIds={selectedList}
                       schedulers={schedulers.data ?? []}
-                      busy={assignMutation.isPending}
+                      busy={assignMutation.isPending || cancelManyMutation.isPending}
                       onAssignOne={(sid) => assignSelectionToSingleScheduler(group, selectedList, sid)}
                       onDistribute={(sids) =>
                         distributeSelectionAcrossSchedulers(group, selectedList, sids)

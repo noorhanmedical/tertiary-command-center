@@ -589,15 +589,25 @@ export function AdminReviewDialog({
     return i >= 0 ? i : 0;
   });
   // Re-anchor when the caller swaps the trigger patient (e.g. user
-  // opens the dialog from a different row).
+  // opens the dialog from a different row). Keying off a stable
+  // signature of the sibling id list (first + last + length) catches
+  // sibling-set mutations that share the same length — e.g. a row
+  // dropped from the start and another added at the end — which the
+  // older `siblingList.length` dependency missed and which left
+  // activeIndex pointing at the wrong patient.
+  // SOURCE MARKER: Admin Review sibling state reanchors safely
+  // SOURCE MARKER: Platform performance pass avoids unnecessary Admin Review resets
+  const siblingSignature =
+    siblingList.length === 0
+      ? "empty"
+      : `${siblingList.length}:${siblingList[0]?.id ?? ""}:${siblingList[siblingList.length - 1]?.id ?? ""}`;
   useEffect(() => {
     const i = siblingList.findIndex((p) => p.id === initialPatient.id);
     setActiveIndex(i >= 0 ? i : 0);
-    // Intentionally not depending on siblingList identity (array
-    // reference changes every render); key off the trigger id +
-    // sibling count which capture the meaningful changes.
+    // siblingList identity changes every parent render — see signature
+    // above for the meaningful-change key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialPatient.id, siblingList.length]);
+  }, [initialPatient.id, siblingSignature]);
   const patient: PatientScreening =
     siblingList[activeIndex] ?? initialPatient;
   const hasPrev = siblings != null && siblings.length > 0 && activeIndex > 0;
@@ -2006,14 +2016,23 @@ export function AdminReviewDialog({
             : "Routed to Engagement Queue (unassigned)"
           : data.patient?.name ?? "",
       });
+      // SOURCE MARKER: Admin Review navigation does not refetch full workspace
+      // Refresh only what actually changes on admin approval: the
+      // patient's batch (so the card surfaces the new
+      // adminApprovalStatus) and the per-patient engagement chip (so
+      // the scheduler routing badge appears). The assignment-board
+      // refresh uses the predicate form so the active query key
+      // matches regardless of which filters the Engagement Center
+      // currently has applied — the old exact-key form never matched
+      // and was effectively a no-op.
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
-      // Refresh the scheduler routing chip + engagement tab call list
-      // so the post-approval scheduler assignment shows immediately.
       queryClient.invalidateQueries({
         queryKey: ["/api/patients", patient.id, "engagement-assignment"],
       });
       queryClient.invalidateQueries({
-        queryKey: ["/api/engagement/assignment-board", patient.facility ?? "_all_"],
+        predicate: (qq) =>
+          Array.isArray(qq.queryKey) &&
+          qq.queryKey[0] === "/api/engagement/assignment-board",
       });
       // Auto-advance to the next sibling when the caller passed a
       // siblings list and there's another patient in the group;
@@ -2101,11 +2120,13 @@ export function AdminReviewDialog({
                   data-testid="admin-review-sibling-nav"
                   data-active-index={activeIndex}
                   data-total={totalSiblings}
+                  data-approve-pending={approvalMutation.isPending ? "true" : "false"}
                 >
+                  {/* SOURCE MARKER: Admin Review navigation disabled during approve */}
                   <button
                     type="button"
                     onClick={() => goToSibling(-1)}
-                    disabled={!hasPrev}
+                    disabled={!hasPrev || approvalMutation.isPending}
                     aria-label="Previous patient"
                     title="Previous patient"
                     data-testid="admin-review-sibling-prev"
@@ -2123,7 +2144,7 @@ export function AdminReviewDialog({
                   <button
                     type="button"
                     onClick={() => goToSibling(1)}
-                    disabled={!hasNext}
+                    disabled={!hasNext || approvalMutation.isPending}
                     aria-label="Next patient"
                     title={
                       hasNext

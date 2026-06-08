@@ -181,6 +181,19 @@ requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
   "Engagement Center PDF fetches full patient records",
   "Engagement Center PDF generation error is surfaced",
   "Engagement Center PDF validation error is surfaced",
+  // Platform stability pass — performance + pending-state +
+  // stale-cleanup contract. Every marker below is grep-asserted so
+  // a future "cleanup" cannot silently drop the guard.
+  "Platform performance pass memoizes Engagement Center groups",
+  "Engagement Center avoids rendering inactive heavy group content",
+  "Assignment updates only invalidate assignment board",
+  "Engagement Center PDF buttons are disabled while generating",
+  "Engagement Center assign controls are disabled while pending",
+  "PDF generation pending state is group scoped",
+  "PDF generation clears stale error on success",
+  "PDF generation runs on demand",
+  "Engagement Center clears stale selection when group mode changes",
+  "Engagement Center clears stale PDF errors when group mode changes",
   // Canonical PDF helpers reused as-is — awaitable variants are
   // required so the inline error surface can show the real reason
   // instead of the fire-and-forget alert fallback.
@@ -226,6 +239,20 @@ requireText("client/src/lib/pdfPacketGrouping.ts", [
   "all-outreach patients",
 ]);
 
+// Platform stability pass — Admin Review dialog must not refetch the
+// whole workspace on approve, must disable sibling nav while approve
+// is in flight, and the sibling-reanchor effect must key off a stable
+// signature so a same-length sibling-list mutation does not leave
+// activeIndex pointing at the wrong patient.
+requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
+  "Admin Review navigation does not refetch full workspace",
+  "Admin Review navigation disabled during approve",
+  "Admin Review sibling state reanchors safely",
+  "Platform performance pass avoids unnecessary Admin Review resets",
+  "siblingSignature",
+  "approvalMutation.isPending",
+]);
+
 // PDF generation library must expose awaitable variants so callers
 // can surface the real failure reason (selection / fetch / validator
 // / html2pdf) instead of swallowing it through the fire-and-forget
@@ -240,6 +267,11 @@ requireText("client/src/lib/pdfGeneration.ts", [
   "PDF export falls back when html2pdf fails",
   "Plexus PDF export is awaitable",
   "Clinician PDF export is awaitable",
+  // Stability pass: read-only PDF path + dev-only timing instrumentation.
+  "PDF generation does not invalidate data queries",
+  "PDF generation runs on demand",
+  "Development-only performance instrumentation",
+  "import.meta.env.DEV",
 ]);
 
 requireText("server/routes.ts", [
