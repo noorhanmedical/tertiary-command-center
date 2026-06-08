@@ -189,6 +189,11 @@ requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
   "engagement-center-distribute-preview",
   "Engagement Center bulk assign selected to one scheduler",
   "Engagement Center distribute evenly across schedulers",
+  // Distribute must tolerate uneven counts (round-robin) and the
+  // toast must surface the actual per-call server error message.
+  "Distribute round-robin tolerates uneven counts",
+  "Distribute partially failed",
+  "as even as possible",
 ]);
 
 // Outreach (no-date) packets must be allowed by the PDF validator

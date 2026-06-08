@@ -516,10 +516,16 @@ export function EngagementAssignmentBoard() {
     );
   }
 
-  // Round-robin distribute every selected row in a group across N
-  // schedulers. Fires one assign-many call per scheduler with their
-  // slice. Each backend call appends its own patient_journey_events
-  // audit row so the trail documents the split.
+  // Distribute every selected row across N schedulers AS EVENLY AS
+  // POSSIBLE. Round-robin walks the screening ids; with 10 patients
+  // and 3 schedulers the split is 4/3/3 (no even-divisibility
+  // requirement). Fires one assign-many call per scheduler with
+  // their slice. Each backend call appends its own
+  // patient_journey_events audit row so the trail documents the
+  // split. The toast surfaces the actual per-call error message so
+  // the cause is visible — never a silent "failed N" count.
+  //
+  // SOURCE MARKER: Distribute round-robin tolerates uneven counts
   async function distributeSelectionAcrossSchedulers(
     group: BoardGroup,
     executionCaseIds: number[],
@@ -534,6 +540,7 @@ export function EngagementAssignmentBoard() {
       });
       return;
     }
+    const schedulersById = new Map((schedulers.data ?? []).map((s) => [s.id, s]));
     const buckets: Record<number, number[]> = {};
     for (const sid of schedulerIds) buckets[sid] = [];
     screeningIds.forEach((pid, i) => {
@@ -542,10 +549,11 @@ export function EngagementAssignmentBoard() {
     });
     let totalAssigned = 0;
     let totalFailed = 0;
-    for (const sidStr of Object.keys(buckets)) {
-      const sid = Number.parseInt(sidStr, 10);
-      const slice = buckets[sid];
+    const errorMessages: string[] = [];
+    for (const sid of schedulerIds) {
+      const slice = buckets[sid] ?? [];
       if (slice.length === 0) continue;
+      const schedulerLabel = schedulersById.get(sid)?.name ?? `Scheduler #${sid}`;
       try {
         const res = await fetch("/api/engagement/assignment-board/assign", {
           method: "POST",
@@ -566,21 +574,43 @@ export function EngagementAssignmentBoard() {
         }
         if (!res.ok) {
           totalFailed += slice.length;
+          const reason = parsed?.error ?? text ?? `HTTP ${res.status}`;
+          errorMessages.push(`${schedulerLabel}: ${reason}`);
           continue;
         }
-        totalAssigned += parsed?.updated?.length ?? 0;
-        totalFailed += parsed?.failed?.length ?? 0;
-      } catch {
+        const updatedCount = parsed?.updated?.length ?? 0;
+        const failedCount = parsed?.failed?.length ?? 0;
+        totalAssigned += updatedCount;
+        totalFailed += failedCount;
+        if (failedCount > 0) {
+          const firstReason =
+            parsed?.failed?.[0]?.reason ?? "Unknown server reason";
+          errorMessages.push(
+            `${schedulerLabel}: ${failedCount} patient${failedCount === 1 ? "" : "s"} failed (${firstReason})`,
+          );
+        }
+      } catch (err) {
         totalFailed += slice.length;
+        const reason = err instanceof Error ? err.message : "Network error";
+        errorMessages.push(`${schedulerLabel}: ${reason}`);
       }
     }
-    toast({
-      title:
-        totalFailed === 0
-          ? `Distributed ${totalAssigned} across ${schedulerIds.length} scheduler${schedulerIds.length === 1 ? "" : "s"}`
-          : `Distributed ${totalAssigned}, failed ${totalFailed}`,
-      variant: totalFailed === 0 ? undefined : "destructive",
-    });
+    if (totalFailed === 0) {
+      toast({
+        title: `Distributed ${totalAssigned} across ${schedulerIds.length} scheduler${schedulerIds.length === 1 ? "" : "s"}`,
+      });
+    } else {
+      const summary = `${totalAssigned} assigned, ${totalFailed} failed`;
+      const detail =
+        errorMessages.length === 0
+          ? summary
+          : `${summary}. ${errorMessages.slice(0, 3).join(" · ")}${errorMessages.length > 3 ? ` · +${errorMessages.length - 3} more` : ""}`;
+      toast({
+        title: "Distribute partially failed",
+        description: detail,
+        variant: "destructive",
+      });
+    }
     setSelectedByGroup((prev) => ({ ...prev, [group.key]: new Set() }));
     invalidateBoard();
   }
@@ -1261,9 +1291,18 @@ function GroupAssignPopover({
             className="text-[10px] text-slate-500"
             data-testid="engagement-center-distribute-preview"
           >
-            {pickedMany.size > 0
-              ? `~${Math.ceil(selectedExecutionCaseIds.length / Math.max(pickedMany.size, 1))} patients each`
-              : "Pick schedulers to preview the split"}
+            {(() => {
+              if (pickedMany.size === 0) return "Pick schedulers to preview the split";
+              const total = selectedExecutionCaseIds.length;
+              const n = pickedMany.size;
+              const base = Math.floor(total / n);
+              const extra = total % n;
+              // Round-robin gives `extra` schedulers (base+1) and (n - extra) schedulers (base).
+              if (extra === 0) {
+                return `${base} patient${base === 1 ? "" : "s"} each (${n} × ${base} = ${total})`;
+              }
+              return `${extra} × ${base + 1} + ${n - extra} × ${base} = ${total} (as even as possible)`;
+            })()}
           </div>
         </div>
       </PopoverContent>
