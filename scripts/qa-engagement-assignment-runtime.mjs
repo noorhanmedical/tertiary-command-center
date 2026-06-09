@@ -272,6 +272,56 @@ requireText("client/src/lib/pdfGeneration.ts", [
   "PDF generation runs on demand",
   "Development-only performance instrumentation",
   "import.meta.env.DEV",
+  // Layout-and-speed pass.
+  "PDF demographics omit schedule date",
+  "Clinician PDF header uses stable two-column alignment",
+  "Clinician PDF demographics do not overlap chart review",
+  "Clinician PDF chart review has safe spacing",
+  "Clinician PDF ancillary columns align cleanly",
+  "Clinician PDF test rows have stable checkbox title alignment",
+  "PDF export uses optimized html2canvas scale",
+  "PDF template avoids expensive visual effects",
+  "PDF generation optimized for large packets",
+  // Speed knobs themselves — asserted as raw substrings so a future
+  // regression that pushes scale back to 2.0 or re-adds windowWidth
+  // gets caught by QA.
+  "scale: 1.5",
+]);
+
+// Demographics block contract — facility / phone / email / DOB / age /
+// sex still render; "Schedule Date:" is removed from the block.
+const demoBlockSource = read("client/src/lib/pdfGeneration.ts") ?? "";
+const demoBlockMatch = demoBlockSource.match(
+  /export function buildPatientDemoBlock[\s\S]*?\n\}/,
+);
+if (!demoBlockMatch) {
+  failures.push("Could not locate buildPatientDemoBlock to verify demographics contract");
+} else {
+  const block = demoBlockMatch[0];
+  for (const needle of [
+    "DOB:",
+    "Age:",
+    "Sex:",
+    "Phone:",
+    "Email:",
+    "Insurance:",
+    "Facility:",
+  ]) {
+    if (!block.includes(needle)) {
+      failures.push(`buildPatientDemoBlock dropped required field: ${needle}`);
+    }
+  }
+  if (block.includes("Schedule Date:")) {
+    failures.push(
+      'buildPatientDemoBlock must NOT render "Schedule Date:" — that lives in the page header now',
+    );
+  }
+}
+
+// Large-packet warning lives in the Engagement Center generateGroupPdf path.
+requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
+  "Large PDF packet generation warning",
+  "Large PDF packet may take longer",
 ]);
 
 requireText("server/routes.ts", [

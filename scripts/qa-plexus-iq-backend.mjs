@@ -218,16 +218,23 @@ requireText("shared/schema/screening.ts", [
 ]);
 
 // PDFs render full patient demographics under the patient name
-// (DOB / age / sex / phone / email / insurance / facility / schedule
-// date) in BOTH Plexus and Clinician packets. Clinical text (Hx /
-// Dx / Rx) wraps and paginates instead of clipping. PDF generation
-// uses html2pdf so the browser print-dialog "about:blank" URL
-// footer never appears in the saved file.
+// (DOB / age / sex / phone / email / insurance / facility) in BOTH
+// Plexus and Clinician packets. Schedule date is intentionally NOT
+// rendered in the demographics block — it lives in the page header
+// only — so the contract here both asserts the present fields and
+// forbids the dropped "Schedule Date:" line in the demo block.
+// Clinical text (Hx / Dx / Rx) wraps and paginates instead of
+// clipping. PDF generation uses html2pdf so the browser print-dialog
+// "about:blank" URL footer never appears in the saved file.
 requireText("client/src/lib/pdfGeneration.ts", [
   "buildPatientDemoBlock",
   "Phone:",
   "Email:",
-  "Schedule Date:",
+  "DOB:",
+  "Age:",
+  "Sex:",
+  "Insurance:",
+  "Facility:",
   "phoneNumber",
   "email",
   "page-break-inside",
@@ -235,11 +242,41 @@ requireText("client/src/lib/pdfGeneration.ts", [
   "Plexus PDF renders demographics under patient name",
   "Clinician PDF renders demographics under patient name",
   "PDF demographics include phone and email",
+  "PDF demographics omit schedule date",
   "Plexus PDF does not cut off Hx Dx Rx",
   "Clinician PDF does not cut off Hx Dx Rx",
   "PDF clinical text wraps and paginates",
   "PDF footer does not render about blank",
+  // Layout + speed pass markers.
+  "Clinician PDF header uses stable two-column alignment",
+  "Clinician PDF demographics do not overlap chart review",
+  "Clinician PDF chart review has safe spacing",
+  "Clinician PDF ancillary columns align cleanly",
+  "Clinician PDF test rows have stable checkbox title alignment",
+  "PDF export uses optimized html2canvas scale",
+  "PDF template avoids expensive visual effects",
+  "PDF generation optimized for large packets",
 ]);
+
+// "Schedule Date:" must not appear anywhere in the demographics
+// block (it lives only in the page header). Locate the function and
+// scan its body specifically so a future template change can't
+// silently reintroduce the line.
+{
+  const pdfSource = read("client/src/lib/pdfGeneration.ts") ?? "";
+  const demoBlockMatch = pdfSource.match(
+    /export function buildPatientDemoBlock[\s\S]*?\n\}/,
+  );
+  if (!demoBlockMatch) {
+    failures.push(
+      "Could not locate buildPatientDemoBlock in pdfGeneration.ts to verify demographics contract",
+    );
+  } else if (demoBlockMatch[0].includes("Schedule Date:")) {
+    failures.push(
+      'buildPatientDemoBlock must NOT render "Schedule Date:" — that lives in the page header now',
+    );
+  }
+}
 // Forbid the broken footer copy in any PDF template.
 {
   const pdfSource = read("client/src/lib/pdfGeneration.ts") ?? "";

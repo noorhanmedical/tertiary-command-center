@@ -139,12 +139,23 @@ async function renderHtml2Pdf(title: string, bodyHtml: string): Promise<void> {
   document.body.appendChild(container);
   try {
     const filename = `${title.replace(/[^A-Za-z0-9._-]+/g, "_")}.pdf`;
+    // SOURCE MARKER: PDF export uses optimized html2canvas scale
+    // SOURCE MARKER: PDF template avoids expensive visual effects
+    // SOURCE MARKER: PDF generation optimized for large packets
+    //
+    // Scale 1.5 (down from 2.0) keeps text crisp at letter print
+    // resolution while cutting the rasterized bitmap area by ~44%.
+    // Removing `windowWidth: 1100` lets html2canvas measure the
+    // container at its natural 8.5in = 816px width so layout doesn't
+    // re-flow to a wider canvas only to be downscaled into letter.
+    // JPEG quality 0.92 is still print-safe and noticeably faster to
+    // encode for multi-page packets.
     const options = {
       margin: [0.5, 0.4, 0.5, 0.4],
       filename,
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, windowWidth: 1100 },
-      jsPDF: { unit: "in", format: "letter", orientation: "portrait" },
+      image: { type: "jpeg", quality: 0.92 },
+      html2canvas: { scale: 1.5, useCORS: true },
+      jsPDF: { unit: "in", format: "letter", orientation: "portrait", compress: true },
       pagebreak: { mode: ["css", "legacy"] },
     } as Record<string, unknown>;
     await html2pdf().set(options).from(container).save();
@@ -224,12 +235,20 @@ export function buildPrintWindow(title: string, bodyHtml: string, options?: { in
 
 // Build the per-patient demographics block rendered directly under
 // the patient name in BOTH Plexus PDF and Clinician PDF.
-// Includes DOB, age, sex, phone, email, insurance, facility,
-// scheduleDate, and (when supplied) the assigned scheduler.
+// Includes DOB, age, sex, phone, email, insurance, facility.
+//
+// Schedule date is intentionally OMITTED here — it is already
+// printed in the page header (right-aligned report label) and a
+// second copy under each patient's name added vertical clutter
+// without adding information. The `scheduleDate` and
+// `schedulerName` options are accepted for backwards compatibility
+// with existing callers but are no longer rendered into the block.
 // SOURCE MARKER: PDF demographics include phone and email
+// SOURCE MARKER: PDF demographics omit schedule date
 export function buildPatientDemoBlock(
   p: PatientScreening,
-  opts?: { scheduleDate?: string | null; schedulerName?: string | null },
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _opts?: { scheduleDate?: string | null; schedulerName?: string | null },
 ): string {
   const ageText = p.age != null && p.age !== ("" as unknown) ? `${p.age} yo` : "";
   const sex = (p.gender ?? "").trim();
@@ -243,11 +262,7 @@ export function buildPatientDemoBlock(
   const row3Parts: string[] = [];
   if (p.insurance) row3Parts.push(`Insurance: ${esc(p.insurance)}`);
   if (p.facility) row3Parts.push(`Facility: ${esc(p.facility)}`);
-  const row4Parts: string[] = [];
-  const date = opts?.scheduleDate ?? null;
-  if (date) row4Parts.push(`Schedule Date: ${esc(date)}`);
-  if (opts?.schedulerName) row4Parts.push(`Scheduler: ${esc(opts.schedulerName)}`);
-  const rows = [row1Parts, row2Parts, row3Parts, row4Parts]
+  const rows = [row1Parts, row2Parts, row3Parts]
     .filter((r) => r.length > 0)
     .map((r) => `<div class="patient-demo-row">${r.join(" · ")}</div>`)
     .join("");
@@ -412,6 +427,14 @@ export async function generateClinicianPDFAsync(batchName: string, patients: Pat
         ${p.previousTests || p.previousTestsDate ? `<div style="display:flex;gap:6px;background:#fef9c3;border-radius:4px;padding:3px 5px;margin-top:2px;page-break-inside:avoid;"><span style="font-size:7.5px;font-weight:700;color:#78350f;letter-spacing:0.05em;min-width:70px;padding-top:1px;white-space:nowrap;">${prevSign}Previous Tests</span><span class="clinical-clinical-text" style="font-size:8.5px;font-weight:700;color:#334155;line-height:1.4;">${p.previousTests ? esc(p.previousTests) : ""}${p.previousTestsDate ? `${p.previousTests ? " — " : ""}Date: ${esc(p.previousTestsDate)}` : ""}</span></div>` : ""}
       </div>` : "";
 
+    // Test-row template shared by both columns. Every row uses the
+    // same outer padding (10px bottom / 10px gap after) AND the same
+    // 22px left indent on chips + reasoning so the checkbox, title,
+    // factor chips, and oneliner share a single vertical baseline
+    // across BrainWave / VitalWave / Ultrasound rows. The right
+    // column adds the ultrasound SVG between the checkbox and the
+    // title without breaking the indent because chips/oneliner are
+    // padded to the same 22px regardless.
     const leftHtml = ancillaryTests.length === 0
       ? `<p style="font-size:10px;color:#94a3b8;font-style:italic;">No qualifying ancillary tests.</p>`
       : ancillaryTests.map((test, i) => {
@@ -422,13 +445,13 @@ export async function generateClinicianPDFAsync(batchName: string, patients: Pat
           const isLast = i === ancillaryTests.length - 1;
           const ancExplain = oneSentence(clinician) || (ancFactors && ancFactors.length > 0 ? oneSentence(ancFactors[0]) : "") || oneSentence(getOneSentenceDesc(test));
           return `
-            <div style="margin-bottom:${isLast ? "0" : "10px"};padding-bottom:${isLast ? "0" : "10px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}">
+            <div style="margin-bottom:${isLast ? "0" : "10px"};padding-bottom:${isLast ? "0" : "10px"};${isLast ? "" : "border-bottom:1px solid #e2e8f0;"}break-inside:avoid;">
               <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;">
-                <span style="font-size:17px;color:${color};line-height:1;">&#9744;</span>
+                <span style="font-size:17px;color:${color};line-height:1;width:17px;text-align:center;">&#9744;</span>
                 <span style="font-size:14px;font-weight:800;color:${color};">${esc(test)}</span>
               </div>
-              ${ancFactors && ancFactors.length > 0 ? `<div style="margin-bottom:3px;line-height:1.5;">${renderFactors(ancFactors)}</div>` : ""}
-              ${ancExplain ? `<p style="font-size:8.5px;line-height:1.4;color:#475569;margin:0;font-style:italic;">${esc(ancExplain)}</p>` : ""}
+              ${ancFactors && ancFactors.length > 0 ? `<div style="margin-bottom:3px;padding-left:22px;line-height:1.5;">${renderFactors(ancFactors)}</div>` : ""}
+              ${ancExplain ? `<p style="font-size:8.5px;line-height:1.4;color:#475569;margin:0;padding-left:22px;font-style:italic;">${esc(ancExplain)}</p>` : ""}
             </div>`;
         }).join("");
 
@@ -442,9 +465,9 @@ export async function generateClinicianPDFAsync(batchName: string, patients: Pat
           const isLast = i === ultrasoundTests.length - 1;
           const oneliner = oneSentence(clinician) || (factors && factors.length > 0 ? oneSentence(factors[0]) : "") || oneSentence(getOneSentenceDesc(test));
           return `
-            <div style="padding:${i === 0 ? "0 0 6px" : "5px 0 6px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}">
+            <div style="margin-bottom:${isLast ? "0" : "10px"};padding-bottom:${isLast ? "0" : "10px"};${isLast ? "" : "border-bottom:1px solid #f1f5f9;"}break-inside:avoid;">
               <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;">
-                <span style="font-size:17px;color:#16a34a;line-height:1;">&#9744;</span>
+                <span style="font-size:17px;color:#16a34a;line-height:1;width:17px;text-align:center;">&#9744;</span>
                 ${icon}
                 <span style="font-size:14px;font-weight:700;color:#16a34a;">${esc(normalizeUltrasoundName(test))}</span>
               </div>
@@ -453,22 +476,44 @@ export async function generateClinicianPDFAsync(batchName: string, patients: Pat
             </div>`;
         }).join("");
 
-    const demoBlock = buildPatientDemoBlock(p, { scheduleDate: date });
+    const demoBlock = buildPatientDemoBlock(p);
+    // SOURCE MARKER: Clinician PDF header uses stable two-column alignment
+    // SOURCE MARKER: Clinician PDF demographics do not overlap chart review
+    // SOURCE MARKER: Clinician PDF chart review has safe spacing
+    // SOURCE MARKER: Clinician PDF ancillary columns align cleanly
+    // SOURCE MARKER: Clinician PDF test rows have stable checkbox title alignment
+    //
+    // Header rewrite:
+    // - Top strip is a real two-column grid (auto / auto with the
+    //   second cell right-justified) so the batch name on the left and
+    //   the report label on the right stay strictly aligned at the
+    //   same baseline regardless of how long either side is.
+    // - Section label + patient name sit on their own grid row with
+    //   `align-items:end` so the small uppercase label hugs the
+    //   bottom of the large name, never floats above it.
+    // - The demographics block lives in its own row directly under
+    //   the name, with explicit `margin-top:6px` and `margin-bottom:
+    //   12px` so the Chart Review box always opens with a clear gap.
+    // - The two ancillary columns use 1fr/1fr (50/50) and each test
+    //   row uses the same left padding so checkboxes, titles, chips,
+    //   and reasoning share the same vertical baseline.
     return `
       <div class="page" style="padding:14px 20px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:4px;margin-bottom:6px;border-bottom:1px solid #cbd5e1;">
+        <div style="display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:12px;padding-bottom:4px;margin-bottom:6px;border-bottom:1px solid #cbd5e1;">
           <span style="font-size:9.5px;font-weight:700;color:#1a365d;">${esc(batchName)}</span>
-          <span style="font-size:8.5px;color:#94a3b8;">Clinician Summary — ${esc(date)}</span>
+          <span style="font-size:8.5px;color:#94a3b8;text-align:right;">Clinician Summary — ${esc(date)}</span>
         </div>
-        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:1px;">
+        <div style="display:grid;grid-template-columns:auto 1fr;align-items:end;column-gap:12px;margin-bottom:2px;">
           <span style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.09em;">Plexus Qualifying Ancillaries</span>
-          <span style="font-size:18px;font-weight:800;color:#1a365d;">${esc(p.name)}</span>
+          <span style="font-size:18px;font-weight:800;color:#1a365d;text-align:right;">${esc(p.name)}</span>
         </div>
-        <div style="font-size:8.5px;color:#94a3b8;text-align:right;margin-bottom:4px;">${demoLine}</div>
-        ${demoBlock}
+        <div style="display:grid;grid-template-columns:1fr auto;align-items:start;column-gap:12px;margin-top:6px;margin-bottom:12px;">
+          <div>${demoBlock}</div>
+          <div style="font-size:8.5px;color:#94a3b8;text-align:right;">${demoLine}</div>
+        </div>
         ${chartReview}
-        <div style="font-size:17px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;text-align:center;margin-top:6px;margin-bottom:10px;">Qualified Ancillary Tests for ${esc(firstName)}</div>
-        <div style="display:grid;grid-template-columns:38% 1fr;gap:10px;border-top:2px solid #e2e8f0;padding-top:10px;">
+        <div style="font-size:17px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.09em;text-align:center;margin-top:10px;margin-bottom:10px;">Qualified Ancillary Tests for ${esc(firstName)}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:14px;border-top:2px solid #e2e8f0;padding-top:10px;">
           <div>
             ${leftHtml}
           </div>
