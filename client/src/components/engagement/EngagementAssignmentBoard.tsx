@@ -151,8 +151,15 @@ export function EngagementAssignmentBoard() {
   // SOURCE MARKER: PDF generation pending state is group scoped
   // SOURCE MARKER: Engagement Center PDF buttons are disabled while generating
   // SOURCE MARKER: PDF generation runs on demand
+  // SOURCE MARKER: Engagement Center PDF spinner shows only on clicked mode
+  // The pending value records WHICH mode is generating (plexus or
+  // clinician) so the visible spinner attaches only to the button
+  // the operator clicked. Both buttons stay disabled while either
+  // mode is generating — group-level locking is preserved by the
+  // truthiness check, not by a separate boolean.
+  type PdfPendingMode = "plexus" | "clinician";
   const [pdfGeneratingByGroup, setPdfGeneratingByGroup] = useState<
-    Record<string, boolean>
+    Record<string, PdfPendingMode | null>
   >({});
   // Per-group multi-export progress, used by the scheduler-tab split
   // path (which fans one click into N sequential html2pdf calls) so
@@ -456,9 +463,12 @@ export function EngagementAssignmentBoard() {
     executionCaseIds: number[],
     mode: "plexus" | "clinician",
   ) {
-    // Double-click guard — the group is already generating, do nothing.
+    // Double-click guard — the group is already generating in some
+    // mode, do nothing. Group-level locking is preserved: while
+    // pdfGeneratingByGroup[group.key] holds any mode, neither Plexus
+    // nor Clinician can be re-clicked.
     if (pdfGeneratingByGroup[group.key]) return;
-    setPdfGeneratingByGroup((prev) => ({ ...prev, [group.key]: true }));
+    setPdfGeneratingByGroup((prev) => ({ ...prev, [group.key]: mode }));
     try {
       await runGroupPdf(group, executionCaseIds, mode);
     } finally {
@@ -1183,12 +1193,17 @@ export function EngagementAssignmentBoard() {
             const selectedList = Array.from(selected);
             const selectedCount = selected.size;
             const pdfError = pdfErrorByGroup[group.key] ?? null;
-            const pdfGenerating = pdfGeneratingByGroup[group.key] === true;
+            // Group-level lock: any mode generating blocks both buttons.
+            // Per-mode spinner: only the clicked mode shows the spinner.
+            const pdfPendingMode = pdfGeneratingByGroup[group.key] ?? null;
+            const pdfGroupBusy = pdfPendingMode !== null;
+            const plexusBusy = pdfPendingMode === "plexus";
+            const clinicianBusy = pdfPendingMode === "clinician";
             const pdfProgress = pdfProgressByGroup[group.key] ?? null;
             const pdfBusyLabel =
-              pdfGenerating && pdfProgress && pdfProgress.total > 1
+              pdfGroupBusy && pdfProgress && pdfProgress.total > 1
                 ? `Generating ${pdfProgress.current}/${pdfProgress.total}…`
-                : pdfGenerating
+                : pdfGroupBusy
                 ? "Generating…"
                 : null;
             const groupSection =
@@ -1273,41 +1288,42 @@ export function EngagementAssignmentBoard() {
                     >
                       {allSel ? "Clear" : "Select All"}
                     </Button>
+                    {/* SOURCE MARKER: Engagement Center PDF spinner shows only on clicked mode */}
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={selectedCount === 0 || pdfGenerating}
+                      disabled={selectedCount === 0 || pdfGroupBusy}
                       onClick={() => generateGroupPdf(group, selectedList, "plexus")}
                       className="h-7 gap-1 px-2 text-[11px]"
                       data-testid={groupPlexus}
                       data-bar-testid="engagement-center-plexus-pdf"
                       data-print-preview-testid={groupPlexusPreview}
-                      data-pdf-generating={pdfGenerating ? "true" : "false"}
+                      data-pdf-generating={plexusBusy ? "true" : "false"}
                     >
-                      {pdfGenerating ? (
+                      {plexusBusy ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
                         <FileText className="h-3 w-3" />
                       )}
-                      {pdfGenerating ? pdfBusyLabel : "Plexus PDF"}
+                      {plexusBusy ? pdfBusyLabel : "Plexus PDF"}
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={selectedCount === 0 || pdfGenerating}
+                      disabled={selectedCount === 0 || pdfGroupBusy}
                       onClick={() => generateGroupPdf(group, selectedList, "clinician")}
                       className="h-7 gap-1 px-2 text-[11px]"
                       data-testid={groupClinician}
                       data-bar-testid="engagement-center-clinician-pdf"
                       data-print-preview-testid={groupClinicianPreview}
-                      data-pdf-generating={pdfGenerating ? "true" : "false"}
+                      data-pdf-generating={clinicianBusy ? "true" : "false"}
                     >
-                      {pdfGenerating ? (
+                      {clinicianBusy ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
                         <FileText className="h-3 w-3" />
                       )}
-                      {pdfGenerating ? pdfBusyLabel : "Clinician PDF"}
+                      {clinicianBusy ? pdfBusyLabel : "Clinician PDF"}
                     </Button>
                     {/* SOURCE MARKER: Engagement Center assign controls are disabled while pending */}
                     <GroupAssignPopover
