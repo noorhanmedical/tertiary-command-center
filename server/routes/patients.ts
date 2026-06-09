@@ -318,171 +318,26 @@ export function registerPatientRoutes(
   // ancillary icon popup, QualificationReasoningDialog, PDFs, and Admin
   // Review all read from the same layer. Also stores supplemental
   // adminReview:<ancillary> metadata for the assignment audit trail.
+  //
+  // Delegated to server/services/plexusIq/adminReviewRegenerateAllService.ts.
+  // Response shape, status codes, error messages, reasoning merge order,
+  // canonical reasoning[testName] writes, all-three adminReview:<a>
+  // supplemental writes, and external AI call semantics are preserved
+  // byte-for-byte; see docs/architecture/backend-route-parity-inventory.md §1.3.
   app.post("/api/patient-screenings/:id/admin-review/regenerate-all", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      if (Number.isNaN(id)) {
-        return res.status(400).json({ error: "Invalid patient id" });
-      }
-      const patient = await storage.getPatientScreening(id);
-      if (!patient) return res.status(404).json({ error: "Patient not found" });
-
-      const assignedEvidenceByAncillary = {
-        brainwave: Array.isArray(req.body?.assignedEvidenceByAncillary?.brainwave)
-          ? req.body.assignedEvidenceByAncillary.brainwave
-          : [],
-        vitalwave: Array.isArray(req.body?.assignedEvidenceByAncillary?.vitalwave)
-          ? req.body.assignedEvidenceByAncillary.vitalwave
-          : [],
-        ultrasound: Array.isArray(req.body?.assignedEvidenceByAncillary?.ultrasound)
-          ? req.body.assignedEvidenceByAncillary.ultrasound
-          : [],
-      };
-      const ancillaryNotes = {
-        brainwave:
-          typeof req.body?.ancillaryNotes?.brainwave === "string"
-            ? req.body.ancillaryNotes.brainwave
-            : "",
-        vitalwave:
-          typeof req.body?.ancillaryNotes?.vitalwave === "string"
-            ? req.body.ancillaryNotes.vitalwave
-            : "",
-        ultrasound:
-          typeof req.body?.ancillaryNotes?.ultrasound === "string"
-            ? req.body.ancillaryNotes.ultrasound
-            : "",
-      };
-      const adminNote =
-        typeof req.body?.adminNote === "string" ? req.body.adminNote : "";
-      const icdCodes: Array<{ code: string; label: string }> = Array.isArray(req.body?.icdCodes)
-        ? req.body.icdCodes
-            .map((c: any) => ({
-              code: String(c?.code ?? "").trim(),
-              label: String(c?.label ?? "").trim(),
-            }))
-            .filter((c: { code: string }) => c.code.length > 0)
-        : [];
-      const updatedDiagnoses =
-        typeof req.body?.diagnoses === "string" ? req.body.diagnoses : patient.diagnoses;
-      const updatedMedications =
-        typeof req.body?.medications === "string" ? req.body.medications : patient.medications;
-      const updatedHistory =
-        typeof req.body?.history === "string" ? req.body.history : patient.history;
-
-      const qualifyingTests = Array.isArray(patient.qualifyingTests)
-        ? patient.qualifyingTests
-        : [];
-
-      const { regenerateCanonicalReasoning } = await import(
-        "../services/plexusIq/adminReviewAiRegeneration"
+      const { regenerateAdminReviewAll } = await import(
+        "../services/plexusIq/adminReviewRegenerateAllService"
       );
-      const { getAncillaryCategory } = await import("@shared/ancillaryCategory");
-
-      const existingReasoningByTest: Record<string, any> = {};
-      const priorReasoning =
-        patient.reasoning && typeof patient.reasoning === "object" && !Array.isArray(patient.reasoning)
-          ? (patient.reasoning as Record<string, any>)
-          : {};
-      for (const t of qualifyingTests) {
-        const e = priorReasoning[t];
-        if (e && typeof e === "object" && !Array.isArray(e)) existingReasoningByTest[t] = e;
-      }
-
-      // Map test -> ancillary so selected support buttons follow the right bucket.
-      const selectedSupportButtonsByTest: Record<string, any[]> = {};
-      for (const t of qualifyingTests) {
-        const cat = getAncillaryCategory(t);
-        if (cat === "brainwave" || cat === "vitalwave" || cat === "ultrasound") {
-          selectedSupportButtonsByTest[t] = assignedEvidenceByAncillary[cat] ?? [];
+      const outcome = await regenerateAdminReviewAll(id, req.body);
+      if (!outcome.ok) {
+        if (outcome.error.kind === "invalid_id") {
+          return res.status(400).json({ error: "Invalid patient id" });
         }
+        return res.status(404).json({ error: "Patient not found" });
       }
-
-      // removedFactors come from the client and may be per-test or per-ancillary.
-      const removedFactorsByTest: Record<string, string[]> = {};
-      const removedFromBody = req.body?.removedFactorsByTest;
-      if (removedFromBody && typeof removedFromBody === "object") {
-        for (const [t, arr] of Object.entries(removedFromBody)) {
-          if (Array.isArray(arr)) removedFactorsByTest[t] = arr.map((s: any) => String(s));
-        }
-      }
-      const removedByAncillary = req.body?.removedFactorsByAncillary;
-      if (removedByAncillary && typeof removedByAncillary === "object") {
-        for (const t of qualifyingTests) {
-          const cat = getAncillaryCategory(t);
-          const arr = (removedByAncillary as Record<string, unknown>)[cat];
-          if (Array.isArray(arr)) {
-            removedFactorsByTest[t] = [
-              ...(removedFactorsByTest[t] ?? []),
-              ...arr.map((s: any) => String(s)),
-            ];
-          }
-        }
-      }
-
-      // Authoritative qualifying-factor floor sent from the client (preferred
-      // over reading patient.reasoning[testName] on the server, since older
-      // stored shapes may lose the array on round-trip).
-      const priorQualifyingFactorsByTest: Record<string, string[]> = {};
-      const priorFromBody = req.body?.priorQualifyingFactorsByTest;
-      if (priorFromBody && typeof priorFromBody === "object") {
-        for (const [t, arr] of Object.entries(priorFromBody)) {
-          if (Array.isArray(arr)) priorQualifyingFactorsByTest[t] = arr.map((s: any) => String(s));
-        }
-      }
-
-      const ai = await regenerateCanonicalReasoning({
-        patient: {
-          ...patient,
-          history: updatedHistory ?? null,
-          diagnoses: updatedDiagnoses ?? null,
-          medications: updatedMedications ?? null,
-        } as typeof patient,
-        qualifyingTests,
-        assignedEvidenceByAncillary,
-        ancillaryNotes,
-        adminNote,
-        icdCodes,
-        existingReasoningByTest,
-        removedFactorsByTest,
-        selectedSupportButtonsByTest,
-        priorQualifyingFactorsByTest,
-      });
-
-      const existingReasoning =
-        patient.reasoning &&
-        typeof patient.reasoning === "object" &&
-        !Array.isArray(patient.reasoning)
-          ? { ...(patient.reasoning as Record<string, unknown>) }
-          : {};
-
-      // Merge canonical regenerated entries onto patient.reasoning[testName].
-      for (const [testName, entry] of Object.entries(ai.reasoningByTest)) {
-        existingReasoning[testName] = entry;
-      }
-
-      // Supplemental adminReview metadata per ancillary (audit only).
-      const timestamp = new Date().toISOString();
-      for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
-        existingReasoning[`adminReview:${id}`] = {
-          ancillaryId: id,
-          assignedEvidence: assignedEvidenceByAncillary[id],
-          ancillaryNote: ancillaryNotes[id],
-          regeneratedAt: timestamp,
-          regeneratedMode: "all",
-        };
-      }
-
-      const updatePayload: Record<string, unknown> = {
-        reasoning: existingReasoning,
-      };
-      if (updatedDiagnoses !== patient.diagnoses) updatePayload.diagnoses = updatedDiagnoses;
-      if (updatedMedications !== patient.medications) updatePayload.medications = updatedMedications;
-      if (updatedHistory !== patient.history) updatePayload.history = updatedHistory;
-
-      const updated = await storage.updatePatientScreening(id, updatePayload);
-
-      invalidatePatientDatabase();
-      res.json({ ok: true, patient: updated });
+      res.json({ ok: true, patient: outcome.patient });
     } catch (error: any) {
       console.error("[admin-review/regenerate-all] error:", error?.message ?? error);
       res.status(500).json({
