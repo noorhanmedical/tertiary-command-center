@@ -468,6 +468,19 @@ export function EngagementAssignmentBoard() {
     // SOURCE MARKER: PDF generation clears stale error on success
     setPdfErrorByGroup((prev) => ({ ...prev, [group.key]: null }));
 
+    // Large-packet advisory — html2pdf rasterizes every page so the
+    // wall-clock cost scales roughly linearly with patient count. We
+    // don't block, but we warn so the operator can choose to split
+    // by scheduler instead of a single 200-patient export.
+    // SOURCE MARKER: Large PDF packet generation warning
+    if (executionCaseIds.length > 50) {
+      toast({
+        title: `Large PDF packet (${executionCaseIds.length} patients)`,
+        description:
+          "Large PDF packet may take longer. Consider generating by scheduler or smaller group.",
+      });
+    }
+
     const reportGenerationError = (message: string) => {
       setPdfErrorByGroup((prev) => ({
         ...prev,
