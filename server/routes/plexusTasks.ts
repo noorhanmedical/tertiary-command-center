@@ -5,10 +5,10 @@ import { db } from "../db";
 import { eq } from "drizzle-orm";
 import { patientScreenings } from "@shared/schema";
 import {
-  appendPatientJourneyEvent,
   getExecutionCaseById,
   getExecutionCaseByScreeningId,
 } from "../repositories/executionCase.repo";
+import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 
 // ── Typed event payloads ───────────────────────────────────────────────────
 type EventPayload =
@@ -511,7 +511,7 @@ export function registerPlexusTasksRoutes(app: Express) {
       let journeyEvent = null;
       if (patientName) {
         try {
-          journeyEvent = await appendPatientJourneyEvent({
+          journeyEvent = await appendJourneyEvent({
             patientName,
             patientDob: patientDob ?? undefined,
             patientScreeningId: patientScreeningId ?? undefined,

@@ -13,10 +13,10 @@ import {
 } from "../repositories/documentReadiness.repo";
 import { evaluateBillingReadinessForProcedure } from "../repositories/billingReadiness.repo";
 import {
-  appendPatientJourneyEvent,
   getExecutionCaseById,
   getExecutionCaseByScreeningId,
 } from "../repositories/executionCase.repo";
+import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 
 const COMPLETION_DOCUMENT_TYPES = [
   "informed_consent",
@@ -244,9 +244,9 @@ export function registerDocumentReadinessRoutes(app: Express) {
       }
 
       // Append journey event (best-effort)
-      let journeyEvent: Awaited<ReturnType<typeof appendPatientJourneyEvent>> | null = null;
+      let journeyEvent: Awaited<ReturnType<typeof appendJourneyEvent>> | null = null;
       try {
-        journeyEvent = await appendPatientJourneyEvent({
+        journeyEvent = await appendJourneyEvent({
           patientName: executionCase.patientName,
           patientDob: executionCase.patientDob ?? undefined,
           patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? undefined,

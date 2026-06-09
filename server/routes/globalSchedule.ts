@@ -13,10 +13,10 @@ import {
   upsertAncillaryScheduleEvent,
 } from "../repositories/globalSchedule.repo";
 import {
-  appendPatientJourneyEvent,
   getExecutionCaseById,
   getExecutionCaseByScreeningId,
 } from "../repositories/executionCase.repo";
+import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 
 const scheduleAncillaryBodySchema = z.object({
   executionCaseId: z.number().int().optional().nullable(),
@@ -249,9 +249,9 @@ export function registerGlobalScheduleRoutes(app: Express) {
       });
 
       // Append journey event (best-effort)
-      let journeyEvent: Awaited<ReturnType<typeof appendPatientJourneyEvent>> | null = null;
+      let journeyEvent: Awaited<ReturnType<typeof appendJourneyEvent>> | null = null;
       try {
-        journeyEvent = await appendPatientJourneyEvent({
+        journeyEvent = await appendJourneyEvent({
           patientName: executionCase.patientName,
           patientDob: executionCase.patientDob ?? undefined,
           patientScreeningId: patientScreeningId ?? executionCase.patientScreeningId ?? undefined,

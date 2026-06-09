@@ -7,10 +7,10 @@ import { db } from "../db";
 import { uploadedDocuments, documents as documentsTable, documentSurfaceAssignments, patientScreenings } from "@shared/schema";
 import { desc, eq, like, sql } from "drizzle-orm";
 import {
-  appendPatientJourneyEvent,
   getExecutionCaseById,
   getExecutionCaseByScreeningId,
 } from "../repositories/executionCase.repo";
+import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 import {
   type Document,
   DOCUMENT_KINDS,
@@ -639,7 +639,7 @@ function mountRoutes(app: Express, basePath: string) {
 
       if (patientName) {
         try {
-          journeyEvent = await appendPatientJourneyEvent({
+          journeyEvent = await appendJourneyEvent({
             patientName,
             patientDob: patientDob ?? undefined,
             patientScreeningId: patientScreeningId ?? undefined,
