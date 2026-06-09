@@ -17,3 +17,4 @@ export * from "./adminReviewStatus";
 export * from "./reasoning";
 export * from "./engagementBoard";
 export * from "./journeyEvents";
+export * from "./patientPacket";

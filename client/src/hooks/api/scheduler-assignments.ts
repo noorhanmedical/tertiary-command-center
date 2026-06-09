@@ -1,14 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { qk } from "./keys";
 
-export type SchedulerAssignmentRow = {
-  id: number;
-  patientScreeningId: number;
-  schedulerId: number;
-  source: string;
-  originalSchedulerId: number | null;
-  reason: string | null;
-};
+// Canonical shape lives in the shared schema. The hook returns rows
+// from GET /api/scheduler-assignments which is `SchedulerAssignment[]`.
+// See shared/schema/outreach.ts.
+import type { SchedulerAssignment } from "@shared/schema";
+
+export type SchedulerAssignmentRow = SchedulerAssignment;
 
 export function useSchedulerAssignments() {
   return useQuery<SchedulerAssignmentRow[]>({
