@@ -39,8 +39,10 @@ import {
   generateClinicianPDFAsync,
 } from "@/lib/pdfGeneration";
 import {
+  splitPatientsByFacilityDate,
   validateSameFacilityDatePacket,
   type PdfPacketSourcePatient,
+  type SchedulerPdfPacket,
 } from "@/lib/pdfPacketGrouping";
 
 // Engagement Assignment Board.
@@ -565,6 +567,26 @@ export function EngagementAssignmentBoard() {
       return;
     }
 
+    if (missingScreeningExecIds.length > 0) {
+      toast({
+        title: `Skipped ${missingScreeningExecIds.length} row${missingScreeningExecIds.length === 1 ? "" : "s"}`,
+        description: `${missingScreeningExecIds.length} of ${executionCaseIds.length} selected execution case${executionCaseIds.length === 1 ? " has" : "s have"} no patientScreeningId and were dropped from the packet.`,
+      });
+    }
+
+    // Scheduler / Team Member groups can legitimately span multiple
+    // facilities and dates after a distribute, so the single-packet
+    // validator below would always reject them. Fork to the split
+    // path: one PDF per facility/date inside the scheduler's selection.
+    // SOURCE MARKER: Scheduler PDF uses selected patients from one scheduler group
+    // SOURCE MARKER: Scheduler PDF does not validate the entire scheduler group as one packet
+    if (groupMode === "scheduler") {
+      await runSchedulerSplitPdf(group, fullPatients, mode, {
+        reportGenerationError,
+      });
+      return;
+    }
+
     const fallbackFacility = group.rows[0]?.facility ?? null;
     const fallbackDate = group.rows[0]?.scheduleDate ?? null;
     const validation = validateSameFacilityDatePacket(
@@ -576,13 +598,6 @@ export function EngagementAssignmentBoard() {
       // SOURCE MARKER: Engagement Center PDF validation error is surfaced
       reportValidationError(validation.reason);
       return;
-    }
-
-    if (missingScreeningExecIds.length > 0) {
-      toast({
-        title: `Skipped ${missingScreeningExecIds.length} row${missingScreeningExecIds.length === 1 ? "" : "s"}`,
-        description: `${missingScreeningExecIds.length} of ${executionCaseIds.length} selected execution case${executionCaseIds.length === 1 ? " has" : "s have"} no patientScreeningId and were dropped from the packet.`,
-      });
     }
 
     const batchName = `${validation.patients[0]?.facility ?? group.label} · ${
@@ -597,6 +612,119 @@ export function EngagementAssignmentBoard() {
     } catch (err) {
       reportGenerationError(err instanceof Error ? err.message : "Unknown PDF export error");
     }
+  }
+
+  // Scheduler-tab PDF: split the scheduler's selected patients into
+  // one valid packet per facility/date and generate them in sequence.
+  // Each packet produces its own PDF download; per-packet failures are
+  // aggregated into one inline group-error line so the operator can
+  // see which slice failed without having to retry the whole batch.
+  // SOURCE MARKER: Scheduler tab PDF splits selected patients by facility date
+  // SOURCE MARKER: Scheduler call list PDF generates one packet per facility date
+  async function runSchedulerSplitPdf(
+    group: BoardGroup,
+    fullPatients: PatientScreening[],
+    mode: "plexus" | "clinician",
+    helpers: { reportGenerationError: (msg: string) => void },
+  ) {
+    const split = splitPatientsByFacilityDate(
+      fullPatients as PdfPacketSourcePatient[],
+    );
+    if (split.packets.length === 0) {
+      helpers.reportGenerationError(
+        split.skipped.length > 0
+          ? `All ${split.skipped.length} selected patients are missing a facility — cannot build a packet.`
+          : "No patients to export.",
+      );
+      return;
+    }
+
+    // Toast the count + scheduler name up front so the operator knows
+    // how many downloads to expect.
+    const packetCount = split.packets.length;
+    const schedulerName = group.label;
+    toast({
+      title:
+        packetCount === 1
+          ? `Generating 1 packet for ${schedulerName}.`
+          : `Generating ${packetCount} packets for ${schedulerName} by facility/date.`,
+      description:
+        split.skipped.length > 0
+          ? `Skipped ${split.skipped.length} patient${split.skipped.length === 1 ? "" : "s"} with no facility.`
+          : undefined,
+    });
+
+    const packetFailures: Array<{ label: string; reason: string }> = [];
+    let packetIndex = 0;
+    for (const packet of split.packets) {
+      packetIndex += 1;
+      const packetLabel = packetLabelFor(packet);
+      const batchName = `${schedulerName} — ${packetLabel}`;
+      try {
+        if (mode === "plexus") {
+          await generatePlexusPDFAsync(
+            batchName,
+            packet.patients,
+            packet.scheduleDate,
+            null,
+          );
+        } else {
+          await generateClinicianPDFAsync(
+            batchName,
+            packet.patients,
+            packet.scheduleDate,
+            null,
+          );
+        }
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : "Unknown PDF export error";
+        packetFailures.push({ label: packetLabel, reason });
+        toast({
+          title: `Packet ${packetIndex}/${packetCount} failed`,
+          description: `Failed to generate ${packetLabel}: ${reason}`,
+          variant: "destructive",
+        });
+      }
+    }
+
+    if (packetFailures.length > 0) {
+      const lines = packetFailures
+        .map((f) => `Failed to generate ${f.label}: ${f.reason}`)
+        .join(" · ");
+      const summary = `${packetFailures.length} of ${packetCount} packet${packetCount === 1 ? "" : "s"} failed for ${schedulerName}.`;
+      helpers.reportGenerationError(`${summary} ${lines}`);
+    }
+  }
+
+  function packetLabelFor(packet: SchedulerPdfPacket): string {
+    if (packet.isOutreachPacket || !packet.scheduleDate) {
+      return `${packet.facility} · Outreach`;
+    }
+    return `${packet.facility} · ${packet.scheduleDate}`;
+  }
+
+  // Cheap, fetch-free packet count for the scheduler-tab UI badge:
+  // we already have facility + scheduleDate on every board row, so
+  // we can map executionCaseId → row → distinct facility/date key
+  // without round-tripping `/api/patients/:id`. Used only for the
+  // visible packet-count attribute on the scheduler group header.
+  function countSchedulerPackets(
+    group: BoardGroup,
+    executionCaseIds: number[],
+  ): number {
+    if (executionCaseIds.length === 0) return 0;
+    const index = new Map<number, BoardRow>();
+    for (const r of group.rows) index.set(r.executionCaseId, r);
+    const keys = new Set<string>();
+    for (const eid of executionCaseIds) {
+      const row = index.get(eid);
+      if (!row) continue;
+      const facility = (row.facility ?? "").trim();
+      if (!facility) continue;
+      const date = (row.scheduleDate ?? "").trim() || "__outreach__";
+      keys.add(`${facility}::${date}`);
+    }
+    return keys.size;
   }
 
   function confirmDeleteGroup(group: BoardGroup, executionCaseIds: number[]) {
@@ -1157,10 +1285,36 @@ export function EngagementAssignmentBoard() {
                         ? "engagement-center-pdf-validation-error"
                         : "engagement-center-pdf-generation-error"
                     }
+                    data-scheduler-testid={
+                      groupMode === "scheduler"
+                        ? "engagement-center-scheduler-pdf-error"
+                        : undefined
+                    }
                     data-group-key={group.key}
                   >
                     <AlertCircle className="mt-[1px] h-3 w-3 flex-shrink-0" />
                     <span className="leading-snug">{pdfError.message}</span>
+                  </div>
+                )}
+                {/* Scheduler-tab packet-count + split warning markers.
+                    A real scheduler call list spans multiple
+                    facility/date packets after distribution, so we
+                    expose both the live count (read from the in-memory
+                    rows for the current selection) and a static
+                    warning testId so QA / e2e can detect the split
+                    surface even when the selection is empty.
+                    SOURCE MARKER: Scheduler call list PDF generates one packet per facility date */}
+                {groupMode === "scheduler" && (
+                  <div
+                    className="hidden"
+                    aria-hidden="true"
+                    data-testid="engagement-center-scheduler-pdf-packet-count"
+                    data-scheduler-id={group.key}
+                    data-packet-count={countSchedulerPackets(group, selectedList)}
+                  >
+                    <span data-testid="engagement-center-scheduler-pdf-split-warning">
+                      Scheduler call list PDF generates one packet per facility/date.
+                    </span>
                   </div>
                 )}
                 <ul className="divide-y divide-slate-100">
