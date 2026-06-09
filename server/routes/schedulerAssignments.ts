@@ -4,6 +4,8 @@ import { storage } from "../storage";
 import { withAdvisoryLock } from "../lib/advisoryLock";
 import { buildDailyAssignments, releaseAndRedistribute } from "../services/callListEngine";
 import { VALID_FACILITIES } from "../../shared/plexus";
+import { isOperationalQueueCallListEnabled } from "../modules/operational-queue/call-list-flag";
+import { getOperationalQueueForUser } from "../modules/operational-queue/service";
 
 function sessionRole(req: Request): string | null {
   const sess = (req as Request & { session?: { role?: string } }).session;
@@ -45,6 +47,63 @@ export function registerSchedulerAssignmentRoutes(app: Express) {
         filters.schedulerId = mine.id;
       }
       const rows = await storage.listActiveSchedulerAssignments(filters);
+
+      // ─── Batch 11d: operational-queue shadow read (flag-gated) ─────
+      //
+      // Flag default OFF. When ON, the legacy `rows` is still what is
+      // returned to the client — response shape is byte-identical to
+      // today. The operational-queue read runs in parallel ONLY to
+      // emit a structured PHI-safe parity log so ops can verify the
+      // unified-queue filter logic before a future projection cutover.
+      //
+      // PHI safety: only event-source string + ownerId counts +
+      // symmetric-difference COUNTS land in the log. Never patient
+      // name, DOB, summary text, raw query, or metadata.
+      //
+      // Scope: only user-scoped reads are shadowed. Admin team-wide
+      // queries (no schedulerId filter resolved) are skipped because
+      // the operational-queue per-user helper requires a userId.
+      if (isOperationalQueueCallListEnabled() && filters.schedulerId != null) {
+        try {
+          // Resolve the userId for the resolved schedulerId. For
+          // non-admin requests this is the session user; for admin
+          // requests we look it up from outreach_schedulers.
+          let shadowUserId: string | null = userId;
+          if (isAdmin) {
+            const allSchedulers = await storage.getOutreachSchedulers();
+            const target = allSchedulers.find((s) => s.id === filters.schedulerId);
+            shadowUserId = target?.userId ?? null;
+          }
+          if (shadowUserId) {
+            const queueItems = await getOperationalQueueForUser(shadowUserId, {
+              kinds: ["call_list_item"],
+              dateFrom: asOfDate,
+              dateTo: asOfDate,
+            });
+            const legacyIds = new Set(rows.map((r) => r.id));
+            const queueOwnerIds = new Set(queueItems.map((i) => i.ownerId));
+            const inLegacyOnly = [...legacyIds].filter((id) => !queueOwnerIds.has(id)).length;
+            const inQueueOnly = [...queueOwnerIds].filter((id) => !legacyIds.has(id)).length;
+            const parityMatch = inLegacyOnly === 0 && inQueueOnly === 0;
+            console.log("[USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read", {
+              parityMatch,
+              legacyCount: legacyIds.size,
+              queueCount: queueOwnerIds.size,
+              inLegacyOnly,
+              inQueueOnly,
+            });
+          } else {
+            console.log("[USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read skipped: no userId for scheduler");
+          }
+        } catch (shadowErr) {
+          // Never affect the response. Log + swallow.
+          console.error(
+            "[USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read failed:",
+            shadowErr instanceof Error ? shadowErr.message : shadowErr,
+          );
+        }
+      }
+
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to list assignments" });
