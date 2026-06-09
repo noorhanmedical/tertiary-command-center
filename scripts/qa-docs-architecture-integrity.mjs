@@ -93,6 +93,9 @@ info("docs/architecture/journey-event-standardization-design.md");
 info("docs/architecture/background-jobs-design.md");
 info("docs/architecture/aws-readiness-design.md");
 
+// Batch 16 — documents storage abstraction (docs-only).
+info("docs/architecture/documents-storage-design.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
