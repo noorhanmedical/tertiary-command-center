@@ -495,162 +495,36 @@ export function registerPatientRoutes(
   // name maps to the requested ancillary, plus the adminReview metadata
   // for that one ancillary. Other ancillaries' canonical reasoning is
   // preserved verbatim.
+  //
+  // Delegated to server/services/plexusIq/adminReviewRegenerateAncillaryService.ts.
+  // Response shape, status codes, error messages, reasoning merge order,
+  // supplemental metadata write, and external AI call semantics are preserved
+  // byte-for-byte; see docs/architecture/backend-route-parity-inventory.md §1.4.
   app.post(
     "/api/patient-screenings/:id/admin-review/regenerate-ancillary",
     async (req, res) => {
       try {
         const id = parseInt(req.params.id);
-        if (Number.isNaN(id)) {
-          return res.status(400).json({ error: "Invalid patient id" });
-        }
-        const ancillaryId = String(req.body?.ancillaryId ?? "");
-        if (
-          ancillaryId !== "brainwave" &&
-          ancillaryId !== "vitalwave" &&
-          ancillaryId !== "ultrasound"
-        ) {
-          return res.status(400).json({
-            error: "ancillaryId must be one of brainwave / vitalwave / ultrasound",
-          });
-        }
-        const patient = await storage.getPatientScreening(id);
-        if (!patient) return res.status(404).json({ error: "Patient not found" });
-
-        const assignedEvidence = Array.isArray(req.body?.assignedEvidence)
-          ? req.body.assignedEvidence
-          : [];
-        const ancillaryNote =
-          typeof req.body?.ancillaryNote === "string" ? req.body.ancillaryNote : "";
-        const adminNote =
-          typeof req.body?.adminNote === "string" ? req.body.adminNote : "";
-        const icdCodes: Array<{ code: string; label: string }> = Array.isArray(
-          req.body?.icdCodes,
-        )
-          ? req.body.icdCodes
-              .map((c: any) => ({
-                code: String(c?.code ?? "").trim(),
-                label: String(c?.label ?? "").trim(),
-              }))
-              .filter((c: { code: string }) => c.code.length > 0)
-          : [];
-        const updatedDiagnoses =
-          typeof req.body?.diagnoses === "string" ? req.body.diagnoses : patient.diagnoses;
-        const updatedMedications =
-          typeof req.body?.medications === "string" ? req.body.medications : patient.medications;
-        const updatedHistory =
-          typeof req.body?.history === "string" ? req.body.history : patient.history;
-
-        const { getAncillaryCategory } = await import("@shared/ancillaryCategory");
-        const allTests = Array.isArray(patient.qualifyingTests)
-          ? patient.qualifyingTests
-          : [];
-        const filteredTests = allTests.filter(
-          (t) => getAncillaryCategory(t) === ancillaryId,
+        const { regenerateAdminReviewAncillary } = await import(
+          "../services/plexusIq/adminReviewRegenerateAncillaryService"
         );
-
-        const { regenerateCanonicalReasoning } = await import(
-          "../services/plexusIq/adminReviewAiRegeneration"
-        );
-
-        const priorReasoning =
-          patient.reasoning && typeof patient.reasoning === "object" && !Array.isArray(patient.reasoning)
-            ? (patient.reasoning as Record<string, any>)
-            : {};
-        const existingReasoningByTest: Record<string, any> = {};
-        for (const t of filteredTests) {
-          const e = priorReasoning[t];
-          if (e && typeof e === "object" && !Array.isArray(e)) existingReasoningByTest[t] = e;
-        }
-
-        const selectedSupportButtonsByTest: Record<string, any[]> = {};
-        for (const t of filteredTests) selectedSupportButtonsByTest[t] = assignedEvidence;
-
-        const removedFactorsByTest: Record<string, string[]> = {};
-        const removedAncillary = Array.isArray(req.body?.removedFactors) ? req.body.removedFactors : [];
-        if (removedAncillary.length) {
-          for (const t of filteredTests) {
-            removedFactorsByTest[t] = removedAncillary.map((s: any) => String(s));
+        const outcome = await regenerateAdminReviewAncillary(id, req.body);
+        if (!outcome.ok) {
+          if (outcome.error.kind === "invalid_id") {
+            return res.status(400).json({ error: "Invalid patient id" });
           }
-        }
-        const removedPerTestBody = req.body?.removedFactorsByTest;
-        if (removedPerTestBody && typeof removedPerTestBody === "object") {
-          for (const [t, arr] of Object.entries(removedPerTestBody)) {
-            if (Array.isArray(arr)) {
-              removedFactorsByTest[t] = [
-                ...(removedFactorsByTest[t] ?? []),
-                ...arr.map((s: any) => String(s)),
-              ];
-            }
+          if (outcome.error.kind === "invalid_ancillary_id") {
+            return res.status(400).json({
+              error: "ancillaryId must be one of brainwave / vitalwave / ultrasound",
+            });
           }
+          return res.status(404).json({ error: "Patient not found" });
         }
-
-        const priorQualifyingFactorsByTest: Record<string, string[]> = {};
-        const priorFromBody = req.body?.priorQualifyingFactorsByTest;
-        if (priorFromBody && typeof priorFromBody === "object") {
-          for (const [t, arr] of Object.entries(priorFromBody)) {
-            if (Array.isArray(arr)) priorQualifyingFactorsByTest[t] = arr.map((s: any) => String(s));
-          }
-        }
-
-        const ai = await regenerateCanonicalReasoning({
-          patient: {
-            ...patient,
-            history: updatedHistory ?? null,
-            diagnoses: updatedDiagnoses ?? null,
-            medications: updatedMedications ?? null,
-          } as typeof patient,
-          qualifyingTests: filteredTests,
-          assignedEvidenceByAncillary: {
-            brainwave: ancillaryId === "brainwave" ? assignedEvidence : [],
-            vitalwave: ancillaryId === "vitalwave" ? assignedEvidence : [],
-            ultrasound: ancillaryId === "ultrasound" ? assignedEvidence : [],
-          },
-          ancillaryNotes: {
-            brainwave: ancillaryId === "brainwave" ? ancillaryNote : "",
-            vitalwave: ancillaryId === "vitalwave" ? ancillaryNote : "",
-            ultrasound: ancillaryId === "ultrasound" ? ancillaryNote : "",
-          },
-          adminNote,
-          icdCodes,
-          existingReasoningByTest,
-          removedFactorsByTest,
-          selectedSupportButtonsByTest,
-          priorQualifyingFactorsByTest,
+        res.json({
+          ok: true,
+          patient: outcome.patient,
+          ancillaryId: outcome.ancillaryId,
         });
-
-        const existingReasoning =
-          patient.reasoning &&
-          typeof patient.reasoning === "object" &&
-          !Array.isArray(patient.reasoning)
-            ? { ...(patient.reasoning as Record<string, unknown>) }
-            : {};
-
-        // Merge ONLY filtered-test entries. Other tests' canonical entries
-        // (including other ancillaries) are preserved verbatim.
-        for (const [testName, entry] of Object.entries(ai.reasoningByTest)) {
-          existingReasoning[testName] = entry;
-        }
-
-        const timestamp = new Date().toISOString();
-        existingReasoning[`adminReview:${ancillaryId}`] = {
-          ancillaryId,
-          assignedEvidence,
-          ancillaryNote,
-          regeneratedAt: timestamp,
-          regeneratedMode: "ancillary",
-        };
-
-        const updatePayload: Record<string, unknown> = {
-          reasoning: existingReasoning,
-        };
-        if (updatedDiagnoses !== patient.diagnoses) updatePayload.diagnoses = updatedDiagnoses;
-        if (updatedMedications !== patient.medications) updatePayload.medications = updatedMedications;
-        if (updatedHistory !== patient.history) updatePayload.history = updatedHistory;
-
-        const updated = await storage.updatePatientScreening(id, updatePayload);
-
-        invalidatePatientDatabase();
-        res.json({ ok: true, patient: updated, ancillaryId });
       } catch (error: any) {
         console.error(
           "[admin-review/regenerate-ancillary] error:",
