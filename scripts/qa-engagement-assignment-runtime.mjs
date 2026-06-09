@@ -194,11 +194,12 @@ requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
   "PDF generation runs on demand",
   "Engagement Center clears stale selection when group mode changes",
   "Engagement Center clears stale PDF errors when group mode changes",
-  // Canonical PDF helpers reused as-is — awaitable variants are
-  // required so the inline error surface can show the real reason
-  // instead of the fire-and-forget alert fallback.
-  "generatePlexusPDFAsync",
-  "generateClinicianPDFAsync",
+  // Print-preview helpers replace the awaitable html2pdf variants
+  // for every multi-patient packet on the board. The html2pdf
+  // helpers are still exported from pdfGeneration.ts but the board
+  // must not call them directly (negative guard later in this file).
+  "openPatientPacketPrintPreview",
+  "openSchedulerPacketPrintPreview",
   "validateSameFacilityDatePacket",
   // Cancel-many wire endpoint.
   "/api/engagement/assignment-board/cancel-many",
@@ -333,10 +334,10 @@ requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
   "engagement-center-scheduler-pdf-packet-count",
   "engagement-center-scheduler-pdf-split-warning",
   "engagement-center-scheduler-pdf-error",
-  // Toast copy: count + scheduler name surfaced before generation.
-  "Generating 1 packet for",
-  "by facility/date",
-  "Failed to generate",
+  // Toast copy: count + scheduler name surfaced when the one-popup
+  // preview opens.
+  "Opened 1 packet for",
+  "in one preview",
   "splitPatientsByFacilityDate",
   // Freeze prevention pass — html2canvas runs synchronously on the
   // main thread, so a scheduler that holds 60 patients in one
@@ -344,17 +345,59 @@ requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
   // packet, yield to the event loop between exports, confirm before
   // large multi-export batches, and report progress on the button
   // label so the operator can see the job is alive.
-  "Scheduler PDF caps patients per export to prevent freeze",
-  "Scheduler PDF yields to event loop between exports",
-  "Scheduler PDF confirms before large multi-export batches",
-  "Scheduler PDF generation reports per-export progress",
-  "MAX_PATIENTS_PER_EXPORT",
-  "CONFIRM_THRESHOLD_EXPORTS",
-  // The per-export progress label uses the count from
-  // pdfProgressByGroup; both must exist.
+  // The per-export progress label still exists (state kept for the
+  // brief "Generating…" flash); the chunking constants are gone now
+  // that the scheduler popup renders ONE preview with all packets.
   "pdfProgressByGroup",
   "Generating ${pdfProgress.current}/${pdfProgress.total}",
+  // Print-preview wiring: every multi-patient packet path on the
+  // board (Date / Facility / Scheduler) opens a popup instead of
+  // running html2pdf inline. Negative guard (later in this file)
+  // forbids generatePlexusPDFAsync / generateClinicianPDFAsync
+  // calls from EngagementAssignmentBoard.tsx.
+  "Engagement Center date packets use print preview",
+  "Engagement Center facility packets use print preview",
+  "Engagement Center packet print preview avoids html2canvas",
+  "engagement-center-date-plexus-print-preview",
+  "engagement-center-date-clinician-print-preview",
+  "engagement-center-facility-plexus-print-preview",
+  "engagement-center-facility-clinician-print-preview",
+  "engagement-center-print-preview-popup-blocked",
+  "engagement-center-print-preview-error",
+  "Scheduler call-list packets use print preview",
+  "Scheduler call-list print preview groups by facility date",
+  "Scheduler call-list print preview avoids forced multi-downloads",
+  "Scheduler call-list print preview avoids html2canvas",
+  "engagement-center-scheduler-plexus-print-preview",
+  "engagement-center-scheduler-clinician-print-preview",
+  "engagement-center-scheduler-print-preview-popup-blocked",
+  "engagement-center-scheduler-print-preview-error",
+  "openPatientPacketPrintPreview",
+  "openSchedulerPacketPrintPreview",
 ]);
+
+// Negative guard — once a multi-patient packet path moves to print
+// preview, the html2pdf helpers must not be re-imported here. The
+// canonical helpers stay available in pdfGeneration.ts for non-
+// packet / simple exports (PatientPdfActions per-patient PDFs etc.).
+{
+  const ecSource = read(
+    "client/src/components/engagement/EngagementAssignmentBoard.tsx",
+  ) ?? "";
+  for (const banned of [
+    "generatePlexusPDF(",
+    "generateClinicianPDF(",
+    "generatePlexusPDFAsync(",
+    "generateClinicianPDFAsync(",
+    "exportPdfDocument(",
+  ]) {
+    if (ecSource.includes(banned)) {
+      failures.push(
+        `EngagementAssignmentBoard must not call ${banned} directly — multi-patient packets must go through openPatientPacketPrintPreview / openSchedulerPacketPrintPreview.`,
+      );
+    }
+  }
+}
 
 // Split helper lives in pdfPacketGrouping — the Scheduler / Team
 // Member call list relies on it to fan one selection out into N

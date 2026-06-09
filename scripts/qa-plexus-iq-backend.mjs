@@ -261,12 +261,29 @@ requireText("client/src/lib/pdfGeneration.ts", [
   // parallel popup-based surface used only by Plexus IQ packet
   // buttons today.
   "openPatientPacketPrintPreview",
+  "openSchedulerPacketPrintPreview",
   "buildClinicianPdfBody",
   "buildPlexusPdfBody",
   "Plexus IQ packet print preview avoids html2canvas",
   "Plexus IQ packet print preview opens printable popup",
   "Plexus IQ packet print preview hides toolbar when printing",
   "html2pdf retained as fallback outside Plexus IQ packet preview",
+  // Global print-preview architecture markers — every multi-patient
+  // packet flow uses these helpers now (Plexus IQ, Admin Review,
+  // Engagement Center Date/Facility/Scheduler). The html2pdf
+  // helpers stay for simple non-packet exports.
+  "Packet print preview replaces html2pdf for multi-patient packets",
+  "Packet print preview avoids html2canvas for patient packets",
+  "Packet print preview opens one printable window",
+  "Packet print preview hides toolbar when printing",
+  "html2pdf retained only for simple non-packet exports",
+  // Scheduler call-list one-popup grouped surface lives in the same
+  // file; the helper assembles ONE preview body with sections per
+  // facility/date instead of N download streams.
+  "Scheduler call-list packets use print preview",
+  "Scheduler call-list print preview groups by facility date",
+  "Scheduler call-list print preview avoids forced multi-downloads",
+  "Scheduler call-list print preview avoids html2canvas",
   // Popup HTML testIds — asserted as raw strings so the popup
   // surface stays detectable.
   "packet-print-preview-window",

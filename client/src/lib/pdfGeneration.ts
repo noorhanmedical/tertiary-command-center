@@ -682,26 +682,115 @@ export function buildPlexusPdfBody(batchName: string, patients: PatientScreening
   return pages.join("");
 }
 
-// Open a printable popup containing the same Plexus / Clinician
-// packet HTML the html2pdf path uses, plus a small toolbar with
-// Print / Save as PDF and Close buttons. This is the path Plexus IQ
-// multi-patient packet buttons take so the operator gets a print
-// preview instead of a synchronous html2canvas freeze.
+// ─────────────────────────────────────────────────────────────────────
+// Print-preview popup architecture
+// ─────────────────────────────────────────────────────────────────────
 //
-// Returns false when the popup was blocked so the caller can toast.
-// Throws when the body is empty (no qualifying patients) so the
-// caller can surface that as a real error.
+// Every multi-patient packet flow (Plexus IQ, Admin Review, and
+// Engagement Center) opens a popup window with the canonical packet
+// HTML + a fixed toolbar that lets the operator hit
+// "Print / Save as PDF" themselves. html2pdf / html2canvas are
+// avoided for these flows because the synchronous canvas pass froze
+// the browser on larger packets.
 //
+// The html2pdf helpers (generatePlexusPDF, generateClinicianPDF,
+// generatePlexusPDFAsync, generateClinicianPDFAsync,
+// exportPdfDocument) are retained for simple non-packet exports
+// (e.g. single-patient PDFs from PatientPdfActions).
+//
+// SOURCE MARKER: Packet print preview replaces html2pdf for multi-patient packets
+// SOURCE MARKER: Packet print preview avoids html2canvas for patient packets
+// SOURCE MARKER: Packet print preview opens one printable window
+// SOURCE MARKER: Packet print preview hides toolbar when printing
+// SOURCE MARKER: html2pdf retained only for simple non-packet exports
+// SOURCE MARKER: html2pdf retained as fallback outside Plexus IQ packet preview
 // SOURCE MARKER: Plexus IQ packet print preview avoids html2canvas
 // SOURCE MARKER: Plexus IQ packet print preview opens printable popup
 // SOURCE MARKER: Plexus IQ packet print preview hides toolbar when printing
-// SOURCE MARKER: html2pdf retained as fallback outside Plexus IQ packet preview
 export type PacketPrintPreviewMode = "plexus" | "clinician";
 
 export type PacketPrintPreviewResult =
   | { ok: true }
   | { ok: false; reason: "popup-blocked" };
 
+// One body section inside the print-preview popup. Single-packet
+// flows pass one section; the scheduler call-list flow passes one
+// section per facility/date so the operator gets ONE popup with all
+// the packets stacked inside.
+export type PacketPrintPreviewSection = {
+  heading?: string;
+  body: string;
+};
+
+const PREVIEW_TOOLBAR_STYLES = `
+  .preview-toolbar {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 8px 14px;
+    background: #1a365d; color: #ffffff;
+    box-shadow: 0 1px 4px rgba(15,23,42,0.18);
+    font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    z-index: 9999;
+  }
+  .preview-toolbar h1 { margin: 0; font-size: 12px; font-weight: 700; }
+  .preview-toolbar button {
+    font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer;
+  }
+  .preview-toolbar .preview-print-btn { background:#ffffff; color:#1a365d; }
+  .preview-toolbar .preview-print-btn:hover { background:#e2e8f0; }
+  .preview-toolbar .preview-close-btn { background: transparent; color:#ffffff; border:1px solid rgba(255,255,255,0.5); }
+  .preview-toolbar .preview-close-btn:hover { background: rgba(255,255,255,0.1); }
+  .preview-doc { padding-top: 48px; }
+  .preview-section-heading {
+    font-size: 13px; font-weight: 800; color: #1a365d;
+    margin: 18px 20px 6px; padding-bottom: 4px;
+    border-bottom: 2px solid #1a365d;
+    page-break-before: always; break-before: page;
+  }
+  .preview-section-heading:first-of-type {
+    page-break-before: avoid; break-before: avoid;
+  }
+  @media print {
+    .preview-toolbar { display: none !important; }
+    .preview-doc { padding-top: 0; }
+  }
+`;
+
+// Build the popup HTML body for one or more sections. Used by every
+// print-preview entry point so the toolbar markup + testIds + media
+// rules are defined exactly once.
+function buildPreviewPopupHtml(docTitle: string, sections: PacketPrintPreviewSection[]): string {
+  const sectionsHtml = sections
+    .map((s) => {
+      const head = s.heading
+        ? `<div class="preview-section-heading">${esc(s.heading)}</div>`
+        : "";
+      return `${head}${s.body}`;
+    })
+    .join("");
+  return (
+    `<!DOCTYPE html><html><head><meta charset="utf-8">` +
+    `<title>${esc(docTitle)}</title>` +
+    `<style>${PDF_BASE_STYLES}</style>` +
+    `<style>${PREVIEW_TOOLBAR_STYLES}</style>` +
+    `</head><body>` +
+    `<div class="preview-toolbar" data-testid="packet-print-preview-window">` +
+    `<h1>${esc(docTitle)}</h1>` +
+    `<div>` +
+    `<button type="button" class="preview-print-btn" data-testid="packet-print-preview-print-button" onclick="window.print()">Print / Save as PDF</button>` +
+    ` ` +
+    `<button type="button" class="preview-close-btn" data-testid="packet-print-preview-close-button" onclick="window.close()">Close</button>` +
+    `</div></div>` +
+    `<div class="preview-doc">${sectionsHtml}</div>` +
+    `</body></html>`
+  );
+}
+
+// Open a print-preview popup containing the same Plexus / Clinician
+// packet HTML the html2pdf path used, plus the shared toolbar.
+// Returns popup-blocked instead of silently failing. Throws when the
+// body is empty so callers can surface a real error.
 export function openPatientPacketPrintPreview(input: {
   mode: PacketPrintPreviewMode;
   batchName: string;
@@ -733,55 +822,83 @@ export function openPatientPacketPrintPreview(input: {
     return { ok: false, reason: "popup-blocked" };
   }
 
-  // Toolbar is fixed at the top of the popup so the operator can hit
-  // Print without scrolling. `@media print` hides it so the saved PDF
-  // is clean. Buttons carry the canonical testIds so QA / e2e can
-  // assert the preview surface exists.
-  const previewStyles = `
-    .preview-toolbar {
-      position: fixed; top: 0; left: 0; right: 0;
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 12px; padding: 8px 14px;
-      background: #1a365d; color: #ffffff;
-      box-shadow: 0 1px 4px rgba(15,23,42,0.18);
-      font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      z-index: 9999;
-    }
-    .preview-toolbar h1 { margin: 0; font-size: 12px; font-weight: 700; }
-    .preview-toolbar button {
-      font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer;
-    }
-    .preview-toolbar .preview-print-btn { background:#ffffff; color:#1a365d; }
-    .preview-toolbar .preview-print-btn:hover { background:#e2e8f0; }
-    .preview-toolbar .preview-close-btn { background: transparent; color:#ffffff; border:1px solid rgba(255,255,255,0.5); }
-    .preview-toolbar .preview-close-btn:hover { background: rgba(255,255,255,0.1); }
-    .preview-doc { padding-top: 48px; }
-    @media print {
-      .preview-toolbar { display: none !important; }
-      .preview-doc { padding-top: 0; }
-    }
-  `;
-
-  const html =
-    `<!DOCTYPE html><html><head><meta charset="utf-8">` +
-    `<title>${esc(docTitle)}</title>` +
-    `<style>${PDF_BASE_STYLES}</style>` +
-    `<style>${previewStyles}</style>` +
-    `</head><body>` +
-    `<div class="preview-toolbar" data-testid="packet-print-preview-window">` +
-    `<h1>${esc(docTitle)}</h1>` +
-    `<div>` +
-    `<button type="button" class="preview-print-btn" data-testid="packet-print-preview-print-button" onclick="window.print()">Print / Save as PDF</button>` +
-    ` ` +
-    `<button type="button" class="preview-close-btn" data-testid="packet-print-preview-close-button" onclick="window.close()">Close</button>` +
-    `</div></div>` +
-    `<div class="preview-doc">${body}</div>` +
-    `</body></html>`;
-
+  const html = buildPreviewPopupHtml(docTitle, [{ body }]);
   win.document.open();
   win.document.write(html);
   win.document.close();
   win.focus();
   return { ok: true };
+}
+
+// One scheduler-call-list packet group: a single (facility, date|
+// outreach) slice from the scheduler's selection. Multiple groups
+// produce one popup with each group stacked inside under a heading.
+export type SchedulerPacketPreviewGroup = {
+  label: string;
+  patients: PatientScreening[];
+  scheduleDate: string | null;
+};
+
+// Open ONE print-preview popup for a scheduler's call list with all
+// facility/date groups stacked inside. No multi-downloads, no
+// chunking, no html2canvas. Groups that produce an empty body (e.g.
+// a Plexus packet group with no qualified tests) are dropped from
+// the popup; the caller is told via `droppedGroups` so it can toast.
+//
+// SOURCE MARKER: Scheduler call-list packets use print preview
+// SOURCE MARKER: Scheduler call-list print preview groups by facility date
+// SOURCE MARKER: Scheduler call-list print preview avoids forced multi-downloads
+// SOURCE MARKER: Scheduler call-list print preview avoids html2canvas
+export type SchedulerPacketPreviewResult =
+  | { ok: true; renderedGroupCount: number; droppedGroups: string[] }
+  | { ok: false; reason: "popup-blocked" | "no-groups" };
+
+export function openSchedulerPacketPrintPreview(input: {
+  mode: PacketPrintPreviewMode;
+  schedulerName: string;
+  groups: SchedulerPacketPreviewGroup[];
+  createdAt?: string | Date | null;
+  title?: string;
+}): SchedulerPacketPreviewResult {
+  const { mode, schedulerName, groups, createdAt } = input;
+  if (groups.length === 0) {
+    return { ok: false, reason: "no-groups" };
+  }
+
+  const docTitle =
+    input.title ??
+    (mode === "plexus"
+      ? `Plexus Team Script — ${schedulerName}`
+      : `Clinician Report — ${schedulerName}`);
+
+  const sections: PacketPrintPreviewSection[] = [];
+  const droppedGroups: string[] = [];
+  for (const g of groups) {
+    const batchName = `${schedulerName} — ${g.label}`;
+    const body =
+      mode === "plexus"
+        ? buildPlexusPdfBody(batchName, g.patients, g.scheduleDate, createdAt)
+        : buildClinicianPdfBody(batchName, g.patients, g.scheduleDate, createdAt);
+    if (!body || body.trim().length === 0) {
+      droppedGroups.push(g.label);
+      continue;
+    }
+    sections.push({ heading: g.label, body });
+  }
+
+  if (sections.length === 0) {
+    return { ok: false, reason: "no-groups" };
+  }
+
+  const win = window.open("", "_blank");
+  if (!win) {
+    return { ok: false, reason: "popup-blocked" };
+  }
+
+  const html = buildPreviewPopupHtml(docTitle, sections);
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  return { ok: true, renderedGroupCount: sections.length, droppedGroups };
 }
