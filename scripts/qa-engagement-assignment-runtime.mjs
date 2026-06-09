@@ -430,6 +430,32 @@ requireText(routeFile, [
   "outreachSchedulers",
 ]);
 
+// ────────────────────────────────────────────────────────────────────
+// 5b. Batch 12b — typed journey-event writer.
+//
+// The assign + cancel-many handlers go through the typed
+// appendJourneyEvent helper (not raw db.insert), and the helper file
+// itself exists.
+// ────────────────────────────────────────────────────────────────────
+
+requireFile("server/services/journey/appendJourneyEvent.ts");
+requireText("server/services/journey/appendJourneyEvent.ts", [
+  "export async function appendJourneyEvent",
+  "PATIENT_JOURNEY_EVENT_TYPES",
+  "appendPatientJourneyEvent",
+]);
+requireText(routeFile, [
+  "from \"../services/journey/appendJourneyEvent\"",
+  "appendJourneyEvent({",
+  "eventType: \"engagement_assignment_changed\"",
+  "eventType: \"engagement_assignment_cancelled\"",
+]);
+requireText("server/routes/executionCases.ts", [
+  "from \"../services/journey/appendJourneyEvent\"",
+  "appendJourneyEvent({",
+  "eventType: \"call_result_logged\"",
+]);
+
 // No engagement-specific migration should have been added with this
 // transplant. Walk migrations/ to confirm nothing matches the
 // engagement-assignment naming.

@@ -10,6 +10,7 @@ import {
   screeningBatches,
   outreachSchedulers,
 } from "@shared/schema";
+import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 
 // No-duplicate-scheduler-per-date guard.
 //
@@ -520,7 +521,7 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             })
             .where(eq(patientExecutionCases.id, execCase.id));
 
-          await db.insert(patientJourneyEvents).values({
+          await appendJourneyEvent({
             patientScreeningId: pid,
             executionCaseId: execCase.id,
             actorUserId: (req.session as any)?.userId ?? null,
@@ -663,11 +664,11 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             .where(eq(patientExecutionCases.id, caseId));
 
           try {
-            await db.insert(patientJourneyEvents).values({
+            await appendJourneyEvent({
               patientScreeningId: execCase.patientScreeningId ?? null,
               executionCaseId: execCase.id,
               actorUserId: (req.session as any)?.userId ?? null,
-              patientName: execCase.patientName ?? null,
+              patientName: execCase.patientName ?? "",
               patientDob: execCase.patientDob ?? null,
               eventType: "engagement_assignment_cancelled",
               eventSource: "engagement_assignment_board",

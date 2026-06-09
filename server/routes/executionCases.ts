@@ -13,8 +13,8 @@ import {
   listEngagementCenterCases,
   listSchedulerPortalCases,
   assignEngagementCases,
-  appendPatientJourneyEvent,
 } from "../repositories/executionCase.repo";
+import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 import {
   createSchedulingTriageCase,
   upsertOpenSchedulingTriageCase,
@@ -271,9 +271,9 @@ export function registerExecutionCaseRoutes(app: Express) {
         facilityId: facilityId ?? null,
         ...(data.metadata ?? {}),
       };
-      let journeyEvent: Awaited<ReturnType<typeof appendPatientJourneyEvent>> | null = null;
+      let journeyEvent: Awaited<ReturnType<typeof appendJourneyEvent>> | null = null;
       try {
-        journeyEvent = await appendPatientJourneyEvent({
+        journeyEvent = await appendJourneyEvent({
           patientName,
           patientDob: patientDob ?? undefined,
           patientScreeningId: patientScreeningId ?? undefined,
