@@ -80,9 +80,12 @@ requireText(patientsRoute, [
   "/api/patient-screenings/:id/admin-review/icd-search",
   "searchAdminReviewIcdCodes",
   "@shared/ancillaryCategory",
-  // Per-test regenerate route.
+  // Per-test regenerate route. After Batch 3b.5 the handler is wrapped by
+  // adminReviewRegenerateTestService.ts; the route only registers the path
+  // and delegates. The unique `qualifyingTests: [testName]` signature now
+  // lives in the service (asserted below).
   "/api/patient-screenings/:id/admin-review/regenerate-test",
-  "qualifyingTests: [testName]",
+  "adminReviewRegenerateTestService",
   "adminReview:test:",
   // ICD search structured error envelope (no leaking keys/PHI).
   "OpenAI universal ICD search failed",
@@ -90,6 +93,20 @@ requireText(patientsRoute, [
   "hasOpenAIKey",
   "hasBaseUrl",
 ]);
+
+// Per-test regenerate service must use the single-test signature
+// `qualifyingTests: [testName]` when calling regenerateCanonicalReasoning,
+// and write the supplemental `adminReview:test:<testName>` metadata with
+// `regeneratedMode: "test"`.
+requireText(
+  "server/services/plexusIq/adminReviewRegenerateTestService.ts",
+  [
+    "qualifyingTests: [testName]",
+    "regenerateCanonicalReasoning",
+    "adminReview:test:",
+    'regeneratedMode: "test"',
+  ],
+);
 
 // AI ICD search service: universal search, Responses API + strict json_schema,
 // baseURL support, explicit error messages, prefers AI_INTEGRATIONS_OPENAI_API_KEY.
