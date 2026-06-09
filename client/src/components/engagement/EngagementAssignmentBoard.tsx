@@ -31,6 +31,8 @@ import {
   Trash2,
   FileText,
   Shuffle,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { PatientScreening } from "@shared/schema";
@@ -170,6 +172,25 @@ export function EngagementAssignmentBoard() {
   const [pdfProgressByGroup, setPdfProgressByGroup] = useState<
     Record<string, { current: number; total: number } | null>
   >({});
+  // All grouped cards start COLLAPSED. The operator opens a group by
+  // clicking the chevron / group header; the action bar (Select All,
+  // PDF buttons, Assign, Delete All) stays visible even when
+  // collapsed so the most common operations are one click away. The
+  // patient list inside the card is only rendered when the group is
+  // expanded.
+  // SOURCE MARKER: Engagement Center grouped cards start collapsed
+  // SOURCE MARKER: Engagement Center grouped expansion is user driven
+  const [expandedGroupKeys, setExpandedGroupKeys] = useState<Set<string>>(
+    () => new Set<string>(),
+  );
+  function toggleGroupExpanded(groupKey: string) {
+    setExpandedGroupKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  }
 
   // Switching group mode invalidates both the per-group selection
   // (the group keys don't exist in the new mode) and any inline PDF
@@ -183,6 +204,10 @@ export function EngagementAssignmentBoard() {
     setPdfErrorByGroup({});
     setPdfGeneratingByGroup({});
     setPdfProgressByGroup({});
+    // Re-collapse every group when the user switches mode — the
+    // group keys don't exist in the new mode, and the operator
+    // should always land on the same collapsed-by-default view.
+    setExpandedGroupKeys(new Set<string>());
   }, [groupMode]);
 
   const board = useQuery<BoardResponse>({
@@ -1199,6 +1224,7 @@ export function EngagementAssignmentBoard() {
             const pdfGroupBusy = pdfPendingMode !== null;
             const plexusBusy = pdfPendingMode === "plexus";
             const clinicianBusy = pdfPendingMode === "clinician";
+            const isExpanded = expandedGroupKeys.has(group.key);
             const pdfProgress = pdfProgressByGroup[group.key] ?? null;
             const pdfBusyLabel =
               pdfGroupBusy && pdfProgress && pdfProgress.total > 1
@@ -1263,10 +1289,25 @@ export function EngagementAssignmentBoard() {
                 data-testid={groupSection}
                 data-group-key={group.key}
                 data-group-tone={group.tone}
+                data-expanded={isExpanded ? "true" : "false"}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="flex items-center gap-2 text-xs text-slate-700">
-                    <span className="font-semibold text-slate-900">{group.label}</span>
+                  {/* SOURCE MARKER: Engagement Center grouped expansion is user driven */}
+                  <button
+                    type="button"
+                    onClick={() => toggleGroupExpanded(group.key)}
+                    aria-expanded={isExpanded}
+                    title={isExpanded ? `Collapse ${group.label}` : `Expand ${group.label}`}
+                    className="flex items-center gap-2 min-w-0 text-xs text-slate-700 bg-transparent border-0 p-0 text-left"
+                    data-testid="engagement-center-group-toggle"
+                    data-group-key={group.key}
+                  >
+                    {isExpanded ? (
+                      <ChevronDown className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                    )}
+                    <span className="font-semibold text-slate-900 truncate">{group.label}</span>
                     <span className="text-slate-400">·</span>
                     <span>{group.rows.length}</span>
                     <span
@@ -1276,7 +1317,7 @@ export function EngagementAssignmentBoard() {
                     >
                       · {selectedCount} selected
                     </span>
-                  </div>
+                  </button>
                   <div className="flex items-center gap-1.5">
                     <Button
                       size="sm"
@@ -1414,77 +1455,89 @@ export function EngagementAssignmentBoard() {
                 >
                   Engagement Center print preview error surface.
                 </span>
-                <ul className="divide-y divide-slate-100">
-                  {group.rows.map((r) => {
-                    const isSelected = selected.has(r.executionCaseId);
-                    return (
-                      <li
-                        key={r.executionCaseId}
-                        className="flex items-start gap-3 px-3 py-2"
-                        data-testid={groupPatientTestId}
-                        data-execution-case-id={r.executionCaseId}
-                      >
-                        <Checkbox
-                          checked={isSelected}
-                          onCheckedChange={() => toggleSelectInGroup(group.key, r.executionCaseId)}
-                          data-testid="engagement-center-select-patient"
-                          data-group-key={group.key}
-                        />
-                        <div className="min-w-0 flex-1 text-xs">
-                          <div className="font-medium text-slate-900 truncate">
-                            {r.patientName}
-                          </div>
-                          <div className="text-slate-500 truncate">
-                            {[r.facility, r.scheduleDate, r.engagementStatus]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </div>
-                          {r.selectedServices?.length ? (
-                            <div className="text-slate-400 truncate">
-                              {r.selectedServices.join(", ")}
-                            </div>
-                          ) : null}
-                        </div>
-                        <div className="text-[10px] text-slate-500 shrink-0 text-right">
-                          <div>
-                            {r.assignedName ?? "Unassigned"}
-                          </div>
-                          <div>{fmtRel(r.lastActivityAt)}</div>
-                        </div>
-                        <InlineSchedulerPicker
-                          executionCaseId={r.executionCaseId}
-                          patientScreeningId={r.patientScreeningId}
-                          currentSchedulerId={r.assignedTeamMemberId}
-                          currentSchedulerName={r.assignedName}
-                          schedulers={schedulers.data ?? []}
-                          busy={assignMutation.isPending}
-                          onAssign={(schedulerId) => {
-                            if (r.patientScreeningId != null) {
-                              submitOne(r.patientScreeningId, schedulerId);
-                            }
-                          }}
-                        />
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            const ok = confirm(
-                              `Remove this assignment from Engagement Center? The patient record stays in Plexus IQ.`,
-                            );
-                            if (ok) cancelManyMutation.mutate({ executionCaseIds: [r.executionCaseId] });
-                          }}
-                          disabled={cancelManyMutation.isPending}
-                          className="h-7 w-7 p-0 text-slate-400 hover:text-rose-600"
-                          data-testid="engagement-center-delete-patient"
-                          aria-label="Remove this assignment"
-                          title="Remove this assignment"
+                {/* Patient list is rendered only when the group is
+                    expanded. The action bar above stays visible
+                    while collapsed so the operator can still hit
+                    Select All / PDF / Assign / Distribute / Delete
+                    without expanding first.
+                    SOURCE MARKER: Engagement Center grouped patient list hidden when collapsed */}
+                {isExpanded && (
+                  <ul
+                    className="divide-y divide-slate-100"
+                    data-testid="engagement-center-group-patient-list"
+                    data-group-key={group.key}
+                  >
+                    {group.rows.map((r) => {
+                      const isSelected = selected.has(r.executionCaseId);
+                      return (
+                        <li
+                          key={r.executionCaseId}
+                          className="flex items-start gap-3 px-3 py-2"
+                          data-testid={groupPatientTestId}
+                          data-execution-case-id={r.executionCaseId}
                         >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleSelectInGroup(group.key, r.executionCaseId)}
+                            data-testid="engagement-center-select-patient"
+                            data-group-key={group.key}
+                          />
+                          <div className="min-w-0 flex-1 text-xs">
+                            <div className="font-medium text-slate-900 truncate">
+                              {r.patientName}
+                            </div>
+                            <div className="text-slate-500 truncate">
+                              {[r.facility, r.scheduleDate, r.engagementStatus]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </div>
+                            {r.selectedServices?.length ? (
+                              <div className="text-slate-400 truncate">
+                                {r.selectedServices.join(", ")}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="text-[10px] text-slate-500 shrink-0 text-right">
+                            <div>
+                              {r.assignedName ?? "Unassigned"}
+                            </div>
+                            <div>{fmtRel(r.lastActivityAt)}</div>
+                          </div>
+                          <InlineSchedulerPicker
+                            executionCaseId={r.executionCaseId}
+                            patientScreeningId={r.patientScreeningId}
+                            currentSchedulerId={r.assignedTeamMemberId}
+                            currentSchedulerName={r.assignedName}
+                            schedulers={schedulers.data ?? []}
+                            busy={assignMutation.isPending}
+                            onAssign={(schedulerId) => {
+                              if (r.patientScreeningId != null) {
+                                submitOne(r.patientScreeningId, schedulerId);
+                              }
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              const ok = confirm(
+                                `Remove this assignment from Engagement Center? The patient record stays in Plexus IQ.`,
+                              );
+                              if (ok) cancelManyMutation.mutate({ executionCaseIds: [r.executionCaseId] });
+                            }}
+                            disabled={cancelManyMutation.isPending}
+                            className="h-7 w-7 p-0 text-slate-400 hover:text-rose-600"
+                            data-testid="engagement-center-delete-patient"
+                            aria-label="Remove this assignment"
+                            title="Remove this assignment"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </Card>
             );
           })}
