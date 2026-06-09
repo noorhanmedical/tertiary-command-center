@@ -78,6 +78,13 @@ info("docs/architecture/pdf-protection-contract.md");
 info("docs/architecture/team-task-spine-design.md");
 info("docs/architecture/billing-cleanup-design.md");
 
+// Batch 11a — Operational Queue source maps + design.
+info("docs/architecture/call-list-source-map.md");
+info("docs/architecture/scheduler-task-source-map.md");
+info("docs/architecture/visit-schedule-source-map.md");
+info("docs/architecture/global-calendar-source-map.md");
+info("docs/architecture/operational-queue-design.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
