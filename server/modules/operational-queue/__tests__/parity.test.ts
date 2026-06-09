@@ -87,6 +87,56 @@ if (preDbFailures.length > 0) {
 }
 console.log("Bridge flag contract checks passed.");
 
+// ─── Pre-DB checks: call-list operational-queue flag (Batch 11d) ────
+//
+// USE_OPERATIONAL_QUEUE_CALL_LIST gates the shadow-read path inside
+// GET /api/scheduler-assignments. Default OFF so production behavior
+// stays byte-identical to today. Truthy values "1" | "true" | "yes"
+// enable the shadow read.
+{
+  const { isOperationalQueueCallListEnabled } = await import("../call-list-flag");
+  const saved = process.env.USE_OPERATIONAL_QUEUE_CALL_LIST;
+  try {
+    delete process.env.USE_OPERATIONAL_QUEUE_CALL_LIST;
+    preDbCheck(
+      isOperationalQueueCallListEnabled() === false,
+      "USE_OPERATIONAL_QUEUE_CALL_LIST unset should keep the shadow read off",
+    );
+    process.env.USE_OPERATIONAL_QUEUE_CALL_LIST = "0";
+    preDbCheck(
+      isOperationalQueueCallListEnabled() === false,
+      'USE_OPERATIONAL_QUEUE_CALL_LIST="0" should keep the shadow read off',
+    );
+    process.env.USE_OPERATIONAL_QUEUE_CALL_LIST = "1";
+    preDbCheck(
+      isOperationalQueueCallListEnabled() === true,
+      'USE_OPERATIONAL_QUEUE_CALL_LIST="1" should enable the shadow read',
+    );
+    process.env.USE_OPERATIONAL_QUEUE_CALL_LIST = "true";
+    preDbCheck(
+      isOperationalQueueCallListEnabled() === true,
+      'USE_OPERATIONAL_QUEUE_CALL_LIST="true" should enable the shadow read',
+    );
+    process.env.USE_OPERATIONAL_QUEUE_CALL_LIST = "yes";
+    preDbCheck(
+      isOperationalQueueCallListEnabled() === true,
+      'USE_OPERATIONAL_QUEUE_CALL_LIST="yes" should enable the shadow read',
+    );
+  } finally {
+    if (saved === undefined) {
+      delete process.env.USE_OPERATIONAL_QUEUE_CALL_LIST;
+    } else {
+      process.env.USE_OPERATIONAL_QUEUE_CALL_LIST = saved;
+    }
+  }
+}
+if (preDbFailures.length > 0) {
+  console.error("Call-list flag contract FAILED:");
+  for (const f of preDbFailures) console.error(`- ${f}`);
+  process.exit(1);
+}
+console.log("Call-list flag contract checks passed.");
+
 if (!process.env.DATABASE_URL) {
   console.log("Operational queue parity test: SKIPPED (DATABASE_URL not set).");
   process.exit(0);
