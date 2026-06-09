@@ -25,10 +25,8 @@ import {
   type PatientExecutionCase,
 } from "@shared/schema/executionCase";
 import type { OutreachScheduler } from "@shared/schema/outreach";
-import {
-  appendPatientJourneyEvent,
-  getExecutionCaseById,
-} from "../repositories/executionCase.repo";
+import { getExecutionCaseById } from "../repositories/executionCase.repo";
+import { appendJourneyEvent } from "./journey/appendJourneyEvent";
 
 const TERMINAL_LIFECYCLE_STATUSES = new Set(["closed", "archived", "cancelled"]);
 
@@ -158,7 +156,7 @@ export async function autoAssignSchedulerForExecutionCase(
   let journeyEventCreated = false;
   if (!existingEvent) {
     try {
-      const journey = await appendPatientJourneyEvent({
+      const journey = await appendJourneyEvent({
         patientName: updatedRow.patientName,
         patientDob: updatedRow.patientDob ?? undefined,
         patientScreeningId: updatedRow.patientScreeningId ?? undefined,
