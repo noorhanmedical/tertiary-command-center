@@ -548,6 +548,43 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             previousSchedulerId,
             previousSchedulerName: previousScheduler?.name ?? null,
           });
+
+          // ─── Optional: engagement-board → call-list bridge (Batch 11c) ───
+          //
+          // Flag-gated BEFORE the dynamic import so production behaviour
+          // with the flag off is byte-identical to today (the only added
+          // statement is one `process.env[...]` boolean read).
+          //
+          // When the flag is ON the bridge writes (or finds) the
+          // corresponding active scheduler_assignments row so the
+          // Scheduler Portal + Team Portal call lists pick up the
+          // assignment immediately without waiting for the next morning
+          // rebuild. See server/modules/operational-queue/bridge.ts for
+          // the safety rules (never throws, never duplicates, never
+          // modifies an existing active row).
+          const bridgeFlag = process.env.ENGAGEMENT_TO_CALL_LIST_BRIDGE;
+          if (bridgeFlag === "1" || bridgeFlag === "true" || bridgeFlag === "yes") {
+            try {
+              const { bridgeEngagementAssignmentToCallList } = await import(
+                "../modules/operational-queue/bridge"
+              );
+              const outcome = await bridgeEngagementAssignmentToCallList({
+                patientScreeningId: pid,
+                schedulerId: newScheduler.id,
+                reason: reason ?? null,
+              });
+              console.log(
+                "[engagement→call-list bridge]",
+                { patientScreeningId: pid, schedulerId: newScheduler.id, outcome: outcome.kind },
+              );
+            } catch (bridgeErr) {
+              console.error(
+                "[engagement→call-list bridge] dispatch failed:",
+                bridgeErr instanceof Error ? bridgeErr.message : bridgeErr,
+              );
+              // Never fail the parent engagement-board assignment.
+            }
+          }
         }
 
         res.json({
