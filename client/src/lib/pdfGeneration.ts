@@ -373,6 +373,18 @@ export function generateClinicianPDF(batchName: string, patients: PatientScreeni
 // relying on the bare alert fallback used by fire-and-forget callers.
 // SOURCE MARKER: Clinician PDF export is awaitable
 export async function generateClinicianPDFAsync(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): Promise<void> {
+  const body = buildClinicianPdfBody(batchName, patients, scheduleDate, createdAt);
+  await exportPdfDocument(`Clinician Report — ${batchName}`, body);
+}
+
+// Pure body builder shared by the html2pdf path and the print-preview
+// popup path. Same content, same layout — see PR #43 markers below.
+// SOURCE MARKER: Clinician PDF header uses stable two-column alignment
+// SOURCE MARKER: Clinician PDF demographics do not overlap chart review
+// SOURCE MARKER: Clinician PDF chart review has safe spacing
+// SOURCE MARKER: Clinician PDF ancillary columns align cleanly
+// SOURCE MARKER: Clinician PDF test rows have stable checkbox title alignment
+export function buildClinicianPdfBody(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): string {
   const date = formatScheduleDate(scheduleDate, createdAt);
 
   const oneSentence = (text: string | null | undefined): string => {
@@ -477,11 +489,8 @@ export async function generateClinicianPDFAsync(batchName: string, patients: Pat
         }).join("");
 
     const demoBlock = buildPatientDemoBlock(p);
-    // SOURCE MARKER: Clinician PDF header uses stable two-column alignment
-    // SOURCE MARKER: Clinician PDF demographics do not overlap chart review
-    // SOURCE MARKER: Clinician PDF chart review has safe spacing
-    // SOURCE MARKER: Clinician PDF ancillary columns align cleanly
-    // SOURCE MARKER: Clinician PDF test rows have stable checkbox title alignment
+    // (Layout markers documented on buildClinicianPdfBody itself —
+    // this is the per-page assembly.)
     //
     // Header rewrite:
     // - Top strip is a real two-column grid (auto / auto with the
@@ -524,7 +533,7 @@ export async function generateClinicianPDFAsync(batchName: string, patients: Pat
       </div>`;
   }).join("");
 
-  await exportPdfDocument(`Clinician Report — ${batchName}`, pages);
+  return pages;
 }
 
 export function generatePlexusPDF(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): void {
@@ -542,6 +551,19 @@ export function generatePlexusPDF(batchName: string, patients: PatientScreening[
 // to say to the call team.
 // SOURCE MARKER: Plexus PDF export is awaitable
 export async function generatePlexusPDFAsync(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): Promise<void> {
+  const body = buildPlexusPdfBody(batchName, patients, scheduleDate, createdAt);
+  if (!body) {
+    throw new Error(
+      "Plexus packet has no qualifying tests for any selected patient. Run qualification or pick a Clinician PDF for an outreach call list.",
+    );
+  }
+  await exportPdfDocument(`Plexus Team Script — ${batchName}`, body);
+}
+
+// Pure body builder shared by the html2pdf path and the print-preview
+// popup path. Returns the empty string when no patient has qualifying
+// tests so callers can decide how to surface that.
+export function buildPlexusPdfBody(batchName: string, patients: PatientScreening[], scheduleDate?: string | null, createdAt?: string | Date | null): string {
   const date = formatScheduleDate(scheduleDate, createdAt);
   const catAccent: Record<string, string> = { brainwave: "#7c3aed", vitalwave: "#be123c", ultrasound: "#047857", other: "#475569" };
 
@@ -657,10 +679,109 @@ export async function generatePlexusPDFAsync(batchName: string, patients: Patien
     return [`<div class="page" style="padding:16px 20px;">${buildCompactTop(p)}${sections.join("")}</div>`];
   });
 
-  if (pages.length === 0) {
+  return pages.join("");
+}
+
+// Open a printable popup containing the same Plexus / Clinician
+// packet HTML the html2pdf path uses, plus a small toolbar with
+// Print / Save as PDF and Close buttons. This is the path Plexus IQ
+// multi-patient packet buttons take so the operator gets a print
+// preview instead of a synchronous html2canvas freeze.
+//
+// Returns false when the popup was blocked so the caller can toast.
+// Throws when the body is empty (no qualifying patients) so the
+// caller can surface that as a real error.
+//
+// SOURCE MARKER: Plexus IQ packet print preview avoids html2canvas
+// SOURCE MARKER: Plexus IQ packet print preview opens printable popup
+// SOURCE MARKER: Plexus IQ packet print preview hides toolbar when printing
+// SOURCE MARKER: html2pdf retained as fallback outside Plexus IQ packet preview
+export type PacketPrintPreviewMode = "plexus" | "clinician";
+
+export type PacketPrintPreviewResult =
+  | { ok: true }
+  | { ok: false; reason: "popup-blocked" };
+
+export function openPatientPacketPrintPreview(input: {
+  mode: PacketPrintPreviewMode;
+  batchName: string;
+  patients: PatientScreening[];
+  scheduleDate?: string | null;
+  createdAt?: string | Date | null;
+  title?: string;
+}): PacketPrintPreviewResult {
+  const { mode, batchName, patients, scheduleDate, createdAt } = input;
+  const body =
+    mode === "plexus"
+      ? buildPlexusPdfBody(batchName, patients, scheduleDate, createdAt)
+      : buildClinicianPdfBody(batchName, patients, scheduleDate, createdAt);
+  if (!body || body.trim().length === 0) {
     throw new Error(
-      "Plexus packet has no qualifying tests for any selected patient. Run qualification or pick a Clinician PDF for an outreach call list.",
+      mode === "plexus"
+        ? "Plexus packet has no qualifying tests for any selected patient. Run qualification or pick a Clinician packet for an outreach call list."
+        : "No patients to render in this packet.",
     );
   }
-  await exportPdfDocument(`Plexus Team Script — ${batchName}`, pages.join(""));
+  const docTitle =
+    input.title ??
+    (mode === "plexus"
+      ? `Plexus Team Script — ${batchName}`
+      : `Clinician Report — ${batchName}`);
+
+  const win = window.open("", "_blank");
+  if (!win) {
+    return { ok: false, reason: "popup-blocked" };
+  }
+
+  // Toolbar is fixed at the top of the popup so the operator can hit
+  // Print without scrolling. `@media print` hides it so the saved PDF
+  // is clean. Buttons carry the canonical testIds so QA / e2e can
+  // assert the preview surface exists.
+  const previewStyles = `
+    .preview-toolbar {
+      position: fixed; top: 0; left: 0; right: 0;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 8px 14px;
+      background: #1a365d; color: #ffffff;
+      box-shadow: 0 1px 4px rgba(15,23,42,0.18);
+      font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      z-index: 9999;
+    }
+    .preview-toolbar h1 { margin: 0; font-size: 12px; font-weight: 700; }
+    .preview-toolbar button {
+      font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer;
+    }
+    .preview-toolbar .preview-print-btn { background:#ffffff; color:#1a365d; }
+    .preview-toolbar .preview-print-btn:hover { background:#e2e8f0; }
+    .preview-toolbar .preview-close-btn { background: transparent; color:#ffffff; border:1px solid rgba(255,255,255,0.5); }
+    .preview-toolbar .preview-close-btn:hover { background: rgba(255,255,255,0.1); }
+    .preview-doc { padding-top: 48px; }
+    @media print {
+      .preview-toolbar { display: none !important; }
+      .preview-doc { padding-top: 0; }
+    }
+  `;
+
+  const html =
+    `<!DOCTYPE html><html><head><meta charset="utf-8">` +
+    `<title>${esc(docTitle)}</title>` +
+    `<style>${PDF_BASE_STYLES}</style>` +
+    `<style>${previewStyles}</style>` +
+    `</head><body>` +
+    `<div class="preview-toolbar" data-testid="packet-print-preview-window">` +
+    `<h1>${esc(docTitle)}</h1>` +
+    `<div>` +
+    `<button type="button" class="preview-print-btn" data-testid="packet-print-preview-print-button" onclick="window.print()">Print / Save as PDF</button>` +
+    ` ` +
+    `<button type="button" class="preview-close-btn" data-testid="packet-print-preview-close-button" onclick="window.close()">Close</button>` +
+    `</div></div>` +
+    `<div class="preview-doc">${body}</div>` +
+    `</body></html>`;
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  return { ok: true };
 }

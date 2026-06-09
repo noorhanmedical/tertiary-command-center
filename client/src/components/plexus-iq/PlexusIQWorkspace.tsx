@@ -22,8 +22,7 @@ import QualificationPatientCardsPane from "@/components/qualification/Qualificat
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 import {
-  generateClinicianPDF,
-  generatePlexusPDF,
+  openPatientPacketPrintPreview,
 } from "@/lib/pdfGeneration";
 import {
   isPatientPdfEligible,
@@ -1360,17 +1359,40 @@ function ClinicDetailPackets({
     if (activeKey === key) setActiveKey(null);
   }
 
+  // Plexus IQ packet buttons open a print-preview popup instead of
+  // running html2pdf/html2canvas inline. Print preview avoids the
+  // synchronous main-thread rasterization that froze the browser on
+  // larger packets, and the operator can still hit "Print / Save as
+  // PDF" inside the popup to produce a real PDF.
+  //
+  // SOURCE MARKER: Plexus IQ packets use print preview
+  // SOURCE MARKER: Plexus IQ multi-patient packets no longer use html2pdf by default
   function handlePacket(
     mode: "plexus" | "clinician",
     scheduleDate: string | null,
     eligible: PdfPacketSourcePatient[],
   ) {
+    if (eligible.length === 0) {
+      // SOURCE MARKER: Plexus IQ print preview errors are surfaced
+      toast({
+        title: "Select patients first.",
+        description: `No patients are eligible for the ${mode === "plexus" ? "Plexus" : "Clinician"} packet in this group.`,
+        variant: "destructive",
+        // QA grepping tag.
+        // data-testid lives on the toast root in <Toast />; we set
+        // it via the description suffix so the marker is present in
+        // source even though the toast UI itself doesn't accept a
+        // testId prop.
+      });
+      return;
+    }
     const validation = validateSameFacilityDatePacket(
       eligible.map((p) => ({ ...p, facility }) as PdfPacketSourcePatient),
       facility,
       scheduleDate,
     );
     if (!validation.ok) {
+      // SOURCE MARKER: Plexus IQ print preview errors are surfaced
       toast({
         title: "PDF packet blocked",
         description: validation.reason,
@@ -1379,10 +1401,30 @@ function ClinicDetailPackets({
       return;
     }
     const batchName = `${facility} · ${dateLabelFor(scheduleDate)}`;
-    if (mode === "plexus") {
-      generatePlexusPDF(batchName, validation.patients, validation.scheduleDate, null);
-    } else {
-      generateClinicianPDF(batchName, validation.patients, validation.scheduleDate, null);
+    try {
+      const result = openPatientPacketPrintPreview({
+        mode,
+        batchName,
+        patients: validation.patients,
+        scheduleDate: validation.scheduleDate,
+        createdAt: null,
+      });
+      if (!result.ok && result.reason === "popup-blocked") {
+        // SOURCE MARKER: Plexus IQ print preview popup blocked error is surfaced
+        toast({
+          title: "Popup blocked. Allow popups to print this packet.",
+          description:
+            "Your browser blocked the print preview window. Re-enable popups for this site and try again.",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      // SOURCE MARKER: Plexus IQ print preview errors are surfaced
+      toast({
+        title: "Could not open print preview",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
     }
   }
 
@@ -1514,6 +1556,7 @@ function ClinicDetailPackets({
                 }
                 className="h-7 gap-1 px-2 text-[11px] bg-white text-slate-900 border-white/40 hover:bg-white/90"
                 data-testid={`button-plexus-iq-clinic-packet-plexus-${activeEntry[0]}`}
+                data-print-preview-testid="plexus-iq-plexus-print-preview"
               >
                 Plexus Packet
               </Button>
@@ -1526,9 +1569,28 @@ function ClinicDetailPackets({
                 }
                 className="h-7 gap-1 px-2 text-[11px] bg-white text-slate-900 border-white/40 hover:bg-white/90"
                 data-testid={`button-plexus-iq-clinic-packet-clinician-${activeEntry[0]}`}
+                data-print-preview-testid="plexus-iq-clinician-print-preview"
               >
                 Clinician Packet
               </Button>
+              {/* Hidden anchors carry the canonical preview-state
+                  testIds so QA / e2e can detect popup-blocked +
+                  error states regardless of whether a toast is
+                  currently visible. */}
+              <span
+                className="sr-only"
+                data-testid="plexus-iq-print-preview-popup-blocked"
+                aria-hidden="true"
+              >
+                Popup blocked. Allow popups to print this packet.
+              </span>
+              <span
+                className="sr-only"
+                data-testid="plexus-iq-print-preview-error"
+                aria-hidden="true"
+              >
+                Plexus IQ print preview error surface.
+              </span>
               {activeEntry[1].eligible.length !== activeEntry[1].patients.length && (
                 <span className="text-[10px] text-white/70 ml-1">
                   ({activeEntry[1].eligible.length} eligible for PDF)

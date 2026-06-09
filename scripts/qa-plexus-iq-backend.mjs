@@ -256,6 +256,22 @@ requireText("client/src/lib/pdfGeneration.ts", [
   "PDF export uses optimized html2canvas scale",
   "PDF template avoids expensive visual effects",
   "PDF generation optimized for large packets",
+  // Print-preview path for Plexus IQ multi-patient packets. The
+  // canonical html2pdf path is kept (asserted above) — this is a
+  // parallel popup-based surface used only by Plexus IQ packet
+  // buttons today.
+  "openPatientPacketPrintPreview",
+  "buildClinicianPdfBody",
+  "buildPlexusPdfBody",
+  "Plexus IQ packet print preview avoids html2canvas",
+  "Plexus IQ packet print preview opens printable popup",
+  "Plexus IQ packet print preview hides toolbar when printing",
+  "html2pdf retained as fallback outside Plexus IQ packet preview",
+  // Popup HTML testIds — asserted as raw strings so the popup
+  // surface stays detectable.
+  "packet-print-preview-window",
+  "packet-print-preview-print-button",
+  "packet-print-preview-close-button",
 ]);
 
 // "Schedule Date:" must not appear anywhere in the demographics
