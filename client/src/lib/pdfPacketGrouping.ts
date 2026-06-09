@@ -125,6 +125,103 @@ export function validateSameFacilityDatePacket(
   };
 }
 
+// Split a set of patients into the largest possible set of *valid*
+// packet groups for PDF generation. Each returned packet satisfies
+// the same single-facility / single-date (or single-facility /
+// all-outreach) contract that `validateSameFacilityDatePacket`
+// requires individually, so the caller can iterate the result and
+// pass each packet straight into `generatePlexusPDFAsync` /
+// `generateClinicianPDFAsync`.
+//
+// Used by the Engagement Center's Scheduler / Team Member tab — a
+// scheduler's call list can legitimately contain rows from multiple
+// facilities and/or multiple scheduled dates, so the single-packet
+// validator would always reject the entire selection. Splitting
+// first lets the same selection produce one PDF per facility/date
+// without dropping any patient or requiring the operator to re-pick
+// per facility.
+//
+// Patients with no facility are dropped — there is no safe way to
+// title a packet for them and the caller should generate individual
+// PDFs instead. The returned `skipped` list surfaces them so the UI
+// can warn.
+// SOURCE MARKER: Scheduler tab PDF splits selected patients by facility date
+// SOURCE MARKER: Scheduler call list PDF generates one packet per facility date
+// SOURCE MARKER: Scheduler PDF does not validate the entire scheduler group as one packet
+export type SchedulerPdfPacket = {
+  facility: string;
+  // null when this is an outreach packet (all patients in the
+  // packet share a facility but none have a scheduleDate).
+  scheduleDate: string | null;
+  isOutreachPacket: boolean;
+  patients: PdfPacketSourcePatient[];
+};
+
+export type SchedulerPdfSplit = {
+  packets: SchedulerPdfPacket[];
+  // Patients dropped because they had no facility — caller should
+  // surface a warning if non-empty.
+  skipped: PdfPacketSourcePatient[];
+};
+
+export function splitPatientsByFacilityDate(
+  patients: PdfPacketSourcePatient[],
+  fallbackFacility: string | null = null,
+  fallbackScheduleDate: string | null = null,
+): SchedulerPdfSplit {
+  const skipped: PdfPacketSourcePatient[] = [];
+  const groups = new Map<
+    string,
+    {
+      facility: string;
+      scheduleDate: string;
+      patients: PdfPacketSourcePatient[];
+    }
+  >();
+
+  for (const p of patients) {
+    const key = getPatientPdfPacketKey(p, fallbackFacility, fallbackScheduleDate);
+    if (key.facility === "(no facility)") {
+      skipped.push(p);
+      continue;
+    }
+    const id = `${key.facility}::${key.scheduleDate}`;
+    const cur =
+      groups.get(id) ?? {
+        facility: key.facility,
+        scheduleDate: key.scheduleDate,
+        patients: [],
+      };
+    cur.patients.push(p);
+    groups.set(id, cur);
+  }
+
+  const packets: SchedulerPdfPacket[] = Array.from(groups.values())
+    .map((g) => {
+      const isOutreachPacket = g.scheduleDate === "(no date)";
+      return {
+        facility: g.facility,
+        scheduleDate: isOutreachPacket ? null : g.scheduleDate,
+        isOutreachPacket,
+        patients: g.patients,
+      };
+    })
+    // Sort dated packets first (newest date), then outreach packets;
+    // ties broken by facility A-Z. Deterministic order keeps the
+    // generated PDF download sequence predictable.
+    .sort((a, b) => {
+      if (a.isOutreachPacket !== b.isOutreachPacket) {
+        return a.isOutreachPacket ? 1 : -1;
+      }
+      if (a.scheduleDate && b.scheduleDate && a.scheduleDate !== b.scheduleDate) {
+        return b.scheduleDate.localeCompare(a.scheduleDate);
+      }
+      return a.facility.localeCompare(b.facility);
+    });
+
+  return { packets, skipped };
+}
+
 // "Completed" predicate used by the PDF buttons. A row only qualifies
 // for PDF when AI qualification has populated `qualifyingTests` /
 // `reasoning` — otherwise the PDF body would be empty.

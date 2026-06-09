@@ -322,6 +322,34 @@ if (!demoBlockMatch) {
 requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
   "Large PDF packet generation warning",
   "Large PDF packet may take longer",
+  // Scheduler-tab split: the scheduler group cannot be a single
+  // packet because distribute legitimately mixes facility/date.
+  // Routing branches into runSchedulerSplitPdf when groupMode is
+  // "scheduler" — these markers + testIds keep that contract.
+  "Scheduler tab PDF splits selected patients by facility date",
+  "Scheduler call list PDF generates one packet per facility date",
+  "Scheduler PDF uses selected patients from one scheduler group",
+  "Scheduler PDF does not validate the entire scheduler group as one packet",
+  "engagement-center-scheduler-pdf-packet-count",
+  "engagement-center-scheduler-pdf-split-warning",
+  "engagement-center-scheduler-pdf-error",
+  // Toast copy: count + scheduler name surfaced before generation.
+  "Generating 1 packet for",
+  "by facility/date",
+  "Failed to generate",
+  "splitPatientsByFacilityDate",
+]);
+
+// Split helper lives in pdfPacketGrouping — the Scheduler / Team
+// Member call list relies on it to fan one selection out into N
+// valid facility/date packets without re-prompting the user.
+requireText("client/src/lib/pdfPacketGrouping.ts", [
+  "splitPatientsByFacilityDate",
+  "SchedulerPdfPacket",
+  "SchedulerPdfSplit",
+  "Scheduler tab PDF splits selected patients by facility date",
+  "Scheduler call list PDF generates one packet per facility date",
+  "Scheduler PDF does not validate the entire scheduler group as one packet",
 ]);
 
 requireText("server/routes.ts", [
