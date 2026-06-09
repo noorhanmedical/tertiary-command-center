@@ -171,11 +171,23 @@ function openPrintWindowFallback(title: string, bodyHtml: string): boolean {
 
 // Awaitable PDF export. Throws when no body is supplied so callers can
 // surface a real error message instead of producing a silent blank PDF.
+//
+// PDF generation is intentionally read-only: it does not touch
+// queryClient and therefore does not invalidate any data caches. The
+// caller's selection state + the toast are the only UI surfaces that
+// change when a PDF is generated.
 // SOURCE MARKER: html2pdf PDF export error is surfaced
+// SOURCE MARKER: PDF generation does not invalidate data queries
+// SOURCE MARKER: PDF generation runs on demand
 export async function exportPdfDocument(title: string, bodyHtml: string): Promise<void> {
   if (!bodyHtml || bodyHtml.trim().length === 0) {
     throw new Error("PDF body is empty — nothing to render");
   }
+  // SOURCE MARKER: Development-only performance instrumentation
+  const devTimingLabel = import.meta.env.DEV
+    ? `[perf] pdf:export "${title}"`
+    : null;
+  if (devTimingLabel) console.time(devTimingLabel);
   try {
     await renderHtml2Pdf(title, bodyHtml);
   } catch (err) {
@@ -187,6 +199,8 @@ export async function exportPdfDocument(title: string, bodyHtml: string): Promis
         ? err
         : new Error("PDF export failed and the print-window fallback was blocked");
     }
+  } finally {
+    if (devTimingLabel) console.timeEnd(devTimingLabel);
   }
 }
 

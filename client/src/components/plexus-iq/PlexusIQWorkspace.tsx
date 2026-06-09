@@ -479,6 +479,11 @@ export function PlexusIQWorkspace({
     return facilities;
   }, [summary]);
 
+  // Per-tab bucket lists below (needs/finalized/scheduled/clinic
+  // rollups/totals) all derive from `allGroups`, so memoizing this
+  // single grouping is enough to keep every downstream useMemo stable
+  // across toolbar / dropdown / display-mode toggles.
+  // SOURCE MARKER: Platform performance pass memoizes Plexus IQ bucket groups
   const allGroups = useMemo<PlexusIQWorklistGroup[]>(() => {
     const out: PlexusIQWorklistGroup[] = [];
     for (const fac of grouped) {
@@ -488,6 +493,10 @@ export function PlexusIQWorkspace({
     }
     return out;
   }, [grouped, batchDetails]);
+
+  // SOURCE MARKER: Plexus IQ avoids rendering inactive heavy group content
+  // (Each WorklistGroupCard already gates its patient-card body behind
+  // `isOpen` — see {isOpen && (...)} guard inside the card.)
 
   // Sorting per tab. Newest/nearest first within each priority bucket.
   const needsGroups = useMemo(() => {
