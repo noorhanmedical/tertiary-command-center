@@ -89,6 +89,10 @@ info("docs/architecture/operational-queue-design.md");
 info("docs/architecture/execution-case-state-machine.md");
 info("docs/architecture/journey-event-standardization-design.md");
 
+// Batches 18 + 19 — infrastructure design (docs-only).
+info("docs/architecture/background-jobs-design.md");
+info("docs/architecture/aws-readiness-design.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
