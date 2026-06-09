@@ -33,6 +33,8 @@ export const PATIENT_JOURNEY_EVENT_TYPES = [
   "execution_case_created",
   "execution_case_updated",
   "engagement_assigned",
+  "engagement_assignment_changed",
+  "engagement_assignment_cancelled",
   "scheduler_assigned",
   "call_result_logged",
   "scheduled_ancillary",
