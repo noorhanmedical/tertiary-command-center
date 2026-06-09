@@ -204,20 +204,24 @@ export function registerPatientRoutes(
 
   // Rule-engine extracted evidence + ICD-needed flags + per-ancillary candidates.
   // Pure deterministic — no AI calls — so it stays cheap and audit-friendly.
+  //
+  // Delegated to server/services/plexusIq/adminReviewEvidenceService.ts.
+  // Response shape, status codes, and error messages preserved byte-for-byte;
+  // see docs/architecture/backend-route-parity-inventory.md §1.1.
   app.get("/api/patient-screenings/:id/admin-review/evidence", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      if (Number.isNaN(id)) {
-        return res.status(400).json({ error: "Invalid patient id" });
-      }
-      const patient = await storage.getPatientScreening(id);
-      if (!patient) return res.status(404).json({ error: "Patient not found" });
-
-      const { runAdminReviewRuleEngine } = await import(
-        "../services/plexusIq/adminReviewRuleEngine"
+      const { getAdminReviewEvidence } = await import(
+        "../services/plexusIq/adminReviewEvidenceService"
       );
-      const result = runAdminReviewRuleEngine(patient);
-      res.json({ ok: true, patientId: id, ...result });
+      const outcome = await getAdminReviewEvidence(id);
+      if (!outcome.ok) {
+        if (outcome.error.kind === "invalid_id") {
+          return res.status(400).json({ error: "Invalid patient id" });
+        }
+        return res.status(404).json({ error: "Patient not found" });
+      }
+      res.json({ ok: true, patientId: outcome.patientId, ...outcome.result });
     } catch (error: any) {
       console.error("[admin-review/evidence] error:", error?.message ?? error);
       res.status(500).json({
