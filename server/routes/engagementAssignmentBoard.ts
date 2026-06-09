@@ -104,28 +104,9 @@ async function findConflictingActiveAssignment(
 // patient_execution_cases.assignedTeamMemberId, so assignments made
 // here flow into the right team member's queue immediately.
 
-type BoardRow = {
-  patientScreeningId: number | null;
-  executionCaseId: number;
-  patientName: string;
-  patientDob: string | null;
-  phoneNumber: string | null;
-  facility: string | null;
-  scheduleDate: string | null;
-  patientType: string | null;
-  engagementBucket: string | null;
-  engagementStatus: string | null;
-  commitStatus: string | null;
-  assignedTeamMemberId: number | null;
-  assignedRole: string | null;
-  assignedName: string | null;
-  assignedFacility: string | null;
-  nextActionAt: string | null;
-  lastActivityAt: string | null;
-  lastActivitySummary: string | null;
-  missingInfo: string[];
-  selectedServices: string[];
-};
+// Board-row shape lives in the shared contract so the client + server
+// agree on one canonical type. See shared/contracts/engagementBoard.ts.
+import type { EngagementBoardRow as BoardRow } from "@shared/contracts/engagementBoard";
 
 const assignBoardSchema = z.object({
   patientScreeningIds: z.array(z.number().int().positive()).min(1),
