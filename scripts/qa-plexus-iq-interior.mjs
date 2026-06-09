@@ -854,7 +854,45 @@ requireText(bucketLabelsHost, [
   // Stability pass — bucket grouping memo + lazy heavy content.
   "Platform performance pass memoizes Plexus IQ bucket groups",
   "Plexus IQ avoids rendering inactive heavy group content",
+  // Multi-patient packet buttons in Plexus IQ now open a print-
+  // preview popup instead of running html2pdf inline. The
+  // canonical PDF helpers (generatePlexusPDF / generateClinicianPDF /
+  // generatePlexusPDFAsync / generateClinicianPDFAsync /
+  // exportPdfDocument) stay available for other flows.
+  "Plexus IQ packets use print preview",
+  "Plexus IQ multi-patient packets no longer use html2pdf by default",
+  "openPatientPacketPrintPreview",
+  // Required testIds for the print-preview surface state on the
+  // Plexus IQ packet buttons.
+  "plexus-iq-plexus-print-preview",
+  "plexus-iq-clinician-print-preview",
+  "plexus-iq-print-preview-popup-blocked",
+  "plexus-iq-print-preview-error",
+  // Toast copy.
+  "Popup blocked. Allow popups to print this packet.",
+  "Select patients first.",
 ]);
+
+// Plexus IQ packet buttons must NOT directly import html2pdf
+// helpers anymore — the print-preview popup is the canonical path.
+// This is a defensive guard so a future cleanup doesn't accidentally
+// re-route Plexus IQ packets back through the synchronous canvas
+// path that froze the browser on large packets.
+{
+  const wsSource = read("client/src/components/plexus-iq/PlexusIQWorkspace.tsx") ?? "";
+  for (const banned of [
+    "generatePlexusPDF(",
+    "generateClinicianPDF(",
+    "generatePlexusPDFAsync(",
+    "generateClinicianPDFAsync(",
+  ]) {
+    if (wsSource.includes(banned)) {
+      failures.push(
+        `PlexusIQWorkspace must not call ${banned} directly — Plexus IQ multi-patient packets must go through openPatientPacketPrintPreview.`,
+      );
+    }
+  }
+}
 // Old label phrasing must be gone.
 requireNotText(
   bucketLabelsHost,
