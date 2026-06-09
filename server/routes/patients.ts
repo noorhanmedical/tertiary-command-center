@@ -482,46 +482,41 @@ export function registerPatientRoutes(
   // canonical reasoning entry `patient.reasoning[testName]` is left
   // intact so historical context survives (UI display is governed by
   // qualifyingTests). Other tests are unaffected.
+  //
+  // Delegated to server/services/plexusIq/adminReviewRemoveService.ts.
+  // Validation order, status codes, error messages (including the exact
+  // `testName "<n>" is not in patient.qualifyingTests` format), and the
+  // canonical-reasoning preservation invariant are preserved byte-for-byte;
+  // see docs/architecture/backend-route-parity-inventory.md §1.6.
   app.post(
     "/api/patient-screenings/:id/admin-review/remove-test",
     async (req, res) => {
       try {
         const id = parseInt(req.params.id);
-        if (Number.isNaN(id)) {
-          return res.status(400).json({ error: "Invalid patient id" });
-        }
-        const testName = String(req.body?.testName ?? "").trim();
-        if (!testName) {
-          return res.status(400).json({ error: "testName is required" });
-        }
-        const patient = await storage.getPatientScreening(id);
-        if (!patient) return res.status(404).json({ error: "Patient not found" });
-
-        const allTests = Array.isArray(patient.qualifyingTests)
-          ? patient.qualifyingTests
-          : [];
-        if (!allTests.includes(testName)) {
+        const { removeAdminReviewTest } = await import(
+          "../services/plexusIq/adminReviewRemoveService"
+        );
+        const outcome = await removeAdminReviewTest(id, req.body);
+        if (!outcome.ok) {
+          if (outcome.error.kind === "invalid_id") {
+            return res.status(400).json({ error: "Invalid patient id" });
+          }
+          if (outcome.error.kind === "missing_test_name") {
+            return res.status(400).json({ error: "testName is required" });
+          }
+          if (outcome.error.kind === "not_found") {
+            return res.status(404).json({ error: "Patient not found" });
+          }
+          // test_not_in_qualifying
           return res.status(400).json({
-            error: `testName "${testName}" is not in patient.qualifyingTests`,
+            error: `testName "${outcome.error.testName}" is not in patient.qualifyingTests`,
           });
         }
-        const nextTests = allTests.filter((t) => t !== testName);
-
-        const existingReasoning =
-          patient.reasoning &&
-          typeof patient.reasoning === "object" &&
-          !Array.isArray(patient.reasoning)
-            ? { ...(patient.reasoning as Record<string, unknown>) }
-            : {};
-        delete existingReasoning[`adminReview:test:${testName}`];
-
-        const updated = await storage.updatePatientScreening(id, {
-          qualifyingTests: nextTests,
-          reasoning: existingReasoning,
+        res.json({
+          ok: true,
+          patient: outcome.patient,
+          removedTestName: outcome.removedTestName,
         });
-
-        invalidatePatientDatabase();
-        res.json({ ok: true, patient: updated, removedTestName: testName });
       } catch (error: any) {
         console.error(
           "[admin-review/remove-test] error:",
@@ -539,58 +534,36 @@ export function registerPatientRoutes(
   // entries. Clear the ancillary's adminReview metadata block and any
   // per-test metadata for tests that just got removed. Canonical
   // reasoning entries are left intact.
+  //
+  // Delegated to server/services/plexusIq/adminReviewRemoveService.ts.
+  // Validation order, status codes, error messages, response envelope,
+  // and the canonical-reasoning preservation invariant are preserved
+  // byte-for-byte; see docs/architecture/backend-route-parity-inventory.md §1.7.
   app.post(
     "/api/patient-screenings/:id/admin-review/remove-ancillary",
     async (req, res) => {
       try {
         const id = parseInt(req.params.id);
-        if (Number.isNaN(id)) {
-          return res.status(400).json({ error: "Invalid patient id" });
-        }
-        const ancillaryId = String(req.body?.ancillaryId ?? "");
-        if (
-          ancillaryId !== "brainwave" &&
-          ancillaryId !== "vitalwave" &&
-          ancillaryId !== "ultrasound"
-        ) {
-          return res.status(400).json({
-            error: "ancillaryId must be one of brainwave / vitalwave / ultrasound",
-          });
-        }
-        const patient = await storage.getPatientScreening(id);
-        if (!patient) return res.status(404).json({ error: "Patient not found" });
-
-        const { getAncillaryCategory } = await import("@shared/ancillaryCategory");
-        const allTests = Array.isArray(patient.qualifyingTests)
-          ? patient.qualifyingTests
-          : [];
-        const toRemove = new Set(
-          allTests.filter((t) => getAncillaryCategory(t) === ancillaryId),
+        const { removeAdminReviewAncillary } = await import(
+          "../services/plexusIq/adminReviewRemoveService"
         );
-        const nextTests = allTests.filter((t) => !toRemove.has(t));
-
-        const existingReasoning =
-          patient.reasoning &&
-          typeof patient.reasoning === "object" &&
-          !Array.isArray(patient.reasoning)
-            ? { ...(patient.reasoning as Record<string, unknown>) }
-            : {};
-        delete existingReasoning[`adminReview:${ancillaryId}`];
-        for (const t of toRemove) {
-          delete existingReasoning[`adminReview:test:${t}`];
+        const outcome = await removeAdminReviewAncillary(id, req.body);
+        if (!outcome.ok) {
+          if (outcome.error.kind === "invalid_id") {
+            return res.status(400).json({ error: "Invalid patient id" });
+          }
+          if (outcome.error.kind === "invalid_ancillary_id") {
+            return res.status(400).json({
+              error: "ancillaryId must be one of brainwave / vitalwave / ultrasound",
+            });
+          }
+          return res.status(404).json({ error: "Patient not found" });
         }
-
-        const updated = await storage.updatePatientScreening(id, {
-          qualifyingTests: nextTests,
-          reasoning: existingReasoning,
-        });
-
-        invalidatePatientDatabase();
         res.json({
           ok: true,
-          patient: updated,
-          ancillaryId,
-          removedTests: Array.from(toRemove),
+          patient: outcome.patient,
+          ancillaryId: outcome.ancillaryId,
+          removedTests: outcome.removedTests,
         });
       } catch (error: any) {
         console.error(
