@@ -439,16 +439,38 @@ for (const rel of forbiddenClientPaths) {
 }
 
 // ─── Admin Review removal routes + additive merge prompt ─────────────
+//
+// After Batch 3b.6, the remove handlers are wrapped by
+// adminReviewRemoveService.ts; the route only registers the paths and
+// delegates. The structural contract (filter on qualifyingTests +
+// getAncillaryCategory, plus selective metadata deletion that preserves
+// canonical reasoning[testName]) now lives in the service.
 requireText("server/routes/patients.ts", [
-  // New remove routes.
+  // New remove routes — still registered in the route file.
   "/api/patient-screenings/:id/admin-review/remove-test",
   "/api/patient-screenings/:id/admin-review/remove-ancillary",
-  // Filters by canonical ancillary category + uses qualifyingTests filter.
-  "getAncillaryCategory",
-  ".filter((t) => !toRemove.has(t))",
-  // Per-test metadata cleanup.
+  // Route delegates to the remove service.
+  "adminReviewRemoveService",
+  // Per-test metadata literal still present in the route file via the
+  // still-inline regenerate-test handler.
   "adminReview:test:",
 ]);
+
+requireText(
+  "server/services/plexusIq/adminReviewRemoveService.ts",
+  [
+    // Filters by canonical ancillary category + uses qualifyingTests filter.
+    "getAncillaryCategory",
+    ".filter((t) => !toRemove.has(t))",
+    // Selective metadata deletion (the canonical-reasoning preservation
+    // invariant: only adminReview:* keys are deleted; reasoning[testName]
+    // is never deleted).
+    "adminReview:test:",
+    "adminReview:${ancillaryId}",
+    "removedTestName",
+    "removedTests",
+  ],
+);
 
 // Regeneration helper must enforce the additive merge contract AND
 // honour the client-supplied authoritative floor.
