@@ -20,35 +20,18 @@ import { listBillingDocumentRequests } from "./billingDocuments.repo";
 import { listCompletedBillingPackages } from "./completedBillingPackages.repo";
 import { listProjectedInvoiceRows } from "./projectedInvoices.repo";
 
-export type PatientPacketLookup = {
-  executionCaseId?: number;
-  patientScreeningId?: number;
-  patientName?: string;
-  patientDob?: string;
-};
-
-/** Warning values surfaced when the resolution chain didn't produce a strict
- *  identifier match. Currently only "name_only_fallback" is emitted. */
-export type PatientPacketLookupWarning = "name_only_fallback";
-
-export type PatientPacket = {
-  resolvedPatientScreeningId: number | null;
-  resolvedExecutionCaseId: number | null;
-  lookupWarning: PatientPacketLookupWarning | null;
-  patientScreening: PatientScreening | null;
-  executionCase: Awaited<ReturnType<typeof getExecutionCaseById>> | null;
-  journeyEvents: Awaited<ReturnType<typeof listJourneyEvents>>;
-  globalScheduleEvents: Awaited<ReturnType<typeof listGlobalScheduleEvents>>;
-  schedulingTriageCases: Awaited<ReturnType<typeof listSchedulingTriageCases>>;
-  insuranceEligibilityReviews: Awaited<ReturnType<typeof listInsuranceEligibilityReviews>>;
-  cooldownRecords: Awaited<ReturnType<typeof listCooldownRecords>>;
-  caseDocumentReadiness: Awaited<ReturnType<typeof listCaseDocumentReadiness>>;
-  procedureEvents: Awaited<ReturnType<typeof listProcedureEvents>>;
-  procedureNotes: Awaited<ReturnType<typeof listGeneratedNotes>>;
-  billingReadinessChecks: Awaited<ReturnType<typeof listBillingReadinessChecks>>;
-  billingDocumentRequests: Awaited<ReturnType<typeof listBillingDocumentRequests>>;
-  completedBillingPackages: Awaited<ReturnType<typeof listCompletedBillingPackages>>;
-  projectedInvoiceRows: Awaited<ReturnType<typeof listProjectedInvoiceRows>>;
+// Patient-packet response shape lives in the shared contract so the
+// server route, the client API helper, and every UI consumer share
+// one canonical type. See shared/contracts/patientPacket.ts.
+import type {
+  PatientPacket,
+  PatientPacketLookup,
+  PatientPacketLookupWarning,
+} from "@shared/contracts/patientPacket";
+export type {
+  PatientPacket,
+  PatientPacketLookup,
+  PatientPacketLookupWarning,
 };
 
 async function findScreeningByNameAndDob(

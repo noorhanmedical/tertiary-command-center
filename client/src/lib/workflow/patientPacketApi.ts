@@ -1,30 +1,14 @@
 import { requestJson } from "@/lib/workflow/safeFetch";
 
-export type PatientPacketLookup = {
-  executionCaseId?: number;
-  patientScreeningId?: number;
-  patientName?: string;
-  patientDob?: string;
-};
+// Patient-packet response shape lives in the shared contract so the
+// server route, this client API helper, and every UI consumer share
+// one canonical type. See shared/contracts/patientPacket.ts.
+import type {
+  PatientPacket,
+  PatientPacketLookup,
+} from "@shared/contracts/patientPacket";
 
-export type PatientPacket = {
-  resolvedPatientScreeningId: number | null;
-  resolvedExecutionCaseId: number | null;
-  patientScreening: Record<string, unknown> | null;
-  executionCase: Record<string, unknown> | null;
-  journeyEvents: Array<Record<string, unknown>>;
-  globalScheduleEvents: Array<Record<string, unknown>>;
-  schedulingTriageCases: Array<Record<string, unknown>>;
-  insuranceEligibilityReviews: Array<Record<string, unknown>>;
-  cooldownRecords: Array<Record<string, unknown>>;
-  caseDocumentReadiness: Array<Record<string, unknown>>;
-  procedureEvents: Array<Record<string, unknown>>;
-  procedureNotes: Array<Record<string, unknown>>;
-  billingReadinessChecks: Array<Record<string, unknown>>;
-  billingDocumentRequests: Array<Record<string, unknown>>;
-  completedBillingPackages: Array<Record<string, unknown>>;
-  projectedInvoiceRows: Array<Record<string, unknown>>;
-};
+export type { PatientPacket, PatientPacketLookup };
 
 function buildQueryString(lookup: PatientPacketLookup): string {
   const params = new URLSearchParams();
