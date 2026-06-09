@@ -93,6 +93,13 @@ info("docs/architecture/journey-event-standardization-design.md");
 info("docs/architecture/background-jobs-design.md");
 info("docs/architecture/aws-readiness-design.md");
 
+// Per-area parity inventories + canonical workflow wiring map (docs-only,
+// 2026-06-09 consolidation bundle).
+info("docs/architecture/plexus-iq-route-parity-inventory.md");
+info("docs/architecture/engagement-center-route-parity-inventory.md");
+info("docs/architecture/portals-route-parity-inventory.md");
+info("docs/architecture/canonical-workflow-wiring-map.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
