@@ -35,6 +35,58 @@
 //   - PARITY_TEST_DATE_TO             (default: today + 7 days)
 //   - PARITY_TEST_INCLUDE_CLOSED      ("1" / "true" / "yes" to include closed)
 
+// ─── Pre-DB checks: bridge flag contract (Batch 11c) ─────────────────
+//
+// Pure module-level checks. Runs regardless of DB availability so the
+// flag contract is exercised in every environment.
+const preDbFailures: string[] = [];
+function preDbCheck(condition: boolean, message: string): void {
+  if (!condition) preDbFailures.push(message);
+}
+{
+  const { isEngagementToCallListBridgeEnabled } = await import("../bridge-flag");
+  const saved = process.env.ENGAGEMENT_TO_CALL_LIST_BRIDGE;
+  try {
+    delete process.env.ENGAGEMENT_TO_CALL_LIST_BRIDGE;
+    preDbCheck(
+      isEngagementToCallListBridgeEnabled() === false,
+      "ENGAGEMENT_TO_CALL_LIST_BRIDGE unset should disable the bridge",
+    );
+    process.env.ENGAGEMENT_TO_CALL_LIST_BRIDGE = "0";
+    preDbCheck(
+      isEngagementToCallListBridgeEnabled() === false,
+      'ENGAGEMENT_TO_CALL_LIST_BRIDGE="0" should disable the bridge',
+    );
+    process.env.ENGAGEMENT_TO_CALL_LIST_BRIDGE = "1";
+    preDbCheck(
+      isEngagementToCallListBridgeEnabled() === true,
+      'ENGAGEMENT_TO_CALL_LIST_BRIDGE="1" should enable the bridge',
+    );
+    process.env.ENGAGEMENT_TO_CALL_LIST_BRIDGE = "true";
+    preDbCheck(
+      isEngagementToCallListBridgeEnabled() === true,
+      'ENGAGEMENT_TO_CALL_LIST_BRIDGE="true" should enable the bridge',
+    );
+    process.env.ENGAGEMENT_TO_CALL_LIST_BRIDGE = "yes";
+    preDbCheck(
+      isEngagementToCallListBridgeEnabled() === true,
+      'ENGAGEMENT_TO_CALL_LIST_BRIDGE="yes" should enable the bridge',
+    );
+  } finally {
+    if (saved === undefined) {
+      delete process.env.ENGAGEMENT_TO_CALL_LIST_BRIDGE;
+    } else {
+      process.env.ENGAGEMENT_TO_CALL_LIST_BRIDGE = saved;
+    }
+  }
+}
+if (preDbFailures.length > 0) {
+  console.error("Bridge flag contract FAILED:");
+  for (const f of preDbFailures) console.error(`- ${f}`);
+  process.exit(1);
+}
+console.log("Bridge flag contract checks passed.");
+
 if (!process.env.DATABASE_URL) {
   console.log("Operational queue parity test: SKIPPED (DATABASE_URL not set).");
   process.exit(0);
