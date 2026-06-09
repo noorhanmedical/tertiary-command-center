@@ -153,6 +153,15 @@ export function EngagementAssignmentBoard() {
   const [pdfGeneratingByGroup, setPdfGeneratingByGroup] = useState<
     Record<string, boolean>
   >({});
+  // Per-group multi-export progress, used by the scheduler-tab split
+  // path (which fans one click into N sequential html2pdf calls) so
+  // the PDF buttons can show "Generating 2/4…" instead of a static
+  // spinner that looks frozen during the multi-second rasterization
+  // of each packet.
+  // SOURCE MARKER: Scheduler PDF generation reports per-export progress
+  const [pdfProgressByGroup, setPdfProgressByGroup] = useState<
+    Record<string, { current: number; total: number } | null>
+  >({});
 
   // Switching group mode invalidates both the per-group selection
   // (the group keys don't exist in the new mode) and any inline PDF
@@ -165,6 +174,7 @@ export function EngagementAssignmentBoard() {
     setSelectedByGroup({});
     setPdfErrorByGroup({});
     setPdfGeneratingByGroup({});
+    setPdfProgressByGroup({});
   }, [groupMode]);
 
   const board = useQuery<BoardResponse>({
@@ -456,6 +466,11 @@ export function EngagementAssignmentBoard() {
         delete next[group.key];
         return next;
       });
+      setPdfProgressByGroup((prev) => {
+        const next = { ...prev };
+        delete next[group.key];
+        return next;
+      });
     }
   }
 
@@ -604,6 +619,10 @@ export function EngagementAssignmentBoard() {
       validation.isOutreachPacket ? "Outreach" : validation.scheduleDate
     }`;
     try {
+      // Yield once so React can paint the spinner before html2canvas
+      // takes the main thread for the next several seconds.
+      // SOURCE MARKER: Scheduler PDF yields to event loop between exports
+      await new Promise((resolve) => setTimeout(resolve, 50));
       if (mode === "plexus") {
         await generatePlexusPDFAsync(batchName, validation.patients, validation.scheduleDate, null);
       } else {
@@ -619,14 +638,36 @@ export function EngagementAssignmentBoard() {
   // Each packet produces its own PDF download; per-packet failures are
   // aggregated into one inline group-error line so the operator can
   // see which slice failed without having to retry the whole batch.
+  //
+  // Freeze prevention:
+  // - Every packet larger than MAX_PATIENTS_PER_EXPORT is further
+  //   sub-chunked into separate html2pdf invocations. html2canvas
+  //   rasterizes the entire packet DOM in one synchronous pass and
+  //   the browser hits canvas-height limits / multi-second freezes
+  //   somewhere around 20+ patients per export, so this caps each
+  //   single export at a manageable size.
+  // - We yield to the event loop before AND between exports
+  //   (`await new Promise(r => setTimeout(r, 50))`) so React can
+  //   actually paint the spinner / progress label and the browser
+  //   stays responsive between rasterizations.
+  // - When the total export count is large, we confirm first so the
+  //   operator doesn't accidentally trigger a long blocking job.
+  //
   // SOURCE MARKER: Scheduler tab PDF splits selected patients by facility date
   // SOURCE MARKER: Scheduler call list PDF generates one packet per facility date
+  // SOURCE MARKER: Scheduler PDF caps patients per export to prevent freeze
+  // SOURCE MARKER: Scheduler PDF yields to event loop between exports
+  // SOURCE MARKER: Scheduler PDF confirms before large multi-export batches
+  // SOURCE MARKER: Scheduler PDF generation reports per-export progress
   async function runSchedulerSplitPdf(
     group: BoardGroup,
     fullPatients: PatientScreening[],
     mode: "plexus" | "clinician",
     helpers: { reportGenerationError: (msg: string) => void },
   ) {
+    const MAX_PATIENTS_PER_EXPORT = 20;
+    const CONFIRM_THRESHOLD_EXPORTS = 4;
+
     const split = splitPatientsByFacilityDate(
       fullPatients as PdfPacketSourcePatient[],
     );
@@ -639,49 +680,114 @@ export function EngagementAssignmentBoard() {
       return;
     }
 
-    // Toast the count + scheduler name up front so the operator knows
-    // how many downloads to expect.
+    // Expand each facility/date packet into one or more bounded
+    // sub-exports so a 60-patient packet becomes 3 × 20-patient PDFs
+    // rather than one PDF that hangs the browser.
+    type Export = {
+      label: string;
+      facility: string;
+      scheduleDate: string | null;
+      isOutreachPacket: boolean;
+      patients: PdfPacketSourcePatient[];
+      slice: number;
+      sliceCount: number;
+    };
+    const exports: Export[] = [];
+    for (const packet of split.packets) {
+      const baseLabel = packetLabelFor(packet);
+      const sliceCount = Math.max(
+        1,
+        Math.ceil(packet.patients.length / MAX_PATIENTS_PER_EXPORT),
+      );
+      for (let i = 0; i < sliceCount; i += 1) {
+        const start = i * MAX_PATIENTS_PER_EXPORT;
+        const slice = packet.patients.slice(start, start + MAX_PATIENTS_PER_EXPORT);
+        const label =
+          sliceCount === 1
+            ? baseLabel
+            : `${baseLabel} · part ${i + 1}/${sliceCount}`;
+        exports.push({
+          label,
+          facility: packet.facility,
+          scheduleDate: packet.scheduleDate,
+          isOutreachPacket: packet.isOutreachPacket,
+          patients: slice,
+          slice: i + 1,
+          sliceCount,
+        });
+      }
+    }
+
+    const exportCount = exports.length;
     const packetCount = split.packets.length;
     const schedulerName = group.label;
+
+    // Confirm before kicking off a long multi-export job — the
+    // browser is single-threaded so even with yields between exports
+    // the operator will see seconds of "Generating X/Y…" with the
+    // page mostly unresponsive during each rasterization.
+    if (exportCount >= CONFIRM_THRESHOLD_EXPORTS) {
+      const ok = confirm(
+        `This will generate ${exportCount} PDF${exportCount === 1 ? "" : "s"} for ${schedulerName} (${fullPatients.length} patients across ${packetCount} facility/date group${packetCount === 1 ? "" : "s"}). The page may pause between exports. Continue?`,
+      );
+      if (!ok) return;
+    }
+
     toast({
       title:
         packetCount === 1
           ? `Generating 1 packet for ${schedulerName}.`
           : `Generating ${packetCount} packets for ${schedulerName} by facility/date.`,
       description:
-        split.skipped.length > 0
-          ? `Skipped ${split.skipped.length} patient${split.skipped.length === 1 ? "" : "s"} with no facility.`
-          : undefined,
+        exportCount === packetCount
+          ? split.skipped.length > 0
+            ? `Skipped ${split.skipped.length} patient${split.skipped.length === 1 ? "" : "s"} with no facility.`
+            : undefined
+          : `Large packets will be split — ${exportCount} PDF${exportCount === 1 ? "" : "s"} total.`,
     });
 
+    // Yield once so the toast + spinner can paint before the first
+    // synchronous html2canvas pass.
+    setPdfProgressByGroup((prev) => ({
+      ...prev,
+      [group.key]: { current: 0, total: exportCount },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
     const packetFailures: Array<{ label: string; reason: string }> = [];
-    let packetIndex = 0;
-    for (const packet of split.packets) {
-      packetIndex += 1;
-      const packetLabel = packetLabelFor(packet);
-      const batchName = `${schedulerName} — ${packetLabel}`;
+    for (let i = 0; i < exports.length; i += 1) {
+      const ex = exports[i];
+      const exportIndex = i + 1;
+      setPdfProgressByGroup((prev) => ({
+        ...prev,
+        [group.key]: { current: exportIndex, total: exportCount },
+      }));
+      // Yield BEFORE each export (including the first) so React can
+      // flush the progress update and the browser can paint.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const batchName = `${schedulerName} — ${ex.label}`;
       try {
         if (mode === "plexus") {
           await generatePlexusPDFAsync(
             batchName,
-            packet.patients,
-            packet.scheduleDate,
+            ex.patients,
+            ex.scheduleDate,
             null,
           );
         } else {
           await generateClinicianPDFAsync(
             batchName,
-            packet.patients,
-            packet.scheduleDate,
+            ex.patients,
+            ex.scheduleDate,
             null,
           );
         }
       } catch (err) {
         const reason = err instanceof Error ? err.message : "Unknown PDF export error";
-        packetFailures.push({ label: packetLabel, reason });
+        packetFailures.push({ label: ex.label, reason });
         toast({
-          title: `Packet ${packetIndex}/${packetCount} failed`,
-          description: `Failed to generate ${packetLabel}: ${reason}`,
+          title: `Export ${exportIndex}/${exportCount} failed`,
+          description: `Failed to generate ${ex.label}: ${reason}`,
           variant: "destructive",
         });
       }
@@ -691,7 +797,7 @@ export function EngagementAssignmentBoard() {
       const lines = packetFailures
         .map((f) => `Failed to generate ${f.label}: ${f.reason}`)
         .join(" · ");
-      const summary = `${packetFailures.length} of ${packetCount} packet${packetCount === 1 ? "" : "s"} failed for ${schedulerName}.`;
+      const summary = `${packetFailures.length} of ${exportCount} export${exportCount === 1 ? "" : "s"} failed for ${schedulerName}.`;
       helpers.reportGenerationError(`${summary} ${lines}`);
     }
   }
@@ -1148,6 +1254,13 @@ export function EngagementAssignmentBoard() {
             const selectedCount = selected.size;
             const pdfError = pdfErrorByGroup[group.key] ?? null;
             const pdfGenerating = pdfGeneratingByGroup[group.key] === true;
+            const pdfProgress = pdfProgressByGroup[group.key] ?? null;
+            const pdfBusyLabel =
+              pdfGenerating && pdfProgress && pdfProgress.total > 1
+                ? `Generating ${pdfProgress.current}/${pdfProgress.total}…`
+                : pdfGenerating
+                ? "Generating…"
+                : null;
             const groupSection =
               groupMode === "date"
                 ? "engagement-center-date-group"
@@ -1231,7 +1344,7 @@ export function EngagementAssignmentBoard() {
                       ) : (
                         <FileText className="h-3 w-3" />
                       )}
-                      {pdfGenerating ? "Generating…" : "Plexus PDF"}
+                      {pdfGenerating ? pdfBusyLabel : "Plexus PDF"}
                     </Button>
                     <Button
                       size="sm"
@@ -1248,7 +1361,7 @@ export function EngagementAssignmentBoard() {
                       ) : (
                         <FileText className="h-3 w-3" />
                       )}
-                      {pdfGenerating ? "Generating…" : "Clinician PDF"}
+                      {pdfGenerating ? pdfBusyLabel : "Clinician PDF"}
                     </Button>
                     {/* SOURCE MARKER: Engagement Center assign controls are disabled while pending */}
                     <GroupAssignPopover
