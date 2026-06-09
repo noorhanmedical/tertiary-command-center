@@ -85,6 +85,10 @@ info("docs/architecture/visit-schedule-source-map.md");
 info("docs/architecture/global-calendar-source-map.md");
 info("docs/architecture/operational-queue-design.md");
 
+// Batches 10 + 12 — canonical-spine read-only foundations.
+info("docs/architecture/execution-case-state-machine.md");
+info("docs/architecture/journey-event-standardization-design.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
