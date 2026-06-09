@@ -691,10 +691,16 @@ requireText("server/services/plexusIq/adminReviewAiRegeneration.ts", [
   "patientExplanation",
 ]);
 
+// After Batch 3b.3, the Admin Review supplemental regenerate handler is
+// wrapped by adminReviewSupplementalRegenerateService.ts. Verify the chain:
+// the route imports the service, and the service references the OpenAI helper.
 requireText("server/routes/patients.ts", [
-  "regenerateAdminReviewReasoning",
-  "../services/plexusIq/adminReviewAiRegeneration",
+  "adminReviewSupplementalRegenerateService",
 ]);
+requireText(
+  "server/services/plexusIq/adminReviewSupplementalRegenerateService.ts",
+  ["regenerateAdminReviewReasoning", "./adminReviewAiRegeneration"],
+);
 
 requireNotText(
   "server/routes/patients.ts",

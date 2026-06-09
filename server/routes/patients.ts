@@ -229,82 +229,31 @@ export function registerPatientRoutes(
   // Regenerate clinician / patient reasoning for a single ancillary using
   // admin-selected evidence. Stores under `reasoning["adminReview:<ancillary>"]`
   // so it round-trips through the existing patient.reasoning field shape.
+  //
+  // Delegated to server/services/plexusIq/adminReviewSupplementalRegenerateService.ts.
+  // This route writes the supplemental adminReview:<ancillary> key only — it
+  // does NOT touch canonical reasoning[testName]. Response shape, status codes,
+  // error messages, and mode-based merge are preserved byte-for-byte; see
+  // docs/architecture/backend-route-parity-inventory.md §1.2.
   app.post("/api/patient-screenings/:id/admin-review/regenerate", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      if (Number.isNaN(id)) {
-        return res.status(400).json({ error: "Invalid patient id" });
-      }
-      const patient = await storage.getPatientScreening(id);
-      if (!patient) return res.status(404).json({ error: "Patient not found" });
-
-      const ancillaryId = String(req.body?.ancillaryId ?? "");
-      const mode = String(req.body?.mode ?? "all");
-      const assignedEvidence = Array.isArray(req.body?.assignedEvidence)
-        ? req.body.assignedEvidence
-        : [];
-      const ancillaryNote =
-        typeof req.body?.ancillaryNote === "string" ? req.body.ancillaryNote : "";
-
-      const existingReasoning =
-        patient.reasoning &&
-        typeof patient.reasoning === "object" &&
-        !Array.isArray(patient.reasoning)
-          ? { ...(patient.reasoning as Record<string, unknown>) }
-          : {};
-
-      const key = `adminReview:${ancillaryId || "unknown"}`;
-      const prior = (existingReasoning as Record<string, any>)[key] ?? {};
-      const normalizedMode =
-        mode === "clinician" || mode === "patient" || mode === "all" ? mode : "all";
-
-      const { regenerateAdminReviewReasoning } = await import(
-        "../services/plexusIq/adminReviewAiRegeneration"
+      const { regenerateAdminReviewSupplemental } = await import(
+        "../services/plexusIq/adminReviewSupplementalRegenerateService"
       );
-
-      const regenerated = await regenerateAdminReviewReasoning({
-        patient,
-        ancillaryId,
-        mode: normalizedMode,
-        assignedEvidence,
-        ancillaryNote,
-        previousClinicianReasoning: prior.clinicianReasoning,
-        previousPatientExplanation: prior.patientExplanation,
-      });
-
-      const timestamp = new Date().toISOString();
-      const nextEntry = {
-        ancillaryId,
-        assignedEvidence,
-        ancillaryNote: regenerated.ancillaryNote || ancillaryNote,
-        clinicianReasoning:
-          normalizedMode === "patient"
-            ? prior.clinicianReasoning ?? regenerated.clinicianReasoning
-            : regenerated.clinicianReasoning,
-        patientExplanation:
-          normalizedMode === "clinician"
-            ? prior.patientExplanation ?? regenerated.patientExplanation
-            : regenerated.patientExplanation,
-        regeneratedAt: timestamp,
-        regeneratedMode: normalizedMode,
-      };
-
-      const nextReasoning = {
-        ...existingReasoning,
-        [key]: nextEntry,
-      };
-
-      const updated = await storage.updatePatientScreening(id, {
-        reasoning: nextReasoning,
-      });
-
-      invalidatePatientDatabase();
+      const outcome = await regenerateAdminReviewSupplemental(id, req.body);
+      if (!outcome.ok) {
+        if (outcome.error.kind === "invalid_id") {
+          return res.status(400).json({ error: "Invalid patient id" });
+        }
+        return res.status(404).json({ error: "Patient not found" });
+      }
       res.json({
         ok: true,
-        patient: updated,
-        ancillaryId,
-        clinicianReasoning: nextEntry.clinicianReasoning,
-        patientExplanation: nextEntry.patientExplanation,
+        patient: outcome.patient,
+        ancillaryId: outcome.ancillaryId,
+        clinicianReasoning: outcome.clinicianReasoning,
+        patientExplanation: outcome.patientExplanation,
       });
     } catch (error: any) {
       console.error("[admin-review/regenerate] error:", error?.message ?? error);
