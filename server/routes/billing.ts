@@ -64,46 +64,23 @@ export function registerBillingRoutes(
 ) {
   const { backgroundSyncBilling } = deps;
 
+  // GET /api/billing-records is the auto-create scan: missing billing
+  // rows for completed patients with qualifying tests are inserted on
+  // every read, then the full billing_records snapshot is returned.
+  // Delegated to server/services/billing/billingRecordsService.ts.
+  // Response shape, status codes, error envelope, write semantics, and
+  // backgroundSyncBilling() fire-and-forget ordering are preserved
+  // byte-for-byte; see docs/architecture/backend-route-parity-inventory.md §9.1.
+  // The O(batches × patients × tests) scan is intentionally NOT optimized
+  // here — orchestrator Batches 14/17 are the venues for that work.
   app.get("/api/billing-records", async (_req, res) => {
     try {
-      const batches = await storage.getAllScreeningBatches();
-      const allScreenedPatients: any[] = [];
-      for (const batch of batches) {
-        const patients = await storage.getPatientScreeningsByBatch(batch.id);
-        for (const p of patients) {
-          if (p.status === "completed" && p.qualifyingTests && p.qualifyingTests.length > 0) {
-            allScreenedPatients.push({ patient: p, batch });
-          }
-        }
-      }
-
-      let billingAutoCreated = 0;
-      for (const { patient, batch } of allScreenedPatients) {
-        const tests: string[] = patient.qualifyingTests || [];
-        for (const test of tests) {
-          const existing = await storage.getBillingRecordByPatientAndService(patient.id, test);
-          if (!existing) {
-            await storage.createBillingRecord({
-              patientId: patient.id,
-              batchId: batch.id,
-              service: test,
-              facility: batch.facility || null,
-              dateOfService: batch.scheduleDate || null,
-              patientName: patient.name,
-              clinician: batch.clinicianName || null,
-              billingStatus: "Not Billed",
-              paidStatus: "Unpaid",
-            });
-            billingAutoCreated++;
-          }
-        }
-      }
-
-      if (billingAutoCreated > 0) {
-        void backgroundSyncBilling();
-      }
-
-      const records = await storage.getAllBillingRecords();
+      const { listBillingRecordsWithAutoCreate } = await import(
+        "../services/billing/billingRecordsService"
+      );
+      const records = await listBillingRecordsWithAutoCreate({
+        backgroundSyncBilling,
+      });
       res.json(records);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
