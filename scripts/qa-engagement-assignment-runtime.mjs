@@ -338,6 +338,22 @@ requireText("client/src/components/engagement/EngagementAssignmentBoard.tsx", [
   "by facility/date",
   "Failed to generate",
   "splitPatientsByFacilityDate",
+  // Freeze prevention pass — html2canvas runs synchronously on the
+  // main thread, so a scheduler that holds 60 patients in one
+  // facility/date packet would hang the browser. We sub-chunk each
+  // packet, yield to the event loop between exports, confirm before
+  // large multi-export batches, and report progress on the button
+  // label so the operator can see the job is alive.
+  "Scheduler PDF caps patients per export to prevent freeze",
+  "Scheduler PDF yields to event loop between exports",
+  "Scheduler PDF confirms before large multi-export batches",
+  "Scheduler PDF generation reports per-export progress",
+  "MAX_PATIENTS_PER_EXPORT",
+  "CONFIRM_THRESHOLD_EXPORTS",
+  // The per-export progress label uses the count from
+  // pdfProgressByGroup; both must exist.
+  "pdfProgressByGroup",
+  "Generating ${pdfProgress.current}/${pdfProgress.total}",
 ]);
 
 // Split helper lives in pdfPacketGrouping — the Scheduler / Team
