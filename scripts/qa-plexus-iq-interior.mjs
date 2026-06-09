@@ -873,23 +873,30 @@ requireText(bucketLabelsHost, [
   "Select patients first.",
 ]);
 
-// Plexus IQ packet buttons must NOT directly import html2pdf
-// helpers anymore — the print-preview popup is the canonical path.
-// This is a defensive guard so a future cleanup doesn't accidentally
-// re-route Plexus IQ packets back through the synchronous canvas
-// path that froze the browser on large packets.
+// Plexus IQ + Admin Review packet buttons must NOT call any of the
+// html2pdf helpers directly. The print-preview popup is the
+// canonical path for multi-patient packets; the helpers are kept in
+// pdfGeneration.ts for simple non-packet exports only.
 {
-  const wsSource = read("client/src/components/plexus-iq/PlexusIQWorkspace.tsx") ?? "";
-  for (const banned of [
+  const guardedFiles = [
+    "client/src/components/plexus-iq/PlexusIQWorkspace.tsx",
+    "client/src/components/qualification/AdminReviewDialog.tsx",
+  ];
+  const banned = [
     "generatePlexusPDF(",
     "generateClinicianPDF(",
     "generatePlexusPDFAsync(",
     "generateClinicianPDFAsync(",
-  ]) {
-    if (wsSource.includes(banned)) {
-      failures.push(
-        `PlexusIQWorkspace must not call ${banned} directly — Plexus IQ multi-patient packets must go through openPatientPacketPrintPreview.`,
-      );
+    "exportPdfDocument(",
+  ];
+  for (const rel of guardedFiles) {
+    const src = read(rel) ?? "";
+    for (const needle of banned) {
+      if (src.includes(needle)) {
+        failures.push(
+          `${rel} must not call ${needle} directly — multi-patient packets must go through openPatientPacketPrintPreview.`,
+        );
+      }
     }
   }
 }
@@ -1012,15 +1019,25 @@ requireText("client/src/components/qualification/AdminReviewDialog.tsx", [
   "admin-review-scheduler-selected-count",
   "admin-review-scheduler-plexus-pdf",
   "admin-review-scheduler-clinician-pdf",
+  // Print-preview surface markers — Admin Review packets now open
+  // the canonical popup instead of running html2pdf inline.
+  "admin-review-plexus-print-preview",
+  "admin-review-clinician-print-preview",
+  "admin-review-print-preview-popup-blocked",
+  "admin-review-print-preview-error",
+  "Admin Review packets use print preview",
+  "Admin Review packet print preview avoids html2canvas",
+  "Admin Review packet print preview opens printable popup",
+  "openPatientPacketPrintPreview",
   // Source markers documenting the contract.
   "Engagement Center source of truth",
   "Scheduler call lists grouped by scheduler",
   "Scheduler PDF packets are scoped to assigned scheduler",
   "Plexus PDF by scheduler assignment",
   "Clinician PDF by scheduler assignment",
-  // PDF helper integration (existing canonical generators).
-  "generatePlexusPDF",
-  "generateClinicianPDF",
+  // Admin Review now uses the print-preview popup; the html2pdf
+  // helpers stay available in pdfGeneration.ts for non-packet
+  // exports but must NOT be called from this file.
   "validateSameFacilityDatePacket",
   // Scheduler Settings source markers + UI ribbons. Today's
   // settings source is the outreach_schedulers table (admin-edited

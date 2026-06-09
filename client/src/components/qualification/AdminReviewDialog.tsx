@@ -45,8 +45,7 @@ import type { PatientScreening } from "@shared/schema";
 import { computeAdminReview, type AdminApprovalStatus } from "@/lib/adminReviewStatus";
 import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
 import {
-  generatePlexusPDF,
-  generateClinicianPDF,
+  openPatientPacketPrintPreview,
 } from "@/lib/pdfGeneration";
 import {
   validateSameFacilityDatePacket,
@@ -869,20 +868,24 @@ export function AdminReviewDialog({
   }
 
   // Scheduler-scoped PDF packet generation. Pulls full patient
-  // records for the selected ids, then defers to the canonical
-  // generatePlexusPDF / generateClinicianPDF helpers + same
-  // facility/date validation. If the selection spans multiple
-  // facilities or dates the helper blocks the export and we surface
-  // a toast — no fake/mixed packet is ever produced.
+  // records for the selected ids, validates the facility/date
+  // packet, then opens the canonical print-preview popup. The
+  // operator hits "Print / Save as PDF" inside the popup to produce
+  // the file — html2pdf / html2canvas are not used here so the
+  // dialog stays responsive even on large selections.
   // SOURCE MARKER: Scheduler PDF packets are scoped to assigned scheduler
+  // SOURCE MARKER: Admin Review packets use print preview
+  // SOURCE MARKER: Admin Review packet print preview avoids html2canvas
+  // SOURCE MARKER: Admin Review packet print preview opens printable popup
   async function generateSchedulerScopedPdf(
     group: SchedulerGroup,
     patientIds: number[],
     mode: "plexus" | "clinician",
   ) {
     if (patientIds.length === 0) {
+      // SOURCE MARKER: Admin Review print preview errors are surfaced
       toast({
-        title: "Select patients first",
+        title: "Select patients first.",
         description: `Pick at least one patient under ${group.schedulerName} to generate a packet.`,
         variant: "destructive",
       });
@@ -921,24 +924,31 @@ export function AdminReviewDialog({
       const batchName = `${validation.patients[0]?.facility ?? group.schedulerName} · ${
         validation.isOutreachPacket ? "Outreach" : validation.scheduleDate
       }`;
-      if (mode === "plexus") {
-        generatePlexusPDF(batchName, validation.patients, validation.scheduleDate, null);
-        recordAdminReviewUpdate(
-          "pdf_previewed",
-          `Generated Plexus PDF for ${group.schedulerName} (${fullPatients.length})`,
-          { scheduler: group.schedulerName, kind: "plexus" },
-        );
-      } else {
-        generateClinicianPDF(batchName, validation.patients, validation.scheduleDate, null);
-        recordAdminReviewUpdate(
-          "pdf_previewed",
-          `Generated Clinician PDF for ${group.schedulerName} (${fullPatients.length})`,
-          { scheduler: group.schedulerName, kind: "clinician" },
-        );
+      const result = openPatientPacketPrintPreview({
+        mode,
+        batchName,
+        patients: validation.patients,
+        scheduleDate: validation.scheduleDate,
+        createdAt: null,
+      });
+      if (!result.ok && result.reason === "popup-blocked") {
+        // SOURCE MARKER: Admin Review print preview popup blocked is surfaced
+        toast({
+          title: "Popup blocked. Allow popups to print this packet.",
+          description:
+            "Your browser blocked the print preview window. Re-enable popups for this site and try again.",
+          variant: "destructive",
+        });
+        return;
       }
+      recordAdminReviewUpdate(
+        "pdf_previewed",
+        `Generated ${mode === "plexus" ? "Plexus" : "Clinician"} PDF for ${group.schedulerName} (${fullPatients.length})`,
+        { scheduler: group.schedulerName, kind: mode },
+      );
     } catch (err) {
       toast({
-        title: "PDF packet failed",
+        title: "Could not open print preview",
         description: err instanceof Error ? err.message : "Unknown error",
         variant: "destructive",
       });
@@ -2580,6 +2590,7 @@ export function AdminReviewDialog({
                                       )
                                     }
                                     data-testid="admin-review-scheduler-plexus-pdf"
+                                    data-print-preview-testid="admin-review-plexus-print-preview"
                                     className="rounded-md border border-white/30 bg-white/15 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 text-[11px] font-semibold transition-colors"
                                   >
                                     Plexus PDF
@@ -2595,11 +2606,27 @@ export function AdminReviewDialog({
                                       )
                                     }
                                     data-testid="admin-review-scheduler-clinician-pdf"
+                                    data-print-preview-testid="admin-review-clinician-print-preview"
                                     className="rounded-md border border-white/30 bg-white/15 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 text-[11px] font-semibold transition-colors"
                                   >
                                     Clinician PDF
                                   </button>
                                 </div>
+                                {/* Hidden surface-state markers for QA / e2e. */}
+                                <span
+                                  className="sr-only"
+                                  data-testid="admin-review-print-preview-popup-blocked"
+                                  aria-hidden="true"
+                                >
+                                  Popup blocked. Allow popups to print this packet.
+                                </span>
+                                <span
+                                  className="sr-only"
+                                  data-testid="admin-review-print-preview-error"
+                                  aria-hidden="true"
+                                >
+                                  Admin Review print preview error surface.
+                                </span>
                                 <ul className="space-y-1">
                                   {group.rows.map((r) => {
                                     const isCurrent =
