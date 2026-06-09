@@ -67,27 +67,25 @@ requireText(patientsRoute, [
   "listRecentlyDeletedPatientScreenings",
   "getPatientScreeningIncludingDeleted",
   "restorePatientScreening",
-  // Canonical Admin Review regeneration must write patient.reasoning[testName]
-  // and use storage.updatePatientScreening; supplemental adminReview metadata
-  // may also be set, but is not the sole output.
+  // After Batches 3b.1–3b.7, every Admin Review handler in patients.ts is
+  // a thin delegate to a service module. The route file asserts only the
+  // path registrations + service imports; the literal merge contracts
+  // (regenerateCanonicalReasoning, priorQualifyingFactorsByTest, etc.)
+  // are asserted in the service files further below.
   "/api/patient-screenings/:id/admin-review/regenerate-all",
-  "regenerateCanonicalReasoning",
+  "adminReviewRegenerateAllService",
   "reasoning",
   "updatePatientScreening",
   "adminReview:",
-  // Per-ancillary regenerate + AI ICD search wiring.
   "/api/patient-screenings/:id/admin-review/regenerate-ancillary",
+  "adminReviewRegenerateAncillaryService",
   "/api/patient-screenings/:id/admin-review/icd-search",
-  "searchAdminReviewIcdCodes",
-  "@shared/ancillaryCategory",
-  // Per-test regenerate route. After Batch 3b.5 the handler is wrapped by
-  // adminReviewRegenerateTestService.ts; the route only registers the path
-  // and delegates. The unique `qualifyingTests: [testName]` signature now
-  // lives in the service (asserted below).
+  "adminReviewIcdSearchService",
   "/api/patient-screenings/:id/admin-review/regenerate-test",
   "adminReviewRegenerateTestService",
   "adminReview:test:",
   // ICD search structured error envelope (no leaking keys/PHI).
+  // The PHI-safe catch logger remains in the route (kept inline by Batch 3b.7).
   "OpenAI universal ICD search failed",
   "hasAIIntegrationsKey",
   "hasOpenAIKey",
@@ -106,6 +104,14 @@ requireText(
     "adminReview:test:",
     'regeneratedMode: "test"',
   ],
+);
+
+// After Batch 3b.7 the ICD search service wrapper handles validation +
+// dispatch; it must call the AI helper and propagate failures so the
+// route's PHI-safe catch logger fires unchanged.
+requireText(
+  "server/services/plexusIq/adminReviewIcdSearchService.ts",
+  ["searchAdminReviewIcdCodes", "./adminReviewIcdSearch"],
 );
 
 // AI ICD search service: universal search, Responses API + strict json_schema,
@@ -145,17 +151,29 @@ requireText("server/services/plexusIq/adminReviewAiRegeneration.ts", [
   "mergedQualifyingFactors",
 ]);
 
-// Regenerate routes must accept the merged-chip payload shape that
-// the dialog sends today: priorQualifyingFactorsByTest, removedFactors
-// (per-ancillary), and assignedEvidence.
-requireText("server/routes/patients.ts", [
-  "/api/patient-screenings/:id/admin-review/regenerate-ancillary",
-  "/api/patient-screenings/:id/admin-review/regenerate-test",
+// The merged-chip payload shape the dialog sends today
+// (priorQualifyingFactorsByTest, removedFactorsByTest,
+// selectedSupportButtonsByTest, regenerateCanonicalReasoning) now lives in
+// the three regenerate service files. The route only registers paths and
+// delegates. Assert the contract in each service.
+const REGEN_SERVICE_CONTRACT = [
   "priorQualifyingFactorsByTest",
   "removedFactorsByTest",
   "selectedSupportButtonsByTest",
   "regenerateCanonicalReasoning",
-]);
+];
+requireText(
+  "server/services/plexusIq/adminReviewRegenerateAllService.ts",
+  REGEN_SERVICE_CONTRACT,
+);
+requireText(
+  "server/services/plexusIq/adminReviewRegenerateAncillaryService.ts",
+  REGEN_SERVICE_CONTRACT,
+);
+requireText(
+  "server/services/plexusIq/adminReviewRegenerateTestService.ts",
+  REGEN_SERVICE_CONTRACT,
+);
 
 // Admin Review approval must trigger the canonical scheduler routing
 // runtime (commitPatient → execution-case spine →
@@ -504,11 +522,10 @@ requireText("server/services/plexusIq/adminReviewAiRegeneration.ts", [
   "priorByTest",
 ]);
 
-// Routes must forward priorQualifyingFactorsByTest from request body to the
-// AI service for all three regenerate endpoints.
-requireText("server/routes/patients.ts", [
-  "priorQualifyingFactorsByTest",
-]);
+// Routes forwarding priorQualifyingFactorsByTest from request body to the
+// AI service used to be inline in patients.ts. After the wrapper batches
+// (3b.2/3b.4/3b.5) the forwarding now happens inside each regenerate
+// service file (asserted via REGEN_SERVICE_CONTRACT above).
 
 // Rule engine: meds do NOT auto-create diagnoses; venous /
 // arterial / carotid / echo per-test ultrasound support helpers;

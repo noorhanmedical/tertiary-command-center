@@ -347,56 +347,37 @@ export function registerPatientRoutes(
 
   // Universal OpenAI ICD-10-CM search for the Admin Review Available Buttons section.
   // Logs only non-sensitive metadata — no key, no PHI, no full query, no Hx/Dx/Rx.
+  //
+  // Delegated to server/services/plexusIq/adminReviewIcdSearchService.ts for the
+  // validation + AI-call path. The PHI-safe catch block is INTENTIONALLY kept
+  // in the route so the structured error log emits the exact same fields it
+  // has always emitted (patientId, queryLength, hasAIIntegrationsKey,
+  // hasOpenAIKey, hasBaseUrl, message). See
+  // docs/architecture/backend-route-parity-inventory.md §1.8.
   app.post(
     "/api/patient-screenings/:id/admin-review/icd-search",
     async (req, res) => {
       const id = parseInt(req.params.id);
       try {
-        if (Number.isNaN(id)) {
-          return res.status(400).json({
-            ok: false,
-            error: "OpenAI universal ICD search failed",
-            detail: "Invalid patient id",
-          });
-        }
-        const patient = await storage.getPatientScreening(id);
-        if (!patient) {
+        const { adminReviewIcdSearch } = await import(
+          "../services/plexusIq/adminReviewIcdSearchService"
+        );
+        const outcome = await adminReviewIcdSearch(id, req.body);
+        if (!outcome.ok) {
+          if (outcome.error.kind === "invalid_id") {
+            return res.status(400).json({
+              ok: false,
+              error: "OpenAI universal ICD search failed",
+              detail: "Invalid patient id",
+            });
+          }
           return res.status(404).json({
             ok: false,
             error: "OpenAI universal ICD search failed",
             detail: "Patient not found",
           });
         }
-
-        const query = String(req.body?.query ?? "").trim();
-        if (query.length < 2) {
-          return res.json({ ok: true, results: [] });
-        }
-
-        const patientContext = {
-          diagnoses:
-            typeof req.body?.patientContext?.diagnoses === "string"
-              ? req.body.patientContext.diagnoses
-              : undefined,
-          history:
-            typeof req.body?.patientContext?.history === "string"
-              ? req.body.patientContext.history
-              : undefined,
-          medications:
-            typeof req.body?.patientContext?.medications === "string"
-              ? req.body.patientContext.medications
-              : undefined,
-        };
-
-        const { searchAdminReviewIcdCodes } = await import(
-          "../services/plexusIq/adminReviewIcdSearch"
-        );
-        const results = await searchAdminReviewIcdCodes({
-          query,
-          patient,
-          patientContext,
-        });
-        res.json({ ok: true, results });
+        res.json({ ok: true, results: outcome.results });
       } catch (error: any) {
         const detail =
           error instanceof Error
