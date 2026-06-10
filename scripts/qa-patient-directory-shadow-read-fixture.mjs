@@ -68,8 +68,7 @@ requireText(FIXTURE_REL, [
   "fieldsDivergent",
   "manualReviewRequired",
   "conflictFlag",
-  // Identity fields.
-  "canonicalPatientId" ? "canonicalPatientId" : "id",
+  // Identity fields the fixture's legacy + canonical sub-objects expose.
   "primaryScreeningId",
   "externalPatientId",
   "mrn",
