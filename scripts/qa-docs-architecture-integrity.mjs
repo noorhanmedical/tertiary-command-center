@@ -132,6 +132,9 @@ info("docs/architecture/qualification-structure-cleanup-design.md");
 // Bundle 32 — Playground design-system implementation plan (docs-only).
 info("docs/architecture/playground-design-system-implementation-plan.md");
 
+// Bundle 36 — QA index + regression coverage map (docs-only).
+info("docs/architecture/qa-index-regression-map.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
