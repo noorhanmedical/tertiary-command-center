@@ -117,6 +117,9 @@ info("docs/architecture/patient-directory-shadow-read-contract.md");
 // Bundle 25 — Plexus IQ aggregate read-model contract (docs-only).
 info("docs/architecture/plexus-iq-read-model-contract.md");
 
+// Bundle 29 — Billing/invoice hard-stop map (docs-only).
+info("docs/architecture/billing-invoice-hard-stop-map.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
