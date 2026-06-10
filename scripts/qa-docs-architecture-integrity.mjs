@@ -168,6 +168,9 @@ info("docs/architecture/engagement-call-list-canonicalization-contract.md");
 // Batch D — Team-member assignment terminology contract (docs-only).
 info("docs/architecture/team-member-assignment-terminology-contract.md");
 
+// Batch E — Engagement → call-list bridge contract (docs-only).
+info("docs/architecture/engagement-call-list-bridge-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
