@@ -147,6 +147,9 @@ info("docs/architecture/emr-adapter-interface-design.md");
 // Bundle 40 — ICD suggestion safety contract (docs-only).
 info("docs/architecture/icd-suggestion-safety-contract.md");
 
+// Bundle 43 — Labs/imaging/notes extraction contract (docs-only).
+info("docs/architecture/labs-imaging-notes-extraction-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
