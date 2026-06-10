@@ -1,9 +1,11 @@
 // QA: operational-queue → SchedulerAssignment projection parity
-// (Batch 11d.2 / Bundle 12).
+// (Batch 11d.2 / Bundles 12 + 13).
 //
 // Two-layer check:
-//   1. Source-code invariants — the projection contract file exists and
-//      the projection-design doc still names the 5 lossy fields.
+//   1. Source-code invariants — the projection contract file, the real
+//      projection module (Bundle 13), and the projection-design doc
+//      still name the 5 lossy fields and the canonical PHI-safe log
+//      prefix.
 //   2. Runs the parity test under server/modules/operational-queue/__tests__/
 //      via tsx (the test itself runs without a DB, so this QA pass is
 //      safe in any environment).
@@ -71,8 +73,21 @@ requireText(TEST_REL, [
   "[operational-queue/projection/schedulerAssignment]",
 ]);
 
+// 2b. The test imports the real projection module (Bundle 13) and
+//     asserts equivalence with the inline reference. Both ends of
+//     the contract come from one source of truth.
+requireText(TEST_REL, [
+  'from "../projections/schedulerAssignment"',
+  "MISSING_ROW_LOG_PREFIX",
+  "LegacySchedulerAssignmentRowShape",
+  "§10",
+  "§11",
+]);
+
 // 3. The test must not import the live DB or any service-layer module —
-//    the no-DB invariant is the whole point.
+//    the no-DB invariant is the whole point. The pure projection module
+//    under ../projections/schedulerAssignment is explicitly allowed
+//    (it has no DB / schema runtime deps).
 requireNotText(
   TEST_REL,
   [
@@ -80,9 +95,68 @@ requireNotText(
     'from "../service"',
     'from "../repo"',
     'from "@shared/schema"',
+    'from "../projections/schedulerAssignmentDefaultFetcher"',
   ],
-  "projection-parity test pulls in DB / service / schema deps",
+  "projection-parity test pulls in DB / service / schema / default-fetcher deps",
 );
+
+// 3b. The real projection module is also pure — no DB / schema runtime
+//     deps — so the test (and any future consumer that does not need
+//     the default fetcher) can import it freely.
+const MODULE_REL = "server/modules/operational-queue/projections/schedulerAssignment.ts";
+requireFile(MODULE_REL);
+requireText(MODULE_REL, [
+  "export async function projectQueueItemsToSchedulerAssignments",
+  "MISSING_ROW_LOG_PREFIX",
+  "LegacySchedulerAssignmentRowShape",
+  "SchedulerAssignmentFetchByIds",
+  "[operational-queue/projection/schedulerAssignment] missing_row",
+  // Mirrors the design doc's lossy-field list inline so a future
+  // refactor that drops one is caught here too.
+  "schedulerId",
+  "assignedAt",
+  "originalSchedulerId",
+  "reason",
+  "completedAt",
+]);
+requireNotText(
+  MODULE_REL,
+  [
+    'from "../../db"',
+    'from "../../../db"',
+    'from "@shared/schema"',
+    'from "../service"',
+    'from "../repo"',
+    "drizzle-orm",
+  ],
+  "projection module must stay pure (no DB / schema / drizzle deps)",
+);
+
+// 3c. The default fetcher file lives next to the pure module so a
+//     future runtime PR can adopt it with a single import.
+const FETCHER_REL = "server/modules/operational-queue/projections/schedulerAssignmentDefaultFetcher.ts";
+requireFile(FETCHER_REL);
+requireText(FETCHER_REL, [
+  "defaultFetchSchedulerAssignmentsByIds",
+  "inArray",
+  "schedulerAssignments",
+  "from \"@shared/schema\"",
+  "from \"./schedulerAssignment\"",
+]);
+// The default fetcher is the one place that DOES import the DB pool
+// — assert that path exists so a refactor that breaks the import is
+// noticed.
+requireText(FETCHER_REL, ['from "../../../db"']);
+
+// 3d. The projections barrel re-exports both halves so consumers have
+//     one import path.
+const BARREL_REL = "server/modules/operational-queue/projections/index.ts";
+requireFile(BARREL_REL);
+requireText(BARREL_REL, [
+  "projectQueueItemsToSchedulerAssignments",
+  "MISSING_ROW_LOG_PREFIX",
+  "defaultFetchSchedulerAssignmentsByIds",
+]);
 
 // 4. The projection-design doc still names the same five lossy fields
 //    and the canonical PHI-safe log line. If a future PR changes the
