@@ -159,6 +159,9 @@ info("docs/architecture/team-portal-runtime-wiring-readiness-checklist.md");
 // Bundle 55 — Frontend hooks extraction plan (docs-only).
 info("docs/architecture/frontend-hooks-extraction-plan.md");
 
+// Bundle 56 — PDF preview + download contract (docs-only).
+info("docs/architecture/pdf-preview-download-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
