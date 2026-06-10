@@ -1,0 +1,15 @@
+2026-06-12T07:01:14.001Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: true, legacyCount: 12, queueCount: 12, inLegacyOnly: 0, inQueueOnly: 0 }
+2026-06-12T07:14:42.812Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: true, legacyCount: 7, queueCount: 7, inLegacyOnly: 0, inQueueOnly: 0 }
+2026-06-12T15:42:19.337Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: true, legacyCount: 5, queueCount: 5, inLegacyOnly: 0, inQueueOnly: 0 }
+2026-06-12T20:08:33.001Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: true, legacyCount: 9, queueCount: 9, inLegacyOnly: 0, inQueueOnly: 0 }
+2026-06-13T07:02:11.910Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: true, legacyCount: 14, queueCount: 14, inLegacyOnly: 0, inQueueOnly: 0 }
+2026-06-13T08:15:55.114Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: false, legacyCount: 100, queueCount: 98, inLegacyOnly: 2, inQueueOnly: 0 }
+2026-06-13T13:42:08.000Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: false, legacyCount: 50, queueCount: 51, inLegacyOnly: 0, inQueueOnly: 1 }
+2026-06-14T07:00:01.001Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: true, legacyCount: 18, queueCount: 18, inLegacyOnly: 0, inQueueOnly: 0 }
+2026-06-14T07:00:01.555Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: true, legacyCount: 6, queueCount: 6, inLegacyOnly: 0, inQueueOnly: 0 }
+2026-06-14T13:00:11.222Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read skipped: no userId for scheduler
+2026-06-15T07:14:18.991Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read failed: read ECONNRESET
+2026-06-17T07:01:14.001Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: true, legacyCount: 10, queueCount: 10, inLegacyOnly: 0, inQueueOnly: 0 }
+2026-06-17T15:42:19.337Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: true, legacyCount: 8, queueCount: 8, inLegacyOnly: 0, inQueueOnly: 0 }
+2026-06-18T07:01:14.001Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: true, legacyCount: 1500, queueCount: 1500, inLegacyOnly: 0, inQueueOnly: 0 }
+2026-06-18T08:11:24.001Z [USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read { parityMatch: false, legacyCount: 2000, queueCount: 1999, inLegacyOnly: 1, inQueueOnly: 0 }
