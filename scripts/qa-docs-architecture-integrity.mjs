@@ -102,6 +102,9 @@ info("docs/architecture/operational-queue-call-list-projection-design.md");
 // Batch 19 — AWS readiness pre-cutover checklist (docs-only).
 info("docs/architecture/aws-readiness-checklist.md");
 
+// Bundle 15 — Shadow-read parity-log analyzer (docs-only).
+info("docs/architecture/shadow-read-parity-log-analyzer-design.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
