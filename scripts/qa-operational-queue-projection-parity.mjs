@@ -176,12 +176,30 @@ requireText(DESIGN_REL, [
 requireText(DESIGN_REL, ["EXACTLY one DB query"]);
 
 // 6. The PHI-safe log line in the design must remain counts-only —
-//    no patient field names allowed in the log spec.
-requireNotText(
-  DESIGN_REL,
-  ["patientName", "patientDob", "summary:"],
-  "design doc PHI-safe log spec must remain counts-only",
-);
+//    no patient field names allowed in the projection-module log spec.
+//
+//    Scope: applies to the original projection-spec sections only
+//    (everything BEFORE the Bundle 14 "## 6. Shadow-read parity-log
+//    schema" heading). Bundle 14's §6.3 prohibition list deliberately
+//    names the forbidden identifiers for the route-level shadow-read
+//    log — that list IS the contract, not a leak, and lives in a
+//    different log line than the projection module's missing-row log.
+{
+  const designContent = read(DESIGN_REL);
+  if (designContent !== null) {
+    const cutoff = designContent.indexOf("## 6. Shadow-read parity-log schema");
+    const projectionSpecOnly =
+      cutoff === -1 ? designContent : designContent.slice(0, cutoff);
+    for (const needle of ["patientName", "patientDob", "summary:"]) {
+      if (projectionSpecOnly.includes(needle)) {
+        failures.push(
+          `design doc PHI-safe log spec must remain counts-only: ` +
+            `${DESIGN_REL} (pre-§6 section) contains "${needle}"`,
+        );
+      }
+    }
+  }
+}
 
 if (failures.length > 0) {
   console.error("Operational queue projection parity QA failed:");
