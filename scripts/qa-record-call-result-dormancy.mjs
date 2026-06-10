@@ -161,11 +161,26 @@ requireText(TEST_REL, [
   "tests/fixtures/callResultCanonicalization.fixture",
 ]);
 
-// 7. Dormancy — no non-test runtime file imports the new service.
+// 7. Dormancy — no non-test runtime file imports the canonical
+//    recordCallResult planner except the designated preview-flag
+//    module added in Batch H Step 2 (which imports it for parity
+//    logging only; the route imports the flag module, not the
+//    planner directly).
 {
   const ROOTS = ["server", "shared", "client", "scripts"];
-  const SERVICE_NAMES = ["recordCallResult", "callResult/recordCallResult"];
   const importers = [];
+
+  // Regex: imports that end at the exact module specifier
+  // ".../recordCallResult" — optionally followed by .ts/.js. Matches
+  // `from "../recordCallResult"` but NOT
+  // `from "../recordCallResultEngagementPreviewFlag"`.
+  const IMPORT_SPECIFIER_RE =
+    /(?:from|import)\s+['"][^'"]*\/recordCallResult(?:\.(?:ts|tsx|mts|cts|js|mjs|cjs|jsx))?['"]/;
+
+  // The single designated runtime importer of recordCallResult.
+  const ALLOWED_RUNTIME_IMPORTERS = new Set([
+    "server/services/callResult/recordCallResultEngagementPreviewFlag.ts",
+  ]);
 
   function walk(dir) {
     let entries;
@@ -191,16 +206,12 @@ requireText(TEST_REL, [
       if (rel.includes("/__tests__/")) continue;
       if (rel.includes("/test/") || rel.includes("/tests/")) continue;
       if (rel.endsWith(".test.ts") || rel.endsWith(".test.tsx") || rel.endsWith(".spec.ts")) continue;
+      // The designated preview-flag module is allowed to import the planner.
+      if (ALLOWED_RUNTIME_IMPORTERS.has(rel)) continue;
 
       const src = fs.readFileSync(abs, "utf8");
-      for (const needle of SERVICE_NAMES) {
-        // Only flag actual import statements, not stray symbol references.
-        const importLine = new RegExp(
-          `(?:from\\s+['\\"][^'\\"]*${needle.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}['\\"]|import\\s+['\\"][^'\\"]*${needle.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}['\\"])`,
-        );
-        if (importLine.test(src)) {
-          importers.push(`${rel} imports ${needle}`);
-        }
+      if (IMPORT_SPECIFIER_RE.test(src)) {
+        importers.push(`${rel} imports recordCallResult`);
       }
     }
   }
@@ -210,7 +221,7 @@ requireText(TEST_REL, [
   if (importers.length > 0) {
     for (const i of importers) {
       failures.push(
-        `Dormancy violation: ${i} — recordCallResult must not be wired to runtime yet (Batch H Step 1 hard-stop)`,
+        `Dormancy violation: ${i} — only the designated preview-flag module may import recordCallResult from runtime`,
       );
     }
   }

@@ -20,6 +20,10 @@ import {
   upsertOpenSchedulingTriageCase,
 } from "../repositories/schedulingTriage.repo";
 import { getGlobalAdminSettingValue } from "../repositories/adminSettings.repo";
+import {
+  isRecordCallResultEngagementPreviewEnabled,
+  runEngagementCallResultPreview,
+} from "../services/callResult/recordCallResultEngagementPreviewFlag";
 
 const assignBodySchema = z.object({
   facilityId: z.string().optional(),
@@ -399,6 +403,36 @@ export function registerExecutionCaseRoutes(app: Express) {
         } catch (err: any) {
           console.error("[call-result] execution case update failed:", err.message);
         }
+      }
+
+      // Batch H Step 2 — dormant recordCallResult preview parity check.
+      // Default OFF. When enabled, runs the canonical planner on the
+      // same input and emits ONE PHI-safe parity line. Never blocks,
+      // never throws, never mutates the response. Patient identifiers
+      // are NOT forwarded to the helper — only the screeningId (opaque)
+      // and the outcome label.
+      if (isRecordCallResultEngagementPreviewEnabled()) {
+        runEngagementCallResultPreview(
+          {
+            patientScreeningId:
+              patientScreeningId !== null ? String(patientScreeningId) : null,
+            outcome: data.callResult,
+            callbackAt: data.nextActionAt ?? null,
+          },
+          {
+            outcome: data.callResult,
+            routeAppointmentStatus: null,
+            routeEngagementStatusTransition:
+              updatedExecutionCase && executionCase &&
+              updatedExecutionCase.engagementStatus !== executionCase.engagementStatus
+                ? updatedExecutionCase.engagementStatus ?? null
+                : null,
+            routeAssignmentCompleted: false,
+            routeFollowUpTaskCreated: task !== null,
+            routeTriageCaseUpserted: triageCase !== null,
+            routeNextActionAtSet: computedNextActionAt !== null,
+          },
+        );
       }
 
       return res.json({
