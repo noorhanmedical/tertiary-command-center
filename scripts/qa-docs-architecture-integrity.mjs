@@ -171,6 +171,9 @@ info("docs/architecture/team-member-assignment-terminology-contract.md");
 // Batch E — Engagement → call-list bridge contract (docs-only).
 info("docs/architecture/engagement-call-list-bridge-contract.md");
 
+// Batch F — Team Portal call-list consumption readiness (docs-only).
+info("docs/architecture/team-portal-call-list-consumption-readiness.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
