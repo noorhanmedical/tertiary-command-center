@@ -120,6 +120,9 @@ info("docs/architecture/plexus-iq-read-model-contract.md");
 // Bundle 29 — Billing/invoice hard-stop map (docs-only).
 info("docs/architecture/billing-invoice-hard-stop-map.md");
 
+// Bundle 30 — Admin Review approval → commit inventory (docs-only).
+info("docs/architecture/admin-review-approval-commit-inventory.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
