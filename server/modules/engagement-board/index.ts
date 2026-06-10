@@ -10,3 +10,15 @@
 // dormant-module pattern from Batch 11a.
 
 export * from "./contracts";
+
+// Bundle 23 — dormant pure-helpers service. Re-exported so the
+// future v2 wiring PR adopts the helpers with one import. The
+// dormancy invariant in scripts/qa-engagement-board-dormant-service.mjs
+// fails CI if any non-test file imports from this module.
+export {
+  applyEngagementBoardFilters,
+  computeEngagementBoardSummary,
+  computeMissingInfoFromScreening,
+  sortEngagementBoardRows,
+  type ScreeningInfoSlice,
+} from "./service";
