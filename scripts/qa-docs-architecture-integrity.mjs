@@ -96,6 +96,9 @@ info("docs/architecture/aws-readiness-design.md");
 // Batch 16 — documents storage abstraction (docs-only).
 info("docs/architecture/documents-storage-design.md");
 
+// Batch 11d.2 — operational-queue → SchedulerAssignment projection (docs-only).
+info("docs/architecture/operational-queue-call-list-projection-design.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
