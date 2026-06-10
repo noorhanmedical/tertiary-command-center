@@ -111,6 +111,9 @@ info("docs/architecture/operational-queue-staging-runbook.md");
 // Bundle 18 — Portal cutover readiness checklist (docs-only).
 info("docs/architecture/portal-cutover-readiness-checklist.md");
 
+// Bundle 20 — Patient Directory shadow-read contract (docs-only).
+info("docs/architecture/patient-directory-shadow-read-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
