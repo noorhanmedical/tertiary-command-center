@@ -141,6 +141,9 @@ info("docs/architecture/emr-integration-clinical-evidence-qualification-contract
 // Bundle 38 — Clinical Evidence Store contract (docs-only).
 info("docs/architecture/clinical-evidence-store-contract.md");
 
+// Bundle 39 — EMR adapter interface design (docs-only).
+info("docs/architecture/emr-adapter-interface-design.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
