@@ -144,6 +144,9 @@ info("docs/architecture/clinical-evidence-store-contract.md");
 // Bundle 39 — EMR adapter interface design (docs-only).
 info("docs/architecture/emr-adapter-interface-design.md");
 
+// Bundle 40 — ICD suggestion safety contract (docs-only).
+info("docs/architecture/icd-suggestion-safety-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
