@@ -157,20 +157,22 @@ requireText(ROUTE_REL, [
   }
 }
 
-// 6. /api/outreach/calls route MUST NOT reference the planner OR
-//    the preview flag (Batch H Step 2 hard-stop: don't touch the
-//    other write path yet).
+// 6. /api/outreach/calls route MUST NOT reference the ENGAGEMENT
+//    preview flag or the engagement-specific helper. (Batch H Step 3
+//    relaxed the "outreach untouched" assertion to allow the OUTREACH
+//    preview path; the engagement and outreach helpers stay surface-
+//    isolated.)
 const OUTREACH_REL = "server/routes/outreach.ts";
 requireFile(OUTREACH_REL);
 requireNotText(
   OUTREACH_REL,
   [
-    "recordCallResult",
     "USE_RECORD_CALL_RESULT_ENGAGEMENT_PREVIEW",
     "isRecordCallResultEngagementPreviewEnabled",
     "runEngagementCallResultPreview",
+    "recordCallResultEngagementPreviewFlag",
   ],
-  "outreach.ts must remain untouched by Batch H Step 2",
+  "outreach.ts must not import the engagement preview path",
 );
 
 // 7. Team Portal route untouched.

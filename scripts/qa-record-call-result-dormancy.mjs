@@ -177,9 +177,12 @@ requireText(TEST_REL, [
   const IMPORT_SPECIFIER_RE =
     /(?:from|import)\s+['"][^'"]*\/recordCallResult(?:\.(?:ts|tsx|mts|cts|js|mjs|cjs|jsx))?['"]/;
 
-  // The single designated runtime importer of recordCallResult.
+  // The designated runtime importers of recordCallResult — one per
+  // surface preview helper. Routes still go THROUGH these modules,
+  // never directly to the planner.
   const ALLOWED_RUNTIME_IMPORTERS = new Set([
     "server/services/callResult/recordCallResultEngagementPreviewFlag.ts",
+    "server/services/callResult/recordCallResultOutreachPreviewFlag.ts",
   ]);
 
   function walk(dir) {
