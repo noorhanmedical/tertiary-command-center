@@ -126,6 +126,9 @@ info("docs/architecture/admin-review-approval-commit-inventory.md");
 // Bundle 31 — Qualification structure cleanup design (docs-only).
 info("docs/architecture/qualification-structure-cleanup-design.md");
 
+// Bundle 32 — Playground design-system implementation plan (docs-only).
+info("docs/architecture/playground-design-system-implementation-plan.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
