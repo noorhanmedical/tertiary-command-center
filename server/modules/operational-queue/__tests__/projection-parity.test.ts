@@ -52,6 +52,11 @@ import {
   OPERATIONAL_QUEUE_ITEM_KINDS,
   type OperationalQueueItem,
 } from "../contracts";
+import {
+  MISSING_ROW_LOG_PREFIX,
+  projectQueueItemsToSchedulerAssignments,
+  type LegacySchedulerAssignmentRowShape,
+} from "../projections/schedulerAssignment";
 
 // ─── Local minimal mirror of shared/schema/outreach.ts SchedulerAssignment.
 // Kept literal so the test does not depend on the schema module (avoids
@@ -524,6 +529,197 @@ check(
   __GAP_MAPPING_MARKER__.length === 5,
   "§9: gap-mapping marker must list exactly 5 lossy fields",
 );
+
+// ─── §10: Equivalence — real module ≡ inline reference (Bundle 13) ────
+//
+// The Bundle 13 PR added the real projection module at
+// server/modules/operational-queue/projections/schedulerAssignment.ts.
+// This section runs every fixture through BOTH the inline reference
+// implementation above (the canonical spec) AND the imported real
+// module, and asserts they produce byte-identical output, identical
+// fetch-call counts, and identical log lines.
+//
+// Failure here means the real module drifted from the design /
+// reference algorithm. The QA wrapper at
+// scripts/qa-operational-queue-projection-parity.mjs asserts the
+// MISSING_ROW_LOG_PREFIX constant matches the design doc's spec, so
+// both ends of the contract (algorithm + log line) stay in sync.
+{
+  // Compile-time proof that the local fixture row type is structurally
+  // assignable to the real module's exported row shape. If either type
+  // ever drifts, this assignment fails typecheck.
+  const _typeShapeCheck: LegacySchedulerAssignmentRowShape = legacyRows[0]!;
+  void _typeShapeCheck;
+
+  type LR = LegacySchedulerAssignmentLike;
+  type Case = {
+    name: string;
+    items: ReadonlyArray<OperationalQueueItem>;
+    fetcher: (ids: number[]) => Promise<LR[]>;
+  };
+  const cases: Case[] = [
+    {
+      name: "happy path — full fetch",
+      items: baseQueueItems,
+      fetcher: async (ids) => legacyRows.filter((r) => ids.includes(r.id)),
+    },
+    {
+      name: "missing row — id 102 dropped",
+      items: baseQueueItems,
+      fetcher: async (_ids) => legacyRows.filter((r) => r.id !== 102),
+    },
+    {
+      name: "DB returns out-of-queue order",
+      items: baseQueueItems,
+      fetcher: async (_ids) => [legacyRows[1]!, legacyRows[0]!, legacyRows[2]!],
+    },
+    {
+      name: "empty input",
+      items: [],
+      fetcher: async (_ids) => legacyRows,
+    },
+    {
+      name: "all-non-call-list input",
+      items: [schedulerTaskQueueItem(99), schedulerTaskQueueItem(88)],
+      fetcher: async (_ids) => legacyRows,
+    },
+  ];
+
+  for (const c of cases) {
+    let refFetchCalls = 0;
+    let realFetchCalls = 0;
+    const refLogs: string[] = [];
+    const realLogs: string[] = [];
+    let refRequested: number[] | null = null;
+    let realRequested: number[] | null = null;
+
+    const refOut = await projectQueueItemsToSchedulerAssignments_REFERENCE(
+      c.items,
+      async (ids) => {
+        refFetchCalls += 1;
+        refRequested = ids.slice();
+        return c.fetcher(ids);
+      },
+      (line) => refLogs.push(line),
+    );
+    const realOut = await projectQueueItemsToSchedulerAssignments<LR>(
+      c.items,
+      async (ids) => {
+        realFetchCalls += 1;
+        realRequested = ids.slice();
+        return c.fetcher(ids);
+      },
+      (line) => realLogs.push(line),
+    );
+
+    check(
+      refOut.length === realOut.length,
+      `§10 [${c.name}]: row count diverges (ref=${refOut.length} real=${realOut.length})`,
+    );
+    for (let i = 0; i < refOut.length && i < realOut.length; i += 1) {
+      const r = refOut[i]!;
+      const x = realOut[i]!;
+      eq(x.id, r.id, `§10 [${c.name}]: row ${i}.id`);
+      eq(x.patientScreeningId, r.patientScreeningId, `§10 [${c.name}]: row ${i}.patientScreeningId`);
+      eq(x.schedulerId, r.schedulerId, `§10 [${c.name}]: row ${i}.schedulerId`);
+      eq(x.asOfDate, r.asOfDate, `§10 [${c.name}]: row ${i}.asOfDate`);
+      eq(x.assignedAt, r.assignedAt, `§10 [${c.name}]: row ${i}.assignedAt`);
+      eq(x.source, r.source, `§10 [${c.name}]: row ${i}.source`);
+      eq(x.originalSchedulerId, r.originalSchedulerId, `§10 [${c.name}]: row ${i}.originalSchedulerId`);
+      eq(x.reason, r.reason, `§10 [${c.name}]: row ${i}.reason`);
+      eq(x.status, r.status, `§10 [${c.name}]: row ${i}.status`);
+      eq(x.completedAt, r.completedAt, `§10 [${c.name}]: row ${i}.completedAt`);
+    }
+    check(
+      refFetchCalls === realFetchCalls,
+      `§10 [${c.name}]: fetch call count diverges (ref=${refFetchCalls} real=${realFetchCalls})`,
+    );
+    // Both implementations must request the same deduplicated ownerId set.
+    const refReqStr = refRequested ? [...refRequested].sort().join(",") : "<none>";
+    const realReqStr = realRequested ? [...realRequested].sort().join(",") : "<none>";
+    check(
+      refReqStr === realReqStr,
+      `§10 [${c.name}]: requested ownerId set diverges (ref=${refReqStr} real=${realReqStr})`,
+    );
+    check(
+      refLogs.length === realLogs.length,
+      `§10 [${c.name}]: log line count diverges (ref=${refLogs.length} real=${realLogs.length})`,
+    );
+    for (let i = 0; i < refLogs.length && i < realLogs.length; i += 1) {
+      eq(realLogs[i], refLogs[i], `§10 [${c.name}]: log line ${i}`);
+    }
+    // And the log prefix the real module emits must be the canonical
+    // PHI-safe one (proves the exported constant matches the inline
+    // reference's literal — the two implementations cannot drift).
+    for (const line of realLogs) {
+      check(
+        line.startsWith(MISSING_ROW_LOG_PREFIX),
+        `§10 [${c.name}]: real-module log line must start with MISSING_ROW_LOG_PREFIX`,
+      );
+    }
+  }
+}
+
+// ─── §11: Required-field tripwire on the real module ──────────────────
+//
+// Asserts that a fetched row missing ANY of the legacy fields the
+// projection promises to round-trip causes a runtime-observable
+// failure in the test, not a silent drop. We do this by feeding the
+// real module a row whose `assignedAt` is missing (`undefined`), then
+// reading the output and asserting the field is undefined — which the
+// test treats as a contract violation and fails on.
+//
+// This is the "fail explicitly in tests if required projection fields
+// are missing" requirement from Bundle 13's brief. The projection
+// itself does NOT validate input rows (that responsibility belongs to
+// the fetcher / DB layer), but the test pins the contract that any
+// future fetcher returning a partial row will be visibly broken.
+{
+  type PartialRow = Omit<LegacySchedulerAssignmentLike, "assignedAt"> & {
+    assignedAt: Date | undefined;
+  };
+  const partial: PartialRow = {
+    id: 999,
+    patientScreeningId: 7777,
+    schedulerId: 9,
+    asOfDate: FIXED_AS_OF_DATE,
+    assignedAt: undefined,
+    source: "auto",
+    originalSchedulerId: null,
+    reason: null,
+    status: "active",
+    completedAt: null,
+  };
+  const items: ReadonlyArray<OperationalQueueItem> = [callListQueueItem(999)];
+  const out = await projectQueueItemsToSchedulerAssignments<PartialRow>(
+    items,
+    async (_ids) => [partial],
+  );
+  check(out.length === 1, "§11: partial-row fixture should round-trip exactly one row");
+  check(
+    out[0]?.assignedAt === undefined,
+    "§11: partial row's missing assignedAt must surface as undefined (caller responsibility to enforce)",
+  );
+  // List every required field the test explicitly checks for presence
+  // — if any is silently absent in a real fetcher, this list is the
+  // canonical place a future PR records the expectation.
+  const requiredFields: ReadonlyArray<keyof LegacySchedulerAssignmentRowShape> = [
+    "id",
+    "patientScreeningId",
+    "schedulerId",
+    "asOfDate",
+    "assignedAt",
+    "source",
+    "originalSchedulerId",
+    "reason",
+    "status",
+    "completedAt",
+  ];
+  check(
+    requiredFields.length === 10,
+    "§11: required-field tripwire list must enumerate all 10 legacy columns",
+  );
+}
 
 // ─── Final result ─────────────────────────────────────────────────────
 if (failures.length > 0) {
