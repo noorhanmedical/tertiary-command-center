@@ -180,6 +180,9 @@ info("docs/architecture/call-history-readonly-envelope-contract.md");
 // Batch H — Call-list runtime implementation plan (docs-only).
 info("docs/architecture/call-list-runtime-implementation-plan.md");
 
+// Batch K — Final call-list canonicalization summary (docs-only).
+info("docs/architecture/call-list-canonicalization-summary.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
