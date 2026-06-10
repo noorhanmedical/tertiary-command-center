@@ -27,11 +27,11 @@
 //   docs/architecture/team-portal-playground-wiring-contract.md §13 (wiring)
 //   docs/architecture/portal-cutover-readiness-checklist.md (gate pattern)
 
+import type { EngagementBoardRow } from "@shared/contracts/engagementBoard";
 import type {
-  EngagementBoardRow,
+  EngagementBoardFilters,
   EngagementBoardSummary,
-} from "@shared/contracts/engagementBoard";
-import type { EngagementBoardFilters } from "./contracts";
+} from "./contracts";
 
 /**
  * Compute the `missingInfo` array from a screening row slice.
