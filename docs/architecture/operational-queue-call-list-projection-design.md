@@ -113,4 +113,96 @@ A future operational-queue PR MUST stop and ask if:
 4. The verification gate windows above are shortened without an explicit risk write-up.
 5. The projection ever WRITES (writes belong in their own service, not in a read-side shape-preserver).
 
+---
+
+## 6. Shadow-read parity-log schema (Bundle 14)
+
+The verification gates in §4 ("`parityMatch: true` for ≥ 7 consecutive days") are only observable if every shadow-read log line uses the same schema. This section pins that schema. It is the one place a future log-aggregation or alerting PR may reference.
+
+### 6.1 Canonical fields
+
+When `USE_OPERATIONAL_QUEUE_CALL_LIST=1` and a `schedulerId` is resolved (see `server/routes/schedulerAssignments.ts` shadow-read block), the route emits **one** log line per request with **exactly** these five fields, in this order:
+
+```
+[USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read {
+  parityMatch:   boolean,
+  legacyCount:   number,
+  queueCount:    number,
+  inLegacyOnly:  number,
+  inQueueOnly:   number,
+}
+```
+
+Field semantics:
+
+- **`parityMatch`** — `true` if and only if `inLegacyOnly === 0 && inQueueOnly === 0`. Derived; not an independent signal.
+- **`legacyCount`** — size of the legacy `scheduler_assignments` result row id set.
+- **`queueCount`** — size of the operational-queue `ownerId` set after kind filter.
+- **`inLegacyOnly`** — count of ids present in legacy but not in queue.
+- **`inQueueOnly`** — count of ids present in queue but not in legacy.
+
+No other field may be added to the schema without a follow-on PR that updates this section AND the PHI invariant in `scripts/qa-shadow-read-parity-log-schema.mjs`.
+
+### 6.2 Skip-and-error log lines
+
+The route also emits two prefixed lines for branches that cannot produce a parity comparison:
+
+- **Skip** — `[USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read skipped: no userId for scheduler` — emitted when an admin request resolves to a `schedulerId` whose `outreach_schedulers` row has no `userId`. No counts.
+- **Error** — `[USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read failed:` followed by `err.message` only — emitted when the shadow read itself throws. The legacy `res.json(rows)` path is unaffected.
+
+Neither variant carries any field outside `err.message`.
+
+### 6.3 PHI prohibition list
+
+The shadow-read log block — successful, skipped, and error variants — MUST NOT contain any of the following identifiers, in field-name OR raw-string form:
+
+- `patientName`
+- `patientDob`
+- `mrn`
+- `insurance`
+- `diagnosis`
+- `summary:` (the inline patient-summary form used elsewhere)
+- raw `rows` array, raw `queueItems` array, or any `JSON.stringify` of either
+- any ownerId, schedulerId, or userId
+
+The QA script `scripts/qa-shadow-read-parity-log-schema.mjs` enforces this list against the route source. Any future PR that adds a new field MUST update both the route, this doc's §6.1 list, AND the QA script's allow-list.
+
+---
+
+## 7. Staging gate (Bundle 14)
+
+Before any future PR flips `USE_OPERATIONAL_QUEUE_CALL_LIST=1` in production, the following gate must be satisfied. This is the operational analogue of the verification-gate windows in §4 — it specifies WHAT to do during the window, not just how long to wait.
+
+### 7.1 Pre-staging canned-fixture pass
+
+1. Run `npx tsx server/modules/operational-queue/__tests__/projection-parity.test.ts` against the merged-to-main projection module (Bundle 13). It must exit 0.
+2. Run `node scripts/qa-operational-queue-projection-parity.mjs`. It must exit 0.
+3. Run `node scripts/qa-shadow-read-parity-log-schema.mjs` (Bundle 14). It must exit 0.
+
+All three are no-DB source/in-memory checks; they run in any environment.
+
+### 7.2 Staging-only flag flip
+
+4. Set `USE_OPERATIONAL_QUEUE_CALL_LIST=1` in the **staging** environment only. Production default remains OFF.
+5. Confirm via `grep '[USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read' <staging-logs>` that the shadow-read line is being emitted on a real request.
+
+### 7.3 Observation window
+
+6. Observe `parityMatch` distribution for **7 consecutive days** of staging traffic that includes at least one weekday morning (when call-list reads peak).
+7. Aggregate by day:
+   - `parityMatch=true` ratio per day.
+   - `inLegacyOnly + inQueueOnly` summed per day, normalised by `legacyCount`.
+8. The window passes if `parityMatch=true` for **every** request OR `(inLegacyOnly + inQueueOnly) / legacyCount < 0.001` (0.1%) every day, with **zero** `[USE_OPERATIONAL_QUEUE_CALL_LIST] shadow-read failed:` lines.
+
+### 7.4 Production gate
+
+9. The production default is NOT flipped by this bundle, by Bundle 15, or by any PR that has not satisfied §7.1–§7.3. A separate, explicitly approved PR — with the staging report linked in the description — owns the production flip.
+10. Rollback drill (§4 Batch 11d.4 verification) is part of the production-flip PR, not this gate.
+
+### 7.5 What this gate does NOT promise
+
+- Does not promise the projection is fast enough for production load — that's an observation concern for the staging window's latency dashboard, not this gate.
+- Does not promise the legacy code path is ready for deletion — that's a separate Batch 11d.5 gate.
+- Does not promise the projection works for admin team-wide reads — the shadow read is intentionally skipped when no `schedulerId` is resolved (see §6.2).
+
 End of design.
