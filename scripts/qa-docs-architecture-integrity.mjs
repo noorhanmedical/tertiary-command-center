@@ -123,6 +123,9 @@ info("docs/architecture/billing-invoice-hard-stop-map.md");
 // Bundle 30 — Admin Review approval → commit inventory (docs-only).
 info("docs/architecture/admin-review-approval-commit-inventory.md");
 
+// Bundle 31 — Qualification structure cleanup design (docs-only).
+info("docs/architecture/qualification-structure-cleanup-design.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
