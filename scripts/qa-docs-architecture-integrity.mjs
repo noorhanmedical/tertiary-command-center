@@ -138,6 +138,9 @@ info("docs/architecture/qa-index-regression-map.md");
 // Bundle 37 — EMR + Clinical Evidence + Ancillary Qualification (docs-only).
 info("docs/architecture/emr-integration-clinical-evidence-qualification-contract.md");
 
+// Bundle 38 — Clinical Evidence Store contract (docs-only).
+info("docs/architecture/clinical-evidence-store-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
