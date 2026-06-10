@@ -150,6 +150,9 @@ info("docs/architecture/icd-suggestion-safety-contract.md");
 // Bundle 43 — Labs/imaging/notes extraction contract (docs-only).
 info("docs/architecture/labs-imaging-notes-extraction-contract.md");
 
+// Bundle 49 — Patient Directory read-only envelope readiness (docs-only).
+info("docs/architecture/patient-directory-readonly-envelope-readiness.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
