@@ -99,6 +99,9 @@ info("docs/architecture/documents-storage-design.md");
 // Batch 11d.2 — operational-queue → SchedulerAssignment projection (docs-only).
 info("docs/architecture/operational-queue-call-list-projection-design.md");
 
+// Batch 19 — AWS readiness pre-cutover checklist (docs-only).
+info("docs/architecture/aws-readiness-checklist.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
