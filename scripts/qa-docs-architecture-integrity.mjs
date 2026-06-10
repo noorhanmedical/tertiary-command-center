@@ -156,6 +156,9 @@ info("docs/architecture/patient-directory-readonly-envelope-readiness.md");
 // Bundle 54 — Team Portal runtime wiring readiness checklist (docs-only).
 info("docs/architecture/team-portal-runtime-wiring-readiness-checklist.md");
 
+// Bundle 55 — Frontend hooks extraction plan (docs-only).
+info("docs/architecture/frontend-hooks-extraction-plan.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
