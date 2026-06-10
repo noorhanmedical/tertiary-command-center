@@ -13,6 +13,10 @@ import {
 import { eq } from "drizzle-orm";
 import { buildOutreachDashboard } from "../services/outreachService";
 import { ensureCanonicalSpineForScreening } from "../services/patientCommitService";
+import {
+  isRecordCallResultOutreachPreviewEnabled,
+  runOutreachCallResultPreview,
+} from "../services/callResult/recordCallResultOutreachPreviewFlag";
 
 // Look up the user_id of the scheduler currently assigned to a given
 // patient screening (via batch.assigned_scheduler_id). Returns null when
@@ -220,7 +224,8 @@ export function registerOutreachRoutes(app: Express) {
       // the queue reflects the change immediately rather than waiting for
       // the next daily build.
       const TERMINAL = new Set(["scheduled", "completed", "declined", "dnc", "do_not_contact", "deceased", "cancelled"]);
-      if (TERMINAL.has(desiredStatus.toLowerCase())) {
+      const terminalForCompletion = TERMINAL.has(desiredStatus.toLowerCase());
+      if (terminalForCompletion) {
         try {
           await storage.markSchedulerAssignmentCompleted(parsed.data.patientScreeningId);
         } catch (err) {
@@ -237,6 +242,32 @@ export function registerOutreachRoutes(app: Express) {
       }).catch((err) => {
         console.error("[outreach.calls] ensureCanonicalSpineForScreening failed:", err);
       });
+
+      // Batch H Step 3 — dormant recordCallResult preview parity check.
+      // Default OFF. When enabled, runs the canonical planner on the
+      // same input and emits ONE PHI-safe parity line. Never blocks,
+      // never throws, never mutates the response. Patient identifiers
+      // (name, dob) are NOT forwarded — only the opaque screeningId
+      // and the outcome label.
+      if (isRecordCallResultOutreachPreviewEnabled()) {
+        const cb = parsed.data.callbackAt;
+        const callbackAtIso = cb instanceof Date ? cb.toISOString() : null;
+        runOutreachCallResultPreview(
+          {
+            patientScreeningId: String(parsed.data.patientScreeningId),
+            outcome: parsed.data.outcome,
+            callbackAt: callbackAtIso,
+          },
+          {
+            outcome: parsed.data.outcome,
+            routeAppointmentStatus: desiredStatus,
+            routeAssignmentCompleted: terminalForCompletion,
+            routeFollowUpTaskCreated: false,
+            routeTriageCaseUpserted: false,
+            routeJourneyEventAppended: false,
+          },
+        );
+      }
 
       res.status(201).json(call);
     } catch (error: any) {
