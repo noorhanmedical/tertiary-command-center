@@ -781,6 +781,66 @@ export function registerPortalRoutes(app: Express) {
     }
   });
 
+  // ── Prior call history per patient (Batch I — read-only) ─────────────────
+  //
+  // Flag-gated; default OFF (USE_PORTAL_CALL_HISTORY_READ). Returns
+  // 404 when the flag is OFF so production behavior is byte-stable
+  // until a deliberate flip.
+  //
+  // Delegates to storage.listOutreachCallsForPatient — no parallel
+  // write path. Applies the Batch G read-only envelope (allowed
+  // fields only). Tenant + facility scope enforced via the existing
+  // allowedFacilities / ensureFacility helpers. Returns 404 (not 403)
+  // when the patient is outside the viewer's facility scope, per
+  // Batch G §4 (avoids existence-revealing).
+  //
+  // No writes. No PHI on info/warn/error logs (Bundle 8).
+  app.get("/api/portal/calls", requirePortalRole, async (req, res) => {
+    try {
+      const { isPortalCallHistoryReadEnabled } = await import(
+        "../modules/portal/call-history-read-flag"
+      );
+      if (!isPortalCallHistoryReadEnabled()) {
+        return res.status(404).json({ error: "Not found" });
+      }
+      const patientScreeningId = Number.parseInt(
+        String(req.query.patientScreeningId ?? ""),
+        10,
+      );
+      if (!Number.isFinite(patientScreeningId) || patientScreeningId <= 0) {
+        return res.status(400).json({ error: "patientScreeningId required" });
+      }
+      const fac = await patientFacility(patientScreeningId);
+      if (!fac) return res.status(404).json({ error: "Not found" });
+      const allowed = await allowedFacilities(req);
+      if (ensureFacility(allowed, fac.facility) !== null) {
+        // Existence-revealing 403 would leak that the row exists; use
+        // 404 per Batch G §4.
+        return res.status(404).json({ error: "Not found" });
+      }
+      const calls = await storage.listOutreachCallsForPatient(patientScreeningId);
+      const envelope = calls.map((c) => ({
+        id: c.id,
+        patientScreeningId: c.patientScreeningId,
+        outcome: c.outcome,
+        notes: c.notes ?? null,
+        callbackAt:
+          (c as unknown as { callbackAt?: Date | string | null }).callbackAt ?? null,
+        attemptNumber:
+          (c as unknown as { attemptNumber?: number | null }).attemptNumber ?? null,
+        durationSeconds:
+          (c as unknown as { durationSeconds?: number | null }).durationSeconds ?? null,
+        startedAt: c.startedAt,
+      }));
+      res.json({
+        patientScreeningId,
+        calls: envelope,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to load call history" });
+    }
+  });
+
   // ── List the facilities this user is allowed to view ───────────────────────
   app.get("/api/portal/my-facilities", requirePortalRole, async (req, res) => {
     try {
