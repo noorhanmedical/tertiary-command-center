@@ -108,6 +108,9 @@ info("docs/architecture/shadow-read-parity-log-analyzer-design.md");
 // Bundle 17 — Operational queue staging runbook (docs-only).
 info("docs/architecture/operational-queue-staging-runbook.md");
 
+// Bundle 18 — Portal cutover readiness checklist (docs-only).
+info("docs/architecture/portal-cutover-readiness-checklist.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
