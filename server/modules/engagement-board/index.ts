@@ -15,10 +15,17 @@ export * from "./contracts";
 // future v2 wiring PR adopts the helpers with one import. The
 // dormancy invariant in scripts/qa-engagement-board-dormant-service.mjs
 // fails CI if any non-test file imports from this module.
+//
+// Bundle 51 — v2 composition helper + opaque-cursor codec
+// (composeEngagementBoardV2Response, encodeV2Cursor, decodeV2Cursor).
+// Still dormant; same import-graph guard applies.
 export {
   applyEngagementBoardFilters,
+  composeEngagementBoardV2Response,
   computeEngagementBoardSummary,
   computeMissingInfoFromScreening,
+  decodeV2Cursor,
+  encodeV2Cursor,
   sortEngagementBoardRows,
   type ScreeningInfoSlice,
 } from "./service";
