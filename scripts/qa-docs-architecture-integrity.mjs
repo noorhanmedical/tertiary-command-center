@@ -231,6 +231,9 @@ info("docs/architecture/engagement-ui-terminology-contract.md");
 // Platform split-brain run Batch 23 — Plexus IQ split-brain audit.
 info("docs/architecture/plexus-iq-split-brain-audit.md");
 
+// Platform split-brain run Batch 24 — Risk register.
+info("docs/architecture/platform-split-brain-risk-register.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
