@@ -285,6 +285,9 @@ info("docs/architecture/engagement-ui-terminology-implementation-blockers.md");
 // Engagement completion run Batch 20 — Final summary.
 info("docs/architecture/engagement-completion-summary.md");
 
+// Phase 1 run Segment B Batch 1 — outreach atomic write contract.
+info("docs/architecture/phase-1-outreach-atomic-write-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
