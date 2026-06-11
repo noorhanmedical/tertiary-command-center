@@ -276,6 +276,9 @@ info("docs/architecture/engagement-call-list-service-module-plan.md");
 // Engagement completion run Batch 16 — Call-list route contract.
 info("docs/architecture/engagement-call-list-route-contract.md");
 
+// Engagement completion run Batch 18 — UI terminology implementation plan.
+info("docs/architecture/engagement-ui-terminology-implementation-plan.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
