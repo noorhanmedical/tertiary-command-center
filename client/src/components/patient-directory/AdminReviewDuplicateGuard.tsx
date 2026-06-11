@@ -49,9 +49,9 @@ export function AdminReviewDuplicateGuard({ result, onOpenAudit }: Props) {
             {onOpenAudit ? (
               <Button
                 type="button"
-                variant="link"
+                variant="ghost"
                 size="sm"
-                className="h-6 px-1 text-[12px]"
+                className="h-6 px-1 text-[12px] underline-offset-2 hover:underline"
                 onClick={() => onOpenAudit(result)}
                 data-testid="admin-review-duplicate-open-audit"
               >
