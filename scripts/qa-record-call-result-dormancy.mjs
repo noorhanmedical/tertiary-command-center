@@ -189,6 +189,7 @@ requireText(TEST_REL, [
     // PRs (Batches 12 + 19). Routes still go through these wrappers,
     // never directly to the planner.
     "server/services/callResult/recordCallResultEngagementExecutor.ts",
+    "server/services/callResult/recordCallResultOutreachExecutor.ts",
   ]);
 
   function walk(dir) {
