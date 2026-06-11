@@ -318,6 +318,9 @@ info("docs/architecture/phase-1-plexus-iq-boundary-contract.md");
 // Phase 1 run Segment D Batch 2 — Admin Review boundary contract.
 info("docs/architecture/phase-1-admin-review-boundary-contract.md");
 
+// Phase 1 run Segment D Batch 4 — Batch Flow handoff contract.
+info("docs/architecture/phase-1-batch-flow-handoff-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
