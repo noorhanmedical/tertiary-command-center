@@ -27,6 +27,7 @@ import {
   type MarkAssignmentCompletedArgs,
   type UpsertTriageCaseArgs,
   type CreateFollowUpTaskArgs,
+  type RecordCallResultExecutionOptions,
 } from "../recordCallResultExecutionAdapter";
 
 const failures: string[] = [];
@@ -436,6 +437,97 @@ for (const outcome of [
   // All other steps ran (strict didn't short-circuit on the suppression).
   eq(log.appendJourneyEvent.length, 1, "§11: subsequent steps still ran");
   eq(result.ok, true, "§11: strict + suppression keeps ok=true");
+}
+
+// ─── §12: Argument extension passthrough (Batch 1 of arg extensions run) ─
+//        Extended optional fields supplied by caller must arrive at
+//        the dep unchanged. (Adapter does not inspect or filter them.)
+//
+// NOTE: TypeScript's structural typing means the adapter accepts an
+// Args object that has extra properties only if the test constructs
+// them inline. We use `as` casts here only to satisfy the dep type
+// signature when reading captured args back out.
+{
+  const journeyMeta = { callDisposition: "ok", facilityId: "f-1" };
+  const triagePayload = {
+    mainType: "callback",
+    subtype: "patient_requested_call_later",
+    priority: "high",
+    note: "test note",
+  };
+  const taskPayload = {
+    title: "test title",
+    description: "test desc",
+    priority: "high",
+    urgency: "EOD",
+    assignedToUserId: "user-1",
+  };
+
+  // Adapter-level: we supply deps that capture the FULL arg object
+  // and assert extended fields show up if the adapter were to pass
+  // them through. The adapter today calls deps with the canonical
+  // fields only — the EXTENSION is that the dep TYPE permits these
+  // optional fields. Callers (executors) supply them in later batches.
+  // §12 confirms the optional field types compile + the dep can read
+  // them off Args without TypeScript errors.
+  const journeyArgs: AppendJourneyEventArgs = {
+    patientScreeningId: "x",
+    patientExecutionCaseId: "ec-x",
+    eventType: "call_result_logged",
+    sourceSurface: "engagement_center_route",
+    outcome: "scheduled",
+    metadata: journeyMeta,
+    patientName: "RouteResolved",
+    patientDob: "1990-01-01",
+  };
+  check(journeyArgs.metadata?.callDisposition === "ok", "§12: journey metadata typed");
+  check(journeyArgs.patientName === "RouteResolved", "§12: PHI patientName typed for DI");
+
+  const triageArgs: UpsertTriageCaseArgs = {
+    patientScreeningId: "x",
+    patientExecutionCaseId: "ec-x",
+    triageType: "callback_scheduled",
+    callbackAt: null,
+    mainType: triagePayload.mainType,
+    subtype: triagePayload.subtype,
+    priority: triagePayload.priority,
+    note: triagePayload.note,
+    assignedUserId: "u-1",
+    dueAt: "2026-06-10T12:00:00Z",
+    metadata: { createdSource: "scheduler_call_result" },
+  };
+  check(triageArgs.mainType === "callback", "§12: triage mainType typed");
+  check(triageArgs.priority === "high", "§12: triage priority typed");
+
+  const taskArgs: CreateFollowUpTaskArgs = {
+    patientScreeningId: "x",
+    patientExecutionCaseId: "ec-x",
+    taskType: "needs_records",
+    title: taskPayload.title,
+    description: taskPayload.description,
+    priority: taskPayload.priority,
+    urgency: taskPayload.urgency,
+    assignedToUserId: taskPayload.assignedToUserId,
+    dueAt: null,
+    metadata: { createdSource: "scheduler_call_result" },
+  };
+  check(taskArgs.title === "test title", "§12: task title typed");
+  check(taskArgs.urgency === "EOD", "§12: task urgency typed");
+
+  const ecArgs: UpdateExecutionCaseEngagementArgs = {
+    patientExecutionCaseId: "ec-x",
+    engagementStatus: "contacted",
+    nextActionAt: null,
+    assignedTeamMemberId: "123",
+    assignedRole: "scheduler",
+    forceReassign: true,
+  };
+  check(ecArgs.assignedTeamMemberId === "123", "§12: assignedTeamMemberId typed");
+  check(ecArgs.forceReassign === true, "§12: forceReassign typed");
+
+  // §12.options — callbackHours typed.
+  const opts: RecordCallResultExecutionOptions = { callbackHours: 24 };
+  check(opts.callbackHours === 24, "§12: callbackHours typed");
 }
 
 if (failures.length > 0) {

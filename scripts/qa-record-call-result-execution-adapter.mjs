@@ -111,7 +111,12 @@ requireNotText(
   "adapter must stay pure (no DB / Express / route / storage imports)",
 );
 
-// 4. No console logging or PHI fields.
+// 4. No console logging. PHI identifiers (patientName, patientDob)
+//    are permitted ONLY as typed DI-passthrough fields on
+//    AppendJourneyEventArgs per the Batch D contract — never logged,
+//    never inspected. They appear ONLY inside the AppendJourneyEventArgs
+//    type block. The check below strips the args block before scanning
+//    for the bare identifiers.
 requireNotText(
   ADAPTER_REL,
   [
@@ -119,8 +124,6 @@ requireNotText(
     "console.info",
     "console.warn",
     "console.error",
-    "patientName",
-    "patientDob",
     "mrn",
     "ssn",
     "phoneNumber",
@@ -128,6 +131,19 @@ requireNotText(
   ],
   "adapter must not log or accept PHI",
 );
+{
+  const src = read(ADAPTER_REL) ?? "";
+  // Strip the AppendJourneyEventArgs type block before checking — the
+  // contract permits patientName / patientDob ONLY there.
+  const stripped = src.replace(/AppendJourneyEventArgs\s*=\s*\{[\s\S]*?\};/, "");
+  for (const phi of ["patientName", "patientDob"]) {
+    if (stripped.includes(phi)) {
+      failures.push(
+        `${ADAPTER_REL}: PHI identifier "${phi}" appears outside the AppendJourneyEventArgs type block — Batch D contract restricts PHI to DI-passthrough only`,
+      );
+    }
+  }
+}
 
 // 5. Test file present.
 const TEST_REL = "server/services/callResult/__tests__/recordCallResultExecutionAdapter.test.ts";
