@@ -348,6 +348,9 @@ info("docs/architecture/ancillary-order-note-tracking-contract.md");
 // Phase 1 run Segment F Batch 5 — physician signing contract.
 info("docs/architecture/physician-signing-contract.md");
 
+// Phase 1 run Segment G Batch 1 — billing readiness boundary contract.
+info("docs/architecture/phase-1-billing-readiness-boundary-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
