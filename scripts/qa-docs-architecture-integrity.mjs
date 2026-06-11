@@ -330,6 +330,9 @@ info("docs/architecture/team-portal-patient-directory-wiring-contract.md");
 // Phase 1 run Segment E Batch 3 — Team Portal structured call-result selector contract.
 info("docs/architecture/team-portal-structured-call-result-selector-contract.md");
 
+// Phase 1 run Segment E Batch 5 — RingCentral adapter contract.
+info("docs/architecture/ringcentral-adapter-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
