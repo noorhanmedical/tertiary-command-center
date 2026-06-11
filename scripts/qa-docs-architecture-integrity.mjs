@@ -258,6 +258,9 @@ info("docs/architecture/call-result-engagement-route-delegation-readiness-rechec
 // Engagement completion run Batch 2 — FINAL readiness.
 info("docs/architecture/call-result-engagement-route-delegation-final-readiness.md");
 
+// Engagement completion run Batch 7 — Canonical plural endpoint contract.
+info("docs/architecture/engagement-canonical-call-results-endpoint-implementation-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
