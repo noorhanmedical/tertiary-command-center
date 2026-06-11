@@ -204,6 +204,9 @@ info("docs/architecture/engagement-call-list-ui-wiring-audit.md");
 // Platform split-brain run Batch 6 — Engagement canonical endpoint contract.
 info("docs/architecture/engagement-canonical-call-result-endpoint-contract.md");
 
+// Platform split-brain run Batch 10 — Engagement delegation contract.
+info("docs/architecture/call-result-engagement-delegation-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
