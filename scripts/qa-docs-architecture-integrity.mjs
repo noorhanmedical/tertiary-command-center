@@ -282,6 +282,9 @@ info("docs/architecture/engagement-ui-terminology-implementation-plan.md");
 // Engagement completion run Batch 19 — UI terminology implementation BLOCKERS.
 info("docs/architecture/engagement-ui-terminology-implementation-blockers.md");
 
+// Engagement completion run Batch 20 — Final summary.
+info("docs/architecture/engagement-completion-summary.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
