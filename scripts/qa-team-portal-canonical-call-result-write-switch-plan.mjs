@@ -24,8 +24,14 @@ else for (const n of [
   "Admin Review",
 ]) if (!c.includes(n)) failures.push(`Missing "${n}" in ${DOC}`);
 
-// E8 is docs+QA only — the new kill-switch flag must NOT exist in code yet.
+// Authorized importers of the rollback flag.
+// Batch E9 wires the flag into DispositionSheet; no other source file
+// may reference it. Update this allowlist alongside each new
+// authorized batch.
 {
+  const ALLOWED = new Set([
+    "client/src/components/outreach/DispositionSheet.tsx",
+  ]);
   const ROOTS = ["server", "client", "shared"];
   function walk(dir) {
     let entries;
@@ -36,9 +42,10 @@ else for (const n of [
       if (e.isDirectory()) { walk(abs); continue; }
       if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
+      if (ALLOWED.has(rel)) continue;
       const src = fs.readFileSync(abs, "utf8");
       if (src.includes("VITE_USE_LEGACY_DISPOSITION_WRITE")) {
-        failures.push(`E8 is docs+QA only: ${rel} already references VITE_USE_LEGACY_DISPOSITION_WRITE`);
+        failures.push(`Unauthorized reference: ${rel} references VITE_USE_LEGACY_DISPOSITION_WRITE`);
       }
     }
   }
@@ -52,12 +59,14 @@ else for (const n of [
   else if (!helper.includes("engagementCallResultEndpoint")) failures.push("engagementCallResultEndpoint export missing");
 }
 
-// DispositionSheet still posts to legacy endpoint today — E8 must not
-// have prematurely flipped the write path.
+// DispositionSheet still references the legacy endpoint string (kept
+// behind the rollback flag in E9 and beyond). If the string vanishes
+// from the file, either the rollback path was removed prematurely or
+// the file was restructured — flag it.
 {
   const dispo = read("client/src/components/outreach/DispositionSheet.tsx") ?? "";
   if (!dispo.includes('"/api/outreach/calls"')) {
-    failures.push("DispositionSheet should still POST /api/outreach/calls today — E8 is docs-only");
+    failures.push("DispositionSheet must still reference /api/outreach/calls (rollback path)");
   }
 }
 

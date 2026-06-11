@@ -48,6 +48,18 @@ const STRUCTURED_SELECTOR_ENABLED = (() => {
   return v === "1" || v === "true" || v === "yes";
 })();
 
+// Phase 1 Segment E Batch 9 — primary write switch. When OFF (default
+// after E9 ships) the legacy outcome grid posts to the canonical
+// Engagement endpoint and the best-effort canonical mirror is gone.
+// When ON, the prior dual-write behavior is restored as a one-release
+// rollback fallback. See:
+//   docs/architecture/team-portal-canonical-call-result-write-switch-plan.md
+const LEGACY_DISPOSITION_WRITE_ENABLED = (() => {
+  const v = (import.meta as { env?: Record<string, unknown> }).env
+    ?.VITE_USE_LEGACY_DISPOSITION_WRITE;
+  return v === "1" || v === "true" || v === "yes";
+})();
+
 const CANONICAL_OUTCOMES = [
   "scheduled",
   "callback",
@@ -184,45 +196,67 @@ export function DispositionSheet({
   const logCall = useMutation({
     mutationFn: async () => {
       if (patientId == null || !outcome) throw new Error("Missing patient or outcome");
-      const body: Record<string, unknown> = {
-        patientScreeningId: patientId,
-        outcome,
-        notes: notes.trim() || null,
-        schedulerUserId: schedulerUserId,
-      };
+      const trimmedNotes = notes.trim();
       const nextActionIso = outcome === "callback" && callbackAt
         ? new Date(callbackAt).toISOString()
         : null;
-      if (nextActionIso) {
-        body.callbackAt = nextActionIso;
+
+      if (LEGACY_DISPOSITION_WRITE_ENABLED) {
+        // Rollback path — restores the pre-E9 dual-write behavior
+        // exactly. Primary POST is the legacy outreach endpoint;
+        // canonical mirror runs best-effort. Drop this branch one
+        // release after E9 ships clean.
+        const legacyBody: Record<string, unknown> = {
+          patientScreeningId: patientId,
+          outcome,
+          notes: trimmedNotes || null,
+          schedulerUserId: schedulerUserId,
+        };
+        if (nextActionIso) legacyBody.callbackAt = nextActionIso;
+        const res = await apiRequest("POST", "/api/outreach/calls", legacyBody);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "Failed to log call");
+        }
+        const created = await res.json();
+        try {
+          const mirrorBody: Record<string, unknown> = {
+            patientScreeningId: patientId,
+            patientName: patientName || undefined,
+            callResult: outcome,
+            callDisposition: outcome,
+            note: trimmedNotes || undefined,
+            assignedUserId: schedulerUserId ?? undefined,
+          };
+          if (nextActionIso) mirrorBody.nextActionAt = nextActionIso;
+          await apiRequest("POST", engagementCallResultEndpoint(), mirrorBody);
+        } catch (mirrorErr) {
+          console.warn("[disposition] canonical call-result mirror failed", mirrorErr);
+        }
+        return created;
       }
-      const res = await apiRequest("POST", "/api/outreach/calls", body);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
+
+      // Default path post-E9 — canonical Engagement endpoint is the
+      // sole primary write. The canonical planner owns the spine
+      // (outreach_calls, journey events, triage, tasks, assignment),
+      // so no secondary mirror is needed. Failures surface to the
+      // caller via onError.
+      const canonicalBody: Record<string, unknown> = {
+        patientScreeningId: patientId,
+        patientName: patientName || undefined,
+        callResult: outcome,
+        callDisposition: outcome,
+        note: trimmedNotes || undefined,
+        assignedUserId: schedulerUserId ?? undefined,
+        schedulerUserId: schedulerUserId ?? undefined,
+      };
+      if (nextActionIso) canonicalBody.nextActionAt = nextActionIso;
+      const canonicalRes = await apiRequest("POST", engagementCallResultEndpoint(), canonicalBody);
+      if (!canonicalRes.ok) {
+        const err = await canonicalRes.json().catch(() => ({}));
         throw new Error(err.error || "Failed to log call");
       }
-      const created = await res.json();
-
-      // Mirror the disposition into the canonical spine — appends a
-      // patient_journey_events row and (for matching outcomes) opens a
-      // scheduling triage case / plexus task. Best-effort: never blocks
-      // the user-facing call log if it fails.
-      try {
-        const canonicalBody: Record<string, unknown> = {
-          patientScreeningId: patientId,
-          patientName: patientName || undefined,
-          callResult: outcome,
-          callDisposition: outcome,
-          note: notes.trim() || undefined,
-          assignedUserId: schedulerUserId ?? undefined,
-        };
-        if (nextActionIso) canonicalBody.nextActionAt = nextActionIso;
-        await apiRequest("POST", engagementCallResultEndpoint(), canonicalBody);
-      } catch (canonicalErr) {
-        console.warn("[disposition] canonical call-result mirror failed", canonicalErr);
-      }
-
-      return created;
+      return canonicalRes.json().catch(() => ({}));
     },
     onSuccess: () => {
       toast({ title: "Call logged" });
