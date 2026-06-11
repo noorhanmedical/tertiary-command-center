@@ -35,8 +35,16 @@ else for (const n of [
   "does NOT touch",
 ]) if (!c.includes(n)) failures.push(`Missing "${n}" in ${DOC}`);
 
-// E5 is docs+QA only — flags + module must NOT exist in code yet.
+// Authorized references to the RingCentral adapter scaffold.
+// Batch E6 introduces the scaffold module + its own test; nothing else
+// may reference the flag or module identifiers yet. Update this
+// allowlist alongside each new authorized batch.
 {
+  const ALLOWED = new Set([
+    "server/services/ringCentral/ringCentralAdapter.ts",
+    "server/services/ringCentral/ringCentralClient.ts",
+    "server/services/ringCentral/__tests__/ringCentralAdapter.test.ts",
+  ]);
   const ROOTS = ["server", "client", "shared"];
   const FORBIDDEN_PATTERNS = [
     "USE_RINGCENTRAL_ADAPTER",
@@ -55,9 +63,10 @@ else for (const n of [
       if (e.isDirectory()) { walk(abs); continue; }
       if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
+      if (ALLOWED.has(rel)) continue;
       const src = fs.readFileSync(abs, "utf8");
       for (const p of FORBIDDEN_PATTERNS) {
-        if (src.includes(p)) failures.push(`E5 is docs+QA only: ${rel} already references "${p}"`);
+        if (src.includes(p)) failures.push(`Unauthorized reference: ${rel} references "${p}"`);
       }
     }
   }
