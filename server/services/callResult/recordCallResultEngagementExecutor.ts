@@ -57,6 +57,18 @@ export type EngagementCallResultInput = {
   assignedTeamMemberId?: string | null;
   assignedRole?: string | null;
   forceReassign?: boolean;
+  /**
+   * Journey-event metadata extension (Batch 3 of arg-extensions run).
+   * Forwarded through to the appendJourneyEvent dep so the route can
+   * preserve the legacy metadata bag byte-equivalent under future
+   * delegation (resolves Batch 12 B8 at the executor layer).
+   *
+   * PHI fields (patientName, patientDob) flow through the dep
+   * boundary ONLY — the executor does not log or inspect them.
+   */
+  journeyEventMetadata?: Record<string, unknown>;
+  patientName?: string | null;
+  patientDob?: string | null;
 };
 
 /**
@@ -145,9 +157,9 @@ export async function recordEngagementCallResult(
 
   // Wrap the caller's updateExecutionCaseEngagement dep so we can
   // forward the ownership write-through fields without requiring the
-  // caller to know about the engagement input shape. The wrapper
-  // copies the caller's args + the ownership fields onto the
-  // dep call.
+  // caller to know about the engagement input shape. Also wrap the
+  // appendJourneyEvent dep to thread journey-event metadata +
+  // closure-captured PHI (Batch 3) through to the writer.
   const wrappedDeps: CallResultExecutionDependencies = {
     ...deps,
     updateExecutionCaseEngagement: (args) =>
@@ -162,6 +174,15 @@ export async function recordEngagementCallResult(
         ...(input.forceReassign !== undefined
           ? { forceReassign: input.forceReassign }
           : {}),
+      }),
+    appendJourneyEvent: (args) =>
+      deps.appendJourneyEvent({
+        ...args,
+        ...(input.journeyEventMetadata !== undefined
+          ? { metadata: input.journeyEventMetadata }
+          : {}),
+        ...(input.patientName !== undefined ? { patientName: input.patientName } : {}),
+        ...(input.patientDob !== undefined ? { patientDob: input.patientDob } : {}),
       }),
   };
 
