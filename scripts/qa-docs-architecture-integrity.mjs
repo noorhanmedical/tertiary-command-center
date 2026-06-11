@@ -333,6 +333,9 @@ info("docs/architecture/team-portal-structured-call-result-selector-contract.md"
 // Phase 1 run Segment E Batch 5 — RingCentral adapter contract.
 info("docs/architecture/ringcentral-adapter-contract.md");
 
+// Phase 1 run Segment E Batch 8 — canonical call-result write switch plan.
+info("docs/architecture/team-portal-canonical-call-result-write-switch-plan.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
