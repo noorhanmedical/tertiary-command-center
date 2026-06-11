@@ -297,6 +297,9 @@ info("docs/architecture/phase-1-outreach-route-delegation-final-readiness.md");
 // Phase 1 run Segment B Batch 10 — Team Portal outreach write audit.
 info("docs/architecture/phase-1-team-portal-outreach-write-audit.md");
 
+// Phase 1 run Segment B Batch 12 — outreach completion summary.
+info("docs/architecture/phase-1-outreach-completion-summary.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
