@@ -439,6 +439,103 @@ for (const outcome of [
   eq(result.ok, true, "§11: strict + suppression keeps ok=true");
 }
 
+// ─── §16: engagementStatusSemantics option (Batch 1 of Engagement
+//        completion run). "coarse" collapses non-terminal statuses
+//        to "in_progress"; terminal outcomes keep canonical value.
+{
+  // Default (undefined) preserves canonical per-outcome transitions.
+  {
+    const { deps } = makeFakeDeps();
+    const r = await executeRecordCallResult(
+      {
+        patientScreeningId: "x",
+        outcome: "callback",
+        sourceSurface: "engagement_center_route",
+        patientExecutionCaseId: "ec-x",
+      },
+      deps,
+    );
+    eq(r.plan.executionCaseEngagementStatus, "needs_followup", "§16.default: canonical preserved");
+  }
+  // "canonical" preserves canonical too.
+  {
+    const { deps } = makeFakeDeps();
+    const r = await executeRecordCallResult(
+      {
+        patientScreeningId: "x",
+        outcome: "no_answer",
+        sourceSurface: "engagement_center_route",
+        patientExecutionCaseId: "ec-x",
+      },
+      deps,
+      { engagementStatusSemantics: "canonical" },
+    );
+    eq(r.plan.executionCaseEngagementStatus, "not_reached", "§16.canonical: canonical preserved");
+  }
+  // "coarse" collapses callback → in_progress.
+  {
+    const { deps } = makeFakeDeps();
+    const r = await executeRecordCallResult(
+      {
+        patientScreeningId: "x",
+        outcome: "callback",
+        sourceSurface: "engagement_center_route",
+        patientExecutionCaseId: "ec-x",
+      },
+      deps,
+      { engagementStatusSemantics: "coarse" },
+    );
+    eq(r.plan.executionCaseEngagementStatus, "in_progress", "§16.coarse: callback collapsed");
+  }
+  // "coarse" collapses no_answer → in_progress.
+  {
+    const { deps } = makeFakeDeps();
+    const r = await executeRecordCallResult(
+      {
+        patientScreeningId: "x",
+        outcome: "no_answer",
+        sourceSurface: "engagement_center_route",
+        patientExecutionCaseId: "ec-x",
+      },
+      deps,
+      { engagementStatusSemantics: "coarse" },
+    );
+    eq(r.plan.executionCaseEngagementStatus, "in_progress", "§16.coarse: no_answer collapsed");
+  }
+  // "coarse" PRESERVES terminal outcomes' canonical engagementStatus.
+  {
+    const { deps } = makeFakeDeps();
+    const r = await executeRecordCallResult(
+      {
+        patientScreeningId: "x",
+        outcome: "scheduled",
+        sourceSurface: "engagement_center_route",
+        patientExecutionCaseId: "ec-x",
+      },
+      deps,
+      { engagementStatusSemantics: "coarse" },
+    );
+    eq(r.plan.terminal, true, "§16.coarse terminal: terminal flag true");
+    eq(r.plan.executionCaseEngagementStatus, "contacted", "§16.coarse terminal: contacted preserved");
+  }
+  // "coarse" PRESERVES declined as contacted.
+  {
+    const { deps } = makeFakeDeps();
+    const r = await executeRecordCallResult(
+      {
+        patientScreeningId: "x",
+        outcome: "declined",
+        sourceSurface: "engagement_center_route",
+        patientExecutionCaseId: "ec-x",
+      },
+      deps,
+      { engagementStatusSemantics: "coarse" },
+    );
+    eq(r.plan.terminal, true, "§16.coarse declined: terminal true");
+    eq(r.plan.executionCaseEngagementStatus, "contacted", "§16.coarse declined: contacted preserved");
+  }
+}
+
 // ─── §13: callbackHours option (Batch 6 of arg extensions run) ───
 //        Route-supplied callback-hours overrides the planner's 4h
 //        default for callback-style outcomes when no explicit
