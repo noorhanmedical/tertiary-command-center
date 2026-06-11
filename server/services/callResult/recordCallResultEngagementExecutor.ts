@@ -69,6 +69,18 @@ export type EngagementCallResultInput = {
   journeyEventMetadata?: Record<string, unknown>;
   patientName?: string | null;
   patientDob?: string | null;
+  /**
+   * Triage payload extension (Batch 4 of arg-extensions run).
+   * Forwarded to upsertTriageCase dep so the route can preserve
+   * the legacy triage row's full payload (resolves Batch 12 B5).
+   */
+  triageMainType?: string | null;
+  triageSubtype?: string | null;
+  triagePriority?: string | null;
+  triageAssignedUserId?: string | null;
+  triageDueAt?: string | null;
+  triageNote?: string | null;
+  triageMetadata?: Record<string, unknown>;
 };
 
 /**
@@ -183,6 +195,19 @@ export async function recordEngagementCallResult(
           : {}),
         ...(input.patientName !== undefined ? { patientName: input.patientName } : {}),
         ...(input.patientDob !== undefined ? { patientDob: input.patientDob } : {}),
+      }),
+    upsertTriageCase: (args) =>
+      deps.upsertTriageCase({
+        ...args,
+        ...(input.triageMainType !== undefined ? { mainType: input.triageMainType } : {}),
+        ...(input.triageSubtype !== undefined ? { subtype: input.triageSubtype } : {}),
+        ...(input.triagePriority !== undefined ? { priority: input.triagePriority } : {}),
+        ...(input.triageAssignedUserId !== undefined
+          ? { assignedUserId: input.triageAssignedUserId }
+          : {}),
+        ...(input.triageDueAt !== undefined ? { dueAt: input.triageDueAt } : {}),
+        ...(input.triageNote !== undefined ? { note: input.triageNote } : {}),
+        ...(input.triageMetadata !== undefined ? { metadata: input.triageMetadata } : {}),
       }),
   };
 
