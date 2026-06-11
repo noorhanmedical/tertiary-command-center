@@ -1,4 +1,4 @@
-import type { Express, Request } from "express";
+import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
@@ -25,6 +25,7 @@ import {
   runEngagementCallResultPreview,
 } from "../services/callResult/recordCallResultEngagementPreviewFlag";
 import { isRecordCallResultEngagementDelegateEnabled } from "../services/callResult/recordCallResultEngagementDelegateFlag";
+import { isEngagementCanonicalCallResultsEndpointEnabled } from "../services/callResult/engagementCanonicalCallResultsEndpointFlag";
 import {
   recordEngagementCallResult,
   type EngagementCallResultInput,
@@ -207,7 +208,12 @@ export function registerExecutionCaseRoutes(app: Express) {
   // manager/team-action results, opens a plexus task. Updates the execution
   // case's engagementStatus/nextActionAt and (subject to ownership settings)
   // assignedTeamMemberId / assignedRole.
-  app.post("/api/engagement-center/call-result", async (req, res) => {
+  // Extracted handler — shared by the legacy singular route AND the
+  // canonical plural route (Batch 8 of Engagement completion run). The
+  // plural route is gated by isEngagementCanonicalCallResultsEndpointEnabled().
+  // Sharing the handler prevents split-brain: any future change to the
+  // call-result write path affects BOTH endpoints in lockstep.
+  const callResultHandler = async (req: Request, res: Response): Promise<unknown> => {
     try {
       const actorUserId = sessionUserIdFrom(req);
       const parsed = callResultBodySchema.safeParse(req.body);
@@ -712,6 +718,19 @@ export function registerExecutionCaseRoutes(app: Express) {
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }
+  };
+
+  // Bind both the legacy singular path AND the canonical plural path
+  // (Batch 8) to the SAME handler. The plural endpoint is gated by
+  // isEngagementCanonicalCallResultsEndpointEnabled() — when OFF it
+  // returns 404 so callers fail loudly until the canonical route is
+  // enabled. When ON the two routes serve byte-equivalent responses.
+  app.post("/api/engagement-center/call-result", callResultHandler);
+  app.post("/api/engagement-center/call-results", async (req, res) => {
+    if (!isEngagementCanonicalCallResultsEndpointEnabled()) {
+      return res.status(404).json({ error: "Not Found" });
+    }
+    return callResultHandler(req, res);
   });
 
   // GET /api/scheduler-portal/cases

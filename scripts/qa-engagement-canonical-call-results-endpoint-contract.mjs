@@ -37,7 +37,8 @@ requireText(DOC, [
   "Hard-stops",
 ]);
 
-// Pin: the plural endpoint does NOT yet exist (Batch 8 wires it).
+// Batch 7 of this run shipped the contract; Batch 8 shipped the route.
+// Only server/routes/executionCases.ts may serve the plural endpoint.
 {
   const ROOTS = ["server"];
   function walk(dir, files) {
@@ -55,9 +56,10 @@ requireText(DOC, [
   for (const abs of files) {
     const rel = path.relative(root, abs);
     if (rel.includes("/__tests__/") || rel.endsWith(".test.ts")) continue;
+    if (rel === "server/routes/executionCases.ts") continue;
     const src = fs.readFileSync(abs, "utf8");
     if (/['"]\/api\/engagement-center\/call-results['"]/.test(src)) {
-      failures.push(`${rel}: contains '/api/engagement-center/call-results' (plural) — Batch 7 is contract-only; route ships in Batch 8`);
+      failures.push(`${rel}: contains '/api/engagement-center/call-results' (plural) — only executionCases.ts may serve this endpoint`);
     }
   }
 }

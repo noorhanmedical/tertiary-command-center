@@ -44,8 +44,10 @@ requireText(DOC, [
   "Out of scope",
 ]);
 
-// Ensure the canonical endpoint route does NOT yet exist (Batch 6 is
-// contract-only). If it does, the contract is being violated.
+// Batch 6 of the split-brain run shipped this contract; Batch 8 of the
+// Engagement completion run shipped the route. We now allow the route
+// to exist in server/routes/executionCases.ts (the designated handler
+// file) and forbid the path string anywhere else in runtime code.
 {
   const ROOTS = ["server"];
   function walk(dir, files) {
@@ -63,10 +65,11 @@ requireText(DOC, [
   for (const abs of files) {
     const rel = path.relative(root, abs);
     if (rel.includes("/__tests__/") || rel.endsWith(".test.ts")) continue;
+    if (rel === "server/routes/executionCases.ts") continue;
     const src = fs.readFileSync(abs, "utf8");
     if (/['"]\/api\/engagement-center\/call-results['"]/.test(src)) {
       failures.push(
-        `${rel}: contains '/api/engagement-center/call-results' (plural) — Batch 6 is contract-only; route must not exist yet`,
+        `${rel}: contains '/api/engagement-center/call-results' (plural) — only executionCases.ts may serve this endpoint`,
       );
     }
   }
