@@ -17,6 +17,7 @@
 import {
   executeRecordCallResult,
   type CallResultExecutionDependencies,
+  type CallResultExecutionStep,
   type RecordCallResultExecutionResult,
   type RecordCallResultExecutionOptions,
 } from "./recordCallResultExecutionAdapter";
@@ -53,6 +54,24 @@ const OUTREACH_OWNED_STEPS = [
   "assignmentCompleted",
 ] as const;
 
+/**
+ * Steps the outreach surface does NOT own today. The executor passes
+ * these to the adapter's `suppressedSteps` option so the adapter
+ * marks them `skipped` with reason `surface does not own` and does
+ * not call their dep — matching the legacy outreach route's behavior
+ * (it does NOT append journey events, does NOT update execution case
+ * state, does NOT open triage cases, does NOT create plexus tasks).
+ *
+ * If Ali approves the outreach surface owning journey-event appends
+ * (Batch 19 B5), this list shrinks in a future PR.
+ */
+export const OUTREACH_SUPPRESSED_STEPS: ReadonlyArray<CallResultExecutionStep> = [
+  "journeyEventAppended",
+  "executionCaseUpdated",
+  "triageCaseUpserted",
+  "followUpTaskCreated",
+];
+
 export async function recordOutreachCallResult(
   input: OutreachCallResultInput,
   deps: CallResultExecutionDependencies,
@@ -66,6 +85,10 @@ export async function recordOutreachCallResult(
   }
 
   const sourceSurface: CallResultSourceSurface = "outreach_call_route";
+  const mergedSuppressed: ReadonlyArray<CallResultExecutionStep> = [
+    ...OUTREACH_SUPPRESSED_STEPS,
+    ...(options?.suppressedSteps ?? []),
+  ];
   const adapterResult = await executeRecordCallResult(
     {
       patientScreeningId: input.patientScreeningId,
@@ -79,7 +102,7 @@ export async function recordOutreachCallResult(
       schedulerAssignmentId: input.schedulerAssignmentId ?? null,
     },
     deps,
-    options,
+    { ...options, suppressedSteps: mergedSuppressed },
   );
 
   return {

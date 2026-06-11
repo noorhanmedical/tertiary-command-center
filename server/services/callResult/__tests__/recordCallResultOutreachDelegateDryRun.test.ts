@@ -3,6 +3,7 @@
 import {
   recordOutreachCallResult,
   OUTREACH_OWNED_STEPS,
+  OUTREACH_SUPPRESSED_STEPS,
 } from "../recordCallResultOutreachExecutor";
 import type { CallResultExecutionDependencies } from "../recordCallResultExecutionAdapter";
 import { isRecordCallResultOutreachDelegateEnabled } from "../recordCallResultOutreachDelegateFlag";
@@ -100,6 +101,20 @@ for (const env of CALL_RESULT_PARITY_FIXTURE) {
   if (captured.outreachCall) {
     eq(captured.outreachCall.outcome, env.outcome, `§2.outcome [${env.outcome}]`);
     eq(captured.outreachCall.attemptNumber, 3, `§2.attempt [${env.outcome}]`);
+  }
+}
+
+// §2.5 — Suppressed steps appear as skipped with the canonical reason.
+{
+  const { deps } = makeCapturingOutreachDeps();
+  const r = await recordOutreachCallResult(
+    { patientScreeningId: "ps", outcome: "scheduled" },
+    deps,
+  );
+  for (const stepName of OUTREACH_SUPPRESSED_STEPS) {
+    const stepResult = r.steps.find((s) => s.step === stepName);
+    check(stepResult?.status === "skipped", `§2.5: ${stepName} skipped on outreach surface`);
+    check(stepResult?.reason === "surface does not own", `§2.5: ${stepName} canonical reason`);
   }
 }
 
