@@ -249,6 +249,9 @@ info("docs/architecture/call-result-outreach-only-outcome-extension.md");
 // Adapter blockers run Batch H — Resolution summary.
 info("docs/architecture/call-result-delegation-blockers-resolution-summary.md");
 
+// Arg-extensions run Batch 7 — Engagement blockers reduction summary.
+info("docs/architecture/call-result-engagement-blockers-reduction-summary.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
