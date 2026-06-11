@@ -6,8 +6,10 @@
 import {
   recordEngagementCallResult,
   ENGAGEMENT_OWNED_STEPS,
+  ENGAGEMENT_SUPPRESSED_STEPS,
   type EngagementCallResultInput,
 } from "../recordCallResultEngagementExecutor";
+import type { CallResultExecutionStepResult } from "../recordCallResultExecutionAdapter";
 import type {
   CallResultExecutionDependencies,
   CreateOutreachCallArgs,
@@ -88,14 +90,13 @@ for (const env of CALL_RESULT_PARITY_FIXTURE) {
     env.executionCaseEngagementStatus !== null ? 1 : 0,
     `§1.ec [${env.outcome}]`,
   );
-  // Assignment completion still fires inside the adapter for terminal
-  // outcomes — the engagement executor doesn't suppress it; the route
-  // caller decides whether to surface it in the engagement response.
-  eq(
-    log.markAssignmentCompleted.length,
-    env.assignmentCompleted ? 1 : 0,
-    `§1.assignment [${env.outcome}]`,
-  );
+  // Engagement surface DOES NOT own assignment completion — the
+  // outreach surface does. After Batch B suppression, the engagement
+  // executor ALWAYS skips markAssignmentCompleted regardless of
+  // planner's terminal flag.
+  eq(log.markAssignmentCompleted.length, 0, `§1.assignment [${env.outcome}] suppressed on engagement surface`);
+  // Engagement surface DOES NOT own outreach call insert either.
+  eq(log.createOutreachCall.length, 0, `§1.outreachInsert [${env.outcome}] suppressed on engagement surface`);
 }
 
 // §2 — ENGAGEMENT_OWNED_STEPS does NOT advertise outreachCallCreated
@@ -140,6 +141,34 @@ check(
     threw = true;
   }
   check(threw, "§3: missing patientScreeningId must throw");
+}
+
+// §3.5 — ENGAGEMENT_SUPPRESSED_STEPS contract.
+{
+  check(
+    ENGAGEMENT_SUPPRESSED_STEPS.includes("outreachCallCreated"),
+    "§3.5: ENGAGEMENT_SUPPRESSED_STEPS must include outreachCallCreated",
+  );
+  check(
+    ENGAGEMENT_SUPPRESSED_STEPS.includes("assignmentCompleted"),
+    "§3.5: ENGAGEMENT_SUPPRESSED_STEPS must include assignmentCompleted",
+  );
+
+  // The adapter-result steps for these must be "skipped" with reason
+  // "surface does not own".
+  const { deps } = fakeDeps();
+  const r = await recordEngagementCallResult(
+    { patientScreeningId: "ps", patientExecutionCaseId: "ec", outcome: "scheduled" },
+    deps,
+  );
+  const findStep = (name: string): CallResultExecutionStepResult | undefined =>
+    r.steps.find((s) => s.step === name);
+  const outreachStep = findStep("outreachCallCreated");
+  const assignStep = findStep("assignmentCompleted");
+  check(outreachStep?.status === "skipped", "§3.5: outreach step is skipped");
+  check(outreachStep?.reason === "surface does not own", "§3.5: outreach reason canonical");
+  check(assignStep?.status === "skipped", "§3.5: assignment step is skipped");
+  check(assignStep?.reason === "surface does not own", "§3.5: assignment reason canonical");
 }
 
 // §4 — explicit per-outcome smoke (keeps grep-stable outcome labels

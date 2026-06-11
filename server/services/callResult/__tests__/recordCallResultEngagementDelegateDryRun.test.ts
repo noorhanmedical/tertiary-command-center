@@ -153,6 +153,30 @@ for (const env of CALL_RESULT_PARITY_FIXTURE) {
   eq(legacyEnvelope.journeyEvent !== null, true, `§2.b [${env.outcome}] journeyEvent presence`);
 }
 
+// §2.5 — Suppression confirms outreach/assignment steps don't
+//        execute on engagement surface.
+{
+  const { deps, captured } = makeCapturingDeps();
+  const result = await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps-dryrun",
+      patientExecutionCaseId: "ec-dryrun",
+      outcome: "scheduled",
+    },
+    deps,
+  );
+  // captured.outreachCallCreated would be true if dep was invoked,
+  // but the dep is a no-op so we inspect the step list instead.
+  const outreachStep = result.steps.find((s) => s.step === "outreachCallCreated");
+  const assignStep = result.steps.find((s) => s.step === "assignmentCompleted");
+  check(outreachStep?.status === "skipped", "§2.5: outreach step skipped on engagement");
+  check(outreachStep?.reason === "surface does not own", "§2.5: outreach reason canonical");
+  check(assignStep?.status === "skipped", "§2.5: assignment step skipped on engagement");
+  check(assignStep?.reason === "surface does not own", "§2.5: assignment reason canonical");
+  // ownershipUpdated captured by execution case dep still works.
+  eq(captured.ownershipUpdated, true, "§2.5: ownershipUpdated still captured");
+}
+
 // §3 — Engagement-owned step list is what the delegated route should
 //      surface. The dry-run uses this list to filter the executor's
 //      step results before rebuilding the legacy envelope.
