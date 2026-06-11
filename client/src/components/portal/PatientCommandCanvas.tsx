@@ -25,6 +25,7 @@ import {
 } from "@/lib/portal/commandCenterApi";
 import { LogCommunicationDialog } from "@/components/portal/LogCommunicationDialog";
 import { PatientCallHistoryPanel } from "@/components/portal/PatientCallHistoryPanel";
+import { InvoiceDraftPanel } from "@/components/portal/InvoiceDraftPanel";
 
 // Canonical document checklist for the readiness panel. Keys must
 // match `documentType` values written by the document-readiness
@@ -382,6 +383,11 @@ export function PatientCommandCanvas({
           disabled; the server-side route is independently gated
           (otherwise GET /api/portal/calls returns 404). Read-only. */}
       <PatientCallHistoryPanel patientScreeningId={patientScreeningId} />
+
+      {/* Phase 1 Segment G Batch 5 — invoice surface scaffold. Owns
+          its own client-side flag check; renders a placeholder when
+          enabled and nothing when disabled. Read-only. */}
+      <InvoiceDraftPanel patientScreeningId={patientScreeningId} />
 
       {/* ─── Latest Activity ──────────────────────────────────────── */}
       <Card className="p-4 bg-white" data-testid="patient-command-canvas-latest">

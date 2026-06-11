@@ -46,7 +46,9 @@ else for (const n of [
       "server/services/invoicing/invoicingScaffold.ts",
       "server/services/invoicing/__tests__/invoicingScaffold.test.ts",
     ]),
-    VITE_USE_INVOICE_UI: new Set(),
+    VITE_USE_INVOICE_UI: new Set([
+      "client/src/components/portal/InvoiceDraftPanel.tsx",
+    ]),
   };
   const ROOTS = ["server", "client", "shared"];
   function walk(dir) {
