@@ -237,6 +237,9 @@ info("docs/architecture/platform-split-brain-risk-register.md");
 // Platform split-brain run Batch 25 — Final summary.
 info("docs/architecture/no-split-brain-architecture-summary.md");
 
+// Adapter blockers run Batch D — Journey-event metadata contract.
+info("docs/architecture/call-result-journey-event-metadata-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
