@@ -28,8 +28,8 @@ function eq<T>(actual: T, expected: T, label: string): void {
 
 // ─── §1: All ten outcomes from the spec are present ───────────────
 check(
-  CALL_RESULT_OUTCOMES_FIXTURE.length === 10,
-  `§1: expected 10 outcomes, got ${CALL_RESULT_OUTCOMES_FIXTURE.length}`,
+  CALL_RESULT_OUTCOMES_FIXTURE.length === 15,
+  `§1: expected 15 outcomes (10 canonical + 5 outreach-only terminals), got ${CALL_RESULT_OUTCOMES_FIXTURE.length}`,
 );
 for (const expected of [
   "scheduled",

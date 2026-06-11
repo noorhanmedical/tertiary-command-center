@@ -46,6 +46,18 @@ export const CALL_RESULT_OUTCOMES = [
   "insurance_prior_auth_issue",
   "manager_review",
   "facility_specific_issue",
+  // Outreach-only canonical terminal outcomes (Batch B2 of Phase 1 run).
+  // Each is terminal; assignmentCompleted=true; no triage / no task /
+  // no callback. The legacy outreach route's TERMINAL set covers these
+  // (scheduler_assignments.status = "completed"). appointmentStatus
+  // mirrors deriveAppointmentStatus mapping for the four "declined"-
+  // style outcomes; "completed" maps to "scheduled" (the patient has
+  // been served — the engagement workflow closes terminal-positive).
+  "completed",
+  "dnc",
+  "do_not_contact",
+  "deceased",
+  "cancelled",
 ] as const;
 
 export type CallResultOutcome = (typeof CALL_RESULT_OUTCOMES)[number];
@@ -268,6 +280,62 @@ const PLAN_BY_OUTCOME: Readonly<Record<CallResultOutcome, CallResultPlan>> = {
     triageCaseRequired: false,
     terminal: false,
     taskType: "facility_specific_issue",
+    triageType: null,
+  },
+  // Outreach-only canonical terminal outcomes (Batch B2 of Phase 1 run).
+  completed: {
+    appointmentStatus: "scheduled",
+    executionCaseEngagementStatus: "contacted",
+    executionCaseNextActionAt: null,
+    assignmentCompleted: true,
+    followUpTaskRequired: false,
+    triageCaseRequired: false,
+    terminal: true,
+    taskType: null,
+    triageType: null,
+  },
+  dnc: {
+    appointmentStatus: "declined",
+    executionCaseEngagementStatus: "contacted",
+    executionCaseNextActionAt: null,
+    assignmentCompleted: true,
+    followUpTaskRequired: false,
+    triageCaseRequired: false,
+    terminal: true,
+    taskType: null,
+    triageType: null,
+  },
+  do_not_contact: {
+    appointmentStatus: "declined",
+    executionCaseEngagementStatus: "contacted",
+    executionCaseNextActionAt: null,
+    assignmentCompleted: true,
+    followUpTaskRequired: false,
+    triageCaseRequired: false,
+    terminal: true,
+    taskType: null,
+    triageType: null,
+  },
+  deceased: {
+    appointmentStatus: "declined",
+    executionCaseEngagementStatus: "contacted",
+    executionCaseNextActionAt: null,
+    assignmentCompleted: true,
+    followUpTaskRequired: false,
+    triageCaseRequired: false,
+    terminal: true,
+    taskType: null,
+    triageType: null,
+  },
+  cancelled: {
+    appointmentStatus: "declined",
+    executionCaseEngagementStatus: "contacted",
+    executionCaseNextActionAt: null,
+    assignmentCompleted: true,
+    followUpTaskRequired: false,
+    triageCaseRequired: false,
+    terminal: true,
+    taskType: null,
     triageType: null,
   },
 };

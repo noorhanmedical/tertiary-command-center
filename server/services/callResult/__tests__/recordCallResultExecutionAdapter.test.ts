@@ -98,8 +98,8 @@ function findStep(
 // ─── §0: planner outcome catalog matches the fixture ──────────────
 {
   check(
-    CALL_RESULT_OUTCOMES_FIXTURE.length === 10,
-    `§0: expected 10 outcomes in fixture, got ${CALL_RESULT_OUTCOMES_FIXTURE.length}`,
+    CALL_RESULT_OUTCOMES_FIXTURE.length === 15,
+    `§0: expected 15 outcomes (10 canonical + 5 outreach terminals), got ${CALL_RESULT_OUTCOMES_FIXTURE.length}`,
   );
 }
 

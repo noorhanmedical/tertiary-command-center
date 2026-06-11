@@ -53,22 +53,24 @@ requireText(DOC, [
   "Hard-stops",
 ]);
 
-// Pin: canonical fixture has NOT been extended yet.
+// Batch F of adapter blockers run was design-only. Batch B2 of Phase 1
+// has since implemented the 5 unambiguous terminal outreach-only
+// outcomes (completed, dnc, do_not_contact, deceased, cancelled).
+// The ambiguous callback-style ones (wants_more_info / language_barrier
+// / mailbox_full) remain absent — Path B fallback per the doc.
 {
   const FIX = "tests/fixtures/callResultCanonicalization.fixture.ts";
   const src = read(FIX) ?? "";
-  for (const outreachOnlyOutcome of [
-    "completed",
-    "dnc",
-    "do_not_contact",
-    "deceased",
-    "cancelled",
-    "wants_more_info",
-    "language_barrier",
-    "mailbox_full",
-  ]) {
-    if (src.includes(`"${outreachOnlyOutcome}"`)) {
-      failures.push(`${FIX}: outreach-only outcome "${outreachOnlyOutcome}" present — Batch F is design-only`);
+  // Implemented outcomes MUST now be present.
+  for (const implemented of ["completed", "dnc", "do_not_contact", "deceased", "cancelled"]) {
+    if (!src.includes(`"${implemented}"`)) {
+      failures.push(`${FIX}: terminal outreach outcome "${implemented}" missing — Batch B2 implementation required`);
+    }
+  }
+  // Ambiguous outcomes MUST remain absent (still Path B until Ali OKs).
+  for (const ambiguous of ["wants_more_info", "language_barrier", "mailbox_full"]) {
+    if (src.includes(`"${ambiguous}"`)) {
+      failures.push(`${FIX}: ambiguous outcome "${ambiguous}" must remain Path B fallback (Ali not yet approved)`);
     }
   }
 }
