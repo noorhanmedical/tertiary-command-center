@@ -342,6 +342,9 @@ info("docs/architecture/phase-1-ancillary-boundary-contract.md");
 // Phase 1 run Segment F Batch 3 — ancillary report upload contract.
 info("docs/architecture/ancillary-report-upload-contract.md");
 
+// Phase 1 run Segment F Batch 4 — ancillary order/note tracking contract.
+info("docs/architecture/ancillary-order-note-tracking-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
