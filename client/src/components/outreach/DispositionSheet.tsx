@@ -36,6 +36,63 @@ import {
 } from "lucide-react";
 import type { OutreachCallOutcome } from "@shared/schema";
 
+// Phase 1 Segment E Batch 4 — structured call-result selector flag.
+// Default OFF: when unset/false the legacy outcome grid is the only
+// disposition surface. When truthy, an additive structured selector
+// appears below the legacy controls and posts canonical payloads to
+// engagementCallResultEndpoint(). See:
+//   docs/architecture/team-portal-structured-call-result-selector-contract.md
+const STRUCTURED_SELECTOR_ENABLED = (() => {
+  const v = (import.meta as { env?: Record<string, unknown> }).env
+    ?.VITE_USE_STRUCTURED_CALL_RESULT_SELECTOR;
+  return v === "1" || v === "true" || v === "yes";
+})();
+
+const CANONICAL_OUTCOMES = [
+  "scheduled",
+  "callback",
+  "no_answer",
+  "voicemail",
+  "wrong_number",
+  "declined",
+  "needs_records",
+  "insurance_prior_auth_issue",
+  "manager_review",
+  "facility_specific_issue",
+  "completed",
+  "dnc",
+  "do_not_contact",
+  "deceased",
+  "cancelled",
+] as const;
+type CanonicalOutcome = (typeof CANONICAL_OUTCOMES)[number];
+
+const CANONICAL_OUTCOME_LABELS: Record<CanonicalOutcome, string> = {
+  scheduled: "Scheduled",
+  callback: "Callback later",
+  no_answer: "No answer",
+  voicemail: "Voicemail",
+  wrong_number: "Wrong number",
+  declined: "Declined",
+  needs_records: "Needs records",
+  insurance_prior_auth_issue: "Insurance / prior auth issue",
+  manager_review: "Manager review",
+  facility_specific_issue: "Facility-specific issue",
+  completed: "Completed",
+  dnc: "DNC",
+  do_not_contact: "Do not contact",
+  deceased: "Deceased",
+  cancelled: "Cancelled",
+};
+
+const OUTREACH_TERMINAL_OUTCOMES: ReadonlySet<CanonicalOutcome> = new Set<CanonicalOutcome>([
+  "completed",
+  "dnc",
+  "do_not_contact",
+  "deceased",
+  "cancelled",
+]);
+
 type OutcomeDef = {
   value: OutreachCallOutcome;
   label: string;
@@ -103,12 +160,24 @@ export function DispositionSheet({
   const [callbackAt, setCallbackAt] = useState<string>(defaultCallbackIso());
   const { toast } = useToast();
 
+  // Structured selector state (only consulted when the flag is ON).
+  const [canonicalOutcome, setCanonicalOutcome] = useState<CanonicalOutcome | "">("");
+  const [canonicalNotes, setCanonicalNotes] = useState("");
+  const [canonicalCallbackAt, setCanonicalCallbackAt] = useState<string>(defaultCallbackIso());
+  const [canonicalDesiredApptStatus, setCanonicalDesiredApptStatus] = useState<string>("scheduled");
+  const [canonicalTerminalReason, setCanonicalTerminalReason] = useState<string>("");
+
   // Reset on patient change / open
   useEffect(() => {
     if (open) {
       setOutcome(defaultOutcome ?? null);
       setNotes("");
       setCallbackAt(defaultCallbackIso());
+      setCanonicalOutcome("");
+      setCanonicalNotes("");
+      setCanonicalCallbackAt(defaultCallbackIso());
+      setCanonicalDesiredApptStatus("scheduled");
+      setCanonicalTerminalReason("");
     }
   }, [open, patientId, defaultOutcome]);
 
@@ -169,6 +238,59 @@ export function DispositionSheet({
     },
     onError: (e: Error) =>
       toast({ title: "Could not log call", description: e.message, variant: "destructive" }),
+  });
+
+  // Phase 1 Segment E Batch 4 — canonical structured submission.
+  // Only invoked when the structured selector flag is ON. Posts the
+  // E3-contract payload to engagementCallResultEndpoint(); the legacy
+  // logCall flow above is unchanged and remains the OFF-flag default.
+  const logCanonicalCall = useMutation({
+    mutationFn: async () => {
+      if (patientId == null || !canonicalOutcome) throw new Error("Missing patient or canonical outcome");
+      const isCallbackOutcome = canonicalOutcome === "callback";
+      const isScheduledOutcome = canonicalOutcome === "scheduled";
+      const isTerminalOutcome = OUTREACH_TERMINAL_OUTCOMES.has(canonicalOutcome);
+      if (isCallbackOutcome && !canonicalCallbackAt) throw new Error("Callback time required");
+      if (isScheduledOutcome && !canonicalDesiredApptStatus) throw new Error("Desired appointment status required");
+      if (isTerminalOutcome && !canonicalTerminalReason.trim()) throw new Error("Terminal completion reason required");
+      const nextActionIso = isCallbackOutcome && canonicalCallbackAt
+        ? new Date(canonicalCallbackAt).toISOString()
+        : null;
+      const body: Record<string, unknown> = {
+        patientScreeningId: patientId,
+        patientName: patientName || undefined,
+        callResult: canonicalOutcome,
+        callDisposition: canonicalOutcome,
+        note: canonicalNotes.trim() || undefined,
+        assignedUserId: schedulerUserId ?? undefined,
+        callMetadata: { source: "team-portal", ringCentralCallId: null },
+      };
+      if (nextActionIso) body.nextActionAt = nextActionIso;
+      if (isScheduledOutcome) {
+        body.desiredAppointmentStatus = canonicalDesiredApptStatus;
+        if (schedulerUserId) body.schedulerUserId = schedulerUserId;
+      }
+      if (isTerminalOutcome) {
+        body.terminalCompletionReason = canonicalTerminalReason.trim();
+      }
+      const res = await apiRequest("POST", engagementCallResultEndpoint(), body);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to log canonical call result");
+      }
+      return res.json().catch(() => ({}));
+    },
+    onSuccess: () => {
+      toast({ title: "Canonical call result logged" });
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/by-patients"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/today"] });
+      onLogged?.();
+      onOpenChange(false);
+    },
+    onError: (e: Error) =>
+      toast({ title: "Could not log canonical result", description: e.message, variant: "destructive" }),
   });
 
   const grouped = {
@@ -236,6 +358,101 @@ export function DispositionSheet({
           {renderGroup("Reached patient", grouped.reached, "border-emerald-300 bg-emerald-50 text-emerald-800")}
           {renderGroup("Did not reach", grouped.missed, "border-amber-300 bg-amber-50 text-amber-800")}
           {renderGroup("Other", grouped.other, "border-slate-300 bg-slate-100 text-slate-700")}
+
+          {STRUCTURED_SELECTOR_ENABLED && (
+            <section
+              className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-3"
+              data-testid="canonical-call-result-selector"
+            >
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-700">
+                Canonical call result (Phase 1)
+              </p>
+              <Label htmlFor="canonical-outcome" className="text-xs font-semibold text-indigo-900">
+                Outcome
+              </Label>
+              <select
+                id="canonical-outcome"
+                value={canonicalOutcome}
+                onChange={(e) => setCanonicalOutcome((e.target.value || "") as CanonicalOutcome | "")}
+                className="mt-1.5 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm"
+                data-testid="canonical-outcome-select"
+              >
+                <option value="">— select canonical outcome —</option>
+                {CANONICAL_OUTCOMES.map((v) => (
+                  <option key={v} value={v} data-testid={`canonical-outcome-option-${v}`}>
+                    {CANONICAL_OUTCOME_LABELS[v]}
+                  </option>
+                ))}
+              </select>
+
+              {canonicalOutcome === "callback" && (
+                <div className="mt-3" data-testid="canonical-callback-block">
+                  <Label className="text-xs font-semibold text-indigo-900">Callback at</Label>
+                  <Input
+                    type="datetime-local"
+                    value={canonicalCallbackAt}
+                    onChange={(e) => setCanonicalCallbackAt(e.target.value)}
+                    className="mt-1 rounded-xl border-indigo-200 bg-white text-sm"
+                    data-testid="canonical-callback-input"
+                  />
+                </div>
+              )}
+
+              {canonicalOutcome === "scheduled" && (
+                <div className="mt-3" data-testid="canonical-scheduled-block">
+                  <Label className="text-xs font-semibold text-indigo-900">Desired appointment status</Label>
+                  <Input
+                    type="text"
+                    value={canonicalDesiredApptStatus}
+                    onChange={(e) => setCanonicalDesiredApptStatus(e.target.value)}
+                    placeholder="scheduled"
+                    className="mt-1 rounded-xl border-indigo-200 bg-white text-sm"
+                    data-testid="canonical-desired-appt-status-input"
+                  />
+                </div>
+              )}
+
+              {canonicalOutcome && OUTREACH_TERMINAL_OUTCOMES.has(canonicalOutcome) && (
+                <div className="mt-3" data-testid="canonical-terminal-block">
+                  <Label className="text-xs font-semibold text-indigo-900">Terminal completion reason</Label>
+                  <Input
+                    type="text"
+                    value={canonicalTerminalReason}
+                    onChange={(e) => setCanonicalTerminalReason(e.target.value)}
+                    placeholder="e.g. completed-outreach, dnc-request"
+                    className="mt-1 rounded-xl border-indigo-200 bg-white text-sm"
+                    data-testid="canonical-terminal-reason-input"
+                  />
+                </div>
+              )}
+
+              <div className="mt-3">
+                <Label htmlFor="canonical-notes" className="text-xs font-semibold text-indigo-900">
+                  Notes <span className="text-indigo-400">(optional)</span>
+                </Label>
+                <Textarea
+                  id="canonical-notes"
+                  value={canonicalNotes}
+                  onChange={(e) => setCanonicalNotes(e.target.value)}
+                  rows={3}
+                  className="mt-1 resize-none rounded-xl border-indigo-200 bg-white text-sm"
+                  data-testid="canonical-notes"
+                />
+              </div>
+
+              <div className="mt-3 flex justify-end">
+                <Button
+                  type="button"
+                  disabled={!canonicalOutcome || logCanonicalCall.isPending}
+                  onClick={() => logCanonicalCall.mutate()}
+                  className="rounded-full bg-indigo-600 px-4 text-white hover:bg-indigo-700 disabled:opacity-40"
+                  data-testid="canonical-submit"
+                >
+                  {logCanonicalCall.isPending ? "Logging…" : "Log canonical result"}
+                </Button>
+              </div>
+            </section>
+          )}
 
           {isCallback && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3" data-testid="disposition-callback-block">
