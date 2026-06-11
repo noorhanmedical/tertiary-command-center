@@ -23,6 +23,7 @@
 import {
   executeRecordCallResult,
   type CallResultExecutionDependencies,
+  type CallResultExecutionStep,
   type RecordCallResultExecutionResult,
   type RecordCallResultExecutionOptions,
 } from "./recordCallResultExecutionAdapter";
@@ -75,6 +76,19 @@ const ENGAGEMENT_OWNED_STEPS = [
 ] as const;
 
 /**
+ * Steps the engagement surface does NOT own. The executor passes
+ * these to the adapter's `suppressedSteps` option so the adapter
+ * marks them `skipped` with reason `surface does not own` and does
+ * not call their dep — matching the legacy engagement route's
+ * behavior (it does NOT insert outreach_calls, does NOT mark
+ * scheduler_assignments completed).
+ */
+export const ENGAGEMENT_SUPPRESSED_STEPS: ReadonlyArray<CallResultExecutionStep> = [
+  "outreachCallCreated",
+  "assignmentCompleted",
+];
+
+/**
  * Engagement executor. Maps engagement input → canonical input,
  * supplies the dependency map (caller still injects the writers),
  * and drives the canonical adapter.
@@ -96,6 +110,10 @@ export async function recordEngagementCallResult(
   }
 
   const sourceSurface: CallResultSourceSurface = "engagement_center_route";
+  const mergedSuppressed: ReadonlyArray<CallResultExecutionStep> = [
+    ...ENGAGEMENT_SUPPRESSED_STEPS,
+    ...(options?.suppressedSteps ?? []),
+  ];
   const adapterResult = await executeRecordCallResult(
     {
       patientScreeningId: input.patientScreeningId,
@@ -109,7 +127,7 @@ export async function recordEngagementCallResult(
       schedulerAssignmentId: input.schedulerAssignmentId ?? null,
     },
     deps,
-    options,
+    { ...options, suppressedSteps: mergedSuppressed },
   );
 
   return {
