@@ -134,14 +134,21 @@ requireFile("scripts/qa-record-call-result-dormancy.mjs");
   }
 }
 
-// 16. No route-delegation flag exists yet in RUNTIME code. The flag
-//     name MAY appear in contract docs and QA scripts (the split-brain
-//     run's Batch 6 / Batch 10 explicitly contract this flag before any
-//     accessor module ships). The hard-stop is on runtime adoption.
+// 16. No route-delegation FLAG accessor is wired into any route yet.
+//     The flag NAME MAY appear in the designated accessor modules
+//     (Batches 10 + 17 of the split-brain run ship those modules
+//     before any route reads them). It MAY also appear in contract
+//     docs and QA scripts. The hard-stop guards against routes
+//     reading the flag without the corresponding delegation safeguards.
 {
   const ROOTS = ["server", "shared", "client"];
   const DELEGATION_FLAG_RE =
     /USE_RECORD_CALL_RESULT_(?:ENGAGEMENT|OUTREACH|PORTAL)_DELEGATE/;
+  const ALLOWED = new Set([
+    // Designated delegate-flag accessor modules.
+    "server/services/callResult/recordCallResultEngagementDelegateFlag.ts",
+    "server/services/callResult/recordCallResultOutreachDelegateFlag.ts",
+  ]);
   const offenders = [];
 
   function walk(dir) {
@@ -167,6 +174,7 @@ requireFile("scripts/qa-record-call-result-dormancy.mjs");
       }
       if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
+      if (ALLOWED.has(rel)) continue;
       // Test files anywhere are allowed to mention the flag for
       // dry-run harness purposes.
       if (rel.includes("/__tests__/")) continue;
@@ -183,7 +191,7 @@ requireFile("scripts/qa-record-call-result-dormancy.mjs");
   if (offenders.length > 0) {
     for (const o of offenders) {
       failures.push(
-        `Premature route-delegation flag found in runtime ${o} — accessor module must ship via Batch H Step 5+ delegation flag PR with proper safeguards`,
+        `Premature route-delegation flag wiring found in runtime ${o} — only the designated delegate-flag accessor modules may name the flag at runtime`,
       );
     }
   }
