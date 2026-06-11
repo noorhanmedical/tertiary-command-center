@@ -56,7 +56,10 @@ else for (const n of [
       "server/services/ancillary/__tests__/ancillaryReadModel.test.ts",
     ]),
     USE_ANCILLARY_REPORT_UPLOAD: new Set(),
-    USE_ANCILLARY_SIGNING_SERVICE: new Set(),
+    USE_ANCILLARY_SIGNING_SERVICE: new Set([
+      "server/services/ancillary/signingService.ts",
+      "server/services/ancillary/__tests__/signingService.test.ts",
+    ]),
     VITE_USE_ANCILLARY_PANEL_SECTIONS: new Set(),
   };
   const ROOTS = ["server", "client", "shared"];
