@@ -145,7 +145,21 @@ export type CallResultExecutionDependencies = {
  */
 export type RecordCallResultExecutionOptions = {
   mode?: "best-effort" | "strict";
+  /**
+   * Per-surface step suppression. Steps named here are NOT executed,
+   * their dep is NOT called, and they are marked `skipped` with
+   * reason "surface does not own". Strict mode does not short-circuit
+   * on a suppressed step (suppression is not failure).
+   *
+   * Engagement and outreach executors use this to scope the adapter
+   * to only the steps each surface owns today (Batches B + C of the
+   * adapter blockers run).
+   */
+  suppressedSteps?: ReadonlyArray<CallResultExecutionStep>;
 };
+
+/** Constant skip reason used for suppressed steps — grep-stable. */
+export const SUPPRESSED_STEP_REASON = "surface does not own";
 
 type StepRunner = () => Promise<void>;
 
@@ -181,6 +195,7 @@ export async function executeRecordCallResult(
 ): Promise<RecordCallResultExecutionResult> {
   const plan = recordCallResult(input);
   const mode = options?.mode ?? "best-effort";
+  const suppressed = new Set<CallResultExecutionStep>(options?.suppressedSteps ?? []);
   const steps: CallResultExecutionStepResult[] = [];
 
   const screeningId = input.patientScreeningId;
@@ -291,6 +306,10 @@ export async function executeRecordCallResult(
   };
 
   for (const step of CALL_RESULT_EXECUTION_STEPS) {
+    if (suppressed.has(step)) {
+      steps.push({ step, status: "skipped", reason: SUPPRESSED_STEP_REASON });
+      continue;
+    }
     const spec = planned[step];
     const result = await runStep(step, spec.shouldRun, spec.reason, spec.runner);
     steps.push(result);
