@@ -31,7 +31,10 @@ requireText(TEST, [
   "makeCapturingOutreachDeps",
 ]);
 
-// Assert no route reads the flag yet.
+// Historical note: Batch B7 of Phase 1 run has since wired the outreach
+// route behind the delegate flag. Wiring + safeguards pinned by
+// qa-record-call-result-outreach-delegation.mjs.
+if (false)
 {
   const ROOTS = ["server/routes"];
   const RE = /USE_RECORD_CALL_RESULT_OUTREACH_DELEGATE|isRecordCallResultOutreachDelegateEnabled/;

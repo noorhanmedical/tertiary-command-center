@@ -61,8 +61,10 @@ requireText(DRY, [
       if (!/\.(ts|tsx|mts|cts)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
       if (rel.includes("/__tests__/") || rel.endsWith(".test.ts")) continue;
+      // Batch B7 of Phase 1 — designated route consumer.
+      if (rel === "server/routes/outreach.ts") continue;
       const src = fs.readFileSync(abs, "utf8");
-      if (RE.test(src)) failures.push(`Route ${rel} imports outreach executor — Batch C does NOT wire routes`);
+      if (RE.test(src)) failures.push(`Route ${rel} unauthorized importer of outreach executor`);
     }
   }
   walk(ROUTES);

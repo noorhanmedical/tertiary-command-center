@@ -46,17 +46,11 @@ requireText(DOC, [
   "Untouched",
 ]);
 
+// Blockers doc is historical. Batch B7 of Phase 1 has since wired the
+// outreach route behind a default-OFF flag. Wiring is pinned by
+// qa-record-call-result-outreach-delegation.mjs.
 const ROUTE = "server/routes/outreach.ts";
 requireFile(ROUTE);
-requireNotText(
-  ROUTE,
-  [
-    "isRecordCallResultOutreachDelegateEnabled",
-    "USE_RECORD_CALL_RESULT_OUTREACH_DELEGATE",
-    "recordOutreachCallResult",
-  ],
-  "Batch 19 blockers: outreach route MUST remain un-delegated",
-);
 
 if (failures.length > 0) {
   console.error("Outreach delegation blockers QA failed:");
