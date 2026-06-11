@@ -291,6 +291,9 @@ info("docs/architecture/phase-1-outreach-atomic-write-contract.md");
 // Phase 1 run Segment B Batch 3 — outreach Journey Event ownership contract.
 info("docs/architecture/phase-1-outreach-journey-event-ownership-contract.md");
 
+// Phase 1 run Segment B Batch 6 — outreach route delegation final readiness.
+info("docs/architecture/phase-1-outreach-route-delegation-final-readiness.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
