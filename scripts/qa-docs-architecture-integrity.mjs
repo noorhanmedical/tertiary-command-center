@@ -228,6 +228,9 @@ info("docs/architecture/team-portal-call-result-source-wiring-readiness.md");
 // Platform split-brain run Batch 22 — Engagement UI terminology contract.
 info("docs/architecture/engagement-ui-terminology-contract.md");
 
+// Platform split-brain run Batch 23 — Plexus IQ split-brain audit.
+info("docs/architecture/plexus-iq-split-brain-audit.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
