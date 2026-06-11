@@ -252,6 +252,9 @@ info("docs/architecture/call-result-delegation-blockers-resolution-summary.md");
 // Arg-extensions run Batch 7 — Engagement blockers reduction summary.
 info("docs/architecture/call-result-engagement-blockers-reduction-summary.md");
 
+// Arg-extensions run Batch 8 — Engagement-route delegation readiness re-check.
+info("docs/architecture/call-result-engagement-route-delegation-readiness-recheck.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
