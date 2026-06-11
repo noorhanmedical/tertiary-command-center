@@ -38,8 +38,13 @@ else for (const n of [
   }
 }
 
-// G1 is docs+QA only — the new V2 flag must not appear in code yet.
+// Authorized importers of the readiness V2 flag.
+// Batch G2 wires the flag into the aggregator scaffold + its test.
 {
+  const ALLOWED = new Set([
+    "server/services/billingReadiness/billingReadinessAggregator.ts",
+    "server/services/billingReadiness/__tests__/billingReadinessAggregator.test.ts",
+  ]);
   const ROOTS = ["server", "client", "shared"];
   function walk(dir) {
     let entries;
@@ -50,9 +55,10 @@ else for (const n of [
       if (e.isDirectory()) { walk(abs); continue; }
       if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
+      if (ALLOWED.has(rel)) continue;
       const src = fs.readFileSync(abs, "utf8");
       if (src.includes("USE_BILLING_READINESS_AGGREGATOR_V2")) {
-        failures.push(`G1 is docs+QA only: ${rel} already references USE_BILLING_READINESS_AGGREGATOR_V2`);
+        failures.push(`Unauthorized reference: ${rel} references USE_BILLING_READINESS_AGGREGATOR_V2`);
       }
     }
   }
