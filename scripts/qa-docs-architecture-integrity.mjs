@@ -369,6 +369,9 @@ info("docs/architecture/phase-1-aws-backup-runbook.md");
 // Phase 1 run Segment H Batch 5 — AWS smoke-test runbook.
 info("docs/architecture/phase-1-aws-smoke-test-runbook.md");
 
+// Phase 1 run Segment I Batch 1 — end-to-end smoke contract.
+info("docs/architecture/phase-1-end-to-end-smoke-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
