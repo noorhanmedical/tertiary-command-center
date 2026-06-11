@@ -4,3 +4,10 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gzstorage/
+
+# Secrets — Phase 1 AWS deployment contract (H1) enforces never
+# committing .env files. Secrets come from injected env at process
+# start (AWS Secrets Manager in staging/prod).
+.env
+.env.*
+!.env.example

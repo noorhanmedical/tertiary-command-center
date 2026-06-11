@@ -354,6 +354,9 @@ info("docs/architecture/phase-1-billing-readiness-boundary-contract.md");
 // Phase 1 run Segment G Batch 3 — invoicing boundary contract.
 info("docs/architecture/phase-1-invoicing-boundary-contract.md");
 
+// Phase 1 run Segment H Batch 1 — AWS deployment contract.
+info("docs/architecture/phase-1-aws-deployment-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
