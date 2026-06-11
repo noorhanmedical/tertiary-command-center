@@ -81,6 +81,18 @@ export type EngagementCallResultInput = {
   triageDueAt?: string | null;
   triageNote?: string | null;
   triageMetadata?: Record<string, unknown>;
+  /**
+   * Follow-up task payload extension (Batch 5 of arg-extensions run).
+   * Forwarded to createFollowUpTask dep so the route can preserve
+   * the legacy task row's full body (resolves Batch 12 B6).
+   */
+  taskTitle?: string | null;
+  taskDescription?: string | null;
+  taskPriority?: string | null;
+  taskUrgency?: string | null;
+  taskAssignedToUserId?: string | null;
+  taskDueAt?: string | null;
+  taskMetadata?: Record<string, unknown>;
 };
 
 /**
@@ -208,6 +220,19 @@ export async function recordEngagementCallResult(
         ...(input.triageDueAt !== undefined ? { dueAt: input.triageDueAt } : {}),
         ...(input.triageNote !== undefined ? { note: input.triageNote } : {}),
         ...(input.triageMetadata !== undefined ? { metadata: input.triageMetadata } : {}),
+      }),
+    createFollowUpTask: (args) =>
+      deps.createFollowUpTask({
+        ...args,
+        ...(input.taskTitle !== undefined ? { title: input.taskTitle } : {}),
+        ...(input.taskDescription !== undefined ? { description: input.taskDescription } : {}),
+        ...(input.taskPriority !== undefined ? { priority: input.taskPriority } : {}),
+        ...(input.taskUrgency !== undefined ? { urgency: input.taskUrgency } : {}),
+        ...(input.taskAssignedToUserId !== undefined
+          ? { assignedToUserId: input.taskAssignedToUserId }
+          : {}),
+        ...(input.taskDueAt !== undefined ? { dueAt: input.taskDueAt } : {}),
+        ...(input.taskMetadata !== undefined ? { metadata: input.taskMetadata } : {}),
       }),
   };
 
