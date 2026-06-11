@@ -3,6 +3,7 @@
 import {
   recordOutreachCallResult,
   OUTREACH_OWNED_STEPS,
+  OUTREACH_SUPPRESSED_STEPS,
   type OutreachCallResultInput,
 } from "../recordCallResultOutreachExecutor";
 import type {
@@ -103,6 +104,37 @@ check(
   !OUTREACH_OWNED_STEPS.includes("followUpTaskCreated" as never),
   "§2: outreach-owned must not advertise follow-up task",
 );
+
+// §2.5 — OUTREACH_SUPPRESSED_STEPS contract.
+{
+  for (const s of ["journeyEventAppended", "executionCaseUpdated", "triageCaseUpserted", "followUpTaskCreated"]) {
+    check(
+      (OUTREACH_SUPPRESSED_STEPS as ReadonlyArray<string>).includes(s),
+      `§2.5: OUTREACH_SUPPRESSED_STEPS must include ${s}`,
+    );
+  }
+
+  // Adapter-result steps for these MUST be "skipped" with the canonical reason.
+  const { deps, log } = fakeDeps();
+  const r = await recordOutreachCallResult(
+    { patientScreeningId: "ps", outcome: "callback", patientExecutionCaseId: "ec" },
+    deps,
+  );
+  for (const stepName of OUTREACH_SUPPRESSED_STEPS) {
+    const stepResult = r.steps.find((s) => s.step === stepName);
+    check(stepResult?.status === "skipped", `§2.5: ${stepName} skipped on outreach`);
+    check(stepResult?.reason === "surface does not own", `§2.5: ${stepName} reason canonical`);
+  }
+  // None of the suppressed deps were called.
+  eq(log.appendJourneyEvent.length, 0, "§2.5: journey dep not called");
+  eq(log.updateExecutionCaseEngagement.length, 0, "§2.5: ec dep not called");
+  eq(log.upsertTriageCase.length, 0, "§2.5: triage dep not called");
+  eq(log.createFollowUpTask.length, 0, "§2.5: task dep not called");
+  // Outreach call insert + appt status update + assignment (when terminal)
+  // still ran — those are owned by outreach.
+  eq(log.createOutreachCall.length, 1, "§2.5: outreach dep called");
+  eq(log.updateAppointmentStatus.length, 1, "§2.5: appt status dep called");
+}
 
 // §3 — Missing patientScreeningId throws.
 {
