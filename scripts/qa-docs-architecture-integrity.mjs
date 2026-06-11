@@ -378,6 +378,9 @@ info("docs/architecture/phase-1-scanner-enforcement-plan.md");
 // Phase 1 run Segment I Batch 3 — Phase 1 completion summary.
 info("docs/architecture/phase-1-completion-summary.md");
 
+// Phase 1 test loop — end-to-end test results report.
+info("docs/architecture/phase-1-end-to-end-test-results.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
