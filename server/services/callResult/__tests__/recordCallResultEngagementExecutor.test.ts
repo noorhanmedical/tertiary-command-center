@@ -226,6 +226,46 @@ check(
   eq(r.ownershipUpdated, false, "§3.8: ownershipUpdated false because EC step skipped");
 }
 
+// §3.9 — Journey-event metadata + PHI passthrough (Batch 3).
+{
+  const { deps, log } = fakeDeps();
+  const meta = { callDisposition: "ok", facilityId: "f-1" };
+  const r = await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps",
+      patientExecutionCaseId: "ec",
+      outcome: "scheduled",
+      journeyEventMetadata: meta,
+      patientName: "Closure Captured",
+      patientDob: "1980-05-15",
+    },
+    deps,
+  );
+  eq(r.ok, true, "§3.9: ok");
+  eq(log.appendJourneyEvent.length, 1, "§3.9: journey dep called");
+  const je = log.appendJourneyEvent[0] as Record<string, unknown>;
+  // Metadata bag forwarded.
+  const jeMeta = je.metadata as Record<string, unknown>;
+  eq(jeMeta?.callDisposition, "ok", "§3.9: journey metadata callDisposition");
+  eq(jeMeta?.facilityId, "f-1", "§3.9: journey metadata facilityId");
+  // PHI fields forwarded to dep boundary.
+  eq(je.patientName, "Closure Captured", "§3.9: patientName forwarded to dep");
+  eq(je.patientDob, "1980-05-15", "§3.9: patientDob forwarded to dep");
+}
+
+// §3.10 — When metadata + PHI not supplied, dep does NOT receive them.
+{
+  const { deps, log } = fakeDeps();
+  await recordEngagementCallResult(
+    { patientScreeningId: "ps", patientExecutionCaseId: "ec", outcome: "scheduled" },
+    deps,
+  );
+  const je = log.appendJourneyEvent[0] as Record<string, unknown>;
+  check(!("metadata" in je) || je.metadata === undefined, "§3.10: metadata not added when input absent");
+  check(!("patientName" in je), "§3.10: patientName not added when input absent");
+  check(!("patientDob" in je), "§3.10: patientDob not added when input absent");
+}
+
 // §4 — explicit per-outcome smoke (keeps grep-stable outcome labels
 //      in the test source).
 {

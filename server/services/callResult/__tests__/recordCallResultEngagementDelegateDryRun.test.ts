@@ -204,6 +204,40 @@ for (const env of CALL_RESULT_PARITY_FIXTURE) {
   eq(legacy.ownershipUpdated, true, "§2.6: legacy envelope ownershipUpdated from executor");
 }
 
+// §2.7 — Journey-event metadata + PHI threaded through DI without
+//        passing through the canonical surface (Batch 3 of arg
+//        extensions).
+{
+  const { deps, captured } = makeCapturingDeps();
+  // Extend the capturing dep to also capture metadata + PHI.
+  let capturedJourneyMeta: Record<string, unknown> | undefined;
+  let capturedPatientName: string | null | undefined;
+  let capturedPatientDob: string | null | undefined;
+  const wrappedDeps = {
+    ...deps,
+    appendJourneyEvent: (args: Record<string, unknown>) => {
+      capturedJourneyMeta = args.metadata as Record<string, unknown> | undefined;
+      capturedPatientName = args.patientName as string | null | undefined;
+      capturedPatientDob = args.patientDob as string | null | undefined;
+      captured.journeyEvent = { id: "je-fake", tag: "journey_event_row" };
+    },
+  };
+  await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps-dryrun",
+      patientExecutionCaseId: "ec-dryrun",
+      outcome: "scheduled",
+      journeyEventMetadata: { callDisposition: "ok", facilityId: "f-1" },
+      patientName: "DryRun Patient",
+      patientDob: "1990-01-01",
+    },
+    wrappedDeps,
+  );
+  check(capturedJourneyMeta?.callDisposition === "ok", "§2.7: dry-run captured journey metadata");
+  check(capturedPatientName === "DryRun Patient", "§2.7: dry-run captured patientName via DI");
+  check(capturedPatientDob === "1990-01-01", "§2.7: dry-run captured patientDob via DI");
+}
+
 // §3 — Engagement-owned step list is what the delegated route should
 //      surface. The dry-run uses this list to filter the executor's
 //      step results before rebuilding the legacy envelope.

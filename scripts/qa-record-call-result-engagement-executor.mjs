@@ -55,11 +55,40 @@ requireNotText(SVC, [
   'from "../storage"',
   "console.log",
   "console.info",
-  "patientName",
-  "patientDob",
   "mrn",
   "ssn",
 ], "engagement executor must stay pure / no PHI");
+
+// PHI passthrough rule (Batch 3): patientName / patientDob are allowed
+// ONLY (1) on the EngagementCallResultInput type fields, and (2) inside
+// the wrappedDeps definition block (the closure that threads PHI to
+// the dep). Anywhere else is a bug.
+{
+  const src = read(SVC) ?? "";
+  // Strip the input type block.
+  let stripped = src.replace(/EngagementCallResultInput\s*=\s*\{[\s\S]*?\};/, "");
+  // Strip the entire wrappedDeps const declaration (brace-balanced).
+  const wrapStart = stripped.indexOf("const wrappedDeps");
+  if (wrapStart >= 0) {
+    let i = stripped.indexOf("{", wrapStart);
+    let depth = 0;
+    let end = -1;
+    for (; i < stripped.length; i++) {
+      const ch = stripped[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) { end = i + 1; break; }
+      }
+    }
+    if (end > 0) stripped = stripped.slice(0, wrapStart) + stripped.slice(end);
+  }
+  for (const phi of ["patientName", "patientDob"]) {
+    if (stripped.includes(phi)) {
+      failures.push(`${SVC}: PHI identifier "${phi}" appears outside DI-passthrough zones`);
+    }
+  }
+}
 
 // Imports the adapter via sibling specifier.
 {
