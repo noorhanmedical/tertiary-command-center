@@ -26,6 +26,12 @@ import {
 } from "../services/callResult/recordCallResultEngagementPreviewFlag";
 import { isRecordCallResultEngagementDelegateEnabled } from "../services/callResult/recordCallResultEngagementDelegateFlag";
 import { isEngagementCanonicalCallResultsEndpointEnabled } from "../services/callResult/engagementCanonicalCallResultsEndpointFlag";
+import { isEngagementCanonicalCallListReadEnabled } from "../services/engagement/engagementCanonicalCallListReadFlag";
+import {
+  getEngagementCallList,
+  type EngagementCallListDependencies,
+  type EngagementCallListItem,
+} from "../services/engagement/engagementCallListService";
 import {
   recordEngagementCallResult,
   type EngagementCallResultInput,
@@ -194,6 +200,71 @@ export function registerExecutionCaseRoutes(app: Express) {
       }
       const result = await assignEngagementCases(parsed.data);
       return res.json({ ok: true, ...result });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/engagement-center/call-list — Canonical engagement
+  // call-list READ endpoint (Batch 17 of Engagement completion run).
+  // Default OFF behind isEngagementCanonicalCallListReadEnabled().
+  // Returns 404 when flag OFF. When ON, delegates to the dormant
+  // engagementCallListService (Batch 15) with a dep that projects
+  // listEngagementCenterCases rows onto the canonical envelope.
+  // Read-only. No PHI in the response. Team Portal does NOT generate
+  // the call list; Operational Queue stays read-only.
+  app.get("/api/engagement-center/call-list", async (req, res) => {
+    if (!isEngagementCanonicalCallListReadEnabled()) {
+      return res.status(404).json({ error: "Not Found" });
+    }
+    try {
+      const q = req.query as Record<string, string | undefined>;
+      const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
+      const deps: EngagementCallListDependencies = {
+        listEngagementCallListItems: async (filters) => {
+          const repoFilters: Parameters<typeof listEngagementCenterCases>[0] = {};
+          if (filters.facilityId) repoFilters.facilityId = filters.facilityId;
+          if (filters.assignedTeamMemberId) {
+            const v = parseInt(filters.assignedTeamMemberId, 10);
+            if (Number.isFinite(v)) repoFilters.assignedTeamMemberId = v;
+          }
+          if (filters.assignedRole) repoFilters.assignedRole = filters.assignedRole;
+          if (filters.engagementStatus) repoFilters.engagementStatus = filters.engagementStatus;
+          const rows = await listEngagementCenterCases(repoFilters, filters.limit ?? 100);
+          return rows.map<EngagementCallListItem>((row) => ({
+            patientScreeningId:
+              row.patientScreeningId != null ? String(row.patientScreeningId) : "",
+            patientExecutionCaseId: String(row.id),
+            engagementStatus:
+              (row.engagementStatus as EngagementCallListItem["engagementStatus"]) ?? null,
+            lifecycleStatus: row.lifecycleStatus ?? null,
+            assignedTeamMemberId:
+              row.assignedTeamMemberId != null ? String(row.assignedTeamMemberId) : null,
+            assignedRole: row.assignedRole ?? null,
+            // appointmentStatus + callListAssignmentDate live on related
+            // tables (patient_screenings + scheduler_assignments); future
+            // expansion can join them in.
+            appointmentStatus: null,
+            nextActionAt:
+              row.nextActionAt instanceof Date ? row.nextActionAt.toISOString() : null,
+            facilityId: row.facilityId ?? null,
+            callListAssignmentDate: null,
+          }));
+        },
+      };
+      const result = await getEngagementCallList(
+        {
+          facilityId: q.facilityId ?? null,
+          assignedTeamMemberId: q.assignedTeamMemberId ?? null,
+          assignedRole: q.assignedRole ?? null,
+          engagementStatus:
+            (q.engagementStatus as EngagementCallListItem["engagementStatus"]) ?? null,
+          callListAssignmentDate: q.callListAssignmentDate ?? null,
+          limit,
+        },
+        deps,
+      );
+      return res.json(result);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }

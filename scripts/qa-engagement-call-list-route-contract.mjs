@@ -34,7 +34,8 @@ requireText(DOC, [
   "Hard-stops",
 ]);
 
-// Pin: route does not yet exist (Batch 17 ships it).
+// Batch 16 shipped the contract; Batch 17 shipped the route. Only
+// server/routes/executionCases.ts may serve this endpoint.
 {
   const ROOTS = ["server"];
   function walk(dir, files) {
@@ -52,9 +53,10 @@ requireText(DOC, [
   for (const abs of files) {
     const rel = path.relative(root, abs);
     if (rel.includes("/__tests__/") || rel.endsWith(".test.ts")) continue;
+    if (rel === "server/routes/executionCases.ts") continue;
     const src = fs.readFileSync(abs, "utf8");
     if (/['"]\/api\/engagement-center\/call-list['"]/.test(src)) {
-      failures.push(`${rel}: contains '/api/engagement-center/call-list' — Batch 16 is contract-only; route ships in Batch 17`);
+      failures.push(`${rel}: contains '/api/engagement-center/call-list' — only executionCases.ts may serve this endpoint`);
     }
   }
 }

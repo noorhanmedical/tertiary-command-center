@@ -87,10 +87,16 @@ requireText(TEST, [
   "§1", "§2", "§3", "§4", "§5",
 ]);
 
-// Dormancy: only the test imports the service (no runtime caller).
+// Designated route consumer is server/routes/executionCases.ts
+// (Batch 17 of Engagement completion run).
 {
   const ROOTS = ["server", "shared", "client", "scripts"];
-  const ALLOWED = new Set([SVC, TEST, "scripts/qa-engagement-call-list-service-module.mjs"]);
+  const ALLOWED = new Set([
+    SVC,
+    TEST,
+    "scripts/qa-engagement-call-list-service-module.mjs",
+    "server/routes/executionCases.ts",
+  ]);
   const IMPORT_RE = /(?:from|import)\s+['"][^'"]*\/engagementCallListService(?:\.\w+)?['"]/;
   function walk(dir) {
     let entries;
@@ -105,7 +111,7 @@ requireText(TEST, [
       if (rel.includes("/__tests__/") || rel.endsWith(".test.ts")) continue;
       const src = fs.readFileSync(abs, "utf8");
       if (IMPORT_RE.test(src)) {
-        failures.push(`Dormancy violation: ${rel} imports engagementCallListService — Batch 15 ships scaffold only`);
+        failures.push(`Unauthorized importer: ${rel} imports engagementCallListService — only the designated route may`);
       }
     }
   }
