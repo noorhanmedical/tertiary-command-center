@@ -267,6 +267,9 @@ info("docs/architecture/engagement-ui-post-delegation-source-audit.md");
 // Engagement completion run Batch 11 — UI canonical write switch plan.
 info("docs/architecture/engagement-ui-canonical-write-switch-plan.md");
 
+// Engagement completion run Batch 13 — Call-list ownership final contract.
+info("docs/architecture/engagement-call-list-ownership-final-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
