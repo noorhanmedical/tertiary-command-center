@@ -24,6 +24,7 @@ import {
   type PatientCommunicationType,
 } from "@/lib/portal/commandCenterApi";
 import { LogCommunicationDialog } from "@/components/portal/LogCommunicationDialog";
+import { PatientCallHistoryPanel } from "@/components/portal/PatientCallHistoryPanel";
 
 // Canonical document checklist for the readiness panel. Keys must
 // match `documentType` values written by the document-readiness
@@ -375,6 +376,12 @@ export function PatientCommandCanvas({
           <ClinicalField label="Notes" value={clinicalProfile.notes} />
         </div>
       </Card>
+
+      {/* Phase 1 Segment E Batch 7 — call-history panel. The panel
+          owns its own client-side flag check and returns null when
+          disabled; the server-side route is independently gated
+          (otherwise GET /api/portal/calls returns 404). Read-only. */}
+      <PatientCallHistoryPanel patientScreeningId={patientScreeningId} />
 
       {/* ─── Latest Activity ──────────────────────────────────────── */}
       <Card className="p-4 bg-white" data-testid="patient-command-canvas-latest">
