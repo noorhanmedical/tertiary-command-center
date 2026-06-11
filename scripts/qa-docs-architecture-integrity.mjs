@@ -270,6 +270,9 @@ info("docs/architecture/engagement-ui-canonical-write-switch-plan.md");
 // Engagement completion run Batch 13 — Call-list ownership final contract.
 info("docs/architecture/engagement-call-list-ownership-final-contract.md");
 
+// Engagement completion run Batch 14 — Call-list service module plan.
+info("docs/architecture/engagement-call-list-service-module-plan.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
