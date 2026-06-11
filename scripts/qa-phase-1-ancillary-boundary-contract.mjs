@@ -47,15 +47,19 @@ else for (const n of [
   }
 }
 
-// Dormancy: the F2/F3/F6 flags must not appear in code yet.
+// Authorized importers of each ancillary flag.
+// Update alongside each new authorized batch.
 {
+  const ALLOWED_BY_FLAG = {
+    USE_ANCILLARY_READ_MODEL: new Set([
+      "server/services/ancillary/ancillaryReadModel.ts",
+      "server/services/ancillary/__tests__/ancillaryReadModel.test.ts",
+    ]),
+    USE_ANCILLARY_REPORT_UPLOAD: new Set(),
+    USE_ANCILLARY_SIGNING_SERVICE: new Set(),
+    VITE_USE_ANCILLARY_PANEL_SECTIONS: new Set(),
+  };
   const ROOTS = ["server", "client", "shared"];
-  const FORBIDDEN = [
-    "USE_ANCILLARY_READ_MODEL",
-    "USE_ANCILLARY_REPORT_UPLOAD",
-    "USE_ANCILLARY_SIGNING_SERVICE",
-    "VITE_USE_ANCILLARY_PANEL_SECTIONS",
-  ];
   function walk(dir) {
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -66,8 +70,9 @@ else for (const n of [
       if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
       const src = fs.readFileSync(abs, "utf8");
-      for (const f of FORBIDDEN) {
-        if (src.includes(f)) failures.push(`F1 is docs+QA only: ${rel} already references "${f}"`);
+      for (const [flag, allowed] of Object.entries(ALLOWED_BY_FLAG)) {
+        if (allowed.has(rel)) continue;
+        if (src.includes(flag)) failures.push(`Unauthorized reference: ${rel} references "${flag}"`);
       }
     }
   }
