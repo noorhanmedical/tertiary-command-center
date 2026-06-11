@@ -202,6 +202,8 @@ requireText(TEST_REL, [
       if (rel.includes("/__tests__/")) continue;
       if (rel.includes("/test/") || rel.includes("/tests/")) continue;
       if (rel.endsWith(".test.ts") || rel.endsWith(".test.tsx") || rel.endsWith(".spec.ts")) continue;
+      // Designated dormant wrappers around the adapter (Batches 7 + 14).
+      if (rel === "server/services/callResult/recordCallResultEngagementExecutor.ts") continue;
 
       const src = fs.readFileSync(abs, "utf8");
       if (IMPORT_RE.test(src)) {

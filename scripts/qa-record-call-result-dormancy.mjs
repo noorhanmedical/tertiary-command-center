@@ -184,6 +184,11 @@ requireText(TEST_REL, [
     "server/services/callResult/recordCallResultEngagementPreviewFlag.ts",
     "server/services/callResult/recordCallResultOutreachPreviewFlag.ts",
     "server/services/callResult/recordCallResultExecutionAdapter.ts",
+    // Engagement / outreach executors are dormant wrappers around the
+    // adapter; they re-export planner types for the route delegation
+    // PRs (Batches 12 + 19). Routes still go through these wrappers,
+    // never directly to the planner.
+    "server/services/callResult/recordCallResultEngagementExecutor.ts",
   ]);
 
   function walk(dir) {
