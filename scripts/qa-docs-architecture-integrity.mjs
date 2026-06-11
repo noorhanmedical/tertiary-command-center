@@ -213,6 +213,9 @@ info("docs/architecture/call-result-engagement-delegation-blockers.md");
 // Platform split-brain run Batch 13 — Outreach-as-Engagement-subworkflow contract.
 info("docs/architecture/outreach-as-engagement-subworkflow-contract.md");
 
+// Platform split-brain run Batch 17 — Outreach delegation contract.
+info("docs/architecture/call-result-outreach-delegation-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
