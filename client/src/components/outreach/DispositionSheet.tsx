@@ -267,6 +267,14 @@ export function DispositionSheet({
       // immediately, not after the next 60s poll.
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/by-patients"] });
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/today"] });
+      // Phase 1 Segment E Batch 10 — refresh Team Portal assigned-work
+      // surfaces so the cockpit reflects engagement-completed state
+      // immediately (instead of waiting for the next poll).
+      queryClient.invalidateQueries({ queryKey: ["/api/engagement-center/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/outreach-call-list"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/my-tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/today-schedule"] });
+      queryClient.invalidateQueries({ queryKey: ["portal-call-history", patientId] });
       onLogged?.();
       onOpenChange(false);
     },
@@ -320,6 +328,14 @@ export function DispositionSheet({
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls"] });
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/by-patients"] });
       queryClient.invalidateQueries({ queryKey: ["/api/outreach/calls/today"] });
+      // Phase 1 Segment E Batch 10 — refresh Team Portal assigned-work
+      // surfaces so the cockpit reflects engagement-completed state
+      // immediately (instead of waiting for the next poll).
+      queryClient.invalidateQueries({ queryKey: ["/api/engagement-center/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/outreach-call-list"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/my-tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/today-schedule"] });
+      queryClient.invalidateQueries({ queryKey: ["portal-call-history", patientId] });
       onLogged?.();
       onOpenChange(false);
     },
