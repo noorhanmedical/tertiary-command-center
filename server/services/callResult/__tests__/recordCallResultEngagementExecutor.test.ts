@@ -310,6 +310,49 @@ check(
   check(!("note" in tc), "§3.12: note not added when input absent");
 }
 
+// §3.13 — Task payload passthrough (Batch 5 of arg-extensions run).
+{
+  const { deps, log } = fakeDeps();
+  await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps",
+      patientExecutionCaseId: "ec",
+      outcome: "needs_records",
+      taskTitle: "Custom title",
+      taskDescription: "Custom desc",
+      taskPriority: "high",
+      taskUrgency: "EOD",
+      taskAssignedToUserId: "u-1",
+      taskDueAt: "2026-06-12T15:00:00Z",
+      taskMetadata: { createdSource: "scheduler_call_result" },
+    },
+    deps,
+  );
+  eq(log.createFollowUpTask.length, 1, "§3.13: task dep called");
+  const t = log.createFollowUpTask[0] as Record<string, unknown>;
+  eq(t.title, "Custom title", "§3.13: title forwarded");
+  eq(t.description, "Custom desc", "§3.13: description forwarded");
+  eq(t.priority, "high", "§3.13: priority forwarded");
+  eq(t.urgency, "EOD", "§3.13: urgency forwarded");
+  eq(t.assignedToUserId, "u-1", "§3.13: assignedToUserId forwarded");
+  eq(t.dueAt, "2026-06-12T15:00:00Z", "§3.13: dueAt forwarded");
+  const md = t.metadata as Record<string, unknown>;
+  eq(md?.createdSource, "scheduler_call_result", "§3.13: task metadata forwarded");
+}
+
+// §3.14 — When task payload not supplied, dep does not receive them.
+{
+  const { deps, log } = fakeDeps();
+  await recordEngagementCallResult(
+    { patientScreeningId: "ps", patientExecutionCaseId: "ec", outcome: "needs_records" },
+    deps,
+  );
+  const t = log.createFollowUpTask[0] as Record<string, unknown>;
+  check(!("title" in t), "§3.14: title not added when input absent");
+  check(!("priority" in t), "§3.14: priority not added when input absent");
+  check(!("urgency" in t), "§3.14: urgency not added when input absent");
+}
+
 // §4 — explicit per-outcome smoke (keeps grep-stable outcome labels
 //      in the test source).
 {
