@@ -134,9 +134,12 @@ requireFile("scripts/qa-record-call-result-dormancy.mjs");
   }
 }
 
-// 16. No route-delegation flag exists yet anywhere in the tree.
+// 16. No route-delegation flag exists yet in RUNTIME code. The flag
+//     name MAY appear in contract docs and QA scripts (the split-brain
+//     run's Batch 6 / Batch 10 explicitly contract this flag before any
+//     accessor module ships). The hard-stop is on runtime adoption.
 {
-  const ROOTS = ["server", "shared", "client", "scripts", "docs"];
+  const ROOTS = ["server", "shared", "client"];
   const DELEGATION_FLAG_RE =
     /USE_RECORD_CALL_RESULT_(?:ENGAGEMENT|OUTREACH|PORTAL)_DELEGATE/;
   const offenders = [];
@@ -162,12 +165,13 @@ requireFile("scripts/qa-record-call-result-dormancy.mjs");
         walk(abs);
         continue;
       }
-      if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx|md)$/.test(e.name)) continue;
+      if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
-      // Exempt this QA script itself + the readiness doc, both of
-      // which mention the future flag NAME pattern intentionally.
-      if (rel === "scripts/qa-call-result-preview-readiness.mjs") continue;
-      if (rel === DOC_REL) continue;
+      // Test files anywhere are allowed to mention the flag for
+      // dry-run harness purposes.
+      if (rel.includes("/__tests__/")) continue;
+      if (rel.includes("/test/") || rel.includes("/tests/")) continue;
+      if (rel.endsWith(".test.ts") || rel.endsWith(".test.tsx") || rel.endsWith(".spec.ts")) continue;
       const src = fs.readFileSync(abs, "utf8");
       if (DELEGATION_FLAG_RE.test(src)) {
         offenders.push(rel);
@@ -179,7 +183,7 @@ requireFile("scripts/qa-record-call-result-dormancy.mjs");
   if (offenders.length > 0) {
     for (const o of offenders) {
       failures.push(
-        `Premature route-delegation flag found in ${o} — Batch H Step 4 hard-stop (no delegation until readiness pass)`,
+        `Premature route-delegation flag found in runtime ${o} — accessor module must ship via Batch H Step 5+ delegation flag PR with proper safeguards`,
       );
     }
   }
