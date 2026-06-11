@@ -363,6 +363,9 @@ info("docs/architecture/phase-1-env-var-inventory.md");
 // Phase 1 run Segment H Batch 3 — AWS deploy runbook.
 info("docs/architecture/phase-1-aws-deploy-runbook.md");
 
+// Phase 1 run Segment H Batch 4 — AWS backup runbook.
+info("docs/architecture/phase-1-aws-backup-runbook.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
