@@ -264,6 +264,9 @@ info("docs/architecture/engagement-canonical-call-results-endpoint-implementatio
 // Engagement completion run Batch 10 — UI post-delegation source audit.
 info("docs/architecture/engagement-ui-post-delegation-source-audit.md");
 
+// Engagement completion run Batch 11 — UI canonical write switch plan.
+info("docs/architecture/engagement-ui-canonical-write-switch-plan.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
