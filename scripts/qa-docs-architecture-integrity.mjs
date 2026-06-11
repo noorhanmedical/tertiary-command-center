@@ -192,6 +192,9 @@ info("docs/architecture/platform-split-brain-audit.md");
 // Platform split-brain run Batch 2 — Canonical ownership registry.
 info("docs/architecture/canonical-workflow-ownership-registry.md");
 
+// Platform split-brain run Batch 3 — Source scanner baseline (docs-only).
+info("docs/architecture/platform-split-brain-source-scanner-baseline.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
