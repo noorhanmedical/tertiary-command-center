@@ -306,6 +306,9 @@ info("docs/architecture/phase-1-module-wiring-contract.md");
 // Phase 1 run Segment C Batch 2 — canonical ID registry.
 info("docs/architecture/phase-1-canonical-id-registry.md");
 
+// Phase 1 run Segment C Batch 3 — status ownership registry.
+info("docs/architecture/phase-1-status-ownership-registry.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
