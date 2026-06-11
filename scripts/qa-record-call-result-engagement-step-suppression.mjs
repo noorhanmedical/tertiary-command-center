@@ -45,9 +45,11 @@ requireText(DRY, [
   "surface does not own",
 ]);
 
-// Pin: no route wires the engagement executor yet.
+// Designated route consumer is server/routes/executionCases.ts
+// (Batch 3 of Engagement completion run).
 {
   const ROUTES = path.join(root, "server/routes");
+  const ALLOWED_ROUTE = "server/routes/executionCases.ts";
   const RE = /(?:from|import)\s+['"][^'"]*\/recordCallResultEngagementExecutor(?:\.\w+)?['"]/;
   function walk(dir) {
     let entries;
@@ -57,9 +59,10 @@ requireText(DRY, [
       if (e.isDirectory()) { walk(abs); continue; }
       if (!/\.(ts|tsx|mts|cts)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
+      if (rel === ALLOWED_ROUTE) continue;
       if (rel.includes("/__tests__/") || rel.endsWith(".test.ts")) continue;
       const src = fs.readFileSync(abs, "utf8");
-      if (RE.test(src)) failures.push(`Route ${rel} imports engagement executor — Batch B does NOT wire routes`);
+      if (RE.test(src)) failures.push(`Route ${rel} unauthorized importer of engagement executor`);
     }
   }
   walk(ROUTES);

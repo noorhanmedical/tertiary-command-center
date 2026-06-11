@@ -36,28 +36,11 @@ requireText(TEST, [
   "task",
 ]);
 
-// Assert no route reads the flag yet (Batch 11 ships only the harness).
-{
-  const ROOTS = ["server/routes"];
-  const RE = /USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE|isRecordCallResultEngagementDelegateEnabled/;
-  function walk(dir) {
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      if (["node_modules", "dist"].includes(e.name)) continue;
-      const abs = path.join(dir, e.name);
-      if (e.isDirectory()) { walk(abs); continue; }
-      if (!/\.(ts|tsx|mts|cts)$/.test(e.name)) continue;
-      const rel = path.relative(root, abs);
-      if (rel.includes("/__tests__/") || rel.endsWith(".test.ts")) continue;
-      const src = fs.readFileSync(abs, "utf8");
-      if (RE.test(src)) {
-        failures.push(`Premature route wiring: ${rel} references the engagement delegate flag — Batch 12 has not shipped yet`);
-      }
-    }
-  }
-  walk(path.join(root, "server/routes"));
-}
+// Historical note: this QA originally asserted no route wired the
+// delegate flag (Batch 11 of split-brain run shipped only the harness).
+// Batch 3 of the Engagement completion run has since wired the
+// engagement route behind a default-OFF flag. The wiring + safeguards
+// are pinned by qa-record-call-result-engagement-delegation.mjs.
 
 if (failures.length === 0) {
   try { execSync(`npx tsx ${TEST}`, { cwd: root, stdio: ["ignore", "inherit", "inherit"] }); }

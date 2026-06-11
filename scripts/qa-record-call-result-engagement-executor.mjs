@@ -116,11 +116,16 @@ requireText(TEST, [
   '"facility_specific_issue"',
 ]);
 
-// Dormancy — only tests may import the engagement executor.
+// Designated runtime importers of the engagement executor:
+//   - server/routes/executionCases.ts (Batch 3 of Engagement completion run)
+// Anything else still trips the QA.
 {
   const ROOTS = ["server", "shared", "client", "scripts"];
   const IMPORT_RE =
     /(?:from|import)\s+['"][^'"]*\/recordCallResultEngagementExecutor(?:\.(?:ts|tsx|mts|cts|js|mjs|cjs|jsx))?['"]/;
+  const ALLOWED = new Set([
+    "server/routes/executionCases.ts",
+  ]);
   const offenders = [];
   function walk(dir) {
     let entries;
@@ -134,6 +139,7 @@ requireText(TEST, [
       if (rel === SVC) continue;
       if (rel === TEST) continue;
       if (rel.startsWith("scripts/qa-record-call-result-engagement-executor.mjs")) continue;
+      if (ALLOWED.has(rel)) continue;
       if (rel.includes("/__tests__/")) continue;
       if (rel.includes("/test/") || rel.includes("/tests/")) continue;
       if (rel.endsWith(".test.ts") || rel.endsWith(".test.tsx") || rel.endsWith(".spec.ts")) continue;
@@ -143,7 +149,7 @@ requireText(TEST, [
   }
   for (const r of ROOTS) walk(path.join(root, r));
   for (const o of offenders) {
-    failures.push(`Dormancy violation: ${o} imports recordCallResultEngagementExecutor — Batch 7 hard-stop`);
+    failures.push(`Unauthorized importer: ${o} imports recordCallResultEngagementExecutor — only the designated route may`);
   }
 }
 

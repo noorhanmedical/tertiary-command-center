@@ -53,8 +53,11 @@ requireText(DRY, [
   "ownershipPlanned",
 ]);
 
-// No route imports engagement executor; no Plexus IQ touched.
+// Designated route consumer is server/routes/executionCases.ts
+// (Batch 3 of Engagement completion run). No Plexus IQ file ever
+// imports the engagement executor.
 {
+  const ALLOWED_ROUTE = "server/routes/executionCases.ts";
   for (const dir of ["server/routes", "server/services/plexusIq"]) {
     const RE = /(?:from|import)\s+['"][^'"]*\/recordCallResultEngagementExecutor(?:\.\w+)?['"]/;
     function walk(d) {
@@ -65,9 +68,10 @@ requireText(DRY, [
         if (e.isDirectory()) { walk(abs); continue; }
         if (!/\.(ts|tsx|mts|cts)$/.test(e.name)) continue;
         const rel = path.relative(root, abs);
+        if (rel === ALLOWED_ROUTE) continue;
         if (rel.includes("/__tests__/") || rel.endsWith(".test.ts")) continue;
         const src = fs.readFileSync(abs, "utf8");
-        if (RE.test(src)) failures.push(`${rel} imports engagement executor — Batch 2 does not wire routes / does not touch Plexus IQ`);
+        if (RE.test(src)) failures.push(`${rel} unauthorized importer of engagement executor — only the designated route may`);
       }
     }
     walk(path.join(root, dir));

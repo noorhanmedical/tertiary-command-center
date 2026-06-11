@@ -43,18 +43,10 @@ requireText(DOC, [
   "Plexus IQ",
 ]);
 
-// Pin: route still NOT delegated.
+// Route delegation has shipped in a later run. The readiness re-check
+// doc is historical — it described the gate BEFORE the wiring landed.
 const ROUTE = "server/routes/executionCases.ts";
 requireFile(ROUTE);
-requireNotText(
-  ROUTE,
-  [
-    "isRecordCallResultEngagementDelegateEnabled",
-    "USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE",
-    "recordEngagementCallResult",
-  ],
-  "Batch 8 readiness re-check: engagement route MUST remain un-delegated",
-);
 
 if (failures.length > 0) {
   console.error("Engagement route delegation readiness re-check QA failed:");

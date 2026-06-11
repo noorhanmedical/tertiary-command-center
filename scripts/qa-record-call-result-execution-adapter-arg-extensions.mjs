@@ -66,9 +66,12 @@ requireNotText(ADAPTER, [
   'from "../routes/',
 ], "adapter must stay pure after arg extensions");
 
-// No route imports the adapter.
+// Designated route consumer is server/routes/executionCases.ts
+// (Batch 3 of Engagement completion run) — it imports adapter TYPES
+// for the dep closures it supplies to the engagement executor.
 {
   const ROUTES = path.join(root, "server/routes");
+  const ALLOWED_ROUTE = "server/routes/executionCases.ts";
   const RE = /(?:from|import)\s+['"][^'"]*\/recordCallResultExecutionAdapter(?:\.\w+)?['"]/;
   function walk(dir) {
     let entries;
@@ -78,9 +81,10 @@ requireNotText(ADAPTER, [
       if (e.isDirectory()) { walk(abs); continue; }
       if (!/\.(ts|tsx|mts|cts)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
+      if (rel === ALLOWED_ROUTE) continue;
       if (rel.includes("/__tests__/") || rel.endsWith(".test.ts")) continue;
       const src = fs.readFileSync(abs, "utf8");
-      if (RE.test(src)) failures.push(`Route ${rel} imports adapter — Batch 1 does NOT wire routes`);
+      if (RE.test(src)) failures.push(`Route ${rel} unauthorized importer of adapter`);
     }
   }
   walk(ROUTES);

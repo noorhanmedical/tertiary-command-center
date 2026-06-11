@@ -24,6 +24,38 @@ import {
   isRecordCallResultEngagementPreviewEnabled,
   runEngagementCallResultPreview,
 } from "../services/callResult/recordCallResultEngagementPreviewFlag";
+import { isRecordCallResultEngagementDelegateEnabled } from "../services/callResult/recordCallResultEngagementDelegateFlag";
+import {
+  recordEngagementCallResult,
+  type EngagementCallResultInput,
+} from "../services/callResult/recordCallResultEngagementExecutor";
+import type {
+  CallResultExecutionDependencies,
+  AppendJourneyEventArgs,
+  UpdateExecutionCaseEngagementArgs,
+  UpsertTriageCaseArgs,
+  CreateFollowUpTaskArgs,
+} from "../services/callResult/recordCallResultExecutionAdapter";
+
+/**
+ * Outcomes the canonical recordCallResult planner understands. The
+ * engagement-route delegation path is restricted to these — non-canonical
+ * outcomes (reschedule, cancelled, no_show, patient_requested_call_later,
+ * transportation_issue, technician_unavailable, needs_new_date) fall
+ * through to the legacy code path even when the delegate flag is ON.
+ */
+const ENGAGEMENT_DELEGATION_CANONICAL_OUTCOMES = new Set([
+  "scheduled",
+  "callback",
+  "no_answer",
+  "voicemail",
+  "wrong_number",
+  "declined",
+  "needs_records",
+  "insurance_prior_auth_issue",
+  "manager_review",
+  "facility_specific_issue",
+]);
 
 const assignBodySchema = z.object({
   facilityId: z.string().optional(),
@@ -263,6 +295,240 @@ export function registerExecutionCaseRoutes(app: Express) {
         dt.setHours(dt.getHours() + callbackHours);
         computedNextActionAt = dt;
       }
+
+      // ─── Engagement-route DELEGATION (Batch 3 of Engagement completion run) ──
+      //
+      // Default-OFF delegate-flag accessor (isRecordCallResultEngagement
+      // DelegateEnabled). When enabled AND the outcome is canonical AND
+      // patient context resolved,
+      // the route delegates to recordEngagementCallResult. The injected deps
+      // wrap the SAME storage/writer calls the legacy path makes (so the
+      // actual DB effects are byte-equivalent) and capture returned rows
+      // for the legacy 6-key response envelope. engagementStatusSemantics:
+      // "coarse" matches the legacy non-terminal-> "in_progress" transition.
+      //
+      // When the flag is OFF, OR the outcome is not in the canonical set,
+      // OR patientScreeningId is null, the legacy code path below runs
+      // unchanged.
+      if (
+        isRecordCallResultEngagementDelegateEnabled() &&
+        patientScreeningId !== null &&
+        ENGAGEMENT_DELEGATION_CANONICAL_OUTCOMES.has(data.callResult)
+      ) {
+        const delegationJourneyMetadata: Record<string, unknown> = {
+          callResult: data.callResult,
+          callDisposition: data.callDisposition ?? null,
+          note: data.note ?? null,
+          nextActionAt: computedNextActionAt ? computedNextActionAt.toISOString() : null,
+          assignedUserId: data.assignedUserId ?? null,
+          assignedRole: data.assignedRole ?? null,
+          facilityId: facilityId ?? null,
+          ...(data.metadata ?? {}),
+        };
+
+        // Parse assignedTeamCandidate identically to the legacy path so
+        // ownership accounting matches.
+        const assignedTeamCandidate = (() => {
+          if (data.assignedUserId == null) return null;
+          const v = typeof data.assignedUserId === "number"
+            ? data.assignedUserId
+            : parseInt(data.assignedUserId, 10);
+          return Number.isFinite(v) ? v : null;
+        })();
+        const forceReassign =
+          (data.metadata && (data.metadata as Record<string, unknown>).forceReassign === true) ||
+          !preserveSchedulerOwnership;
+
+        const mapping = TRIAGE_MAPPINGS[data.callResult];
+        const managerReviewRequiresTaskHere = managerReviewRequiresTask;
+        const needsTriageHere = CALL_RESULTS_NEEDING_TRIAGE.has(data.callResult);
+        const needsTaskHere =
+          CALL_RESULTS_NEEDING_TASK.has(data.callResult) &&
+          (data.callResult !== "manager_review" || managerReviewRequiresTaskHere);
+
+        // Capture targets for the legacy 6-key envelope.
+        let delegatedJourneyEvent: Awaited<ReturnType<typeof appendJourneyEvent>> | null = null;
+        let delegatedTriageCase: Awaited<ReturnType<typeof createSchedulingTriageCase>> | null = null;
+        let delegatedTask: Awaited<ReturnType<typeof storage.createTask>> | null = null;
+        let delegatedExecutionCase = executionCase;
+        let delegatedOwnershipUpdated = false;
+
+        const deps: CallResultExecutionDependencies = {
+          createOutreachCall: () => {
+            // engagement-suppressed step; never reached.
+          },
+          appendJourneyEvent: async (args: AppendJourneyEventArgs) => {
+            try {
+              delegatedJourneyEvent = await appendJourneyEvent({
+                patientName,
+                patientDob: patientDob ?? undefined,
+                patientScreeningId: patientScreeningId ?? undefined,
+                executionCaseId: executionCaseId ?? undefined,
+                eventType: args.eventType,
+                eventSource: "scheduler_portal",
+                actorUserId,
+                summary: "call result logged",
+                metadata: (args.metadata as Record<string, unknown> | undefined) ?? delegationJourneyMetadata,
+              });
+            } catch (err: any) {
+              console.error("[call-result] journey event append failed:", err.message);
+            }
+          },
+          updateAppointmentStatus: () => {
+            // engagement route does not own appointmentStatus updates.
+          },
+          updateExecutionCaseEngagement: async (args: UpdateExecutionCaseEngagementArgs) => {
+            if (!executionCase) return;
+            const updates: Record<string, unknown> = { updatedAt: new Date() };
+            // Re-apply the legacy "don't overwrite terminal" guard.
+            if (
+              args.engagementStatus &&
+              !TERMINAL_ENGAGEMENT_STATUSES_FOR_CALL_RESULT.has(executionCase.engagementStatus)
+            ) {
+              updates.engagementStatus = args.engagementStatus;
+            }
+            if (args.nextActionAt instanceof Date) {
+              updates.nextActionAt = args.nextActionAt;
+            }
+            if (args.assignedRole && args.assignedRole !== executionCase.assignedRole) {
+              updates.assignedRole = args.assignedRole;
+            }
+            // Re-apply ownership-preservation guard.
+            if (assignedTeamCandidate !== null) {
+              if (executionCase.assignedTeamMemberId == null || forceReassign) {
+                updates.assignedTeamMemberId = assignedTeamCandidate;
+                delegatedOwnershipUpdated = true;
+              }
+            }
+            try {
+              const [row] = await db
+                .update(patientExecutionCases)
+                .set(updates)
+                .where(eq(patientExecutionCases.id, executionCase.id))
+                .returning();
+              if (row) delegatedExecutionCase = row;
+            } catch (err: any) {
+              console.error("[call-result] execution case update failed:", err.message);
+            }
+          },
+          markAssignmentCompleted: () => {
+            // engagement-suppressed step.
+          },
+          upsertTriageCase: async (_args: UpsertTriageCaseArgs) => {
+            if (!needsTriageHere || !mapping) return;
+            try {
+              const result = await upsertOpenSchedulingTriageCase({
+                executionCaseId: executionCaseId ?? undefined,
+                patientScreeningId: patientScreeningId ?? undefined,
+                patientName: patientName ?? undefined,
+                patientDob: patientDob ?? undefined,
+                facilityId: facilityId ?? undefined,
+                mainType: mapping.mainType,
+                subtype: mapping.subtype,
+                status: "open",
+                priority: data.callResult === "manager_review" ? "high" : "normal",
+                nextOwnerRole: mapping.nextOwnerRole,
+                assignedUserId: typeof data.assignedUserId === "string" ? data.assignedUserId : undefined,
+                dueAt: computedNextActionAt ?? undefined,
+                note: data.note ?? undefined,
+                metadata: {
+                  callResult: data.callResult,
+                  callDisposition: data.callDisposition ?? null,
+                  createdSource: "scheduler_call_result",
+                  ...(data.metadata ?? {}),
+                },
+              });
+              delegatedTriageCase = result.row;
+            } catch (err: any) {
+              console.error("[call-result] triage case upsert failed:", err.message);
+            }
+          },
+          createFollowUpTask: async (_args: CreateFollowUpTaskArgs) => {
+            if (!needsTaskHere) return;
+            try {
+              const assignedToUserId = typeof data.assignedUserId === "string" ? data.assignedUserId : null;
+              delegatedTask = await storage.createTask({
+                title: `Call result needs follow-up — ${data.callResult}`,
+                description: data.note ?? undefined,
+                taskType: "task",
+                urgency: "EOD",
+                priority: data.callResult === "manager_review" ? "high" : "normal",
+                status: "open",
+                assignedToUserId,
+                createdByUserId: actorUserId,
+                patientScreeningId: patientScreeningId ?? null,
+                projectId: null,
+                parentTaskId: null,
+                batchId: null,
+                dueDate: null,
+              });
+            } catch (err: any) {
+              console.error("[call-result] task create failed:", err.message);
+            }
+          },
+        };
+
+        const execInput: EngagementCallResultInput = {
+          patientScreeningId: String(patientScreeningId),
+          patientExecutionCaseId:
+            executionCaseId !== null ? String(executionCaseId) : null,
+          outcome: data.callResult as
+            | "scheduled"
+            | "callback"
+            | "no_answer"
+            | "voicemail"
+            | "wrong_number"
+            | "declined"
+            | "needs_records"
+            | "insurance_prior_auth_issue"
+            | "manager_review"
+            | "facility_specific_issue",
+          callbackAt: computedNextActionAt ? computedNextActionAt.toISOString() : null,
+          notes: data.note ?? null,
+          assignedTeamMemberId:
+            assignedTeamCandidate !== null ? String(assignedTeamCandidate) : null,
+          assignedRole: data.assignedRole ?? null,
+          forceReassign,
+          journeyEventMetadata: delegationJourneyMetadata,
+          patientName,
+          patientDob: patientDob ?? null,
+        };
+
+        await recordEngagementCallResult(execInput, deps, {
+          callbackHours,
+          engagementStatusSemantics: "coarse",
+        });
+
+        if (isRecordCallResultEngagementPreviewEnabled()) {
+          runEngagementCallResultPreview(
+            {
+              patientScreeningId: String(patientScreeningId),
+              outcome: data.callResult,
+              callbackAt: data.nextActionAt ?? null,
+            },
+            {
+              outcome: data.callResult,
+              routeAppointmentStatus: null,
+              routeEngagementStatusTransition: null,
+              routeAssignmentCompleted: false,
+              routeFollowUpTaskCreated: delegatedTask !== null,
+              routeTriageCaseUpserted: delegatedTriageCase !== null,
+              routeNextActionAtSet: computedNextActionAt !== null,
+            },
+          );
+        }
+
+        return res.json({
+          ok: true,
+          executionCase: delegatedExecutionCase,
+          journeyEvent: delegatedJourneyEvent,
+          triageCase: delegatedTriageCase,
+          task: delegatedTask,
+          ownershipUpdated: delegatedOwnershipUpdated,
+        });
+      }
+
+      // ─── Legacy code path (flag OFF, non-canonical outcome, or no screening) ─
 
       // Always append journey event (best-effort — never blocks the response)
       const journeyMetadata = {

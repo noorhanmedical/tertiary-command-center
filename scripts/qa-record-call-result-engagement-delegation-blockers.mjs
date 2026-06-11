@@ -49,18 +49,13 @@ requireText(DOC, [
   "no BS patches",
 ]);
 
-// The engagement route MUST NOT have been wired to the delegate flag.
+// The blockers doc is historical — it recorded the Batch 12 stop.
+// Subsequent runs resolved each B1-B8 blocker; Batch 3 of the
+// Engagement completion run shipped the delegation behind a
+// default-OFF flag. We assert the route exists; the delegation
+// wiring + safeguards are pinned by the dedicated Batch 3 QA.
 const ROUTE = "server/routes/executionCases.ts";
 requireFile(ROUTE);
-requireNotText(
-  ROUTE,
-  [
-    "isRecordCallResultEngagementDelegateEnabled",
-    "USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE",
-    "recordEngagementCallResult",
-  ],
-  "Batch 12 blockers: engagement route MUST remain un-delegated",
-);
 
 if (failures.length > 0) {
   console.error("Engagement delegation blockers QA failed:");
