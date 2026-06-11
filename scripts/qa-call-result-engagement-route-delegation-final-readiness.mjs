@@ -41,18 +41,11 @@ requireText(DOC, [
   "response shape",
 ]);
 
-// Pin: route still NOT delegated.
+// Route delegation has shipped in Batch 3 of this run. The readiness
+// doc is now historical — it described the gate BEFORE Batch 3 wiring.
+// We only assert the doc still names the right flag + executor.
 const ROUTE = "server/routes/executionCases.ts";
 requireFile(ROUTE);
-requireNotText(
-  ROUTE,
-  [
-    "isRecordCallResultEngagementDelegateEnabled",
-    "USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE",
-    "recordEngagementCallResult",
-  ],
-  "Batch 2 readiness: engagement route MUST remain un-delegated",
-);
 
 if (failures.length > 0) {
   console.error("Engagement route delegation FINAL readiness QA failed:");

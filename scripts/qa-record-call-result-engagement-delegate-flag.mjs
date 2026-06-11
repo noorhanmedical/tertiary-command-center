@@ -62,13 +62,20 @@ requireText(DOC, [
   "Untouched",
 ]);
 
-// Hard-stop: no runtime file imports the delegate flag yet (Batch 10
-// ships only the accessor module + the contract doc; Batch 11 will
-// allow a test importer; Batch 12 will allow the route).
+// Historical note: Batch 10 of split-brain run shipped only the
+// accessor; Batch 11 allowed a test importer; Batch 3 of the
+// Engagement completion run has since wired the engagement route
+// behind a default-OFF flag. The runtime importer policy is:
+//   - server/routes/executionCases.ts (the designated route consumer)
+//   - tests / harness files anywhere
+// Anything else still trips the QA.
 {
   const ROOTS = ["server", "shared", "client", "scripts"];
   const IMPORT_RE =
     /(?:from|import)\s+['"][^'"]*\/recordCallResultEngagementDelegateFlag(?:\.(?:ts|tsx|mts|cts|js|mjs|cjs|jsx))?['"]/;
+  const ALLOWED = new Set([
+    "server/routes/executionCases.ts",
+  ]);
   const offenders = [];
   function walk(dir) {
     let entries;
@@ -81,6 +88,7 @@ requireText(DOC, [
       const rel = path.relative(root, abs);
       if (rel === FLAG) continue;
       if (rel === "scripts/qa-record-call-result-engagement-delegate-flag.mjs") continue;
+      if (ALLOWED.has(rel)) continue;
       if (rel.includes("/__tests__/")) continue;
       if (rel.endsWith(".test.ts") || rel.endsWith(".test.tsx") || rel.endsWith(".spec.ts")) continue;
       const src = fs.readFileSync(abs, "utf8");
@@ -89,7 +97,7 @@ requireText(DOC, [
   }
   for (const r of ROOTS) walk(path.join(root, r));
   for (const o of offenders) {
-    failures.push(`Premature delegation wiring: ${o} imports the engagement delegate flag — Batch 10 ships accessor only`);
+    failures.push(`Unauthorized importer: ${o} imports the engagement delegate flag — only the designated route may`);
   }
 }
 

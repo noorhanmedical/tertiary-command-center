@@ -50,19 +50,12 @@ const EXEC_TEST = "server/services/callResult/__tests__/recordCallResultEngageme
 requireFile(EXEC_TEST);
 requireText(EXEC_TEST, ["§3.16", "engagementStatusSemantics"]);
 
-// Pin: no route reads the engagement delegate flag yet.
+// Batch 3 of this run wires the engagement route. The Batch 1 QA
+// originally asserted the route was un-delegated; we now just check
+// the route file exists. The wiring + safeguards are pinned by
+// qa-record-call-result-engagement-delegation.mjs.
 const ROUTE = "server/routes/executionCases.ts";
 requireFile(ROUTE);
-requireNotText(
-  ROUTE,
-  [
-    "isRecordCallResultEngagementDelegateEnabled",
-    "USE_RECORD_CALL_RESULT_ENGAGEMENT_DELEGATE",
-    "recordEngagementCallResult",
-    "engagementStatusSemantics",
-  ],
-  "Batch 1: engagement route MUST remain un-delegated",
-);
 
 // Pin: no client/src file edited.
 {

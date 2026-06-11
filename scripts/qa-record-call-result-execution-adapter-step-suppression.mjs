@@ -46,10 +46,12 @@ requireText(TEST, [
   "suppression does not fail",
 ]);
 
-// Pin: no route imports the adapter (re-asserts Step 5A dormancy,
-// preserved even after the suppression extension).
+// Designated route consumer is server/routes/executionCases.ts
+// (Batch 3 of Engagement completion run) — it imports adapter TYPES
+// for the dep closures it supplies to the engagement executor.
 {
   const ROUTES_DIR = path.join(root, "server/routes");
+  const ALLOWED_ROUTE = "server/routes/executionCases.ts";
   const IMPORT_RE =
     /(?:from|import)\s+['"][^'"]*\/recordCallResultExecutionAdapter(?:\.(?:ts|tsx|mts|cts|js|mjs|cjs|jsx))?['"]/;
   function walk(dir) {
@@ -60,10 +62,11 @@ requireText(TEST, [
       if (e.isDirectory()) { walk(abs); continue; }
       if (!/\.(ts|tsx|mts|cts)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
+      if (rel === ALLOWED_ROUTE) continue;
       if (rel.includes("/__tests__/") || rel.endsWith(".test.ts")) continue;
       const src = fs.readFileSync(abs, "utf8");
       if (IMPORT_RE.test(src)) {
-        failures.push(`Route ${rel} imports execution adapter — Batch A does NOT wire routes`);
+        failures.push(`Route ${rel} unauthorized importer of execution adapter`);
       }
     }
   }
