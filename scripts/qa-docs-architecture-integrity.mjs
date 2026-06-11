@@ -243,6 +243,9 @@ info("docs/architecture/call-result-journey-event-metadata-contract.md");
 // Adapter blockers run Batch E — engagementStatus semantics decision doc.
 info("docs/architecture/call-result-engagement-status-semantics.md");
 
+// Adapter blockers run Batch F — outreach-only outcome extension design.
+info("docs/architecture/call-result-outreach-only-outcome-extension.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
