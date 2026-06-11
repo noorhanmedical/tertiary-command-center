@@ -226,6 +226,19 @@ export type RecordCallResultExecutionOptions = {
    * Currently typed only; planner consumption ships in a future PR.
    */
   callbackHours?: number;
+  /**
+   * engagementStatus semantics selector (Batch 12 B1 — final blocker).
+   * Default: undefined → preserves canonical per-outcome transitions
+   * (`contacted`, `needs_followup`, `not_reached`, `in_progress`).
+   * `"canonical"` → same as undefined.
+   * `"coarse"` → collapses every NON-terminal status transition to
+   * `"in_progress"` so the adapter matches the legacy engagement-
+   * center route. Terminal outcomes (scheduled / declined) keep
+   * their canonical engagementStatus value (`contacted`). This
+   * lets route delegation ship behind a default-OFF flag without
+   * visible engagementStatus drift on flag flip.
+   */
+  engagementStatusSemantics?: "coarse" | "canonical";
 };
 
 /** Constant skip reason used for suppressed steps — grep-stable. */
@@ -283,7 +296,17 @@ export async function executeRecordCallResult(
       }
     : input;
 
-  const plan = recordCallResult(plannerInput);
+  const rawPlan = recordCallResult(plannerInput);
+  // Apply engagementStatus semantics post-processing (Batch 12 B1).
+  // "coarse" collapses NON-terminal engagement-status transitions to
+  // "in_progress", matching the legacy engagement-center route.
+  // Terminal outcomes keep their canonical engagementStatus value.
+  const plan =
+    options?.engagementStatusSemantics === "coarse" &&
+    !rawPlan.terminal &&
+    rawPlan.executionCaseEngagementStatus !== null
+      ? { ...rawPlan, executionCaseEngagementStatus: "in_progress" as const }
+      : rawPlan;
   const mode = options?.mode ?? "best-effort";
   const suppressed = new Set<CallResultExecutionStep>(options?.suppressedSteps ?? []);
   const steps: CallResultExecutionStepResult[] = [];

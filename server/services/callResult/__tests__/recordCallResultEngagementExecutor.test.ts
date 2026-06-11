@@ -376,6 +376,36 @@ check(
   }
 }
 
+// §3.16 — engagementStatusSemantics forwarding (Batch 1 of Engagement
+//         completion run). Coarse mode collapses callback to in_progress.
+{
+  const { deps } = fakeDeps();
+  const r = await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps",
+      patientExecutionCaseId: "ec",
+      outcome: "callback",
+    },
+    deps,
+    { engagementStatusSemantics: "coarse" },
+  );
+  eq(r.plan.executionCaseEngagementStatus, "in_progress", "§3.16: coarse callback collapsed via executor");
+}
+{
+  // Canonical mode preserved.
+  const { deps } = fakeDeps();
+  const r = await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps",
+      patientExecutionCaseId: "ec",
+      outcome: "no_answer",
+    },
+    deps,
+    { engagementStatusSemantics: "canonical" },
+  );
+  eq(r.plan.executionCaseEngagementStatus, "not_reached", "§3.16: canonical no_answer preserved via executor");
+}
+
 // §4 — explicit per-outcome smoke (keeps grep-stable outcome labels
 //      in the test source).
 {
