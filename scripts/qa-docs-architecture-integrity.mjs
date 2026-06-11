@@ -222,6 +222,9 @@ info("docs/architecture/call-result-outreach-delegation-blockers.md");
 // Platform split-brain run Batch 20 — Team Portal canonical write contract.
 info("docs/architecture/team-portal-canonical-call-result-write-contract.md");
 
+// Platform split-brain run Batch 21 — Team Portal source wiring readiness.
+info("docs/architecture/team-portal-call-result-source-wiring-readiness.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
