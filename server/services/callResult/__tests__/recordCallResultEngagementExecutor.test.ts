@@ -353,6 +353,29 @@ check(
   check(!("urgency" in t), "§3.14: urgency not added when input absent");
 }
 
+// §3.15 — callbackHours option (Batch 6 of arg extensions run).
+//         Engagement executor forwards options.callbackHours to the
+//         adapter, which feeds it into the planner's callback
+//         fallback for callback-style outcomes.
+{
+  const { deps } = fakeDeps();
+  const r = await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps",
+      patientExecutionCaseId: "ec",
+      outcome: "callback",
+      // No callbackAt — relies on callbackHours.
+    },
+    deps,
+    { callbackHours: 24 },
+  );
+  check(r.plan.callbackAt instanceof Date, "§3.15: callbackAt populated via callbackHours");
+  if (r.plan.callbackAt) {
+    const diff = Math.abs(r.plan.callbackAt.getTime() - (Date.now() + 24 * 60 * 60 * 1000));
+    check(diff < 5 * 60 * 1000, "§3.15: callbackAt close to now+24h");
+  }
+}
+
 // §4 — explicit per-outcome smoke (keeps grep-stable outcome labels
 //      in the test source).
 {

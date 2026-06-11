@@ -439,6 +439,72 @@ for (const outcome of [
   eq(result.ok, true, "§11: strict + suppression keeps ok=true");
 }
 
+// ─── §13: callbackHours option (Batch 6 of arg extensions run) ───
+//        Route-supplied callback-hours overrides the planner's 4h
+//        default for callback-style outcomes when no explicit
+//        callbackAt is given.
+{
+  const { deps } = makeFakeDeps();
+  const result = await executeRecordCallResult(
+    {
+      patientScreeningId: "x",
+      outcome: "callback",
+      sourceSurface: "engagement_center_route",
+      patientExecutionCaseId: "ec-x",
+      // No callbackAt — adapter must compute one using callbackHours.
+    },
+    deps,
+    { callbackHours: 24 },
+  );
+  check(result.plan.callbackAt instanceof Date, "§13: callbackAt populated");
+  if (result.plan.callbackAt) {
+    const targetMs = result.plan.callbackAt.getTime();
+    const expectedMs = Date.now() + 24 * 60 * 60 * 1000;
+    check(
+      Math.abs(targetMs - expectedMs) < 5 * 60 * 1000,
+      `§13: callbackAt within 5min of (now + 24h); diff=${Math.abs(targetMs - expectedMs)}ms`,
+    );
+  }
+}
+
+// ─── §14: explicit callbackAt beats callbackHours ────────────────
+{
+  const { deps } = makeFakeDeps();
+  const result = await executeRecordCallResult(
+    {
+      patientScreeningId: "x",
+      outcome: "callback",
+      sourceSurface: "engagement_center_route",
+      patientExecutionCaseId: "ec-x",
+      callbackAt: "2026-07-01T10:00:00.000Z",
+    },
+    deps,
+    { callbackHours: 24 },
+  );
+  check(result.plan.callbackAt instanceof Date, "§14: callbackAt populated");
+  eq(
+    result.plan.callbackAt?.toISOString(),
+    new Date("2026-07-01T10:00:00.000Z").toISOString(),
+    "§14: explicit callbackAt preserved",
+  );
+}
+
+// ─── §15: callbackHours has no effect for terminal outcomes ──────
+{
+  const { deps } = makeFakeDeps();
+  const result = await executeRecordCallResult(
+    {
+      patientScreeningId: "x",
+      outcome: "scheduled",
+      sourceSurface: "engagement_center_route",
+      patientExecutionCaseId: "ec-x",
+    },
+    deps,
+    { callbackHours: 24 },
+  );
+  eq(result.plan.executionCaseNextActionAt, null, "§15: terminal outcome has no nextActionAt");
+}
+
 // ─── §12: Argument extension passthrough (Batch 1 of arg extensions run) ─
 //        Extended optional fields supplied by caller must arrive at
 //        the dep unchanged. (Adapter does not inspect or filter them.)

@@ -263,7 +263,27 @@ export async function executeRecordCallResult(
   deps: CallResultExecutionDependencies,
   options?: RecordCallResultExecutionOptions,
 ): Promise<RecordCallResultExecutionResult> {
-  const plan = recordCallResult(input);
+  // Apply route-supplied callback-hours fallback (Batch 6 of arg
+  // extensions run) before planning. The planner already supplies a
+  // 4h default when no callbackAt is given on a callback-style
+  // outcome; this lets the route override that default (typically
+  // 24h per `scheduling_triage.default_callback_due_hours`).
+  const callbackHoursOpt = options?.callbackHours;
+  const requiresCallbackDefault =
+    callbackHoursOpt !== undefined &&
+    typeof callbackHoursOpt === "number" &&
+    Number.isFinite(callbackHoursOpt) &&
+    callbackHoursOpt > 0 &&
+    (input.outcome === "callback" || input.outcome === "no_answer" || input.outcome === "voicemail") &&
+    (input.callbackAt === undefined || input.callbackAt === null || input.callbackAt === "");
+  const plannerInput: CanonicalCallResultInput = requiresCallbackDefault
+    ? {
+        ...input,
+        callbackAt: new Date(Date.now() + callbackHoursOpt * 60 * 60 * 1000).toISOString(),
+      }
+    : input;
+
+  const plan = recordCallResult(plannerInput);
   const mode = options?.mode ?? "best-effort";
   const suppressed = new Set<CallResultExecutionStep>(options?.suppressedSteps ?? []);
   const steps: CallResultExecutionStepResult[] = [];
