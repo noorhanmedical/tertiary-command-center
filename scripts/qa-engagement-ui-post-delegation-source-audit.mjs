@@ -47,19 +47,14 @@ for (const rel of [
   if (read(rel) === null) failures.push(`Referenced UI file missing: ${rel}`);
 }
 
-// No client/src file has been changed by this batch — verify it still
-// references the legacy singular endpoint.
+// Batch 10 audited the UI pre-switch. Batch 12 of this run has
+// since wired the UI to use the engagementCallResultEndpoint()
+// helper. We now only assert the outreach POST remains (the outreach
+// sub-workflow is on a separate track).
 {
   const dispositionSheet = read("client/src/components/outreach/DispositionSheet.tsx") ?? "";
   if (!dispositionSheet.includes("/api/outreach/calls")) {
-    failures.push(`DispositionSheet.tsx must still reference /api/outreach/calls (no UI edit this batch)`);
-  }
-  if (!dispositionSheet.includes("/api/engagement-center/call-result")) {
-    failures.push(`DispositionSheet.tsx must still reference /api/engagement-center/call-result (no UI edit this batch)`);
-  }
-  // It must NOT reference the plural endpoint (no early adoption).
-  if (dispositionSheet.includes("/api/engagement-center/call-results")) {
-    failures.push(`DispositionSheet.tsx must not yet reference plural endpoint`);
+    failures.push(`DispositionSheet.tsx must still reference /api/outreach/calls (outreach sub-workflow on separate track)`);
   }
 }
 

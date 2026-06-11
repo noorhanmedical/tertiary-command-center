@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { engagementCallResultEndpoint } from "@/lib/engagementCanonicalCallResultsUiFlag";
 import { useToast } from "@/hooks/use-toast";
 
 // Minimal action surface for canonical execution case rows in the
@@ -203,7 +204,7 @@ function CanonicalLogCallDialog({
       if (callResult === "callback" && nextActionAt) {
         body.nextActionAt = new Date(nextActionAt).toISOString();
       }
-      const res = await apiRequest("POST", "/api/engagement-center/call-result", body);
+      const res = await apiRequest("POST", engagementCallResultEndpoint(), body);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Failed to log call result");
