@@ -171,6 +171,61 @@ check(
   check(assignStep?.reason === "surface does not own", "§3.5: assignment reason canonical");
 }
 
+// §3.6 — Ownership write-through (Batch 2 of arg-extensions run).
+{
+  // Caller supplies ownership fields → executor forwards them to the
+  // updateExecutionCaseEngagement dep + surfaces ownershipPlanned/
+  // ownershipUpdated on the response.
+  const { deps, log } = fakeDeps();
+  const r = await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps",
+      patientExecutionCaseId: "ec",
+      outcome: "scheduled",
+      assignedTeamMemberId: "tm-7",
+      assignedRole: "scheduler",
+      forceReassign: true,
+    },
+    deps,
+  );
+  eq(r.ownershipPlanned, true, "§3.6: ownershipPlanned true");
+  eq(r.ownershipUpdated, true, "§3.6: ownershipUpdated true when EC step ran");
+  // Dep received the ownership fields.
+  eq(log.updateExecutionCaseEngagement.length, 1, "§3.6: ec dep called");
+  const ecCall = log.updateExecutionCaseEngagement[0] as Record<string, unknown>;
+  eq(ecCall.assignedTeamMemberId, "tm-7", "§3.6: assignedTeamMemberId forwarded");
+  eq(ecCall.assignedRole, "scheduler", "§3.6: assignedRole forwarded");
+  eq(ecCall.forceReassign, true, "§3.6: forceReassign forwarded");
+}
+
+// §3.7 — When ownership not supplied, response flags are false.
+{
+  const { deps } = fakeDeps();
+  const r = await recordEngagementCallResult(
+    { patientScreeningId: "ps", patientExecutionCaseId: "ec", outcome: "scheduled" },
+    deps,
+  );
+  eq(r.ownershipPlanned, false, "§3.7: ownershipPlanned false when no fields supplied");
+  eq(r.ownershipUpdated, false, "§3.7: ownershipUpdated false when not planned");
+}
+
+// §3.8 — ownershipUpdated is false if planned but EC step did NOT run.
+{
+  const { deps } = fakeDeps();
+  // Patient has no execution case id → EC step is skipped by adapter.
+  const r = await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps",
+      patientExecutionCaseId: null,
+      outcome: "scheduled",
+      assignedTeamMemberId: "tm-99",
+    },
+    deps,
+  );
+  eq(r.ownershipPlanned, true, "§3.8: ownershipPlanned true");
+  eq(r.ownershipUpdated, false, "§3.8: ownershipUpdated false because EC step skipped");
+}
+
 // §4 — explicit per-outcome smoke (keeps grep-stable outcome labels
 //      in the test source).
 {

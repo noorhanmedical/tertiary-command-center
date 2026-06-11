@@ -177,6 +177,33 @@ for (const env of CALL_RESULT_PARITY_FIXTURE) {
   eq(captured.ownershipUpdated, true, "§2.5: ownershipUpdated still captured");
 }
 
+// §2.6 — Ownership write-through populates the legacy envelope's
+//        ownershipUpdated boolean directly from the executor
+//        response (Batch 2 of arg-extensions run).
+{
+  const { deps } = makeCapturingDeps();
+  const r = await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps-dryrun",
+      patientExecutionCaseId: "ec-dryrun",
+      outcome: "scheduled",
+      assignedTeamMemberId: "tm-99",
+      forceReassign: true,
+    },
+    deps,
+  );
+  eq(r.ownershipPlanned, true, "§2.6: ownershipPlanned true");
+  eq(r.ownershipUpdated, true, "§2.6: ownershipUpdated true when EC step ran");
+  // The legacy envelope now derives ownershipUpdated DIRECTLY from
+  // the executor response (was: captured side-effect proxy in the
+  // makeCapturingDeps closure).
+  const legacy = {
+    ok: r.ok,
+    ownershipUpdated: r.ownershipUpdated,
+  };
+  eq(legacy.ownershipUpdated, true, "§2.6: legacy envelope ownershipUpdated from executor");
+}
+
 // §3 — Engagement-owned step list is what the delegated route should
 //      surface. The dry-run uses this list to filter the executor's
 //      step results before rebuilding the legacy envelope.

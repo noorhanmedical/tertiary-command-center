@@ -47,6 +47,16 @@ export type EngagementCallResultInput = {
   durationSeconds?: number | null;
   attemptNumber?: number | null;
   schedulerAssignmentId?: string | null;
+  /**
+   * Ownership write-through (Batch 2 of arg-extensions run).
+   * When the engagement route resolves a new assigned team member /
+   * role from the request body, it passes them here. The executor
+   * forwards them to the updateExecutionCaseEngagement dep via the
+   * adapter's UpdateExecutionCaseEngagementArgs extension fields.
+   */
+  assignedTeamMemberId?: string | null;
+  assignedRole?: string | null;
+  forceReassign?: boolean;
 };
 
 /**
@@ -65,6 +75,19 @@ export type EngagementCallResultExecutorResponse = {
    * event, execution-case update, triage, task.
    */
   engagementOwnedSteps: ReadonlyArray<RecordCallResultExecutionResult["steps"][number]["step"]>;
+  /**
+   * `true` when the caller supplied any ownership write-through
+   * field (assignedTeamMemberId / assignedRole / forceReassign).
+   * Independent of whether the EC update step ran.
+   */
+  ownershipPlanned: boolean;
+  /**
+   * `true` when ownership write-through was both PLANNED by the
+   * input AND the execution-case update step actually ran (status
+   * === "ran"). Matches the legacy route's `ownershipUpdated` boolean
+   * (resolves Batch 12 B3).
+   */
+  ownershipUpdated: boolean;
 };
 
 const ENGAGEMENT_OWNED_STEPS = [
@@ -114,6 +137,34 @@ export async function recordEngagementCallResult(
     ...ENGAGEMENT_SUPPRESSED_STEPS,
     ...(options?.suppressedSteps ?? []),
   ];
+
+  const ownershipPlanned =
+    input.assignedTeamMemberId !== undefined ||
+    input.assignedRole !== undefined ||
+    input.forceReassign === true;
+
+  // Wrap the caller's updateExecutionCaseEngagement dep so we can
+  // forward the ownership write-through fields without requiring the
+  // caller to know about the engagement input shape. The wrapper
+  // copies the caller's args + the ownership fields onto the
+  // dep call.
+  const wrappedDeps: CallResultExecutionDependencies = {
+    ...deps,
+    updateExecutionCaseEngagement: (args) =>
+      deps.updateExecutionCaseEngagement({
+        ...args,
+        ...(input.assignedTeamMemberId !== undefined
+          ? { assignedTeamMemberId: input.assignedTeamMemberId }
+          : {}),
+        ...(input.assignedRole !== undefined
+          ? { assignedRole: input.assignedRole }
+          : {}),
+        ...(input.forceReassign !== undefined
+          ? { forceReassign: input.forceReassign }
+          : {}),
+      }),
+  };
+
   const adapterResult = await executeRecordCallResult(
     {
       patientScreeningId: input.patientScreeningId,
@@ -126,15 +177,20 @@ export async function recordEngagementCallResult(
       patientExecutionCaseId: input.patientExecutionCaseId,
       schedulerAssignmentId: input.schedulerAssignmentId ?? null,
     },
-    deps,
+    wrappedDeps,
     { ...options, suppressedSteps: mergedSuppressed },
   );
+
+  const ecStep = adapterResult.steps.find((s) => s.step === "executionCaseUpdated");
+  const ownershipUpdated = ownershipPlanned && ecStep?.status === "ran";
 
   return {
     ok: adapterResult.ok,
     steps: adapterResult.steps,
     plan: adapterResult.plan,
     engagementOwnedSteps: ENGAGEMENT_OWNED_STEPS,
+    ownershipPlanned,
+    ownershipUpdated,
   };
 }
 
