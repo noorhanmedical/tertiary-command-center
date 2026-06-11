@@ -312,6 +312,9 @@ info("docs/architecture/phase-1-status-ownership-registry.md");
 // Phase 1 run Segment C Batch 4 — wiring smoke-test contract.
 info("docs/architecture/phase-1-wiring-smoke-test-contract.md");
 
+// Phase 1 run Segment D Batch 1 — Plexus IQ boundary contract.
+info("docs/architecture/phase-1-plexus-iq-boundary-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
