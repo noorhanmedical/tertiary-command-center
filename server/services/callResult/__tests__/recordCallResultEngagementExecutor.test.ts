@@ -266,6 +266,50 @@ check(
   check(!("patientDob" in je), "§3.10: patientDob not added when input absent");
 }
 
+// §3.11 — Triage payload passthrough (Batch 4 of arg-extensions run).
+{
+  const { deps, log } = fakeDeps();
+  await recordEngagementCallResult(
+    {
+      patientScreeningId: "ps",
+      patientExecutionCaseId: "ec",
+      outcome: "callback",
+      triageMainType: "callback",
+      triageSubtype: "patient_requested_call_later",
+      triagePriority: "high",
+      triageAssignedUserId: "u-7",
+      triageDueAt: "2026-06-12T09:00:00Z",
+      triageNote: "test note (PHI may live here)",
+      triageMetadata: { createdSource: "scheduler_call_result" },
+    },
+    deps,
+  );
+  eq(log.upsertTriageCase.length, 1, "§3.11: triage dep called");
+  const tc = log.upsertTriageCase[0] as Record<string, unknown>;
+  eq(tc.mainType, "callback", "§3.11: mainType forwarded");
+  eq(tc.subtype, "patient_requested_call_later", "§3.11: subtype forwarded");
+  eq(tc.priority, "high", "§3.11: priority forwarded");
+  eq(tc.assignedUserId, "u-7", "§3.11: assignedUserId forwarded");
+  eq(tc.dueAt, "2026-06-12T09:00:00Z", "§3.11: dueAt forwarded");
+  eq(tc.note, "test note (PHI may live here)", "§3.11: note forwarded");
+  const md = tc.metadata as Record<string, unknown>;
+  eq(md?.createdSource, "scheduler_call_result", "§3.11: triage metadata forwarded");
+}
+
+// §3.12 — When triage payload not supplied, dep does not receive
+//         those keys.
+{
+  const { deps, log } = fakeDeps();
+  await recordEngagementCallResult(
+    { patientScreeningId: "ps", patientExecutionCaseId: "ec", outcome: "callback" },
+    deps,
+  );
+  const tc = log.upsertTriageCase[0] as Record<string, unknown>;
+  check(!("mainType" in tc), "§3.12: mainType not added when input absent");
+  check(!("priority" in tc), "§3.12: priority not added when input absent");
+  check(!("note" in tc), "§3.12: note not added when input absent");
+}
+
 // §4 — explicit per-outcome smoke (keeps grep-stable outcome labels
 //      in the test source).
 {
