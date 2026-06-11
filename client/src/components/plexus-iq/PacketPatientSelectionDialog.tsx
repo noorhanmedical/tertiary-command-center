@@ -42,7 +42,10 @@ export function PacketPatientSelectionDialog({
   onConfirm,
   mode = "print",
 }: Props) {
-  const ordered = useMemo(() => orderPatientsWithinRun(patients), [patients]);
+  const ordered = useMemo(
+    () => orderPatientsWithinRun(patients) as ReadonlyArray<PacketPatient>,
+    [patients],
+  );
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
