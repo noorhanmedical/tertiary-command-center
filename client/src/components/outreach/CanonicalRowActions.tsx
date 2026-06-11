@@ -216,6 +216,12 @@ function CanonicalLogCallDialog({
       queryClient.invalidateQueries({ queryKey: ["/api/scheduler-portal/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/engagement-center/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/patient-journey-events"] });
+      // Phase 1 Segment E Batch 10 — refresh Team Portal assigned-work
+      // surfaces alongside engagement-center cases so the cockpit
+      // reflects the latest disposition immediately.
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/outreach-call-list"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/my-tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/today-schedule"] });
       onSuccess?.();
       onOpenChange(false);
     },
@@ -337,6 +343,12 @@ function CanonicalScheduleDialog({
       queryClient.invalidateQueries({ queryKey: ["/api/scheduler-portal/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/engagement-center/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/patient-journey-events"] });
+      // Phase 1 Segment E Batch 10 — refresh Team Portal assigned-work
+      // surfaces alongside engagement-center cases so the cockpit
+      // reflects the latest disposition immediately.
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/outreach-call-list"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/my-tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/today-schedule"] });
       onSuccess?.();
       onOpenChange(false);
     },
