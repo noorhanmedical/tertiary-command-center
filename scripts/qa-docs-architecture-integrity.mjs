@@ -225,6 +225,9 @@ info("docs/architecture/team-portal-canonical-call-result-write-contract.md");
 // Platform split-brain run Batch 21 — Team Portal source wiring readiness.
 info("docs/architecture/team-portal-call-result-source-wiring-readiness.md");
 
+// Platform split-brain run Batch 22 — Engagement UI terminology contract.
+info("docs/architecture/engagement-ui-terminology-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
