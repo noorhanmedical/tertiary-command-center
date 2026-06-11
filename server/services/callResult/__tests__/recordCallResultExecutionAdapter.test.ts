@@ -383,6 +383,61 @@ for (const outcome of [
   noPhi(log.createFollowUpTask[0] as unknown as Record<string, unknown>, "createFollowUpTask");
 }
 
+// ─── §10: Step suppression (Batch A of adapter blockers run) ──────
+{
+  const { deps, log } = makeFakeDeps();
+  const result = await executeRecordCallResult(
+    {
+      patientScreeningId: "x",
+      outcome: "scheduled",
+      sourceSurface: "engagement_center_route",
+      patientExecutionCaseId: "ec-x",
+      schedulerAssignmentId: "asg-x",
+    },
+    deps,
+    { suppressedSteps: ["outreachCallCreated", "assignmentCompleted"] },
+  );
+
+  const outreachStep = findStep(result.steps, "outreachCallCreated");
+  const assignmentStep = findStep(result.steps, "assignmentCompleted");
+  eq(outreachStep.status, "skipped", "§10: suppressed outreach is skipped");
+  eq(outreachStep.reason, "surface does not own", "§10: suppression reason");
+  eq(assignmentStep.status, "skipped", "§10: suppressed assignment is skipped");
+  eq(assignmentStep.reason, "surface does not own", "§10: assignment suppression reason");
+
+  // Deps must NOT have been called.
+  eq(log.createOutreachCall.length, 0, "§10: suppressed createOutreachCall dep not called");
+  eq(log.markAssignmentCompleted.length, 0, "§10: suppressed markAssignmentCompleted dep not called");
+
+  // Non-suppressed deps still ran.
+  eq(log.appendJourneyEvent.length, 1, "§10: journey still appended");
+  eq(log.updateAppointmentStatus.length, 1, "§10: appt status still updated");
+
+  // result.ok stays true — suppression is not failure.
+  eq(result.ok, true, "§10: suppression does not fail result.ok");
+}
+
+// ─── §11: Strict mode + suppression — suppression does not short-circuit ─
+{
+  const { deps, log } = makeFakeDeps();
+  const result = await executeRecordCallResult(
+    {
+      patientScreeningId: "x",
+      outcome: "callback",
+      sourceSurface: "engagement_center_route",
+      patientExecutionCaseId: "ec-x",
+    },
+    deps,
+    { mode: "strict", suppressedSteps: ["outreachCallCreated"] },
+  );
+  const outreachStep = findStep(result.steps, "outreachCallCreated");
+  eq(outreachStep.status, "skipped", "§11: strict still skips suppressed");
+  eq(outreachStep.reason, "surface does not own", "§11: strict suppression reason");
+  // All other steps ran (strict didn't short-circuit on the suppression).
+  eq(log.appendJourneyEvent.length, 1, "§11: subsequent steps still ran");
+  eq(result.ok, true, "§11: strict + suppression keeps ok=true");
+}
+
 if (failures.length > 0) {
   console.error("recordCallResult execution adapter test FAILED:");
   for (const f of failures) console.error(`- ${f}`);
