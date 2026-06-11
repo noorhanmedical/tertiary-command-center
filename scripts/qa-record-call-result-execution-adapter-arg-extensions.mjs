@@ -71,7 +71,10 @@ requireNotText(ADAPTER, [
 // for the dep closures it supplies to the engagement executor.
 {
   const ROUTES = path.join(root, "server/routes");
-  const ALLOWED_ROUTE = "server/routes/executionCases.ts";
+  const ALLOWED_ROUTES = new Set([
+    "server/routes/executionCases.ts",
+    "server/routes/outreach.ts",
+  ]);
   const RE = /(?:from|import)\s+['"][^'"]*\/recordCallResultExecutionAdapter(?:\.\w+)?['"]/;
   function walk(dir) {
     let entries;
@@ -81,7 +84,7 @@ requireNotText(ADAPTER, [
       if (e.isDirectory()) { walk(abs); continue; }
       if (!/\.(ts|tsx|mts|cts)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
-      if (rel === ALLOWED_ROUTE) continue;
+      if (ALLOWED_ROUTES.has(rel)) continue;
       if (rel.includes("/__tests__/") || rel.endsWith(".test.ts")) continue;
       const src = fs.readFileSync(abs, "utf8");
       if (RE.test(src)) failures.push(`Route ${rel} unauthorized importer of adapter`);

@@ -221,8 +221,9 @@ requireText(TEST_REL, [
       // Designated dormant wrappers around the adapter (Batches 7 + 14).
       if (rel === "server/services/callResult/recordCallResultEngagementExecutor.ts") continue;
       if (rel === "server/services/callResult/recordCallResultOutreachExecutor.ts") continue;
-      // Designated route consumer (Batch 3 of Engagement completion run).
+      // Designated route consumers.
       if (rel === "server/routes/executionCases.ts") continue;
+      if (rel === "server/routes/outreach.ts") continue;
 
       const src = fs.readFileSync(abs, "utf8");
       if (IMPORT_RE.test(src)) {

@@ -90,6 +90,8 @@ requireText(TEST, [
       if (rel === SVC) continue;
       if (rel === TEST) continue;
       if (rel.startsWith("scripts/qa-record-call-result-outreach-executor.mjs")) continue;
+      // Batch B7 of Phase 1 — designated route consumer.
+      if (rel === "server/routes/outreach.ts") continue;
       if (rel.includes("/__tests__/")) continue;
       if (rel.endsWith(".test.ts") || rel.endsWith(".test.tsx") || rel.endsWith(".spec.ts")) continue;
       const src = fs.readFileSync(abs, "utf8");

@@ -80,6 +80,8 @@ requireText(DOC, [
       const rel = path.relative(root, abs);
       if (rel === FLAG) continue;
       if (rel === "scripts/qa-record-call-result-outreach-delegate-flag.mjs") continue;
+      // Batch B7 of Phase 1 — designated route consumer.
+      if (rel === "server/routes/outreach.ts") continue;
       if (rel.includes("/__tests__/")) continue;
       if (rel.endsWith(".test.ts") || rel.endsWith(".test.tsx") || rel.endsWith(".spec.ts")) continue;
       const src = fs.readFileSync(abs, "utf8");

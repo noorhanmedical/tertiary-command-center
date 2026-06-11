@@ -17,6 +17,42 @@ import {
   isRecordCallResultOutreachPreviewEnabled,
   runOutreachCallResultPreview,
 } from "../services/callResult/recordCallResultOutreachPreviewFlag";
+import { isRecordCallResultOutreachDelegateEnabled } from "../services/callResult/recordCallResultOutreachDelegateFlag";
+import {
+  recordOutreachCallResult,
+  type OutreachCallResultInput,
+} from "../services/callResult/recordCallResultOutreachExecutor";
+import type {
+  CallResultExecutionDependencies,
+  CreateOutreachCallArgs,
+} from "../services/callResult/recordCallResultExecutionAdapter";
+
+/**
+ * Canonical outcomes the planner accepts. Outreach delegation is
+ * restricted to these — non-canonical outreach-only outcomes (e.g.
+ * wants_more_info / language_barrier / mailbox_full / hung_up /
+ * disconnected / busy / reached / refused_dnc / moved / not_interested
+ * / will_think_about_it) fall through to the legacy code path even
+ * when the delegate flag is ON.
+ */
+const OUTREACH_DELEGATION_CANONICAL_OUTCOMES = new Set([
+  "scheduled",
+  "callback",
+  "no_answer",
+  "voicemail",
+  "wrong_number",
+  "declined",
+  "needs_records",
+  "insurance_prior_auth_issue",
+  "manager_review",
+  "facility_specific_issue",
+  // Outreach-only canonical terminal outcomes (Batch B2).
+  "completed",
+  "dnc",
+  "do_not_contact",
+  "deceased",
+  "cancelled",
+]);
 
 // Look up the user_id of the scheduler currently assigned to a given
 // patient screening (via batch.assigned_scheduler_id). Returns null when
@@ -210,21 +246,87 @@ export function registerOutreachRoutes(app: Express) {
           ? parsed.data.schedulerUserId
           : userId;
 
-      const call = await storage.createOutreachCallAtomic(
-        {
-          ...parsed.data,
-          schedulerUserId: attributedScheduler,
+      // ─── Outreach DELEGATION (Batch B7 of Phase 1 run) ─────────────
+      // Default-OFF delegate-flag accessor (isRecordCallResultOutreach
+      // DelegateEnabled). When enabled AND the outcome is canonical,
+      // the route delegates to recordOutreachCallResult. The executor's
+      // OUTREACH_SUPPRESSED_STEPS keeps engagement-only side effects
+      // suppressed; the route still fires terminal-completion + canonical-
+      // spine sync directly so the side-effect ordering matches legacy.
+      const TERMINAL_OUTREACH = new Set([
+        "scheduled", "completed", "declined", "dnc",
+        "do_not_contact", "deceased", "cancelled",
+      ]);
+      const terminalForCompletionEarly = TERMINAL_OUTREACH.has(desiredStatus.toLowerCase());
+
+      let call: Awaited<ReturnType<typeof storage.createOutreachCallAtomic>>;
+      if (
+        isRecordCallResultOutreachDelegateEnabled() &&
+        OUTREACH_DELEGATION_CANONICAL_OUTCOMES.has(parsed.data.outcome)
+      ) {
+        let captured: Awaited<ReturnType<typeof storage.createOutreachCallAtomic>> | null = null;
+        const deps: CallResultExecutionDependencies = {
+          createOutreachCall: async (_args: CreateOutreachCallArgs) => {
+            captured = await storage.createOutreachCallAtomic(
+              { ...parsed.data, schedulerUserId: attributedScheduler, attemptNumber },
+              desiredStatus,
+            );
+          },
+          updateAppointmentStatus: () => {
+            // Owned by the atomic helper above; no-op here.
+          },
+          markAssignmentCompleted: () => {
+            // Route fires storage.markSchedulerAssignmentCompleted directly below.
+          },
+          appendJourneyEvent: () => {
+            // Engagement-suppressed on outreach surface per Batch B3 contract.
+          },
+          updateExecutionCaseEngagement: () => {
+            // Engagement-suppressed.
+          },
+          upsertTriageCase: () => {
+            // Engagement-suppressed.
+          },
+          createFollowUpTask: () => {
+            // Engagement-suppressed.
+          },
+        };
+        const input: OutreachCallResultInput = {
+          patientScreeningId: String(parsed.data.patientScreeningId),
+          outcome: parsed.data.outcome as Parameters<typeof recordOutreachCallResult>[0]["outcome"],
           attemptNumber,
-        },
-        desiredStatus,
-      );
+          desiredAppointmentStatus: desiredStatus,
+          schedulerUserId: attributedScheduler ?? null,
+          callbackAt:
+            parsed.data.callbackAt instanceof Date ? parsed.data.callbackAt.toISOString() : null,
+          notes: parsed.data.notes ?? null,
+          durationSeconds: parsed.data.durationSeconds ?? null,
+          terminalCompletionReason: terminalForCompletionEarly ? parsed.data.outcome : null,
+        };
+        await recordOutreachCallResult(input, deps);
+        if (captured === null) {
+          // Executor invoked the createOutreachCall dep; capture should be set.
+          return res.status(500).json({ error: "Failed to capture call row from delegation path" });
+        }
+        call = captured;
+      } else {
+        // Legacy code path (flag OFF or non-canonical outcome).
+        call = await storage.createOutreachCallAtomic(
+          {
+            ...parsed.data,
+            schedulerUserId: attributedScheduler,
+            attemptNumber,
+          },
+          desiredStatus,
+        );
+      }
 
       // If the disposition removes the patient from the eligibility pool
       // (scheduled/declined/dnc/completed), close any active assignment so
       // the queue reflects the change immediately rather than waiting for
       // the next daily build.
-      const TERMINAL = new Set(["scheduled", "completed", "declined", "dnc", "do_not_contact", "deceased", "cancelled"]);
-      const terminalForCompletion = TERMINAL.has(desiredStatus.toLowerCase());
+      const TERMINAL = TERMINAL_OUTREACH;
+      const terminalForCompletion = terminalForCompletionEarly;
       if (terminalForCompletion) {
         try {
           await storage.markSchedulerAssignmentCompleted(parsed.data.patientScreeningId);
