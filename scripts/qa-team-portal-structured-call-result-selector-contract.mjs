@@ -52,8 +52,13 @@ else for (const n of [
   }
 }
 
-// Dormancy: the new VITE flag must not exist in any source file yet.
+// Authorized importers of the structured selector flag.
+// Batch E4 wires the flag into DispositionSheet; no other source file may
+// reference it. Update this allowlist alongside each new authorized batch.
 {
+  const ALLOWED = new Set([
+    "client/src/components/outreach/DispositionSheet.tsx",
+  ]);
   const ROOTS = ["server", "client", "shared"];
   function walk(dir) {
     let entries;
@@ -64,9 +69,10 @@ else for (const n of [
       if (e.isDirectory()) { walk(abs); continue; }
       if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
+      if (ALLOWED.has(rel)) continue;
       const src = fs.readFileSync(abs, "utf8");
       if (src.includes("VITE_USE_STRUCTURED_CALL_RESULT_SELECTOR")) {
-        failures.push(`E3 is docs+QA only: ${rel} already references VITE_USE_STRUCTURED_CALL_RESULT_SELECTOR`);
+        failures.push(`Unauthorized reference: ${rel} references VITE_USE_STRUCTURED_CALL_RESULT_SELECTOR`);
       }
     }
   }
