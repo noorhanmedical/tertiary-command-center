@@ -240,6 +240,9 @@ info("docs/architecture/no-split-brain-architecture-summary.md");
 // Adapter blockers run Batch D — Journey-event metadata contract.
 info("docs/architecture/call-result-journey-event-metadata-contract.md");
 
+// Adapter blockers run Batch E — engagementStatus semantics decision doc.
+info("docs/architecture/call-result-engagement-status-semantics.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
