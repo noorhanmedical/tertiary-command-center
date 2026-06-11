@@ -321,6 +321,9 @@ info("docs/architecture/phase-1-admin-review-boundary-contract.md");
 // Phase 1 run Segment D Batch 4 — Batch Flow handoff contract.
 info("docs/architecture/phase-1-batch-flow-handoff-contract.md");
 
+// Phase 1 run Segment E Batch 1 — Team Portal panel/playground protection contract.
+info("docs/architecture/team-portal-panel-playground-protection-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
