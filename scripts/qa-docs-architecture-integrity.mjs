@@ -300,6 +300,9 @@ info("docs/architecture/phase-1-team-portal-outreach-write-audit.md");
 // Phase 1 run Segment B Batch 12 — outreach completion summary.
 info("docs/architecture/phase-1-outreach-completion-summary.md");
 
+// Phase 1 run Segment C Batch 1 — module wiring contract.
+info("docs/architecture/phase-1-module-wiring-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
