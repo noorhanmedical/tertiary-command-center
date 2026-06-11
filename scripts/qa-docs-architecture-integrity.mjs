@@ -327,6 +327,9 @@ info("docs/architecture/team-portal-panel-playground-protection-contract.md");
 // Phase 1 run Segment E Batch 2 — Team Portal Patient Directory wiring contract.
 info("docs/architecture/team-portal-patient-directory-wiring-contract.md");
 
+// Phase 1 run Segment E Batch 3 — Team Portal structured call-result selector contract.
+info("docs/architecture/team-portal-structured-call-result-selector-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
