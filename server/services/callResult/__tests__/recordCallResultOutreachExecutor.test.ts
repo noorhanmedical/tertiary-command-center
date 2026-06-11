@@ -136,6 +136,31 @@ check(
   eq(log.updateAppointmentStatus.length, 1, "§2.5: appt status dep called");
 }
 
+// §2.7 — Atomic-write extension fields forwarded (Batch B4 of Phase 1).
+{
+  const { deps, log } = fakeDeps();
+  await recordOutreachCallResult(
+    {
+      patientScreeningId: "ps",
+      outcome: "scheduled",
+      desiredAppointmentStatus: "scheduled",
+      schedulerUserId: "user-1",
+      callMetadata: { ringCentralCallId: "rc-99" },
+      terminalCompletionReason: "scheduled",
+    },
+    deps,
+  );
+  eq(log.createOutreachCall.length, 1, "§2.7: outreach dep called");
+  const oc = log.createOutreachCall[0] as Record<string, unknown>;
+  eq(oc.desiredAppointmentStatus, "scheduled", "§2.7: desiredAppointmentStatus forwarded");
+  eq(oc.schedulerUserId, "user-1", "§2.7: schedulerUserId forwarded");
+  const meta = oc.callMetadata as Record<string, unknown>;
+  eq(meta?.ringCentralCallId, "rc-99", "§2.7: callMetadata forwarded");
+  eq(log.markAssignmentCompleted.length, 1, "§2.7: assignment dep called");
+  const mc = log.markAssignmentCompleted[0] as Record<string, unknown>;
+  eq(mc.terminalCompletionReason, "scheduled", "§2.7: terminalCompletionReason forwarded");
+}
+
 // §3 — Missing patientScreeningId throws.
 {
   let threw = false;

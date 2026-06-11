@@ -78,6 +78,15 @@ export type CreateOutreachCallArgs = {
   notes: string | null;
   durationSeconds: number | null;
   attemptNumber: number | null;
+  /**
+   * Outreach atomic-write extension fields (Batch B4 of Phase 1 run).
+   * Forwarded by the outreach executor when supplied so the route's
+   * createOutreachCallAtomic dep can reproduce the legacy atomic
+   * insert + appointmentStatus update byte-equivalent.
+   */
+  desiredAppointmentStatus?: string | null;
+  schedulerUserId?: string | null;
+  callMetadata?: Record<string, unknown>;
 };
 
 export type AppendJourneyEventArgs = {
@@ -137,6 +146,14 @@ export type UpdateExecutionCaseEngagementArgs = {
 export type MarkAssignmentCompletedArgs = {
   patientScreeningId: string;
   schedulerAssignmentId: string | null;
+  /**
+   * Outreach atomic-write extension (Batch B4 of Phase 1 run).
+   * Optional reason string the route may pass through (e.g. the
+   * canonical outcome label "scheduled" / "declined" / "dnc") so the
+   * `markSchedulerAssignmentCompleted` storage helper can record it
+   * if needed. The canonical adapter does not interpret this value.
+   */
+  terminalCompletionReason?: string | null;
 };
 
 export type UpsertTriageCaseArgs = {
@@ -239,6 +256,17 @@ export type RecordCallResultExecutionOptions = {
    * visible engagementStatus drift on flag flip.
    */
   engagementStatusSemantics?: "coarse" | "canonical";
+  /**
+   * Outreach atomic-write extension (Batch B4 of Phase 1 run). When
+   * `true`, the caller's outreach route delegation indicates the
+   * canonical-spine-sync side effect should happen out-of-band (the
+   * route fires `ensureCanonicalSpineForScreening` itself; the
+   * adapter does not model the step). Currently informational — the
+   * adapter does not use the value; the outreach route fires the
+   * spine sync directly after the executor returns. Kept as an
+   * option so future PRs can plug in a dedicated adapter step.
+   */
+  canonicalSpineRequired?: boolean;
 };
 
 /** Constant skip reason used for suppressed steps — grep-stable. */

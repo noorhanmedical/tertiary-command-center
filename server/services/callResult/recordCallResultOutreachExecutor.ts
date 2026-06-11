@@ -39,6 +39,16 @@ export type OutreachCallResultInput = {
    * not supplied, the executor's executionCaseUpdated step is skipped.
    */
   patientExecutionCaseId?: string | null;
+  /**
+   * Outreach atomic-write extension (Batch B4 of Phase 1 run).
+   * The route resolves these from the request + admin settings and
+   * passes them through; the executor wraps the relevant deps to
+   * forward them.
+   */
+  desiredAppointmentStatus?: string | null;
+  schedulerUserId?: string | null;
+  callMetadata?: Record<string, unknown>;
+  terminalCompletionReason?: string | null;
 };
 
 export type OutreachCallResultExecutorResponse = {
@@ -89,6 +99,33 @@ export async function recordOutreachCallResult(
     ...OUTREACH_SUPPRESSED_STEPS,
     ...(options?.suppressedSteps ?? []),
   ];
+
+  // Wrap the caller's createOutreachCall + markAssignmentCompleted
+  // deps to forward the outreach atomic-write extension fields when
+  // supplied. Other deps are forwarded as-is (they're suppressed
+  // anyway under OUTREACH_SUPPRESSED_STEPS).
+  const wrappedDeps: CallResultExecutionDependencies = {
+    ...deps,
+    createOutreachCall: (args) =>
+      deps.createOutreachCall({
+        ...args,
+        ...(input.desiredAppointmentStatus !== undefined
+          ? { desiredAppointmentStatus: input.desiredAppointmentStatus }
+          : {}),
+        ...(input.schedulerUserId !== undefined
+          ? { schedulerUserId: input.schedulerUserId }
+          : {}),
+        ...(input.callMetadata !== undefined ? { callMetadata: input.callMetadata } : {}),
+      }),
+    markAssignmentCompleted: (args) =>
+      deps.markAssignmentCompleted({
+        ...args,
+        ...(input.terminalCompletionReason !== undefined
+          ? { terminalCompletionReason: input.terminalCompletionReason }
+          : {}),
+      }),
+  };
+
   const adapterResult = await executeRecordCallResult(
     {
       patientScreeningId: input.patientScreeningId,
@@ -101,7 +138,7 @@ export async function recordOutreachCallResult(
       patientExecutionCaseId: input.patientExecutionCaseId ?? null,
       schedulerAssignmentId: input.schedulerAssignmentId ?? null,
     },
-    deps,
+    wrappedDeps,
     { ...options, suppressedSteps: mergedSuppressed },
   );
 
