@@ -189,6 +189,9 @@ info("docs/architecture/call-result-preview-parity-readiness.md");
 // Platform split-brain run Batch 1 — Platform-wide audit (docs-only).
 info("docs/architecture/platform-split-brain-audit.md");
 
+// Platform split-brain run Batch 2 — Canonical ownership registry.
+info("docs/architecture/canonical-workflow-ownership-registry.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
