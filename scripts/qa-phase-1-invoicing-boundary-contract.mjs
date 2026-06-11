@@ -39,8 +39,15 @@ else for (const n of [
   }
 }
 
-// G3 is docs+QA only — the new flags must not appear in code yet.
+// Authorized importers of each G-flag.
 {
+  const ALLOWED_BY_FLAG = {
+    USE_INVOICING_SCAFFOLD_V2: new Set([
+      "server/services/invoicing/invoicingScaffold.ts",
+      "server/services/invoicing/__tests__/invoicingScaffold.test.ts",
+    ]),
+    VITE_USE_INVOICE_UI: new Set(),
+  };
   const ROOTS = ["server", "client", "shared"];
   function walk(dir) {
     let entries;
@@ -52,8 +59,9 @@ else for (const n of [
       if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
       const src = fs.readFileSync(abs, "utf8");
-      for (const flag of ["USE_INVOICING_SCAFFOLD_V2", "VITE_USE_INVOICE_UI"]) {
-        if (src.includes(flag)) failures.push(`G3 is docs+QA only: ${rel} already references "${flag}"`);
+      for (const [flag, allowed] of Object.entries(ALLOWED_BY_FLAG)) {
+        if (allowed.has(rel)) continue;
+        if (src.includes(flag)) failures.push(`Unauthorized reference: ${rel} references "${flag}"`);
       }
     }
   }
