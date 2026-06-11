@@ -86,6 +86,24 @@ export type AppendJourneyEventArgs = {
   eventType: "call_result_logged";
   sourceSurface: CallResultSourceSurface;
   outcome: CallResultOutcome;
+  /**
+   * Optional structured metadata bag forwarded to the canonical
+   * appendJourneyEvent writer. The bag MAY include the caller's
+   * route-shaped payload (callDisposition, note, nextActionAtIso,
+   * assignedUserId, assignedRole, facilityId, plus open
+   * forward-compatible keys). The canonical adapter does not log,
+   * inspect, or filter the contents — it forwards the bag to the
+   * injected writer, which is the only authorized appender.
+   */
+  metadata?: Record<string, unknown>;
+  /**
+   * PHI fields passed through the dependency injection boundary ONLY.
+   * They must NEVER appear in adapter logs (the adapter does no
+   * logging anyway). Routes capture these from session-resolved
+   * patient identity and supply them to the writer.
+   */
+  patientName?: string | null;
+  patientDob?: string | null;
 };
 
 export type UpdateAppointmentStatusArgs = {
@@ -97,6 +115,23 @@ export type UpdateExecutionCaseEngagementArgs = {
   patientExecutionCaseId: string;
   engagementStatus: NonNullable<RecordCallResultOutcome["executionCaseEngagementStatus"]>;
   nextActionAt: Date | null;
+  /**
+   * Optional ownership write-through. When the engagement route
+   * resolves a new assigned team member or role from the request
+   * body, it passes them here so the canonical execution-case
+   * update can persist them alongside the engagement-status
+   * transition (matches the legacy route's ownership update path,
+   * resolves Batch 12 B2).
+   */
+  assignedTeamMemberId?: string | null;
+  assignedRole?: string | null;
+  /**
+   * When `true`, the route is asking the writer to overwrite the
+   * existing assignedTeamMemberId even if one is already set
+   * (matches the legacy `metadata.forceReassign` flag + the
+   * `preserve_scheduler_ownership` admin setting).
+   */
+  forceReassign?: boolean;
 };
 
 export type MarkAssignmentCompletedArgs = {
@@ -109,12 +144,38 @@ export type UpsertTriageCaseArgs = {
   patientExecutionCaseId: string | null;
   triageType: NonNullable<RecordCallResultOutcome["triageType"]>;
   callbackAt: Date | null;
+  /**
+   * Optional triage-mapping payload (Batch 12 B5). When the route
+   * supplies these, the upsertTriageCase writer carries them onto
+   * the scheduling_triage_cases row exactly as the legacy route does.
+   * The canonical adapter forwards them through without inspection.
+   */
+  mainType?: string | null;
+  subtype?: string | null;
+  priority?: string | null;
+  assignedUserId?: string | null;
+  dueAt?: string | null;
+  /** Free-text note — may contain PHI; never logged by adapter. */
+  note?: string | null;
+  metadata?: Record<string, unknown>;
 };
 
 export type CreateFollowUpTaskArgs = {
   patientScreeningId: string;
   patientExecutionCaseId: string | null;
   taskType: NonNullable<RecordCallResultOutcome["taskType"]>;
+  /**
+   * Optional follow-up task payload (Batch 12 B6). Mirrors the
+   * legacy route's storage.createTask body so delegation can
+   * reproduce the existing task row byte-equivalent.
+   */
+  title?: string | null;
+  description?: string | null;
+  priority?: string | null;
+  urgency?: string | null;
+  assignedToUserId?: string | null;
+  dueAt?: string | null;
+  metadata?: Record<string, unknown>;
 };
 
 /**
@@ -156,6 +217,15 @@ export type RecordCallResultExecutionOptions = {
    * adapter blockers run).
    */
   suppressedSteps?: ReadonlyArray<CallResultExecutionStep>;
+  /**
+   * Route-supplied callback-hours fallback (Batch 12 B4). When set,
+   * the planner uses this value (instead of the hard-coded 4h default)
+   * for callback-style outcomes that arrive without an explicit
+   * callbackAt. The adapter does not consume this directly — it is
+   * threaded through to the planner via the canonical input.
+   * Currently typed only; planner consumption ships in a future PR.
+   */
+  callbackHours?: number;
 };
 
 /** Constant skip reason used for suppressed steps — grep-stable. */

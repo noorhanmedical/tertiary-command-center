@@ -39,15 +39,22 @@ requireText(DOC, [
   "Hard-stops",
 ]);
 
-// Pin: no proposed extension has been applied to the adapter yet.
+// Pin: the proposed extension has been delivered by Batch 1 of the
+// arg-extensions run. AppendJourneyEventArgs MUST now carry the
+// optional metadata + closure-PHI fields documented in the contract.
 {
   const ADAPTER = "server/services/callResult/recordCallResultExecutionAdapter.ts";
   const src = read(ADAPTER) ?? "";
-  // The proposed extension adds an optional `metadata?: { ... }` field
-  // to AppendJourneyEventArgs. If it exists, this batch has overstepped.
-  const argsMatch = src.match(/AppendJourneyEventArgs\s*=\s*\{[^}]*\};/s);
-  if (argsMatch && /metadata\s*\?:/.test(argsMatch[0])) {
-    failures.push(`${ADAPTER}: AppendJourneyEventArgs already has metadata field — Batch D is design-only`);
+  const argsMatch = src.match(/AppendJourneyEventArgs\s*=\s*\{[\s\S]*?\};/);
+  if (!argsMatch) {
+    failures.push(`${ADAPTER}: cannot locate AppendJourneyEventArgs type`);
+  } else {
+    const block = argsMatch[0];
+    for (const needle of ["metadata?:", "patientName?:", "patientDob?:"]) {
+      if (!block.includes(needle)) {
+        failures.push(`${ADAPTER}: AppendJourneyEventArgs missing "${needle}" (Batch D contract not yet honored by adapter)`);
+      }
+    }
   }
 }
 
