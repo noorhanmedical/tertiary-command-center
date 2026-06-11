@@ -336,6 +336,9 @@ info("docs/architecture/ringcentral-adapter-contract.md");
 // Phase 1 run Segment E Batch 8 — canonical call-result write switch plan.
 info("docs/architecture/team-portal-canonical-call-result-write-switch-plan.md");
 
+// Phase 1 run Segment F Batch 1 — ancillary boundary contract.
+info("docs/architecture/phase-1-ancillary-boundary-contract.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);
