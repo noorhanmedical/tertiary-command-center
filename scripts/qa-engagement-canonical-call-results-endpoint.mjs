@@ -74,8 +74,11 @@ requireText(ROUTE, [
   }
 }
 
-// §5 — No UI references the canonical plural endpoint yet.
+// §5 — UI consumption of the plural endpoint is allowed ONLY in the
+//      designated UI flag helper (Batch 12 of Engagement completion run).
+//      Other UI files must go through the helper, not hard-code the path.
 {
+  const ALLOWED_UI = "client/src/lib/engagementCanonicalCallResultsUiFlag.ts";
   const ROOTS = [path.join(root, "client/src")];
   function walk(dir, results) {
     let entries;
@@ -90,9 +93,11 @@ requireText(ROUTE, [
   const files = [];
   for (const r of ROOTS) walk(r, files);
   for (const abs of files) {
+    const rel = path.relative(root, abs);
+    if (rel === ALLOWED_UI) continue;
     const src = fs.readFileSync(abs, "utf8");
     if (src.includes("/api/engagement-center/call-results")) {
-      failures.push(`${path.relative(root, abs)} references plural endpoint — UI must not consume it yet`);
+      failures.push(`${rel} references plural endpoint directly — must use engagementCallResultEndpoint() helper`);
     }
   }
 }

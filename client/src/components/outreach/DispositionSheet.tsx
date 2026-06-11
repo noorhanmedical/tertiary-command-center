@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { engagementCallResultEndpoint } from "@/lib/engagementCanonicalCallResultsUiFlag";
 import { useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -147,7 +148,7 @@ export function DispositionSheet({
           assignedUserId: schedulerUserId ?? undefined,
         };
         if (nextActionIso) canonicalBody.nextActionAt = nextActionIso;
-        await apiRequest("POST", "/api/engagement-center/call-result", canonicalBody);
+        await apiRequest("POST", engagementCallResultEndpoint(), canonicalBody);
       } catch (canonicalErr) {
         console.warn("[disposition] canonical call-result mirror failed", canonicalErr);
       }
