@@ -23,6 +23,7 @@ import { registerAppointmentRoutes } from "./routes/appointments";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerOutboxRoutes } from "./routes/outbox";
 import { registerPatientDatabaseRoutes } from "./routes/patientDatabase";
+import { registerPatientDirectoryRoutes } from "./routes/patientDirectory";
 import { registerTestFixtureRoutes } from "./routes/testFixture";
 import { registerMarketingMaterialRoutes } from "./routes/marketingMaterials";
 import { registerDocumentLibraryRoutes } from "./routes/documentLibrary";
@@ -219,6 +220,10 @@ export async function registerRoutes(
   // `/api/patients/:id` parameterised handler.
   registerPatientDatabaseRoutes(app);
   registerPatientRoutes(app, { backgroundSyncPatients });
+  // Patient Directory routes: gated on USE_PATIENT_DIRECTORY_ACTIVATION.
+  // Default OFF — no endpoints registered until Ali flips the flag and
+  // applies migrations 0027-0029 from the blockers doc.
+  registerPatientDirectoryRoutes(app);
   registerPlexusIqClinicalImportRoutes(app);
   registerEngagementAssignmentBoardRoutes(app);
   registerBillingRoutes(app, { backgroundSyncBilling });
