@@ -23,31 +23,33 @@ import { EngagementDuplicateBanner } from "@/components/engagement/EngagementDup
 
 export default function EngagementCenterPage() {
   return (
-    <div className="flex flex-col h-full">
-      <header className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-2">
+    <div className="flex h-full flex-col bg-[#EEF1F6]">
+      <header className="sticky top-0 z-30 border-b border-slate-800 bg-[#101115] text-white">
+        <div className="mx-auto flex h-16 w-full max-w-7xl items-center gap-4 px-4 sm:px-6 lg:px-8">
           <SidebarTrigger data-testid="button-sidebar-toggle-engagement-center" />
           <div>
-            <div className="text-[10px] font-semibold tracking-[0.16em] text-slate-500 uppercase">
-              PLEXUS ANCILLARY · ENGAGEMENT CENTER
+            <div className="text-[10px] font-normal uppercase tracking-[0.18em] text-slate-400">
+              PLEXUS CLINICAL · ENGAGEMENT
             </div>
             <h1
-              className="text-xl font-semibold tracking-tight text-slate-900"
+              className="text-xl font-medium tracking-[-0.02em] text-white"
               data-testid="text-engagement-center-title"
             >
               Engagement Center
             </h1>
-            <p className="text-[11px] text-slate-500">
-              Assignment board, follow-up queue, and team-member coordination.
+            <p className="text-[11px] font-light text-slate-400">
+              Assignment board, follow-up queue, and team coordination.
             </p>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-6 space-y-3">
-          <EngagementDuplicateBanner />
-          <EngagementAssignmentBoard />
+      <main className="flex-1 min-h-0 overflow-auto bg-[#EEF1F6]">
+        <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <div className="space-y-3">
+            <EngagementDuplicateBanner />
+            <EngagementAssignmentBoard />
+          </div>
         </div>
       </main>
     </div>
