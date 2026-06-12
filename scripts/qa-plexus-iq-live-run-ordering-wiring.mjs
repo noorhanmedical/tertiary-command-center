@@ -1,4 +1,9 @@
-// QA: Plexus IQ live run-ordering wiring (Parts 2 + 3).
+// QA: Plexus IQ live run-ordering wiring (Parts 2 + 3, hotfix-updated).
+//
+// After the hotfix the giant PlexusIQRunOrganizationPanel is removed.
+// Run ordering is wired inside PlexusIQWorkspace: each WorklistGroupCard
+// runs orderPatientsWithinRun() before handing the patient list to
+// QualificationPatientCardsPane.
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
@@ -8,41 +13,40 @@ const failures = [];
 function read(rel) { const abs = path.join(root, rel); if (!fs.existsSync(abs)) return null; return fs.readFileSync(abs, "utf8"); }
 
 const WK = "client/src/components/plexus-iq/PlexusIQWorkspace.tsx";
-const PANEL = "client/src/components/plexus-iq/PlexusIQRunOrganizationPanel.tsx";
-
 const wk = read(WK);
 if (wk === null) failures.push(`Missing file: ${WK}`);
 else {
-  // Workspace imports + renders the panel.
   for (const n of [
-    'from "@/components/plexus-iq/PlexusIQRunOrganizationPanel"',
-    "PlexusIQRunOrganizationPanel",
-    "runOrgBatches",
+    'from "@/components/plexus-iq/PlexusIQRunSelector"',
+    'from "@/lib/qualificationRunOrdering"',
+    "orderPatientsWithinRun(",
+    "PlexusIQRunSelector",
   ]) if (!wk.includes(n)) failures.push(`${WK} missing "${n}"`);
-  // Panel rendered in BOTH render branches: clinic-detail + legacy view.
-  const panelRenderCount = (wk.match(/<PlexusIQRunOrganizationPanel/g) ?? []).length;
-  if (panelRenderCount < 2) failures.push(`${WK}: panel should render in both clinic-detail + legacy views (found ${panelRenderCount})`);
+  if (wk.includes("PlexusIQRunOrganizationPanel")) {
+    failures.push(`${WK} must not re-import the removed giant panel`);
+  }
 }
 
-const panel = read(PANEL);
-if (panel === null) failures.push(`Missing file: ${PANEL}`);
+// Compact selector module shape.
+const SEL = "client/src/components/plexus-iq/PlexusIQRunSelector.tsx";
+const sel = read(SEL);
+if (sel === null) failures.push(`Missing file: ${SEL}`);
 else for (const n of [
-  "orderPatientsWithinRun",
-  "buildQualificationGroups",
-  "RunComparisonSelector",
-  "DuplicateWarningBadge",
-  "PatientAuditTrailModal",
-  "useLiveDuplicateWarnings",
-  "plexus-iq-run-organization-panel",
-  "plexus-iq-run-org-sort-toggle",
-  "plexus-iq-run-org-select-all",
-  "plexus-iq-run-org-clear",
-  "Newest first",
-  "Oldest first",
-  "Comparing: all",
-  "outreach",
-  "appointmentTime",
-]) if (!panel.includes(n)) failures.push(`${PANEL} missing "${n}"`);
+  "PlexusIQRunSelector",
+  "PlexusIQRunSibling",
+  "buildSiblingGroups",
+  "All runs for this date",
+  "Run ",
+  "plexus-iq-run-selector",
+  "plexus-iq-run-row-",
+  "plexus-iq-run-pick-",
+  "plexus-iq-run-all",
+]) if (!sel.includes(n)) failures.push(`${SEL} missing "${n}"`);
+
+// The removed giant panel file is gone.
+if (read("client/src/components/plexus-iq/PlexusIQRunOrganizationPanel.tsx") !== null) {
+  failures.push("PlexusIQRunOrganizationPanel.tsx must be deleted by the hotfix");
+}
 
 // Helper still exposes the ordering invariants.
 const helper = read("client/src/lib/qualificationRunOrdering.ts") ?? "";
@@ -55,7 +59,6 @@ for (const n of [
   "makeRunLabel",
 ]) if (!helper.includes(n)) failures.push(`qualificationRunOrdering missing "${n}"`);
 
-// Unit test still passes (outreach alphabetical + visit appointment-time).
 try {
   execSync(`npx tsx tests/unit/qualificationRunOrdering.test.ts`, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
 } catch {

@@ -19,7 +19,9 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import QualificationPatientCardsPane from "@/components/qualification/QualificationPatientCardsPane";
-import { PlexusIQRunOrganizationPanel, type PlexusIQRunOrgBatch } from "@/components/plexus-iq/PlexusIQRunOrganizationPanel";
+import { PlexusIQRunSelector, type PlexusIQRunSibling } from "@/components/plexus-iq/PlexusIQRunSelector";
+import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
+import { orderPatientsWithinRun } from "@/lib/qualificationRunOrdering";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 import {
@@ -255,6 +257,18 @@ type WorklistGroupCardProps = {
   onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
   onDeletePatient: (id: number) => void;
   onAnalyzeOnePatient: (id: number) => void;
+  /** Sibling runs for this (facility, scheduleDate) bucket. Always
+   *  includes the current group's batch. When > 1, the compact run
+   *  selector is rendered above the patient list. */
+  siblings: ReadonlyArray<PlexusIQRunSibling>;
+  /** Currently selected batch id for this bucket. */
+  selectedBatchId: number;
+  /** Whether explicit "all runs for this date" mode is active. */
+  allRunsMode: boolean;
+  /** Aggregated multi-run patient set used when allRunsMode is true. */
+  allRunsPatients: PatientScreening[];
+  onSelectRun: (batchId: number) => void;
+  onSelectAllRuns: () => void;
 };
 
 function WorklistGroupCard({
@@ -269,20 +283,41 @@ function WorklistGroupCard({
   onUpdatePatient,
   onDeletePatient,
   onAnalyzeOnePatient,
+  siblings,
+  selectedBatchId,
+  allRunsMode,
+  allRunsPatients,
+  onSelectRun,
+  onSelectAllRuns,
 }: WorklistGroupCardProps) {
   const isAnalyzing = analyzingBatchId === group.batchId;
-  // The pane data depends on which tab this card lives in: Needs
-  // Completion shows incomplete patients, Finalized shows only completed
-  // ones, Scheduled shows the scheduled subset (currently equivalent to
-  // all patients on a dated batch).
-  const patientsToRender =
-    mode === "needs"
+  // The pane data depends on which tab this card lives in. When the
+  // user explicitly picks "All runs for this date" the workspace
+  // hands the aggregated multi-run patient set in via
+  // allRunsPatients; otherwise we use this card's own selected run.
+  const sourcePatients = allRunsMode
+    ? allRunsPatients
+    : mode === "needs"
       ? group.incompletePatients
       : mode === "finalized"
       ? group.finalizedPatients
       : group.scheduledPatients.length > 0
       ? group.scheduledPatients
       : group.patients;
+  // Visible alphabetical order for outreach + appointment time for
+  // visit, applied to the actual rendered array — not just unit-tested.
+  const patientsToRender = orderPatientsWithinRun(
+    sourcePatients.map((p) => ({
+      batchId: group.batchId,
+      batchCreatedAt: "",
+      patientType: (p.patientType ?? "visit") as "visit" | "outreach" | string,
+      patientId: p.id,
+      name: p.name,
+      appointmentTime: p.time ?? null,
+    })),
+  )
+    .map((r) => sourcePatients.find((p) => p.id === r.patientId))
+    .filter((p): p is PatientScreening => !!p);
 
   const ariaLabel =
     mode === "needs"
@@ -385,7 +420,17 @@ function WorklistGroupCard({
       </div>
 
       {isOpen && (
-        <div className="px-4 pb-4 pt-0">
+        <div className="px-4 pb-4 pt-0 space-y-2">
+          {/* Compact run selector — replaces the old giant standalone
+              run-org panel. Always rendered so the active run label
+              stays visible above the patient list. */}
+          <PlexusIQRunSelector
+            siblings={siblings}
+            selectedBatchId={allRunsMode ? null : selectedBatchId}
+            allRunsMode={allRunsMode}
+            onSelectRun={onSelectRun}
+            onSelectAllRuns={onSelectAllRuns}
+          />
           {!group.detailReady ? (
             <div className="flex items-center gap-2 text-xs text-slate-500 italic py-3">
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -480,31 +525,6 @@ export function PlexusIQWorkspace({
   }, [summary]);
 
   // Qualification run-organization panel input. Maps each batch's
-  // createdAt + patients into the PlexusIQRunOrgBatch shape so the
-  // additive panel can group by parent date / run and feed the
-  // RunComparisonSelector + duplicate-warning engine.
-  const runOrgBatches = useMemo<ReadonlyArray<PlexusIQRunOrgBatch>>(() => {
-    const out: PlexusIQRunOrgBatch[] = [];
-    for (const [bidStr, det] of Object.entries(batchDetails)) {
-      const bid = Number.parseInt(bidStr, 10);
-      const createdAt = det.createdAt instanceof Date
-        ? det.createdAt.toISOString()
-        : typeof det.createdAt === "string" ? det.createdAt : new Date(0).toISOString();
-      const patients = (det.patients ?? []).map((p) => ({
-        id: p.id,
-        name: p.name,
-        facility: p.facility ?? null,
-        patientType: (p.patientType ?? "visit"),
-        appointmentTime: p.time ?? null,
-        dob: p.dob ?? null,
-        phoneNumber: p.phoneNumber ?? null,
-        mrn: ((p as unknown as Record<string, unknown>).mrn as string | null | undefined) ?? null,
-      }));
-      out.push({ batchId: bid, batchCreatedAt: createdAt, patients });
-    }
-    return out;
-  }, [batchDetails]);
-
   // Per-tab bucket lists below (needs/finalized/scheduled/clinic
   // rollups/totals) all derive from `allGroups`, so memoizing this
   // single grouping is enough to keep every downstream useMemo stable
@@ -519,6 +539,132 @@ export function PlexusIQWorkspace({
     }
     return out;
   }, [grouped, batchDetails]);
+
+  // ─── Hotfix: bucket by (facility, scheduleDate) so sibling runs
+  // collapse into one card with a compact run selector instead of N
+  // separate cards. Active = most recent run by default; explicit
+  // "All runs for this date" mode is opt-in only.
+  type SiblingBucket = {
+    bucketKey: string;
+    siblings: PlexusIQRunSibling[];
+    groups: PlexusIQWorklistGroup[];
+  };
+  const siblingBucketsByGroupKey = useMemo(() => {
+    const buckets = new Map<string, SiblingBucket>();
+    for (const g of allGroups) {
+      const bucketKey = `${g.facility || "Unassigned"}::${g.scheduleDate ?? "no-date"}`;
+      const cur = buckets.get(bucketKey) ?? { bucketKey, siblings: [], groups: [] };
+      cur.groups.push(g);
+      buckets.set(bucketKey, cur);
+    }
+    for (const b of buckets.values()) {
+      const sortedAsc = b.groups.slice().sort((a, b) =>
+        new Date((a.row as unknown as { createdAt?: string }).createdAt ?? "")
+          .getTime() - new Date((b.row as unknown as { createdAt?: string }).createdAt ?? "")
+          .getTime() || a.batchId - b.batchId,
+      );
+      const createdAtOf = (g: PlexusIQWorklistGroup) => {
+        const cr = (g.row as unknown as { createdAt?: string | Date }).createdAt;
+        if (cr instanceof Date) return cr.toISOString();
+        if (typeof cr === "string") return cr;
+        const det = batchDetails[g.batchId];
+        const dcr = det && (det.createdAt as unknown as string | Date | undefined);
+        if (dcr instanceof Date) return dcr.toISOString();
+        if (typeof dcr === "string") return dcr;
+        return new Date(0).toISOString();
+      };
+      b.siblings = sortedAsc.map((g, idx) => ({
+        batchId: g.batchId,
+        runNumber: idx + 1,
+        createdAt: createdAtOf(g),
+        patientCount: g.totalCount,
+      }));
+    }
+    // Map group.key → SiblingBucket for fast lookup at render time.
+    const byGroupKey = new Map<string, SiblingBucket>();
+    for (const b of buckets.values()) {
+      for (const g of b.groups) byGroupKey.set(g.key, b);
+    }
+    return byGroupKey;
+  }, [allGroups, batchDetails]);
+
+  // Default selected run per bucket = newest. Stored at the workspace
+  // level so flipping tabs / re-rendering doesn't reset the user's pick.
+  const [selectedBatchByBucket, setSelectedBatchByBucket] = useState<Map<string, number>>(
+    () => new Map(),
+  );
+  const [allRunsModeByBucket, setAllRunsModeByBucket] = useState<Set<string>>(() => new Set());
+
+  function resolveSelection(bucket: SiblingBucket): {
+    selectedBatchId: number;
+    allRunsMode: boolean;
+  } {
+    const allOn = allRunsModeByBucket.has(bucket.bucketKey);
+    const newest = bucket.siblings.length > 0 ? bucket.siblings[bucket.siblings.length - 1].batchId : 0;
+    const picked = selectedBatchByBucket.get(bucket.bucketKey);
+    return {
+      selectedBatchId: picked ?? newest,
+      allRunsMode: allOn,
+    };
+  }
+
+  function setBucketRun(bucketKey: string, batchId: number) {
+    setSelectedBatchByBucket((prev) => {
+      const next = new Map(prev);
+      next.set(bucketKey, batchId);
+      return next;
+    });
+    setAllRunsModeByBucket((prev) => {
+      const next = new Set(prev);
+      next.delete(bucketKey);
+      return next;
+    });
+  }
+
+  function toggleBucketAllRuns(bucketKey: string) {
+    setAllRunsModeByBucket((prev) => {
+      const next = new Set(prev);
+      if (next.has(bucketKey)) next.delete(bucketKey); else next.add(bucketKey);
+      return next;
+    });
+  }
+
+  // Reduce N sibling groups → 1 visible group per bucket (the active
+  // one). Patient sets stay correct because the card's source list is
+  // chosen by the bucket's selected batch / all-runs mode at render
+  // time.
+  function reduceToActive(groups: PlexusIQWorklistGroup[]): PlexusIQWorklistGroup[] {
+    const seen = new Set<string>();
+    const out: PlexusIQWorklistGroup[] = [];
+    for (const g of groups) {
+      const bucket = siblingBucketsByGroupKey.get(g.key);
+      if (!bucket) {
+        out.push(g);
+        continue;
+      }
+      if (seen.has(bucket.bucketKey)) continue;
+      const { selectedBatchId } = resolveSelection(bucket);
+      const active = bucket.groups.find((bg) => bg.batchId === selectedBatchId) ?? bucket.groups[0];
+      out.push(active);
+      seen.add(bucket.bucketKey);
+    }
+    return out;
+  }
+  function bucketFor(group: PlexusIQWorklistGroup): SiblingBucket | undefined {
+    return siblingBucketsByGroupKey.get(group.key);
+  }
+  function allRunsPatientsFor(group: PlexusIQWorklistGroup, mode: "needs" | "finalized" | "scheduled"): PatientScreening[] {
+    const bucket = bucketFor(group);
+    if (!bucket) return [];
+    const out: PatientScreening[] = [];
+    for (const g of bucket.groups) {
+      const src = mode === "needs" ? g.incompletePatients
+        : mode === "finalized" ? g.finalizedPatients
+        : g.scheduledPatients.length > 0 ? g.scheduledPatients : g.patients;
+      for (const p of src) out.push(p);
+    }
+    return out;
+  }
 
   // SOURCE MARKER: Plexus IQ avoids rendering inactive heavy group content
   // (Each WorklistGroupCard already gates its patient-card body behind
@@ -828,18 +974,6 @@ export function PlexusIQWorkspace({
             </div>
           </div>
 
-          {/* Run organization panel — date/run grouping, comparison
-              selector, outreach-alphabetical / visit-by-appointment
-              ordering, live duplicate warnings. Additive surface. */}
-          <PlexusIQRunOrganizationPanel
-            batches={runOrgBatches.filter((b) =>
-              b.patients.some((p) => (p.facility ?? "Unassigned") === selectedClinicFacility),
-            ).map((b) => ({
-              ...b,
-              patients: b.patients.filter((p) => (p.facility ?? "Unassigned") === selectedClinicFacility),
-            }))}
-          />
-
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6" data-testid="plexus-iq-clinic-status-tiles">
             {tiles.map((t) => {
               const isActive = clinicStatusFilter === t.id;
@@ -987,10 +1121,6 @@ export function PlexusIQWorkspace({
           ← Back to clinic tiles
         </button>
       </div>
-      {/* Run organization panel (legacy "All view") — same additive
-          surface as the clinic-detail view, scoped to all batches. */}
-      <PlexusIQRunOrganizationPanel batches={runOrgBatches} />
-
       <Tabs defaultValue="needs" className="w-full">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <TabsList className="bg-slate-100" data-testid="plexus-iq-worklist-tabs">
@@ -1055,7 +1185,10 @@ export function PlexusIQWorkspace({
             </div>
           ) : (
             <div className="space-y-2">
-              {needsGroups.map((g) => (
+              {reduceToActive(needsGroups).map((g) => {
+                const bucket = bucketFor(g);
+                const sel = bucket ? resolveSelection(bucket) : { selectedBatchId: g.batchId, allRunsMode: false };
+                return (
                 <WorklistGroupCard
                   key={g.key}
                   group={g}
@@ -1069,8 +1202,14 @@ export function PlexusIQWorkspace({
                   onUpdatePatient={onUpdatePatient}
                   onDeletePatient={onDeletePatient}
                   onAnalyzeOnePatient={onAnalyzeOnePatient}
-                />
-              ))}
+                  siblings={bucket?.siblings ?? []}
+                  selectedBatchId={sel.selectedBatchId}
+                  allRunsMode={sel.allRunsMode}
+                  allRunsPatients={sel.allRunsMode ? allRunsPatientsFor(g, "needs") : []}
+                  onSelectRun={(bid) => bucket && setBucketRun(bucket.bucketKey, bid)}
+                  onSelectAllRuns={() => bucket && toggleBucketAllRuns(bucket.bucketKey)}
+                />);
+              })}
             </div>
           )}
         </TabsContent>
@@ -1082,7 +1221,10 @@ export function PlexusIQWorkspace({
             </div>
           ) : (
             <div className="space-y-2">
-              {finalizedGroups.map((g) => (
+              {reduceToActive(finalizedGroups).map((g) => {
+                const bucket = bucketFor(g);
+                const sel = bucket ? resolveSelection(bucket) : { selectedBatchId: g.batchId, allRunsMode: false };
+                return (
                 <WorklistGroupCard
                   key={g.key}
                   group={g}
@@ -1096,8 +1238,14 @@ export function PlexusIQWorkspace({
                   onUpdatePatient={onUpdatePatient}
                   onDeletePatient={onDeletePatient}
                   onAnalyzeOnePatient={onAnalyzeOnePatient}
-                />
-              ))}
+                  siblings={bucket?.siblings ?? []}
+                  selectedBatchId={sel.selectedBatchId}
+                  allRunsMode={sel.allRunsMode}
+                  allRunsPatients={sel.allRunsMode ? allRunsPatientsFor(g, "finalized") : []}
+                  onSelectRun={(bid) => bucket && setBucketRun(bucket.bucketKey, bid)}
+                  onSelectAllRuns={() => bucket && toggleBucketAllRuns(bucket.bucketKey)}
+                />);
+              })}
             </div>
           )}
         </TabsContent>
@@ -1110,7 +1258,10 @@ export function PlexusIQWorkspace({
             </div>
           ) : (
             <div className="space-y-2">
-              {scheduledGroups.map((g) => (
+              {reduceToActive(scheduledGroups).map((g) => {
+                const bucket = bucketFor(g);
+                const sel = bucket ? resolveSelection(bucket) : { selectedBatchId: g.batchId, allRunsMode: false };
+                return (
                 <WorklistGroupCard
                   key={g.key}
                   group={g}
@@ -1124,8 +1275,14 @@ export function PlexusIQWorkspace({
                   onUpdatePatient={onUpdatePatient}
                   onDeletePatient={onDeletePatient}
                   onAnalyzeOnePatient={onAnalyzeOnePatient}
-                />
-              ))}
+                  siblings={bucket?.siblings ?? []}
+                  selectedBatchId={sel.selectedBatchId}
+                  allRunsMode={sel.allRunsMode}
+                  allRunsPatients={sel.allRunsMode ? allRunsPatientsFor(g, "scheduled") : []}
+                  onSelectRun={(bid) => bucket && setBucketRun(bucket.bucketKey, bid)}
+                  onSelectAllRuns={() => bucket && toggleBucketAllRuns(bucket.bucketKey)}
+                />);
+              })}
             </div>
           )}
         </TabsContent>
@@ -1336,6 +1493,18 @@ function ClinicDetailPackets({
 }) {
   const { toast } = useToast();
 
+  // Packet selection popup — pinned by the hotfix brief. When the
+  // user clicks "Plexus Packet" / "Clinician Packet" we open the
+  // PdfPatientSelectDialog FIRST. Only after the user confirms with
+  // their checkbox selection do we route to handlePacket(), which
+  // routes through the existing print-preview path. Default = all
+  // eligible patients pre-selected.
+  const [packetSel, setPacketSel] = useState<{
+    mode: "plexus" | "clinician";
+    scheduleDate: string | null;
+    patients: PdfPacketSourcePatient[];
+  } | null>(null);
+
   // Single active key — only one date panel is open at a time. Click
   // the same row again to close it. `null` = default closed (no panel
   // showing). SOURCE MARKER: defaultClosedDropdowns / ?? true.
@@ -1343,6 +1512,18 @@ function ClinicDetailPackets({
   const defaultClosedDropdowns: Record<string, boolean> = {};
   void defaultClosedDropdowns;
   const [activeKey, setActiveKey] = useState<string | null>(null);
+
+  function openPacketPicker(mode: "plexus" | "clinician", scheduleDate: string | null, eligible: PdfPacketSourcePatient[]) {
+    if (eligible.length === 0) {
+      toast({
+        title: "Select patients first.",
+        description: `No patients are eligible for the ${mode === "plexus" ? "Plexus" : "Clinician"} packet in this group.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setPacketSel({ mode, scheduleDate, patients: eligible });
+  }
 
   function isDropdownClosed(key: string): boolean {
     // Default-closed semantics: when there is no activeKey, every key
@@ -1595,7 +1776,7 @@ function ClinicDetailPackets({
                 variant="outline"
                 disabled={activeEntry[1].eligible.length === 0}
                 onClick={() =>
-                  handlePacket("plexus", activeEntry[1].scheduleDate, activeEntry[1].eligible)
+                  openPacketPicker("plexus", activeEntry[1].scheduleDate, activeEntry[1].eligible)
                 }
                 className="h-7 gap-1 px-2 text-[11px] bg-white text-slate-900 border-white/40 hover:bg-white/90"
                 data-testid={`button-plexus-iq-clinic-packet-plexus-${activeEntry[0]}`}
@@ -1608,7 +1789,7 @@ function ClinicDetailPackets({
                 variant="outline"
                 disabled={activeEntry[1].eligible.length === 0}
                 onClick={() =>
-                  handlePacket("clinician", activeEntry[1].scheduleDate, activeEntry[1].eligible)
+                  openPacketPicker("clinician", activeEntry[1].scheduleDate, activeEntry[1].eligible)
                 }
                 className="h-7 gap-1 px-2 text-[11px] bg-white text-slate-900 border-white/40 hover:bg-white/90"
                 data-testid={`button-plexus-iq-clinic-packet-clinician-${activeEntry[0]}`}
@@ -1666,6 +1847,22 @@ function ClinicDetailPackets({
           </div>
         )}
       </div>
+
+      {/* Hotfix: packet checkbox popup gates the Plexus / Clinician
+          packet generation. The packet only fires after the operator
+          confirms their selection in this dialog. */}
+      <PdfPatientSelectDialog
+        open={packetSel !== null}
+        mode={packetSel?.mode ?? null}
+        patients={(packetSel?.patients as unknown as PatientScreening[]) ?? []}
+        onClose={() => setPacketSel(null)}
+        onGenerate={(selected) => {
+          if (!packetSel) return;
+          const filtered = packetSel.patients.filter((p) => selected.some((s) => s.id === p.id));
+          setPacketSel(null);
+          handlePacket(packetSel.mode, packetSel.scheduleDate, filtered);
+        }}
+      />
     </div>
   );
 }

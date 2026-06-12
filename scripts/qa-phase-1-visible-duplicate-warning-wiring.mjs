@@ -6,10 +6,21 @@ const root = process.cwd();
 const failures = [];
 function read(rel) { const abs = path.join(root, rel); if (!fs.existsSync(abs)) return null; return fs.readFileSync(abs, "utf8"); }
 
-// §1 — Plexus IQ surface renders DuplicateWarningBadge via the new panel.
-const PANEL = read("client/src/components/plexus-iq/PlexusIQRunOrganizationPanel.tsx") ?? "";
-for (const n of ["DuplicateWarningBadge", "DuplicateWarningSummary", "useLiveDuplicateWarnings"]) {
-  if (!PANEL.includes(n)) failures.push(`PlexusIQRunOrganizationPanel missing "${n}"`);
+// §1 — Plexus IQ surface still exposes the duplicate-warning entry
+// points. After the hotfix the giant PlexusIQRunOrganizationPanel was
+// removed; warnings still consume useLiveDuplicateWarnings through
+// the AdminReview / Engagement / Team Portal banners + the live
+// Patient Directory page. We assert the giant panel did NOT return
+// and the compact selector is in place.
+{
+  const WORKSPACE = read("client/src/components/plexus-iq/PlexusIQWorkspace.tsx") ?? "";
+  if (WORKSPACE.includes("PlexusIQRunOrganizationPanel")) {
+    failures.push("PlexusIQWorkspace must NOT re-import the removed giant PlexusIQRunOrganizationPanel");
+  }
+  const SELECTOR = read("client/src/components/plexus-iq/PlexusIQRunSelector.tsx") ?? "";
+  if (!SELECTOR.includes("PlexusIQRunSelector")) failures.push("Compact PlexusIQRunSelector missing");
+  const HOOK = read("client/src/lib/useLiveDuplicateWarnings.ts") ?? "";
+  if (!HOOK.includes("useLiveDuplicateWarnings")) failures.push("useLiveDuplicateWarnings hook missing");
 }
 
 // §2 — AdminApprovalControl imports + renders the guard + uses isApprovalHardBlocked.
