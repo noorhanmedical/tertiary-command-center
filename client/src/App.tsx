@@ -45,6 +45,7 @@ import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
 import EngagementCenterPage from "@/pages/engagement-center";
+import PatientDirectoryLiveRoute from "@/pages/patient-directory-live";
 
 const SIDEBAR_STYLE = {
   "--sidebar-width": "18rem",
@@ -97,6 +98,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   </SidebarProvider>
                 </Route>
                 <Route path="/schedule" component={SchedulePage} />
+                <Route path="/patient-directory/live" component={PatientDirectoryLiveRoute} />
                 <Route path="/patient-directory" component={PatientDatabasePage} />
                 <Route path="/patient-database">
                   <Redirect to="/patient-directory" />
