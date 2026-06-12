@@ -27,6 +27,11 @@ import {
 import { logAudit } from "../services/auditService";
 import { invalidatePatientDatabase } from "./patientDatabase";
 import {
+  startBatchAnalysis,
+  NoSuchBatchError,
+  EmptyBatchError,
+} from "../services/batchAnalysisRunner";
+import {
   findSchedulerForBatch,
   createAssignmentTask,
 } from "../services/schedulerAssignmentService";
@@ -303,125 +308,41 @@ export function registerBatchRoutes(app: Express) {
     }
   });
 
+  // Hotfix: this route used to inline-duplicate the batch analysis
+  // logic from batchAnalysisRunner, which (a) drifted from the canonical
+  // runner (missing dob / insurance / previousTests in the patient
+  // payload) and (b) kept the heavy work running on the Express handler
+  // after `res.json()` — fragile under Replit / proxy connection drops.
+  // We now delegate to the durable runner: it persists an analysis_jobs
+  // row before returning, fires the loop with `void runAnalysisLoop`,
+  // and reports progress via /api/batches/:id/analysis-status (existing).
   app.post("/api/batches/:id/analyze", async (req, res) => {
     const batchId = parseInt(req.params.id);
+    if (!Number.isFinite(batchId) || batchId <= 0) {
+      return res.status(400).json({ error: "Invalid batch id" });
+    }
     try {
-      const batch = await storage.getScreeningBatch(batchId);
-      if (!batch) return res.status(404).json({ error: "Batch not found" });
-
-      const patients = await storage.getPatientScreeningsByBatch(batchId);
-      if (patients.length === 0) return res.status(400).json({ error: "No patients in batch" });
-
-      await db.transaction(async (tx) => {
-        if (batch.status === "processing" || batch.status === "error") {
-          await tx.update(screeningBatches).set({ status: "draft" }).where(eq(screeningBatches.id, batchId));
-          const processingPatients = patients.filter((p) => p.status === "processing");
-          for (const p of processingPatients) {
-            await tx.update(patientScreenings).set({ status: "draft", qualifyingTests: [], reasoning: {} }).where(eq(patientScreenings.id, p.id));
-          }
-        }
-        await tx.update(screeningBatches).set({ status: "processing" }).where(eq(screeningBatches.id, batchId));
-      });
-
-      const job = await storage.createAnalysisJob({
+      const { jobId, totalPatients } = await startBatchAnalysis(
         batchId,
-        status: "running",
-        totalPatients: patients.length,
-        completedPatients: 0,
-      });
-
-      res.json({ success: true, patientCount: patients.length, jobId: job.id, async: true });
-
-      const facilityQualMode = await getQualificationMode(batch.facility ?? null);
-      console.log(`[batch:${batchId}] Qualification mode: ${facilityQualMode} (facility: ${batch.facility ?? "none"})`);
-
-      await batchProcess(
-        patients,
-        async (patient) => {
-          try {
-            const result = await screenSinglePatientWithAI({
-              name: patient.name,
-              time: patient.time,
-              age: patient.age,
-              gender: patient.gender,
-              diagnoses: patient.diagnoses,
-              history: patient.history,
-              medications: patient.medications,
-              notes: patient.notes,
-            }, facilityQualMode);
-
-            if (result) {
-              const match = result?.patients?.[0] || result;
-              const rawReasoning: Record<string, any> = match.reasoning || {};
-              for (const testKey of Object.keys(rawReasoning)) {
-                const entry = rawReasoning[testKey];
-                if (entry && typeof entry === "object" && entry.pearls !== undefined) {
-                  if (!Array.isArray(entry.pearls) || entry.pearls.some((p: unknown) => typeof p !== "string")) {
-                    entry.pearls = undefined;
-                  }
-                }
-              }
-              await storage.updatePatientScreening(patient.id, {
-                qualifyingTests: match.qualifyingTests || [],
-                reasoning: rawReasoning,
-                diagnoses: match.diagnoses || patient.diagnoses || null,
-                history: match.history || patient.history || null,
-                medications: match.medications || patient.medications || null,
-                age: match.age || patient.age || null,
-                gender: match.gender || patient.gender || null,
-                status: "completed",
-              });
-            } else {
-              await storage.updatePatientScreening(patient.id, {
-                qualifyingTests: [],
-                reasoning: {},
-                status: "completed",
-              });
-            }
-            // Auto-commit on successful batch analysis: any Draft patients
-            // whose AI analysis just finished move to Ready so the assigned
-            // scheduler can immediately see and call them.
-            try {
-              await commitPatient(patient.id, req.session.userId ?? null, { auto: true });
-            } catch (commitErr) {
-              console.error(`Auto-commit after batch analyze failed for patient ${patient.id}:`, commitErr);
-            }
-          } catch (err: any) {
-            console.error(`Failed to analyze patient ${patient.name}:`, err.message);
-            await storage.updatePatientScreening(patient.id, {
-              qualifyingTests: [],
-              reasoning: {},
-              status: "error",
-            });
-          }
-          await storage.incrementAnalysisJobProgress(job.id).catch(() => {});
-        },
-        { concurrency: 5, retries: 3 }
+        req.session.userId ?? null,
       );
-
-      await db.transaction(async (tx) => {
-        await tx.update(screeningBatches).set({ status: "completed", patientCount: patients.length }).where(eq(screeningBatches.id, batchId));
+      return res.json({
+        success: true,
+        patientCount: totalPatients,
+        jobId,
+        async: true,
       });
-      await storage.updateAnalysisJob(job.id, { status: "completed", completedAt: new Date() });
-      invalidatePatientDatabase();
-    } catch (error: unknown) {
-      console.error("Analysis error:", error);
-      try {
-        await db.transaction(async (tx) => {
-          await tx.update(screeningBatches).set({ status: "error" }).where(eq(screeningBatches.id, batchId));
-        });
-      } catch (resetErr: unknown) {
-        console.error("Failed to set batch status to error after analysis failure:", resetErr);
+    } catch (err: unknown) {
+      if (err instanceof NoSuchBatchError) {
+        return res.status(404).json({ error: "Batch not found" });
       }
-      try {
-        const failedJob = await storage.getLatestAnalysisJobByBatch(batchId);
-        if (failedJob && failedJob.status === "running") {
-          const errMsg = error instanceof Error ? error.message : "Unknown analysis error";
-          await storage.updateAnalysisJob(failedJob.id, { status: "failed", errorMessage: errMsg, completedAt: new Date() });
-        }
-      } catch (jobErr: unknown) {
-        console.error("Failed to mark analysis job as failed:", jobErr);
+      if (err instanceof EmptyBatchError) {
+        return res.status(400).json({ error: "No patients in batch" });
       }
+      console.error("Analysis kickoff error:", err);
+      return res.status(500).json({
+        error: err instanceof Error ? err.message : "Failed to start analysis",
+      });
     }
   });
 

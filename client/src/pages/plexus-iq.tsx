@@ -10,6 +10,7 @@ import {
   useUpdatePatient,
   useDeletePatient,
   useAnalyzePatient,
+  useAnalyzePatientAsync,
   useStartBatchAnalysis,
   useInvalidateBatch,
   fetchAnalysisStatus,
@@ -122,6 +123,7 @@ export default function PlexusIQPage() {
   const updatePatientMut = useUpdatePatient();
   const deletePatientMut = useDeletePatient();
   const analyzePatientMut = useAnalyzePatient();
+  const analyzePatientAsyncMut = useAnalyzePatientAsync();
   const startAnalysisMut = useStartBatchAnalysis();
 
   const { data: batches = [] } = useScreeningBatches();
@@ -587,11 +589,42 @@ export default function PlexusIQPage() {
     async (patientId: number) => {
       setAnalyzingPatients((prev) => new Set(prev).add(patientId));
       try {
-        await analyzePatientMut.mutateAsync(patientId);
-        const owning = batches.find((b) =>
+        // Durable path: kick off a single-patient slice of the
+        // batchAnalysisRunner and poll the existing analysis-status
+        // route until the patient flips out of `processing`. The
+        // browser request stays alive only long enough to receive the
+        // jobId (~milliseconds), so Replit's proxy can't time it out.
+        const kickoff = await analyzePatientAsyncMut.mutateAsync(patientId);
+        const owningBatchId = kickoff.batchId ?? batches.find((b) =>
           (batchDetails[b.id]?.patients ?? []).some((p) => p.id === patientId),
-        );
-        if (owning) invalidateBatch(owning.id);
+        )?.id ?? null;
+        if (owningBatchId) {
+          // Poll up to 5 minutes; treat network blips as reconnect.
+          const startedAt = Date.now();
+          const maxMs = 5 * 60 * 1000;
+          let intervalMs = 2000;
+          let consecutiveErrors = 0;
+          while (Date.now() - startedAt < maxMs) {
+            await new Promise((r) => setTimeout(r, intervalMs));
+            try {
+              const r = await fetch(`/api/batches/${owningBatchId}/analysis-status`, { credentials: "include" });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              const s = await r.json();
+              consecutiveErrors = 0;
+              const me = (s.patients ?? []).find((p: { id: number }) => p.id === patientId)
+                ?? (s.processingPatients ?? []).find((p: { id: number }) => p.id === patientId);
+              const terminal = s.status === "completed" || s.status === "failed";
+              const meDone = me && me.status !== "processing" && me.status !== "draft";
+              if (terminal || meDone) break;
+              intervalMs = 2500;
+            } catch {
+              consecutiveErrors += 1;
+              intervalMs = Math.min(intervalMs * 2, 15_000);
+              if (consecutiveErrors > 8) break;
+            }
+          }
+          invalidateBatch(owningBatchId);
+        }
         refreshAll();
         toast({ title: "Patient analyzed" });
       } catch (err) {
@@ -608,7 +641,7 @@ export default function PlexusIQPage() {
         });
       }
     },
-    [analyzePatientMut, batches, batchDetails, invalidateBatch, refreshAll, toast],
+    [analyzePatientAsyncMut, batches, batchDetails, invalidateBatch, refreshAll, toast],
   );
 
   // Generate All for a single batch — runs the canonical batch analysis

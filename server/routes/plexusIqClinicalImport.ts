@@ -15,7 +15,10 @@ import {
   startBatchAnalysis,
   NoSuchBatchError,
   EmptyBatchError,
+  recoverStuckAnalysisJobs,
+  getBatchAnalysisConfig,
 } from "../services/batchAnalysisRunner";
+import { getAiClientConfig } from "../services/aiClientConfig";
 import { extractDateFromPrevTests } from "./helpers";
 
 // Clinical-paste bulk import + durable qualification job routes for
@@ -625,6 +628,38 @@ export function registerPlexusIqClinicalImportRoutes(app: Express) {
           error: err instanceof Error ? err.message : "Failed to retry job",
         });
       }
+    },
+  );
+
+  // ─── Stuck-job recovery ──────────────────────────────────────────────
+  // Marks any analysis_jobs row stuck in `running` past the configured
+  // threshold as `failed` with a clear errorMessage, and surfaces the
+  // batch for retry. Idempotent.
+  app.post(
+    "/api/plexus-iq/qualification-jobs/recover-stuck",
+    async (_req: Request, res: Response) => {
+      try {
+        const recovered = await recoverStuckAnalysisJobs();
+        res.json({ ok: true, recovered });
+      } catch (err: unknown) {
+        console.error("[plexusIqClinicalImport] recover-stuck error:", err);
+        res.status(500).json({
+          error: err instanceof Error ? err.message : "Recovery failed",
+        });
+      }
+    },
+  );
+
+  // ─── Configuration snapshot ──────────────────────────────────────────
+  // Surfaces the env-controlled tuning knobs the qualification flow
+  // depends on. The client status banner uses this to show the current
+  // timeout/concurrency budget when explaining stuck or slow runs.
+  app.get(
+    "/api/plexus-iq/qualification-config",
+    async (_req: Request, res: Response) => {
+      const ai = getAiClientConfig();
+      const batch = getBatchAnalysisConfig();
+      res.json({ ok: true, ai, batch });
     },
   );
 }

@@ -128,22 +128,25 @@ export async function screenSinglePatientWithAI(patient: ScreeningPatientInput, 
   const userPromptSuffix = USER_PROMPT_SUFFIX[mode];
 
   const response = await withRetry(
-    () =>
-      openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: `${userPromptSuffix}\n\n${description}`,
-          },
-        ],
-        temperature: 0.2,
-        response_format: { type: "json_object" },
-        max_completion_tokens: 16000,
-      }),
+    (signal) =>
+      openai.chat.completions.create(
+        {
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: `${userPromptSuffix}\n\n${description}`,
+            },
+          ],
+          temperature: 0.2,
+          response_format: { type: "json_object" },
+          max_completion_tokens: 16000,
+        },
+        { signal },
+      ),
     3,
-    `screenPatient:${patient.name}`
+    `screenPatient:${patient.name}`,
   );
 
   const content = response.choices[0]?.message?.content || "{}";

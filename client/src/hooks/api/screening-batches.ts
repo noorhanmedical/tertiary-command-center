@@ -242,11 +242,21 @@ export function useDeletePatient() {
 // Kicks off batch analysis on the server. Caller is responsible for any
 // polling / progress UI; `useFetchAnalysisStatus` exposes a one-shot fetch
 // helper that uses the canonical key.
+//
+// After the timeout hotfix the server route delegates to
+// startBatchAnalysis() and returns immediately with { success, jobId,
+// patientCount, async: true }. The browser request no longer rides on
+// top of the OpenAI work.
 export function useStartBatchAnalysis() {
   return useMutation({
     mutationFn: async (batchId: number) => {
       const res = await apiRequest("POST", `/api/batches/${batchId}/analyze`);
-      return (await res.json()) as { patientCount?: number };
+      return (await res.json()) as {
+        success?: boolean;
+        patientCount?: number;
+        jobId?: number;
+        async?: boolean;
+      };
     },
   });
 }
@@ -267,11 +277,39 @@ export type AnalyzePatientResult = {
   [key: string]: unknown;
 };
 
+// Legacy synchronous per-patient analyze. Kept for admin/dev tooling
+// only. Plexus IQ must use useAnalyzePatientAsync below — the legacy
+// route awaits OpenAI before responding and will timeout on Replit
+// under proxy/connection pressure.
 export function useAnalyzePatient() {
   return useMutation({
     mutationFn: async (patientId: number) => {
       const res = await apiRequest("POST", `/api/patients/${patientId}/analyze`);
       return (await res.json().catch(() => ({}))) as AnalyzePatientResult;
+    },
+  });
+}
+
+// Durable per-patient analyze (hotfix). Routes through the
+// /api/patients/:id/analyze-async endpoint which uses the
+// batchAnalysisRunner. Returns { jobId, batchId, patientCount }
+// immediately so the UI can switch to polling instead of hanging on
+// the browser request.
+export type AnalyzePatientAsyncResult = {
+  success?: boolean;
+  jobId?: number;
+  batchId?: number;
+  patientCount?: number;
+  async?: boolean;
+};
+export function useAnalyzePatientAsync() {
+  return useMutation({
+    mutationFn: async (patientId: number) => {
+      const res = await apiRequest(
+        "POST",
+        `/api/patients/${patientId}/analyze-async`,
+      );
+      return (await res.json().catch(() => ({}))) as AnalyzePatientAsyncResult;
     },
   });
 }
