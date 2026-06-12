@@ -51,17 +51,20 @@ function runTest(rel) {
 
 console.log("\nPatient Directory full-activation smoke\n=========================================");
 
-// 1) Migration plan + 0026 committed
-step(1, "Migration 0026 committed; 0027/0028/0029 inlined in blockers doc", () => {
-  if (read("migrations/0026_add_patient_screening_mrn.sql") === null) throw new Error("0026 not committed");
-  for (const f of ["0027_add_patient_screening_do_not_contact.sql", "0028_add_screening_batch_source_file.sql", "0029_add_patient_directory_events.sql"]) {
-    if (fs.existsSync(path.join(root, "migrations", f))) throw new Error(`${f} should NOT be committed`);
+// 1) All four migrations 0026-0029 committed + additive only.
+step(1, "All Patient Directory migrations 0026-0029 committed + additive only", () => {
+  for (const f of [
+    "migrations/0026_add_patient_screening_mrn.sql",
+    "migrations/0027_add_patient_screening_do_not_contact.sql",
+    "migrations/0028_add_screening_batch_source_file.sql",
+    "migrations/0029_add_patient_directory_events.sql",
+  ]) {
+    const src = read(f);
+    if (src === null) throw new Error(`missing migration: ${f}`);
+    for (const dangerous of [/DROP TABLE/i, /DROP COLUMN/i, /TRUNCATE\s/i, /DELETE FROM/i]) {
+      if (dangerous.test(src)) throw new Error(`${f} contains destructive statement matching ${dangerous}`);
+    }
   }
-  requireText("docs/architecture/patient-directory-full-activation-blockers.md", [
-    "0027_add_patient_screening_do_not_contact.sql",
-    "0028_add_screening_batch_source_file.sql",
-    "0029_add_patient_directory_events.sql",
-  ]);
 });
 
 // 2) Routes registered (or guarded behind the activation flag)

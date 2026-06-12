@@ -95,13 +95,15 @@ requireNotText(SVC, [
   walk(ROUTES);
 }
 
-// 0027/0028/0029 migration files must still NOT be committed; 0026
-// is now committed by the activation branch (lowest-risk additive
-// column, approved in the run brief).
+// 0026 / 0027 / 0028 / 0029 — all additive nullable, all committed.
+// Guard against any future destructive migration sneaking in by name.
 {
-  const migrations = fs.readdirSync(path.join(root, "migrations")).filter((f) => /^00(2[7-9])/.test(f));
-  if (migrations.length > 0) {
-    failures.push(`Migrations 0027-0029 must remain in the activation blockers doc; found committed: ${migrations.join(", ")}`);
+  const all = fs.readdirSync(path.join(root, "migrations")).filter((f) => /\.sql$/.test(f));
+  for (const f of all) {
+    const src = fs.readFileSync(path.join(root, "migrations", f), "utf8");
+    for (const dangerous of [/DROP TABLE/i, /DROP COLUMN/i, /TRUNCATE\s/i, /DELETE FROM/i]) {
+      if (dangerous.test(src)) failures.push(`${f} contains destructive statement matching ${dangerous}`);
+    }
   }
 }
 

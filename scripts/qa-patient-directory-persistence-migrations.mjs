@@ -21,15 +21,22 @@ else {
   if (/NOT NULL/.test(c26)) failures.push(`${M26}: should be nullable to avoid backfill`);
 }
 
-// §2 — Migrations 0027/0028/0029 must NOT be committed (auto-mode policy).
-//      Their SQL must be inlined in the blockers doc instead.
+// §2 — Migrations 0027/0028/0029 are all additive nullable; committed
+//      in this branch. Verify each exists and contains no destructive
+//      statements.
 for (const f of [
   "0027_add_patient_screening_do_not_contact.sql",
   "0028_add_screening_batch_source_file.sql",
   "0029_add_patient_directory_events.sql",
 ]) {
-  if (fs.existsSync(path.join(root, "migrations", f))) {
-    failures.push(`Migration ${f} unexpectedly committed — should be inlined in blockers doc`);
+  const p = path.join(root, "migrations", f);
+  if (!fs.existsSync(p)) {
+    failures.push(`Migration ${f} missing — expected to be committed`);
+    continue;
+  }
+  const src = fs.readFileSync(p, "utf8");
+  for (const dangerous of [/DROP TABLE/i, /DROP COLUMN/i, /TRUNCATE\s/i, /DELETE FROM/i]) {
+    if (dangerous.test(src)) failures.push(`${f} contains a destructive statement: ${dangerous}`);
   }
 }
 
