@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Printer, Users2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import type { PatientScreening } from "@shared/schema";
+import { orderPatientsWithinRun } from "@/lib/qualificationRunOrdering";
 
 interface PdfPatientSelectDialogProps {
   open: boolean;
@@ -27,8 +28,25 @@ export default function PdfPatientSelectDialog({
     if (open) setSelected(new Set(patients.map(p => p.id)));
   }, [open, patients]);
 
-  const allSelected = selected.size === patients.length;
-  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(patients.map(p => p.id)));
+  // Phase 1 ordering: outreach alphabetical, visit by appointment time.
+  // Same helper as PlexusIQRunOrganizationPanel + the PDF packet group
+  // dialog so the order on screen matches the order in the generated PDF.
+  const ordered = useMemo(() => {
+    const rows = patients.map((p) => ({
+      batchId: 0,
+      batchCreatedAt: "",
+      patientType: (p.patientType ?? "visit") as "visit" | "outreach" | string,
+      patientId: p.id,
+      name: p.name,
+      appointmentTime: p.time ?? null,
+    }));
+    const orderedRows = orderPatientsWithinRun(rows);
+    const byId = new Map(patients.map((p) => [p.id, p]));
+    return orderedRows.map((r) => byId.get(r.patientId)!).filter(Boolean);
+  }, [patients]);
+
+  const allSelected = selected.size === ordered.length;
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(ordered.map(p => p.id)));
   const toggle = (id: number) => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   const title = mode === "clinician" ? "Clinician PDF" : "Plexus Team PDF";
@@ -60,10 +78,10 @@ export default function PdfPatientSelectDialog({
             <Label htmlFor="select-all" className="text-sm font-semibold cursor-pointer select-none flex-1">
               Select all patients
             </Label>
-            <span className="text-xs font-semibold text-slate-500">{selected.size}/{patients.length}</span>
+            <span className="text-xs font-semibold text-slate-500">{selected.size}/{ordered.length}</span>
           </div>
           <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
-            {patients.map(p => (
+            {ordered.map(p => (
               <div
                 key={p.id}
                 className="flex items-center gap-3 px-4 py-2.5"
@@ -91,7 +109,7 @@ export default function PdfPatientSelectDialog({
           <Button
             size="sm"
             disabled={selected.size === 0}
-            onClick={() => onGenerate(patients.filter(p => selected.has(p.id)))}
+            onClick={() => onGenerate(ordered.filter(p => selected.has(p.id)))}
             className="gap-1.5"
             data-testid="button-pdf-generate"
           >
