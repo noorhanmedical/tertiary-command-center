@@ -1,4 +1,143 @@
-/* Plexus IQ premium stylesheet */
-.plexus-iq-premium-shell {
-  background: #eef1f6;
+/* Plexus IQ premium visual stylesheet. Visual-only; no wiring changes. */
+
+[data-testid="text-plexus-iq-title"],
+[data-testid="plexus-iq-facility-overview"],
+[data-testid="plexus-iq-clinic-detail-header"],
+[data-testid="plexus-iq-clinic-status-tiles"],
+[data-testid="plexus-iq-add-patient-hub"] {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+[data-testid="plexus-iq-facility-overview"],
+[data-testid="plexus-iq-clinic-detail-header"] {
+  max-width: none !important;
+  padding-left: 2rem !important;
+  padding-right: 2rem !important;
+}
+
+[data-testid="plexus-iq-facility-overview"] > div:first-child,
+[data-testid="plexus-iq-clinic-detail-header"] {
+  border: 1px solid #DCE2EA;
+  background: #FFFFFF;
+  padding: 1rem !important;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, .055);
+}
+
+[data-testid="button-plexus-iq-legacy-full-view"],
+[data-testid="button-plexus-iq-clinic-back"] {
+  border: 1px solid #DCE2EA !important;
+  border-radius: 0.25rem !important;
+  background: #F8F9FB !important;
+  color: #475467 !important;
+  padding: 0.55rem 0.75rem !important;
+  font-size: 10px !important;
+  font-weight: 390 !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+}
+
+[data-testid="button-plexus-iq-clinic-back"] {
+  background: #101115 !important;
+  color: #FFFFFF !important;
+}
+
+[data-testid="plexus-iq-facility-tile-grid"] {
+  gap: 1rem !important;
+}
+
+[data-testid^="plexus-iq-facility-tile-"] {
+  position: relative;
+  overflow: hidden;
+  border-color: #DCE2EA !important;
+  border-radius: 0.375rem !important;
+  background: #FFFFFF !important;
+  box-shadow: 0 22px 60px rgba(15, 23, 42, .06) !important;
+  text-align: left !important;
+}
+
+[data-testid^="plexus-iq-facility-tile-"]:hover {
+  border-color: #101115 !important;
+  transform: translateY(-1px);
+}
+
+[data-testid^="plexus-iq-facility-tile-"]::after {
+  content: "IQ";
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #E2E8F0;
+  background: #F8F9FB;
+  color: #101115;
+  font-size: 10px;
+  font-weight: 430;
+  letter-spacing: 0.08em;
+}
+
+[data-testid^="plexus-iq-clinic-status-tile-"],
+[data-testid^="plexus-iq-worklist-group-"] {
+  border-radius: 0.375rem !important;
+  box-shadow: none !important;
+}
+
+[data-testid^="plexus-iq-worklist-group-"] {
+  border: 1px solid #DCE2EA !important;
+}
+
+[data-testid^="plexus-iq-worklist-group-"] > div:first-child {
+  background: #F8F9FB;
+  border-bottom: 1px solid #DCE2EA;
+}
+
+[data-testid^="button-plexus-iq-worklist-toggle-"],
+[data-testid^="button-plexus-iq-worklist-generate-"],
+[data-testid^="button-plexus-iq-worklist-final-"] {
+  border-radius: 0.25rem !important;
+  border: 1px solid #DCE2EA !important;
+  background: #FFFFFF !important;
+}
+
+[data-testid^="button-plexus-iq-worklist-action-"] {
+  border-radius: 0.25rem !important;
+  background: #101115 !important;
+  color: #FFFFFF !important;
+  font-weight: 390 !important;
+}
+
+[data-testid="plexus-iq-add-patient-hub"] {
+  border-radius: 0.375rem !important;
+  border: 1px solid #DCE2EA !important;
+  box-shadow: 0 40px 120px rgba(3, 7, 18, .25) !important;
+}
+
+[data-testid="button-plexus-iq-add-patient-tile-visit"],
+[data-testid="button-plexus-iq-add-patient-tile-outreach"],
+[data-testid="button-plexus-iq-add-patient-tile-batchflow"] {
+  min-height: 11rem;
+  border-radius: 0.375rem !important;
+  box-shadow: none !important;
+}
+
+[data-testid="button-plexus-iq-add-patient-tile-visit"]:hover,
+[data-testid="button-plexus-iq-add-patient-tile-outreach"]:hover,
+[data-testid="button-plexus-iq-add-patient-tile-batchflow"]:hover {
+  border-color: #101115 !important;
+}
+
+[data-testid="plexus-iq-qualification-status-strip"] > * {
+  border-radius: 0.375rem !important;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, .055) !important;
+}
+
+@media (max-width: 1180px) {
+  [data-testid="plexus-iq-facility-overview"],
+  [data-testid="plexus-iq-clinic-detail-header"] {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
 }
