@@ -74,13 +74,28 @@ export function useLiveDuplicateWarnings(
     && targets.length > 0
     && !factsQ.isFetching;
 
+  // Hydrate facts to match the engine's DuplicatePatientFact shape
+  // (engine wants patientName alongside identity).
+  const hydratedFacts = {
+    sentToEngagement: facts.sentToEngagement.map((r) => ({
+      ...r, patientName: r.identity.name ?? "",
+    })),
+    doNotContact: facts.doNotContact.map((r) => ({
+      ...r, patientName: r.identity.name ?? "",
+    })),
+    cooldowns: facts.cooldowns.map((r) => ({
+      ...r, patientName: r.identity.name ?? "",
+    })),
+    priorTests: facts.priorTests,
+  };
+
   // The engine runs regardless — for an OFF-flag environment the
   // empty facts mean no warnings, which matches expected behavior.
   const list = computeDuplicateWarnings({
     currentPatients: input.currentPatients,
     priorRunRoster: input.priorRunRoster ?? [],
     selection: input.selection ?? selectNoRuns(),
-    facts,
+    facts: hydratedFacts,
     restrictedTestNames: input.restrictedTestNames,
   });
 
