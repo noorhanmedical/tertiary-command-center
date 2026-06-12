@@ -8,7 +8,7 @@
 
 [data-testid="tile-plexus-iq"] h1,
 [data-testid="text-home-heading"] {
-  font-weight: 430 !important;
+  font-weight: 520 !important;
   letter-spacing: -0.045em !important;
 }
 
@@ -17,13 +17,39 @@
 [data-testid="tile-plexus-iq"] button,
 [data-testid="tile-live-dashboard-row"] *,
 [data-testid="tile-calendar-bottom"] * {
-  font-weight: 350 !important;
+  font-weight: 390 !important;
 }
 
 [data-testid="tile-live-dashboard-row"] .font-black,
 [data-testid="tile-calendar-bottom"] .font-black {
-  font-weight: 440 !important;
+  font-weight: 520 !important;
   letter-spacing: -0.012em !important;
+}
+
+/* Engagement Center should remain a left-panel/navigation destination, not a home-page tile. */
+[data-testid="tile-engagement-center"] {
+  display: none !important;
+}
+
+[data-testid="tile-team-member-portals"],
+[data-testid="tile-team-ops"],
+[data-testid="tile-patient-directory"],
+[data-testid="tile-document-upload"],
+[data-testid="tile-documents"],
+[data-testid="tile-plexus-tasks"],
+[data-testid="tile-plexus-drive"] {
+  border-radius: 0.375rem !important;
+}
+
+[data-testid="tile-team-member-portals"] *,
+[data-testid="tile-team-ops"] *,
+[data-testid="tile-patient-directory"] *,
+[data-testid="tile-document-upload"] *,
+[data-testid="tile-documents"] *,
+[data-testid="tile-plexus-tasks"] *,
+[data-testid="tile-plexus-drive"] * {
+  font-weight: 430 !important;
+  letter-spacing: -0.004em !important;
 }
 
 [data-testid="engagement-assignment-board"] {
@@ -44,7 +70,7 @@
   font-size: 54px;
   line-height: .95;
   letter-spacing: -0.04em;
-  font-weight: 430;
+  font-weight: 520;
   content: "Plexus Clinical\A Engagement";
 }
 
@@ -54,7 +80,7 @@
   left: 32px;
   color: #D5DBE5;
   font-size: 15px;
-  font-weight: 350;
+  font-weight: 390;
   content: "Assign approved patients. PCS calls. Scheduler books. ACS tracks tests.";
 }
 
@@ -62,15 +88,15 @@
 [data-testid="engagement-assignment-board"] .font-bold,
 [data-testid="engagement-assignment-board"] .font-semibold,
 [data-testid="engagement-assignment-board"] .font-medium {
-  font-weight: 430 !important;
+  font-weight: 520 !important;
   letter-spacing: -0.01em !important;
 }
 
 [data-testid="engagement-assignment-board"] .uppercase,
 [data-testid="engagement-assignment-board"] label,
 [data-testid="engagement-assignment-board"] th {
-  font-weight: 420 !important;
-  letter-spacing: 0.11em !important;
+  font-weight: 480 !important;
+  letter-spacing: 0.1em !important;
 }
 
 [data-testid="engagement-assignment-board"] p,
@@ -78,7 +104,7 @@
 [data-testid="engagement-assignment-board"] input,
 [data-testid="engagement-assignment-board"] button,
 [data-testid="engagement-assignment-board"] span {
-  font-weight: 350 !important;
+  font-weight: 390 !important;
 }
 
 [data-testid="engagement-assignment-board"] .rounded-md,
@@ -87,7 +113,7 @@
 [data-testid="engagement-assignment-board"] .rounded-2xl,
 [data-testid="engagement-assignment-board"] .rounded-3xl,
 [data-testid="engagement-assignment-board"] .rounded-full {
-  border-radius: 0 !important;
+  border-radius: 0.375rem !important;
 }
 
 [data-testid="engagement-assignment-board"] > .grid:first-of-type {
@@ -99,10 +125,11 @@
   border: 1px solid #DCE2EA;
   background: #fff;
   box-shadow: 0 18px 48px rgba(15,23,42,.055);
+  border-radius: 0.375rem;
 }
 
 [data-testid="engagement-assignment-board"] > .grid:first-of-type > div {
-  border-radius: 0 !important;
+  border-radius: 0.375rem !important;
   border-color: #DCE2EA !important;
   background: #F8F9FB !important;
   color: #101115 !important;
@@ -123,7 +150,7 @@
 
 [data-testid="engagement-center-grouped-board"],
 [data-testid="engagement-center-grouped-board"] button {
-  border-radius: 0 !important;
+  border-radius: 0.375rem !important;
 }
 
 @media (max-width: 900px) {
