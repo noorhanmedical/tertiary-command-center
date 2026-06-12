@@ -81,7 +81,7 @@ export default function EngagementCenterPage() {
   };
 
   return (
-    <div className="relative left-1/2 flex h-full w-screen -translate-x-1/2 flex-col bg-[#EEF1F6] text-[#101115]">
+    <div className="flex h-full min-w-0 flex-col bg-[#EEF1F6] text-[#101115]">
       <header className="sticky top-0 z-30 border-b border-slate-800 bg-[#101115] text-white">
         <div className="flex h-20 w-full items-center justify-between gap-4 px-6 lg:px-10">
           <div className="flex items-center gap-4">
