@@ -8,6 +8,7 @@ import { SchedulerIcon } from "@/components/plexus/SchedulerIcon";
 import type { AssignmentRow, CallBucket, OutreachCallItem } from "./types";
 import { BucketIndicator } from "./SmallBits";
 import { digitsOnly, formatRelative, statusBadgeClass, statusLabel, toDate } from "./utils";
+import { CallListDuplicateBanner } from "@/components/outreach/CallListDuplicateBanner";
 
 export type CallListEntry = { item: OutreachCallItem; latest: OutreachCall | undefined; bucket: CallBucket };
 
@@ -36,6 +37,11 @@ export function CallListPanel({
     <div className="min-w-0 flex flex-col max-h-[calc(100vh-140px)] xl:max-h-none xl:min-h-0 xl:h-full">
       <div className="rounded-3xl border border-white/60 bg-white/85 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl overflow-hidden flex flex-col min-h-0 flex-1">
         <div className="px-5 pt-5 pb-4 flex flex-col flex-1 min-h-0">
+          {/* Phase 1 Patient Directory activation: read-only duplicate
+              warning banner above the call list. Renders nothing when
+              no patient has a warning (activation flag OFF or empty
+              facts). */}
+          <CallListDuplicateBanner sortedCallList={sortedCallList} />
           <div className="mb-3 flex flex-wrap items-center gap-3">
             <h2 className="text-lg font-semibold text-slate-900">Call list</h2>
             <Badge variant="outline" className="rounded-full text-[11px] text-slate-500">

@@ -19,6 +19,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import QualificationPatientCardsPane from "@/components/qualification/QualificationPatientCardsPane";
+import { PlexusIQRunOrganizationPanel, type PlexusIQRunOrgBatch } from "@/components/plexus-iq/PlexusIQRunOrganizationPanel";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 import {
@@ -478,6 +479,32 @@ export function PlexusIQWorkspace({
     return facilities;
   }, [summary]);
 
+  // Qualification run-organization panel input. Maps each batch's
+  // createdAt + patients into the PlexusIQRunOrgBatch shape so the
+  // additive panel can group by parent date / run and feed the
+  // RunComparisonSelector + duplicate-warning engine.
+  const runOrgBatches = useMemo<ReadonlyArray<PlexusIQRunOrgBatch>>(() => {
+    const out: PlexusIQRunOrgBatch[] = [];
+    for (const [bidStr, det] of Object.entries(batchDetails)) {
+      const bid = Number.parseInt(bidStr, 10);
+      const createdAt = det.createdAt instanceof Date
+        ? det.createdAt.toISOString()
+        : typeof det.createdAt === "string" ? det.createdAt : new Date(0).toISOString();
+      const patients = (det.patients ?? []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        facility: p.facility ?? null,
+        patientType: (p.patientType ?? "visit"),
+        appointmentTime: p.time ?? null,
+        dob: p.dob ?? null,
+        phoneNumber: p.phoneNumber ?? null,
+        mrn: ((p as unknown as Record<string, unknown>).mrn as string | null | undefined) ?? null,
+      }));
+      out.push({ batchId: bid, batchCreatedAt: createdAt, patients });
+    }
+    return out;
+  }, [batchDetails]);
+
   // Per-tab bucket lists below (needs/finalized/scheduled/clinic
   // rollups/totals) all derive from `allGroups`, so memoizing this
   // single grouping is enough to keep every downstream useMemo stable
@@ -801,6 +828,18 @@ export function PlexusIQWorkspace({
             </div>
           </div>
 
+          {/* Run organization panel — date/run grouping, comparison
+              selector, outreach-alphabetical / visit-by-appointment
+              ordering, live duplicate warnings. Additive surface. */}
+          <PlexusIQRunOrganizationPanel
+            batches={runOrgBatches.filter((b) =>
+              b.patients.some((p) => (p.facility ?? "Unassigned") === selectedClinicFacility),
+            ).map((b) => ({
+              ...b,
+              patients: b.patients.filter((p) => (p.facility ?? "Unassigned") === selectedClinicFacility),
+            }))}
+          />
+
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6" data-testid="plexus-iq-clinic-status-tiles">
             {tiles.map((t) => {
               const isActive = clinicStatusFilter === t.id;
@@ -948,6 +987,10 @@ export function PlexusIQWorkspace({
           ← Back to clinic tiles
         </button>
       </div>
+      {/* Run organization panel (legacy "All view") — same additive
+          surface as the clinic-detail view, scoped to all batches. */}
+      <PlexusIQRunOrganizationPanel batches={runOrgBatches} />
+
       <Tabs defaultValue="needs" className="w-full">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <TabsList className="bg-slate-100" data-testid="plexus-iq-worklist-tabs">

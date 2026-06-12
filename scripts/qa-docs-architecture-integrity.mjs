@@ -386,6 +386,13 @@ info("docs/architecture/patient-directory-runtime-implementation-audit.md");
 info("docs/architecture/patient-directory-runtime-blockers.md");
 info("docs/architecture/patient-directory-duplicate-warning-results.md");
 
+// Patient Directory full-activation — review branch docs.
+info("docs/architecture/patient-directory-full-activation-blockers.md");
+info("docs/architecture/patient-directory-full-activation-results.md");
+
+// Phase 1 final-completion — second-round review branch docs.
+info("docs/architecture/phase-1-final-completion-results.md");
+
 if (failures.length > 0) {
   console.error("Architecture docs integrity QA failed:");
   for (const f of failures) console.error(`- ${f}`);

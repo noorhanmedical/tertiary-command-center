@@ -70,8 +70,13 @@ requireNotText(SVC, [
   "console.info",
 ], "patient directory service must stay pure");
 
-// Dormancy — no route imports the scaffold.
+// Activation branch wires server/routes/patientDirectory.ts to consume
+// the scaffold via patientDirectoryStorageDeps. Authorized importers
+// allowlist scoped to that route file.
 {
+  const ALLOWED_ROUTES = new Set([
+    "server/routes/patientDirectory.ts",
+  ]);
   const ROUTES = path.join(root, "server/routes");
   const RE = /(?:from|import)\s+['"][^'"]*\/patientDirectoryService(?:\.\w+)?['"]/;
   function walk(dir) {
@@ -82,6 +87,7 @@ requireNotText(SVC, [
       if (e.isDirectory()) { walk(abs); continue; }
       if (!/\.(ts|tsx|mts|cts)$/.test(e.name)) continue;
       const rel = path.relative(root, abs);
+      if (ALLOWED_ROUTES.has(rel)) continue;
       const src = fs.readFileSync(abs, "utf8");
       if (RE.test(src)) failures.push(`Route ${rel} unauthorized importer of patientDirectoryService`);
     }
@@ -89,11 +95,15 @@ requireNotText(SVC, [
   walk(ROUTES);
 }
 
-// No migration files added by this branch (B3 promise).
+// 0026 / 0027 / 0028 / 0029 — all additive nullable, all committed.
+// Guard against any future destructive migration sneaking in by name.
 {
-  const migrations = fs.readdirSync(path.join(root, "migrations")).filter((f) => /^00(2[6-9])/.test(f));
-  if (migrations.length > 0) {
-    failures.push(`This branch must NOT add migrations; found: ${migrations.join(", ")}`);
+  const all = fs.readdirSync(path.join(root, "migrations")).filter((f) => /\.sql$/.test(f));
+  for (const f of all) {
+    const src = fs.readFileSync(path.join(root, "migrations", f), "utf8");
+    for (const dangerous of [/DROP TABLE/i, /DROP COLUMN/i, /TRUNCATE\s/i, /DELETE FROM/i]) {
+      if (dangerous.test(src)) failures.push(`${f} contains destructive statement matching ${dangerous}`);
+    }
   }
 }
 

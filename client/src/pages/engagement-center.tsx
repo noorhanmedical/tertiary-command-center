@@ -19,6 +19,7 @@
 
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { EngagementAssignmentBoard } from "@/components/engagement/EngagementAssignmentBoard";
+import { EngagementDuplicateBanner } from "@/components/engagement/EngagementDuplicateBanner";
 
 export default function EngagementCenterPage() {
   return (
@@ -44,7 +45,8 @@ export default function EngagementCenterPage() {
       </header>
 
       <main className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-6">
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-6 space-y-3">
+          <EngagementDuplicateBanner />
           <EngagementAssignmentBoard />
         </div>
       </main>
