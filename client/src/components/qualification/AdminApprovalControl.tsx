@@ -13,6 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loader2, ShieldCheck, AlertCircle, Clock, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { AdminReviewDuplicateGuard, isApprovalHardBlocked } from "@/components/patient-directory/AdminReviewDuplicateGuard";
+import { useLiveDuplicateWarnings } from "@/lib/useLiveDuplicateWarnings";
 
 // Compact admin approval chip + dialog used on `PatientCard`. The
 // chip displays the current approval state; clicking opens a dialog
@@ -26,6 +28,12 @@ export type AdminApprovalControlProps = {
   patientId: number;
   status: AdminApprovalStatus | string | null;
   compact?: boolean;
+  /** Optional identity info for the live duplicate-warning guard. */
+  patientName?: string | null;
+  facility?: string | null;
+  dob?: string | null;
+  phoneNumber?: string | null;
+  mrn?: string | null;
 };
 
 const STATUS_META: Record<
@@ -65,7 +73,24 @@ export function AdminApprovalControl({
   patientId,
   status,
   compact = false,
+  patientName = null,
+  facility = null,
+  dob = null,
+  phoneNumber = null,
+  mrn = null,
 }: AdminApprovalControlProps) {
+  // Live duplicate-warning guard: queries the activation flag-gated
+  // /api/patient-directory/duplicate-warning-facts endpoint and
+  // hard-blocks Save when DNC or active cooldown is in effect.
+  const warnings = useLiveDuplicateWarnings({
+    currentPatients: [{
+      patientScreeningId: patientId,
+      patientName: patientName ?? "",
+      identity: { name: patientName ?? "", facility, dob, phoneNumber, mrn },
+    }],
+  });
+  const warning = warnings.byId[patientId];
+  const blocked = isApprovalHardBlocked(warning);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -121,6 +146,7 @@ export function AdminApprovalControl({
           <DialogHeader>
             <DialogTitle className="text-base">Admin approval</DialogTitle>
           </DialogHeader>
+          <AdminReviewDuplicateGuard result={warning} />
           <div className="space-y-2">
             <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
               Status
@@ -170,12 +196,13 @@ export function AdminApprovalControl({
             </Button>
             <Button
               onClick={() => mutation.mutate()}
-              disabled={mutation.isPending || picked === current}
+              disabled={mutation.isPending || picked === current || (blocked && picked === "approved")}
               className="gap-1.5"
               data-testid={`admin-approval-save-${patientId}`}
+              title={blocked && picked === "approved" ? "Blocked by Patient Directory (DNC or active cooldown)" : undefined}
             >
               {mutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Save
+              {blocked && picked === "approved" ? "Blocked — cannot approve" : "Save"}
             </Button>
           </DialogFooter>
         </DialogContent>
