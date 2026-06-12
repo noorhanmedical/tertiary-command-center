@@ -92,39 +92,44 @@ step(4, "PatientDirectoryLivePage uses client API helper", () => {
   ]);
 });
 
-// 5) Plexus IQ live workspace uses qualificationRunOrdering via the panel.
-step(5, "PlexusIQWorkspace consumes the run-organization panel", () => {
+// 5) Plexus IQ live workspace uses the compact run selector + ordering.
+step(5, "PlexusIQWorkspace consumes the compact PlexusIQRunSelector + orderPatientsWithinRun", () => {
   requireText("client/src/components/plexus-iq/PlexusIQWorkspace.tsx", [
-    "PlexusIQRunOrganizationPanel",
-    "runOrgBatches",
-  ]);
-  requireText("client/src/components/plexus-iq/PlexusIQRunOrganizationPanel.tsx", [
-    "buildQualificationGroups",
+    "PlexusIQRunSelector",
     "orderPatientsWithinRun",
-    "RunComparisonSelector",
-    "useLiveDuplicateWarnings",
-    "DuplicateWarningBadge",
-    "PatientAuditTrailModal",
   ]);
-});
-
-// 6) Parent-date + run grouping visible.
-step(6, "Run-organization panel renders parent-date dropdowns with run labels", () => {
-  requireText("client/src/components/plexus-iq/PlexusIQRunOrganizationPanel.tsx", [
-    "plexus-iq-run-org-date-list",
-    "plexus-iq-run-org-date-toggle-",
-    "plexus-iq-run-org-runs-",
-    "Newest first",
-    "Oldest first",
-  ]);
-});
-
-// 7) Sort controls visible.
-step(7, "Sort + Select all + Clear controls visible in source", () => {
-  const c = read("client/src/components/plexus-iq/PlexusIQRunOrganizationPanel.tsx") ?? "";
-  for (const n of ["plexus-iq-run-org-sort-toggle", "plexus-iq-run-org-select-all", "plexus-iq-run-org-clear"]) {
-    if (!c.includes(n)) throw new Error(`missing control: ${n}`);
+  const wk = read("client/src/components/plexus-iq/PlexusIQWorkspace.tsx") ?? "";
+  if (wk.includes("PlexusIQRunOrganizationPanel")) throw new Error("workspace must not re-introduce the giant panel");
+  // The removed giant panel file no longer exists on disk.
+  if (read("client/src/components/plexus-iq/PlexusIQRunOrganizationPanel.tsx") !== null) {
+    throw new Error("PlexusIQRunOrganizationPanel.tsx must be deleted");
   }
+});
+
+// 6) Compact run selector renders run rows with exact created
+//    date/time + supports the explicit all-runs row.
+step(6, "Compact PlexusIQRunSelector exposes per-run rows + explicit all-runs", () => {
+  requireText("client/src/components/plexus-iq/PlexusIQRunSelector.tsx", [
+    "PlexusIQRunSelector",
+    "plexus-iq-run-selector",
+    "plexus-iq-run-row-",
+    "plexus-iq-run-pick-",
+    "plexus-iq-run-all",
+    "All runs for this date",
+    "explicit only",
+    "Run ",
+  ]);
+});
+
+// 7) Active selection + state separation. Workspace must store
+//    selectedBatchByBucket separately from selectedDate.
+step(7, "Workspace tracks selectedBatchByBucket + allRunsModeByBucket separately", () => {
+  requireText("client/src/components/plexus-iq/PlexusIQWorkspace.tsx", [
+    "selectedBatchByBucket",
+    "allRunsModeByBucket",
+    "resolveSelection",
+    "reduceToActive",
+  ]);
 });
 
 // 8) Outreach alphabetical ordering test.
@@ -134,15 +139,16 @@ step(8, "Outreach alphabetical + visit appointment-time ordering test", () =>
 // 9) Visit appointment-time ordering verified by same test.
 step(9, "Visit appointment-time ordering verified by run-ordering test (same fixture)", () => {});
 
-// 10) RunComparisonSelector rendered in panel.
-step(10, "RunComparisonSelector rendered by live Plexus IQ panel", () => {
-  requireText("client/src/components/plexus-iq/PlexusIQRunOrganizationPanel.tsx", ["<RunComparisonSelector"]);
+// 10) Compact "Compare" chip exists per run (not as a giant panel).
+step(10, "Compact compare chip rendered per run row", () => {
+  requireText("client/src/components/plexus-iq/PlexusIQRunSelector.tsx", ["plexus-iq-run-compare-"]);
 });
 
-// 11) Duplicate warning badge in Plexus IQ.
-step(11, "DuplicateWarningBadge appears inside the live Plexus IQ panel", () => {
-  requireText("client/src/components/plexus-iq/PlexusIQRunOrganizationPanel.tsx", [
-    "<DuplicateWarningBadge",
+// 11) DuplicateWarningBadge is still exported + rendered somewhere on
+//     the live live PD page / Engagement banner / Team Portal banner.
+step(11, "DuplicateWarningBadge component still exported", () => {
+  requireText("client/src/components/patient-directory/DuplicateWarningBadge.tsx", [
+    "DuplicateWarningBadge",
     "DuplicateWarningSummary",
   ]);
 });
@@ -172,11 +178,11 @@ step(13, "Engagement banner + Team Portal call-list banner wired", () => {
 });
 
 // 14) PatientAuditTrailModal reachable from warning + profile paths.
-step(14, "PatientAuditTrailModal reachable from at least 3 warning surfaces", () => {
+step(14, "PatientAuditTrailModal reachable from at least 3 surfaces", () => {
   for (const rel of [
-    "client/src/components/plexus-iq/PlexusIQRunOrganizationPanel.tsx",
     "client/src/components/engagement/EngagementDuplicateBanner.tsx",
     "client/src/components/outreach/CallListDuplicateBanner.tsx",
+    "client/src/components/patient-directory/PatientAuditTrailModal.tsx",
   ]) requireText(rel, ["PatientAuditTrailModal"]);
 });
 

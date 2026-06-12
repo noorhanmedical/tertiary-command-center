@@ -25,10 +25,13 @@ for (const n of [
 //      Directory live page consumes endpointUnavailable so OFF flag
 //      shows the source-unavailable state.
 {
+  // After the hotfix the giant Plexus IQ panel is gone; the modal is
+  // still reachable from the Engagement banner, the Team Portal
+  // call-list banner, and the live Patient Directory page audit tab.
   const surfaces = [
-    "client/src/components/plexus-iq/PlexusIQRunOrganizationPanel.tsx",
     "client/src/components/engagement/EngagementDuplicateBanner.tsx",
     "client/src/components/outreach/CallListDuplicateBanner.tsx",
+    "client/src/components/patient-directory/PatientAuditTrailModal.tsx",
   ];
   for (const rel of surfaces) {
     const c = read(rel) ?? "";
