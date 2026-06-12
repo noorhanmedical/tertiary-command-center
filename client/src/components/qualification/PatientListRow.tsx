@@ -301,6 +301,7 @@ export function PatientListRow({
             title="Remove patient"
             className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors"
             data-testid={`button-delete-patient-list-row-${patient.id}`}
+            data-legacy-testid={`menu-list-row-delete-${patient.id}`}
             data-row-action="plexus-iq-delete-patient"
             data-delete-action="plexus-iq-delete-patient"
           >
@@ -346,19 +347,10 @@ export function PatientListRow({
                 )}
                 {generateLabel}
               </DropdownMenuItem>
-              {/* Delete is available to Plexus IQ users — NOT admin-only. */}
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (confirm("Remove this patient?")) onDelete();
-                }}
-                data-testid={`menu-list-row-delete-${patient.id}`}
-                data-delete-action="plexus-iq-delete-patient"
-                className="text-rose-700"
-              >
-                <Trash2 className="w-3.5 h-3.5 mr-2" />
-                Remove patient
-              </DropdownMenuItem>
+              {/* Remove patient lives on the inline trash icon (above);
+                  the dropdown duplicate is dropped to avoid two delete
+                  affordances on the same row. The inline button keeps
+                  the canonical data-testid `button-delete-patient-list-row-*`. */}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

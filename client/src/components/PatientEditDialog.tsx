@@ -170,7 +170,56 @@ export function PatientEditDialog({
         data-testid={`dialog-patient-edit-${patient.id}`}
       >
         <DialogHeader className="px-5 pt-5 pb-3 border-b">
-          <DialogTitle className="text-base font-semibold tracking-tight">Edit Patient</DialogTitle>
+          <div className="flex items-center justify-between gap-2">
+            <DialogTitle className="text-base font-semibold tracking-tight">Edit Patient</DialogTitle>
+            {/* Admin Review entry moves into the header so the body
+                doesn't carry a large duplicate CTA. Admin-only is still
+                enforced by the parent — onOpenAdminReview is only wired
+                when the role check passes. */}
+            {onOpenAdminReview && (() => {
+              const review = computeAdminReview({
+                name: patient.name,
+                dob: patient.dob,
+                phoneNumber: patient.phoneNumber,
+                facility: patient.facility,
+                qualifyingTests,
+                commitStatus: patient.commitStatus,
+                adminApprovalStatus:
+                  (patient as { adminApprovalStatus?: string | null })
+                    .adminApprovalStatus ?? null,
+              });
+              const title =
+                review.approval === "approved"
+                  ? "Approved · Open Admin Review"
+                  : review.approval === "rejected"
+                    ? "Rejected · Open Admin Review"
+                    : review.approval === "needs_info"
+                      ? "Needs Info · Open Admin Review"
+                      : review.readyForAdminReview
+                        ? "Ready for Admin Review"
+                        : "Open Admin Review";
+              const tone =
+                review.readyForAdminReview
+                  ? "text-violet-700 hover:text-violet-900 hover:bg-violet-50"
+                  : review.approval === "approved"
+                    ? "text-emerald-700 hover:bg-emerald-50"
+                    : review.approval === "rejected"
+                      ? "text-rose-700 hover:bg-rose-50"
+                      : "text-slate-700 hover:bg-slate-50";
+              return (
+                <button
+                  type="button"
+                  onClick={onOpenAdminReview}
+                  aria-label={title}
+                  title={title}
+                  className={`inline-flex items-center justify-center h-7 w-7 rounded transition-colors ${tone}`}
+                  data-testid={`dialog-button-admin-review-${patient.id}`}
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                </button>
+              );
+            })()}
+          </div>
         </DialogHeader>
 
         <div className="px-5 py-4 space-y-5">
@@ -374,58 +423,8 @@ export function PatientEditDialog({
             </div>
           </section>
 
-          {/* Admin Review entry point — surfaces the unified review
-              dialog from inside the edit flow. Visible whenever the
-              caller wires the handler. */}
-          {onOpenAdminReview && (
-            <section className="space-y-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-finance-text-muted">
-                Admin Review
-              </div>
-              {(() => {
-                const review = computeAdminReview({
-                  name: patient.name,
-                  dob: patient.dob,
-                  phoneNumber: patient.phoneNumber,
-                  facility: patient.facility,
-                  qualifyingTests,
-                  commitStatus: patient.commitStatus,
-                  adminApprovalStatus:
-                    (patient as { adminApprovalStatus?: string | null })
-                      .adminApprovalStatus ?? null,
-                });
-                const label =
-                  review.approval === "approved"
-                    ? "Approved · Open Admin Review"
-                    : review.approval === "rejected"
-                      ? "Rejected · Open Admin Review"
-                      : review.approval === "needs_info"
-                        ? "Needs Info · Open Admin Review"
-                        : review.readyForAdminReview
-                          ? "Ready for Admin Review"
-                          : "Open Admin Review";
-                const variant =
-                  review.readyForAdminReview
-                    ? "bg-violet-600 text-white hover:bg-violet-700"
-                    : review.approval === "approved"
-                      ? "bg-emerald-100 text-emerald-900 border border-emerald-200 hover:bg-emerald-200"
-                      : review.approval === "rejected"
-                        ? "bg-rose-100 text-rose-900 border border-rose-200 hover:bg-rose-200"
-                        : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50";
-                return (
-                  <Button
-                    type="button"
-                    onClick={onOpenAdminReview}
-                    className={`gap-1.5 ${variant}`}
-                    data-testid={`dialog-button-admin-review-${patient.id}`}
-                  >
-                    <ShieldCheck className="w-4 h-4" />
-                    {label}
-                  </Button>
-                );
-              })()}
-            </section>
-          )}
+          {/* Admin Review CTA moved to the header (top-right shield
+              icon). Keeps capability without the large body section. */}
         </div>
 
         {!completeness.isComplete && (

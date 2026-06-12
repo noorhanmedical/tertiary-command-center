@@ -408,14 +408,17 @@ function WorklistGroupCard({
               <CalendarCheck className="w-4 h-4" />
             </IconButton>
           )}
+          {/* Quieter count chip — the chevron above is the canonical
+              expand control. Still clickable for redundancy and to
+              preserve onToggle wiring + the existing data-testid. */}
           <button
             type="button"
             onClick={onToggle}
-            className="ml-1 inline-flex items-center gap-1 rounded-full bg-slate-100 hover:bg-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-800 transition-colors"
+            aria-label={ariaLabel}
+            className="ml-1 inline-flex items-center gap-1 rounded text-[11px] text-[#475467] hover:text-[#111827] transition-colors px-1.5 py-0.5"
             data-testid={`button-plexus-iq-worklist-action-${group.batchId}`}
           >
-            {ariaLabel}
-            <span className="text-slate-500">({patientsToRender.length})</span>
+            <span className="tabular-nums">{patientsToRender.length}</span>
           </button>
         </div>
       </div>

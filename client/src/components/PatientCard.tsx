@@ -528,22 +528,29 @@ export function PatientCard({
                   <Pencil className="w-3.5 h-3.5 mr-2" />
                   Edit patient
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={generateDisabled}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!infoComplete) return;
-                    onAnalyze();
-                  }}
-                  data-testid={`menu-generate-${patient.id}`}
-                >
-                  {isAnalyzing ? (
-                    <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-3.5 h-3.5 mr-2" />
-                  )}
-                  {generateLabel}
-                </DropdownMenuItem>
+                {/* When zero tests, the front-card round Generate is
+                    the primary CTA; hide the duplicate menu entry.
+                    When tests exist, Re-generate stays here as the
+                    secondary action — Generate disappears from the
+                    front so the front stays icon-only. */}
+                {tests.length > 0 && (
+                  <DropdownMenuItem
+                    disabled={generateDisabled}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!infoComplete) return;
+                      onAnalyze();
+                    }}
+                    data-testid={`menu-generate-${patient.id}`}
+                  >
+                    {isAnalyzing ? (
+                      <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5 mr-2" />
+                    )}
+                    {generateLabel}
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
