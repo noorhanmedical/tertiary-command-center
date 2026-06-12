@@ -10,8 +10,8 @@
 // storage deps are defensive.
 
 import type { Express } from "express";
+import { isPatientDirectoryActivationEnabled } from "../services/patientDirectory/patientDirectoryActivationFlag";
 import {
-  isPatientDirectoryActivationEnabled,
   addPriorTest,
   buildDuplicateFacts,
   clearCooldown,

@@ -46,10 +46,10 @@ export type PatientDirectoryEventWrite = {
   payload?: Record<string, unknown>;
 };
 
-const TRUTHY = new Set(["1", "true", "yes"]);
-export function isPatientDirectoryActivationEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return TRUTHY.has(env.USE_PATIENT_DIRECTORY_ACTIVATION ?? "");
-}
+// Re-export the activation flag accessor from its dedicated tiny
+// module so callers that want only the flag can read it without
+// pulling the db / storage layer.
+export { isPatientDirectoryActivationEnabled } from "./patientDirectoryActivationFlag";
 
 /** Insert an audit event. Safe no-op when the 0029 table is missing. */
 export async function writePatientDirectoryEvent(event: PatientDirectoryEventWrite): Promise<void> {

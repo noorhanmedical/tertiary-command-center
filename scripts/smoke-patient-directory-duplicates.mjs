@@ -70,14 +70,17 @@ step(4, "Patient Directory service test", () =>
   runTest("server/services/patientDirectory/__tests__/patientDirectoryService.test.ts"));
 
 // 5) Migration plan committed (no migrations added)
-step(5, "Migration plan present; no 0026-0029 migrations committed", () => {
+step(5, "Migration plan present; 0026 committed; 0027-0029 inlined in activation blockers", () => {
+  // Prior-batch plan doc still pinned.
   requireText("docs/architecture/patient-directory-runtime-blockers.md", [
     "0026_add_patient_screening_mrn.sql",
     "0027_add_patient_screening_do_not_contact.sql",
     "0028_add_screening_batch_source_file.sql",
     "0029_add_patient_directory_events.sql",
   ]);
-  const migrations = fs.readdirSync(path.join(root, "migrations")).filter((f) => /^00(2[6-9])/.test(f));
+  // 0026 is committed by the activation branch (safe additive column).
+  // 0027/0028/0029 must remain inlined-in-doc only.
+  const migrations = fs.readdirSync(path.join(root, "migrations")).filter((f) => /^00(2[7-9])/.test(f));
   if (migrations.length > 0) throw new Error(`unexpected migrations committed: ${migrations.join(", ")}`);
 });
 
