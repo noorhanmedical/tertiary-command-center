@@ -22,6 +22,7 @@ import QualificationPatientCardsPane from "@/components/qualification/Qualificat
 import { PlexusIQRunSelector, type PlexusIQRunSibling } from "@/components/plexus-iq/PlexusIQRunSelector";
 import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
 import { orderPatientsWithinRun } from "@/lib/qualificationRunOrdering";
+import { orderPacketPatientsForDisplayAndPdf } from "@/lib/patientPacketOrdering";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 import {
@@ -836,21 +837,29 @@ export function PlexusIQWorkspace({
   const clinicDetailFiltered = useMemo(() => {
     const facilityHint = selectedClinicFacility;
     const rows = clinicDetailRollup.patients;
+    // Hotfix: the completed-section visible list, the packet popup,
+    // and the PDF preview/save all use the same ordering source —
+    // outreach alphabetical, visit by appointment time. The raw rows
+    // from clinicDetailRollup come back in DB / batch order; we sort
+    // here so what the user sees on screen matches what gets handed to
+    // the packet popup + handlePacket + openPatientPacketPrintPreview.
+    let filtered: PatientScreening[];
     switch (clinicStatusFilter) {
       case "needs":
-        return rows.filter(isIncomplete);
+        filtered = rows.filter(isIncomplete); break;
       case "completed":
-        return rows.filter(isFinalized);
+        filtered = rows.filter(isFinalized); break;
       case "missingInfo":
-        return rows.filter((p) => isMissingEngagementInfo(p, facilityHint));
+        filtered = rows.filter((p) => isMissingEngagementInfo(p, facilityHint)); break;
       case "readyForEngagement":
-        return rows.filter((p) => isReadyForEngagement(p, facilityHint));
+        filtered = rows.filter((p) => isReadyForEngagement(p, facilityHint)); break;
       case "sentToEngagement":
-        return rows.filter(isSentToEngagement);
+        filtered = rows.filter(isSentToEngagement); break;
       case "all":
       default:
-        return rows;
+        filtered = rows; break;
     }
+    return orderPacketPatientsForDisplayAndPdf(filtered);
   }, [clinicDetailRollup, clinicStatusFilter, selectedClinicFacility]);
 
   const clinicDetailScheduleDate = useMemo(() => {
@@ -1546,6 +1555,11 @@ function ClinicDetailPackets({
     string,
     { scheduleDate: string | null; patients: PdfPacketSourcePatient[]; eligible: PdfPacketSourcePatient[] }
   >();
+  // Build raw bucket lists first, then re-sort each bucket so the
+  // packet picker + handlePacket + PDF preview see the same outreach-
+  // alphabetical / visit-appointment-time ordering. Without this, the
+  // dialog displayed alphabetical names but its onGenerate handler
+  // re-filtered raw eligibles and shipped raw order to the PDF.
   for (const p of patients) {
     const sd = patientToScheduleDate.get(p.id) ?? fallbackScheduleDate ?? null;
     const key = sd ?? "(no date)";
@@ -1553,6 +1567,10 @@ function ClinicDetailPackets({
     cur.patients.push(p as PdfPacketSourcePatient);
     if (isPatientPdfEligible(p)) cur.eligible.push(p as PdfPacketSourcePatient);
     groups.set(key, cur);
+  }
+  for (const cur of groups.values()) {
+    cur.patients = orderPacketPatientsForDisplayAndPdf(cur.patients) as PdfPacketSourcePatient[];
+    cur.eligible = orderPacketPatientsForDisplayAndPdf(cur.eligible) as PdfPacketSourcePatient[];
   }
 
   const ordered = Array.from(groups.entries()).sort((a, b) => {
@@ -1610,8 +1628,16 @@ function ClinicDetailPackets({
       });
       return;
     }
-    const validation = validateSameFacilityDatePacket(
+    // Defense in depth: re-order the eligible roster here as well so
+    // ANY caller (not just the packet popup) gets a consistently sorted
+    // PDF. validateSameFacilityDatePacket preserves input order, so
+    // ordering before it suffices for both validation.patients and
+    // the eventual openPatientPacketPrintPreview call.
+    const orderedEligible = orderPacketPatientsForDisplayAndPdf(
       eligible.map((p) => ({ ...p, facility }) as PdfPacketSourcePatient),
+    ) as PdfPacketSourcePatient[];
+    const validation = validateSameFacilityDatePacket(
+      orderedEligible,
       facility,
       scheduleDate,
     );
@@ -1858,7 +1884,13 @@ function ClinicDetailPackets({
         onClose={() => setPacketSel(null)}
         onGenerate={(selected) => {
           if (!packetSel) return;
-          const filtered = packetSel.patients.filter((p) => selected.some((s) => s.id === p.id));
+          // CRITICAL: re-order the filtered selection through the same
+          // shared helper so the PDF preview / saved PDF render in the
+          // same order the dialog displayed. Previously this line
+          // filtered the raw packetSel.patients which preserved DB
+          // order — the popup showed alphabetical but the PDF didn't.
+          const filteredRaw = packetSel.patients.filter((p) => selected.some((s) => s.id === p.id));
+          const filtered = orderPacketPatientsForDisplayAndPdf(filteredRaw);
           setPacketSel(null);
           handlePacket(packetSel.mode, packetSel.scheduleDate, filtered);
         }}
