@@ -12,6 +12,11 @@ import {
   PatientDirectoryPage,
   type PatientDirectoryRow,
 } from "@/components/patient-directory/PatientDirectoryPage";
+import {
+  AddPriorTestDialog,
+  BulkImportDialog,
+  DncCooldownDialog,
+} from "@/components/patient-directory/PatientDirectoryActions";
 import type { PatientProfileSnapshot } from "@/components/patient-directory/PatientProfileDrawer";
 import {
   type DirectorySnapshot,
@@ -81,6 +86,9 @@ export function PatientDirectoryLivePage({
 } = {}) {
   const [query, setQuery] = useState("");
   const qc = useQueryClient();
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [dncOpen, setDncOpen] = useState<{ id: number; dnc: boolean; cd: boolean } | null>(null);
+  const [priorOpen, setPriorOpen] = useState<{ id: number; name: string } | null>(null);
 
   const reachableQ = useQuery({
     queryKey: ["patient-directory-activation-reachable"],
@@ -148,16 +156,44 @@ export function PatientDirectoryLivePage({
   // signal so the modal renders its source-unavailable state when the
   // activation flag is OFF.
   return (
-    <PatientDirectoryPage
-      searchResults={searchResults}
-      warningResultsById={warningResultsById}
-      snapshotById={snapshotById}
-      onSearch={(q) => {
-        setQuery(q);
-        // Invalidate so the dependent search runs.
-        qc.invalidateQueries({ queryKey: ["patient-directory-search"] });
-      }}
-      auditEndpointUnavailable={!reachable}
-    />
+    <>
+      <PatientDirectoryPage
+        searchResults={searchResults}
+        warningResultsById={warningResultsById}
+        snapshotById={snapshotById}
+        onSearch={(q) => {
+          setQuery(q);
+          qc.invalidateQueries({ queryKey: ["patient-directory-search"] });
+        }}
+        onBulkImport={() => setBulkImportOpen(true)}
+        auditEndpointUnavailable={!reachable}
+      />
+
+      <BulkImportDialog
+        open={bulkImportOpen}
+        onOpenChange={setBulkImportOpen}
+        batchId={0 /* operator picks via the existing flow until a batch picker lands */}
+        onComplete={() => qc.invalidateQueries({ queryKey: ["patient-directory-search"] })}
+      />
+      {dncOpen ? (
+        <DncCooldownDialog
+          open={dncOpen !== null}
+          onOpenChange={(o) => !o && setDncOpen(null)}
+          patientScreeningId={dncOpen.id}
+          currentDnc={dncOpen.dnc}
+          currentCooldownActive={dncOpen.cd}
+          onComplete={() => qc.invalidateQueries({ queryKey: ["patient-directory-search"] })}
+        />
+      ) : null}
+      {priorOpen ? (
+        <AddPriorTestDialog
+          open={priorOpen !== null}
+          onOpenChange={(o) => !o && setPriorOpen(null)}
+          patientScreeningId={priorOpen.id}
+          patientName={priorOpen.name}
+          onComplete={() => qc.invalidateQueries({ queryKey: ["patient-directory-search"] })}
+        />
+      ) : null}
+    </>
   );
 }
