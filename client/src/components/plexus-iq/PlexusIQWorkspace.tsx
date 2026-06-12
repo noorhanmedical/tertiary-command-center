@@ -955,33 +955,36 @@ export function PlexusIQWorkspace({
       };
       return (
         <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3">
-          <div className="flex items-center gap-3" data-testid="plexus-iq-clinic-detail-header">
+          {/* Single breadcrumb row. Replaces the prior duplicate
+              "Back to clinics" pill + facility label + "Legacy full
+              view →" trio. Legacy view stays reachable from the
+              Plexus IQ overview eyebrow; not duplicated here. */}
+          <nav
+            className="flex items-center gap-1.5 text-[13px]"
+            data-testid="plexus-iq-clinic-detail-header"
+            data-legacy-testid="plexus-iq-clinic-detail-header"
+            aria-label="Breadcrumb"
+          >
             <button
               type="button"
               onClick={() => {
                 setSelectedClinicFacility(null);
                 setClinicStatusFilter("completed");
               }}
-              className="inline-flex items-center gap-1 rounded-full bg-slate-100 hover:bg-slate-200 px-3 py-1 text-xs font-medium text-slate-800"
+              className="inline-flex items-center gap-1 rounded text-[#475467] hover:text-[#111827] transition-colors px-1 py-0.5"
               data-testid="button-plexus-iq-clinic-back"
             >
               <ChevronRight className="h-3.5 w-3.5 rotate-180" />
-              Back to clinics
+              Clinics
             </button>
-            <div className="text-base font-semibold text-slate-900">
+            <span aria-hidden className="text-[#9AA3B2]">/</span>
+            <span
+              className="text-[#111827] font-medium truncate"
+              title={selectedClinicFacility ?? undefined}
+            >
               {selectedClinicFacility}
-            </div>
-            <div className="ml-auto">
-              <button
-                type="button"
-                onClick={() => setViewMode("all")}
-                className="text-[11px] text-slate-500 hover:text-slate-700"
-                data-testid="button-plexus-iq-legacy-full-view"
-              >
-                Legacy full view →
-              </button>
-            </div>
-          </div>
+            </span>
+          </nav>
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6" data-testid="plexus-iq-clinic-status-tiles">
             {tiles.map((t) => {
@@ -1787,10 +1790,13 @@ function ClinicDetailPackets({
             data-panel-color="#7283B0"
             style={{ backgroundColor: "#7283B0" }}
           >
+            {/* Header line drops the facility · date repeat because the
+                left-side date rail already carries that context. Count
+                stays since it is the only piece of info unique here. */}
             <div className="flex items-center gap-2 px-1 pb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/85">
               <CalendarDays className="w-3 h-3 opacity-80" />
               <span className="truncate">
-                {facility} · {dateLabelFor(activeEntry[1].scheduleDate)}
+                {dateLabelFor(activeEntry[1].scheduleDate)}
               </span>
               <span className="ml-auto text-white/70 tabular-nums">
                 {activeEntry[1].patients.length}
