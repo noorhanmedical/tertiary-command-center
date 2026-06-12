@@ -165,3 +165,29 @@ CREATE INDEX IF NOT EXISTS idx_patient_directory_events_actor
 - [[phase-1-canonical-id-registry]]
 
 End of plan.
+
+## Deferred — PDF packet selection dialog wiring
+
+`PacketPatientSelectionDialog` exists, is QA-pinned, and accepts a
+`patients` roster + `onConfirm` callback that hands the narrowed
+selection back to the caller. The caller would be one of:
+
+- `client/src/components/qualification/PatientPdfActions.tsx`
+- `client/src/components/ResultsView.tsx`
+
+Both files live inside the protected qualification flow. Wiring the
+dialog into either would touch a protected surface, so the wiring
+remains deferred per the run brief's "if protected surface wiring is
+too risky, document deferred and keep component validated" rule.
+
+To wire (future approved batch):
+
+1. Import `PacketPatientSelectionDialog` in `PatientPdfActions.tsx`.
+2. Wrap the existing `generateClinicianPDF` / `generatePlexusPDF`
+   call with a state-driven open dialog that captures the operator's
+   selection.
+3. Pass the narrowed `patients` array to the generate helpers.
+4. Confirm visually that the PDF output is byte-equivalent when "all
+   patients" stays selected.
+
+No PDF format change. No new dependency.
