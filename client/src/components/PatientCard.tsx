@@ -233,7 +233,7 @@ export function PatientCard({
   const { isComplete: infoComplete, missing } = getPatientCompleteness(patient, { isVisit });
   const generatedFinal = patient.status === "completed";
   const showAsFinal = infoComplete && generatedFinal;
-  const statusLabel = !infoComplete ? "Pending" : generatedFinal ? "Final" : "Ready";
+  const statusLabel = !infoComplete ? "Needs Completion" : generatedFinal ? "Completed" : "Ready";
 
   // Three banner states:
   //   1. Lavender — `readyForAdminReview` (premium soft violet gradient,
@@ -270,7 +270,7 @@ export function PatientCard({
         };
 
   const reviewPillLabel = review.readyForAdminReview
-    ? "Ready for Admin Review"
+    ? "Admin Review"
     : review.approval === "approved"
       ? "Approved"
       : review.approval === "rejected"

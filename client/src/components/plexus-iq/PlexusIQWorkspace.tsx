@@ -55,9 +55,9 @@ type BatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 // Centralized facility/dashboard bucket display labels. Backend status
 // values stay untouched — this is presentation only.
 export const PLEXUS_IQ_BUCKET_LABELS = {
-  needs_completion: "Parsed",
+  needs_completion: "Needs Completion",
   missing_info: "Missing Info",
-  admin_review: "Admin Review Pending",
+  admin_review: "Admin Review",
   completed: "Completed",
   submitted_engagement: "Sent to Engagement",
 } as const;
@@ -322,9 +322,9 @@ function WorklistGroupCard({
 
   const ariaLabel =
     mode === "needs"
-      ? "Work incomplete"
+      ? "Needs Completion"
       : mode === "finalized"
-      ? "View finalized"
+      ? "View completed"
       : "View patients";
 
   return (
@@ -364,7 +364,7 @@ function WorklistGroupCard({
             {group.finalizedCount > 0 && (
               <>
                 <span className="text-slate-300">·</span>
-                <span className="text-emerald-700">{group.finalizedCount} finalized</span>
+                <span className="text-emerald-700">{group.finalizedCount} completed</span>
               </>
             )}
             {group.scheduleDate && group.scheduledCount > 0 && (
@@ -901,8 +901,8 @@ export function PlexusIQWorkspace({
       // Plexus IQ facility bucket order:
       //   1. Completed
       //   2. Missing Info
-      //   3. Parsed
-      //   4. Admin Review Pending
+      //   3. Needs Completion
+      //   4. Admin Review
       //   5. Sent to Engagement
       //   6. All Patients
       // SOURCE MARKER: Plexus IQ facility bucket order
@@ -1088,14 +1088,14 @@ export function PlexusIQWorkspace({
                   stacked + colored sparingly so the eye lands on the
                   number first. */}
               <div className="flex-1 px-4 py-3 space-y-1.5">
-                <StatRow label="Incomplete" value={c.incompleteCount} tone="amber" />
+                <StatRow label="Needs Completion" value={c.incompleteCount} tone="amber" />
                 <StatRow label="Completed" value={c.finalizedCount} tone="emerald" />
                 {c.missingInfoCount > 0 && (
-                  <StatRow label="Missing info" value={c.missingInfoCount} tone="rose" />
+                  <StatRow label="Missing Info" value={c.missingInfoCount} tone="rose" />
                 )}
                 {c.readyForEngagementCount > 0 && (
                   <StatRow
-                    label="Ready for Engagement"
+                    label="Admin Review"
                     value={c.readyForEngagementCount}
                     tone="sky"
                   />
@@ -1148,7 +1148,7 @@ export function PlexusIQWorkspace({
               )}
             </TabsTrigger>
             <TabsTrigger value="finalized" data-testid="tab-plexus-iq-finalized">
-              Finalized
+              Completed
               {totals.totalFinalized > 0 && (
                 <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-emerald-100 px-1.5 text-[10px] font-semibold text-emerald-800">
                   {totals.totalFinalized}
@@ -1178,7 +1178,7 @@ export function PlexusIQWorkspace({
             </span>
             <span className="text-slate-300">·</span>
             <span>
-              <strong className="text-slate-800">{totals.totalFinalized}</strong> finalized
+              <strong className="text-slate-800">{totals.totalFinalized}</strong> completed
             </span>
             <span className="text-slate-300">·</span>
             <span>
@@ -1195,7 +1195,7 @@ export function PlexusIQWorkspace({
           {needsGroups.length === 0 ? (
             <div className="rounded-2xl bg-white p-6 text-center text-xs text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
               <CheckCircle2 className="mx-auto mb-2 h-5 w-5 text-emerald-600" />
-              All visible patients are finalized. Use Finalized, Scheduled,
+              All visible patients are completed. Use Completed, Scheduled,
               or All Patients to review completed work.
             </div>
           ) : (
@@ -1232,7 +1232,7 @@ export function PlexusIQWorkspace({
         <TabsContent value="finalized" className="mt-3" data-testid="plexus-iq-tab-content-finalized">
           {finalizedGroups.length === 0 ? (
             <div className="rounded-2xl bg-white p-6 text-center text-xs text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-              No finalized patients yet. Run Generate on a batch to populate.
+              No completed patients yet. Run Generate on a batch to populate.
             </div>
           ) : (
             <div className="space-y-2">

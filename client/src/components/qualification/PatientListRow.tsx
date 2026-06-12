@@ -139,7 +139,7 @@ export function PatientListRow({
     isVisit,
   });
   const generatedFinal = patient.status === "completed";
-  const statusLabel = !infoComplete ? "Pending" : generatedFinal ? "Final" : "Ready";
+  const statusLabel = !infoComplete ? "Needs Completion" : generatedFinal ? "Completed" : "Ready";
   const statusToneClass = !infoComplete
     ? "bg-amber-50 text-amber-800 border-amber-200"
     : generatedFinal

@@ -196,7 +196,7 @@ export function PatientEditDialog({
                     : review.approval === "needs_info"
                       ? "Needs Info · Open Admin Review"
                       : review.readyForAdminReview
-                        ? "Ready for Admin Review"
+                        ? "Admin Review"
                         : "Open Admin Review";
               const tone =
                 review.readyForAdminReview
