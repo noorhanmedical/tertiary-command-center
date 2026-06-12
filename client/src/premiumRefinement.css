@@ -26,12 +26,8 @@
   letter-spacing: -0.012em !important;
 }
 
-/* Engagement Center should remain a left-panel/navigation destination, not a home-page tile. */
-[data-testid="tile-engagement-center"] {
-  display: none !important;
-}
-
 [data-testid="tile-team-member-portals"],
+[data-testid="tile-engagement-center"],
 [data-testid="tile-team-ops"],
 [data-testid="tile-patient-directory"],
 [data-testid="tile-document-upload"],
@@ -42,6 +38,7 @@
 }
 
 [data-testid="tile-team-member-portals"] *,
+[data-testid="tile-engagement-center"] *,
 [data-testid="tile-team-ops"] *,
 [data-testid="tile-patient-directory"] *,
 [data-testid="tile-document-upload"] *,
@@ -53,35 +50,7 @@
 }
 
 [data-testid="engagement-assignment-board"] {
-  position: relative;
   color: #101115;
-}
-
-[data-testid="engagement-assignment-board"]::before {
-  display: block;
-  min-height: 210px;
-  margin-bottom: 16px;
-  padding: 32px;
-  border: 1px solid #252A36;
-  background: radial-gradient(circle at 82% 12%, rgba(180,195,218,.18), transparent 26%), linear-gradient(135deg,#0D0E12 0%,#171B26 52%,#2A3D5A 100%);
-  box-shadow: 0 34px 90px rgba(4,8,16,.22);
-  color: #fff;
-  white-space: pre-line;
-  font-size: 54px;
-  line-height: .95;
-  letter-spacing: -0.04em;
-  font-weight: 520;
-  content: "Plexus Clinical\A Engagement";
-}
-
-[data-testid="engagement-assignment-board"]::after {
-  position: absolute;
-  top: 134px;
-  left: 32px;
-  color: #D5DBE5;
-  font-size: 15px;
-  font-weight: 390;
-  content: "Assign approved patients. PCS calls. Scheduler books. ACS tracks tests.";
 }
 
 [data-testid="engagement-assignment-board"] .font-black,
@@ -154,15 +123,6 @@
 }
 
 @media (max-width: 900px) {
-  [data-testid="engagement-assignment-board"]::before {
-    font-size: 42px;
-    min-height: 190px;
-  }
-  [data-testid="engagement-assignment-board"]::after {
-    top: 126px;
-    right: 24px;
-    left: 32px;
-  }
   [data-testid="engagement-assignment-board"] > .grid:first-of-type {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
