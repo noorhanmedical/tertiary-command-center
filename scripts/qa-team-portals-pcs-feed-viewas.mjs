@@ -37,10 +37,17 @@ requireText(api, [
   "fetchTeamMembersForWorkspace",
 ]);
 
-// 2) PCS call-list endpoint passes viewAsTeamMemberId with workspace "pcs".
+// 2) PCS call-list endpoint passes viewAsTeamMemberId. PR B made the
+//    workspace arg conditional so both PCS and ACS can share the
+//    shared call-list endpoint — the workspace is read from a
+//    whitelisted query param ("pcs"|"acs"). The endpoint must:
+//    a) still register at /api/scheduler-portal/cases
+//    b) still call resolvePhase1FacilityScope with viewAsTeamMemberId
+//    c) whitelist q.workspace as "pcs" | "acs" before passing it
 requireText(execCases, [
   '"/api/scheduler-portal/cases"',
-  'resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId, "pcs")',
+  'resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId, wsParam)',
+  'q.workspace === "acs" || q.workspace === "pcs"',
 ]);
 
 // 3) Schedule endpoints (shared) pass viewAsTeamMemberId.

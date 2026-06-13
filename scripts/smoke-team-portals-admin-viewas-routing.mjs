@@ -79,10 +79,19 @@ expectContains(
 // ════════════════════════════════════════════════════════════════════
 header("STAGE 2 — PCS feed uses selected user context");
 
+// PR B: workspace param is now whitelisted from the query string
+// (the call-list endpoint is shared by PCS and ACS). The endpoint
+// must still call resolvePhase1FacilityScope with the viewAsTeamMemberId,
+// and the workspace param must be whitelisted to "pcs" | "acs".
 expectContains(
-  "PCS call-list endpoint forwards viewAsTeamMemberId with workspace=pcs",
+  "PCS call-list endpoint forwards viewAsTeamMemberId (workspace param whitelisted)",
   "server/routes/executionCases.ts",
-  'resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId, "pcs")',
+  'resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId, wsParam)',
+);
+expectContains(
+  "Call-list endpoint whitelists workspace=pcs|acs (PR B shared-call-list contract)",
+  "server/routes/executionCases.ts",
+  'q.workspace === "acs" || q.workspace === "pcs"',
 );
 expectContains(
   "Client call-list helper threads viewAsTeamMemberId",

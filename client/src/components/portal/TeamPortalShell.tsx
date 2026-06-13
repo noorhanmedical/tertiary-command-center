@@ -955,6 +955,20 @@ export function TeamPortalShell({
   // so the query refetches on selection change. The param is forwarded
   // to the canonical feed helpers; the backend ignores it for non-admin
   // callers as a defense-in-depth measure.
+  //
+  // workspaceCallListContext tells the call-list endpoint which workspace
+  // is asking — PCS (liaison-role view-as) or ACS (technician-role view-
+  // as). Without this hint, ACS admin view-as silently fails the role
+  // compat check and falls back to admin pass-through, which would
+  // show every case in the facility instead of the viewed-as user's
+  // queue. See [[anthony-callista-root-cause]] and
+  // docs/architecture/complete-team-portal-operations-runtime.md §B.
+  const workspaceCallListContext: "pcs" | "acs" | undefined =
+    workspaceRole === "patientCareSpecialist" || workspaceRole === "liaison"
+      ? "pcs"
+      : workspaceRole === "ancillaryCareSpecialist" || workspaceRole === "technician"
+        ? "acs"
+        : undefined;
   const { data: workspaceCallList = [], isLoading: workspaceCallListLoading } = useQuery({
     queryKey: [
       "team-workspace-call-list",
@@ -962,6 +976,7 @@ export function TeamPortalShell({
       facility,
       selectedDate,
       viewAsTeamMemberId,
+      workspaceCallListContext,
     ],
     queryFn: () =>
       // assignedRole is intentionally omitted — both workspaces read the
@@ -969,12 +984,19 @@ export function TeamPortalShell({
       // and the profile's facility scope handles narrowing. Hardcoded
       // role hints used to differ per workspace name; per spec, the
       // profile is now authoritative.
+      //
+      // assignedTeamMemberId is intentionally NOT passed here either —
+      // the server resolves it from the session (or the view-as user)
+      // via resolveCallListAssignmentScope and applies it server-side
+      // as a locked filter. The client must not pass an integer id
+      // because it would be ignored anyway (locked override).
       fetchWorkspaceCallList({
         facilityId: facility || null,
         startDate: workspaceDayStartIso,
         endDate: workspaceDayEndIso,
         limit: 100,
         viewAsTeamMemberId,
+        workspace: workspaceCallListContext ?? null,
       }),
     enabled: !!facility,
   });

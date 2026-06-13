@@ -80,6 +80,12 @@ type CallListParams = {
   limit?: number;
   /** ADMIN VIEW-AS — only honored when the caller is admin. */
   viewAsTeamMemberId?: string | null;
+  /** Tells the server which workspace ("pcs"|"acs") is requesting the
+   *  shared call list. Affects admin view-as role-compat: when
+   *  workspace="acs" the viewed-as user must be a technician; when
+   *  "pcs" they must be a liaison. When omitted the server allows any
+   *  active team member (legacy permissive behavior). */
+  workspace?: "pcs" | "acs" | null;
 };
 
 function appendIf(params: URLSearchParams, key: string, value: unknown) {
@@ -275,6 +281,7 @@ export async function fetchWorkspaceCallList(
   appendIf(qs, "assignedRole", params.assignedRole);
   appendIf(qs, "limit", params.limit ?? 100);
   appendIf(qs, "viewAsTeamMemberId", params.viewAsTeamMemberId);
+  appendIf(qs, "workspace", params.workspace);
   const url = `/api/scheduler-portal/cases${qs.toString() ? `?${qs}` : ""}`;
   const rows = await fetchJson<unknown[]>(url);
   if (!Array.isArray(rows)) return [];

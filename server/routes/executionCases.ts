@@ -20,6 +20,7 @@ import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 // other portal endpoints already use. See the matching block in
 // server/routes/globalSchedule.ts.
 import { requirePortalRole, allowedFacilities, resolveAdminViewAsUserId, type ViewAsWorkspaceType } from "./portal";
+import { resolveCallListAssignmentScope } from "../services/teamMemberScope";
 
 // ADMIN VIEW-AS — same shape as the helper in globalSchedule.ts so the
 // /api/scheduler-portal/cases endpoint honors `?viewAsTeamMemberId=`
@@ -850,13 +851,35 @@ export function registerExecutionCaseRoutes(app: Express) {
   app.get("/api/scheduler-portal/cases", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
-      // /api/scheduler-portal/cases is the PCS Workspace call list, so
-      // view-as restricts to liaison-role users.
-      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId, "pcs");
+      // /api/scheduler-portal/cases is the SHARED call list — both
+      // PCS (liaison) and ACS (technician) consume it via
+      // TeamPortalShell. The `workspace` query param (when supplied)
+      // narrows view-as role-compat to that workspace's role; when
+      // omitted the helper accepts any active team member.
+      const wsParam = q.workspace === "acs" || q.workspace === "pcs" ? q.workspace : undefined;
+      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId, wsParam);
       if (!scope.ok) return;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listSchedulerPortalCases>[0] = {};
-      if (q.assignedTeamMemberId) {
+      // PR B — Engagement→workspace feed wiring. Resolve the caller's
+      // (or viewed-as user's) outreach_schedulers.id and narrow the
+      // call list by patient_execution_cases.assignedTeamMemberId.
+      // Without this, an Engagement-assigned case never appears in the
+      // assigned team-member's workspace queue. See
+      // docs/architecture/complete-team-portal-operations-runtime.md
+      // §B (Anthony / Callista root cause).
+      const assignmentScope = await resolveCallListAssignmentScope(
+        req,
+        scope.facilityId,
+        scope.viewAsUserId,
+      );
+      if (assignmentScope.locked) {
+        // When locked, ignore any client-supplied override (defense
+        // in depth). If schedulerId is null (caller has no row in
+        // outreach_schedulers for this facility) the feed returns []
+        // because no assignment can match the impossible filter.
+        filters.assignedTeamMemberId = assignmentScope.schedulerId ?? -1;
+      } else if (q.assignedTeamMemberId) {
         const id = parseInt(q.assignedTeamMemberId, 10);
         if (!isNaN(id)) filters.assignedTeamMemberId = id;
       }
