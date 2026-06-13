@@ -281,3 +281,34 @@ export async function sendMarketingMaterial(input: {
   }
   return (await res.json()) as { ok: boolean };
 }
+
+// Send a plain-body email through the canonical outreach send route.
+// The backend is Live but Requires Activation: SMTP_HOST / SMTP_PORT /
+// SMTP_USER / SMTP_PASS / SMTP_FROM must be configured. Without those,
+// the backend returns 502 with an honest "Email is not configured"
+// message — the composer surfaces that error literally rather than
+// faking a sent state.
+export async function sendOutreachEmail(input: {
+  patientScreeningId: number;
+  to: string;
+  subject: string;
+  body: string;
+}): Promise<{ ok: boolean; messageId?: string }> {
+  const res = await fetch(`/api/outreach/send-email`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const body = await res.json();
+      detail = body?.error ?? "";
+    } catch {
+      /* noop */
+    }
+    throw new Error(`${detail || `Email send failed (${res.status})`}`);
+  }
+  return (await res.json()) as { ok: boolean; messageId?: string };
+}

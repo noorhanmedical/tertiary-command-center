@@ -26,12 +26,17 @@ type MarketingMaterial = {
 
 export function PortalMarketingTab({
   selectedPatient,
+  onComposeEmailWithMaterials,
 }: {
   selectedPatient: {
     patientScreeningId: number;
     name: string;
     email?: string | null;
   } | null;
+  /** Optional handoff — when the operator clicks "Compose email with
+   *  selected materials", the shell receives the picked material ids
+   *  and opens the Email Composer tab with them pre-attached. */
+  onComposeEmailWithMaterials?: (materialIds: ReadonlyArray<string | number>) => void;
 }) {
   const { toast } = useToast();
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | number | null>(null);
@@ -179,6 +184,27 @@ export function PortalMarketingTab({
             )}
             Send marketing
           </Button>
+
+          {/* Compose-email handoff: hands the picked material to the
+              Email Composer tab in the center canvas so the operator
+              can edit subject/body before sending. */}
+          {onComposeEmailWithMaterials && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!selectedMaterialId}
+              onClick={() => {
+                if (!selectedMaterialId) return;
+                onComposeEmailWithMaterials([selectedMaterialId]);
+              }}
+              className="mt-1.5 w-full gap-1.5"
+              data-testid="portal-marketing-compose-email"
+            >
+              <Mail className="h-3.5 w-3.5" />
+              Compose email with selected material
+            </Button>
+          )}
 
           <Button
             type="button"
