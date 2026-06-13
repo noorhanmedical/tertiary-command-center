@@ -2,7 +2,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { CalendarDays, Loader2, Plus } from "lucide-react";
+import {
+  BrainCircuit,
+  Building2,
+  CalendarDays,
+  Loader2,
+  Plus,
+  Users,
+  Workflow,
+} from "lucide-react";
+import {
+  PremiumPageShell,
+  PremiumTopBar,
+  PremiumHero,
+  PremiumHeroStat,
+  PremiumHeroStatGrid,
+} from "@/components/premium";
 import {
   useScreeningBatches,
   useCreateBatch,
@@ -731,86 +746,158 @@ export default function PlexusIQPage() {
     [batches, batchDetails, deletePatientMut, invalidateBatch, refreshAll, toast],
   );
 
+  // Hero metrics — derived only from `summary` so the strip never
+  // displays fake or hardcoded patient/facility data.
+  const heroTotalPatients = summary.reduce(
+    (acc, r) => acc + (r.patientCount ?? 0),
+    0,
+  );
+  const heroActiveFacilityCount = new Set(
+    summary
+      .filter((r) => (r.patientCount ?? 0) > 0)
+      .map((r) => r.facility ?? "Unassigned"),
+  ).size;
+  const heroActiveBatches = summary.filter(
+    (r) => (r.patientCount ?? 0) > 0,
+  ).length;
+  const heroUnscheduled = summary.filter(
+    (r) => !r.scheduleDate && (r.patientCount ?? 0) > 0,
+  ).length;
+
   return (
-    <div className="flex flex-col h-full w-full min-w-0">
-      <header className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
-        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-3 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight text-slate-900" data-testid="text-plexus-iq-title">
-                Plexus IQ
-              </h1>
-              <p className="text-[11px] text-slate-500">
-                Multi-day, multi-facility workspace
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
+    <PremiumPageShell
+      mainRef={mainScrollRef}
+      topBar={
+        <PremiumTopBar
+          title="Plexus IQ"
+          subtitle="Multi-day, multi-facility workspace"
+          titleTestId="text-plexus-iq-title"
+          leading={<SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />}
+          actions={
+            <>
+              <Button
+                size="sm"
+                onClick={() => setAddHubOpen(true)}
+                className="gap-1.5 rounded bg-white text-[#101115] hover:bg-white/90"
+                data-testid="button-plexus-iq-add-patient"
+              >
+                <Plus className="w-4 h-4" />
+                Add Patient(s)
+              </Button>
+              <button
+                type="button"
+                onClick={() => setCalendarOpen(true)}
+                aria-label="Open calendar"
+                title="Calendar"
+                className="inline-flex items-center justify-center h-9 w-9 rounded bg-[#171B26] text-white border border-white/10 hover:bg-[#2A3D5A] transition-colors"
+                data-testid="button-plexus-iq-calendar"
+              >
+                <CalendarDays className="w-4 h-4" />
+              </button>
+            </>
+          }
+        />
+      }
+    >
+      <PremiumHero
+        eyebrow="Plexus Clinical"
+        title="Plexus IQ"
+        copy="Facility-first qualification workspace for Batch Flow, Visit patients, Outreach patients, calendar review, and final day packet review."
+        actions={
+          <>
             <Button
               size="sm"
               onClick={() => setAddHubOpen(true)}
-              className="gap-1.5 rounded-xl"
-              data-testid="button-plexus-iq-add-patient"
+              className="gap-1.5 rounded bg-white text-[#101115] hover:bg-white/90"
+              data-testid="button-plexus-iq-hero-add-patient"
             >
               <Plus className="w-4 h-4" />
               Add Patient(s)
             </Button>
-            <button
-              type="button"
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setBulkOpen(true)}
+              className="gap-1.5 rounded bg-transparent text-white border-white/30 hover:bg-white/10"
+              data-testid="button-plexus-iq-hero-batchflow"
+            >
+              <Workflow className="w-4 h-4" />
+              Batch Flow
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => setCalendarOpen(true)}
-              aria-label="Open calendar"
-              title="Calendar"
-              className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-plexus-navy-800 text-white shadow-sm hover:bg-plexus-navy-700 transition-colors"
-              data-testid="button-plexus-iq-calendar"
+              className="gap-1.5 rounded bg-transparent text-white border-white/30 hover:bg-white/10"
+              data-testid="button-plexus-iq-hero-calendar"
             >
               <CalendarDays className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main
-        ref={mainScrollRef}
-        className="flex-1 min-h-0 overflow-auto bg-slate-50/40"
-      >
-        {/* Facility-first overview: the first Plexus IQ surface shows
-            facility tiles only. Global stat cards, recent qualification
-            cards, and recently-deleted panels (PlexusIQDashboardRow /
-            PlexusIQRecentQualificationCards / PlexusIQRecentlyDeleted)
-            remain off the overview per the facility-first rule. */}
-        {/* BatchFlow qualification status — only renders WHILE jobs are
-            active. Conditional on activeQualificationJobs.length > 0 so
-            it never becomes a permanent dashboard panel. State is
-            backed by localStorage so it survives a refresh while jobs
-            are still running on the server. */}
-        {activeQualificationJobs.length > 0 && (
-          <div
-            className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-3"
-            data-testid="plexus-iq-qualification-status-strip"
-            data-mount-gate="activeQualificationJobs.length > 0"
-          >
-            <PlexusIQQualificationJobsStatus
-              jobs={activeQualificationJobs}
-              onJobsChange={setActiveQualificationJobs}
-              onDismiss={() => setActiveQualificationJobs([])}
+              Calendar
+            </Button>
+          </>
+        }
+        statusCard={
+          <PremiumHeroStatGrid>
+            <PremiumHeroStat
+              icon={<Users className="w-3.5 h-3.5" />}
+              label="Patients"
+              value={heroTotalPatients}
+              testId="plexus-iq-hero-total"
             />
-          </div>
-        )}
-        <PlexusIQWorkspace
-          summary={summary}
-          batchDetails={batchDetails}
-          analyzingBatchId={analyzingBatchId}
-          analyzingPatients={analyzingPatients}
-          onGenerateBatch={handleGenerateBatch}
-          onOpenFinalSchedule={handleOpenFinalSchedule}
-          onDeleteAllForBatch={handleDeleteAllForBatch}
-          onDeleteAllForFacility={handleDeleteAllForFacility}
-          onUpdatePatient={handleUpdatePatient}
-          onDeletePatient={handleDeletePatient}
-          onAnalyzeOnePatient={handleAnalyzePatient}
-        />
-      </main>
+            <PremiumHeroStat
+              icon={<Building2 className="w-3.5 h-3.5" />}
+              label="Facilities"
+              value={heroActiveFacilityCount}
+              testId="plexus-iq-hero-facilities"
+            />
+            <PremiumHeroStat
+              icon={<BrainCircuit className="w-3.5 h-3.5" />}
+              label="Active Batches"
+              value={heroActiveBatches}
+              testId="plexus-iq-hero-active-batches"
+            />
+            <PremiumHeroStat
+              icon={<CalendarDays className="w-3.5 h-3.5" />}
+              label="Unscheduled"
+              value={heroUnscheduled}
+              testId="plexus-iq-hero-unscheduled"
+            />
+          </PremiumHeroStatGrid>
+        }
+        testId="plexus-iq-hero"
+      />
+
+      {/* BatchFlow qualification status — only renders WHILE jobs are
+          active. Conditional on activeQualificationJobs.length > 0 so
+          it never becomes a permanent dashboard panel. State is
+          backed by localStorage so it survives a refresh while jobs
+          are still running on the server. */}
+      {activeQualificationJobs.length > 0 && (
+        <div
+          className="mx-auto w-full max-w-[1400px] px-6 sm:px-8 lg:px-10 xl:px-12 pt-4"
+          data-testid="plexus-iq-qualification-status-strip"
+          data-mount-gate="activeQualificationJobs.length > 0"
+        >
+          <PlexusIQQualificationJobsStatus
+            jobs={activeQualificationJobs}
+            onJobsChange={setActiveQualificationJobs}
+            onDismiss={() => setActiveQualificationJobs([])}
+          />
+        </div>
+      )}
+      <PlexusIQWorkspace
+        summary={summary}
+        batchDetails={batchDetails}
+        analyzingBatchId={analyzingBatchId}
+        analyzingPatients={analyzingPatients}
+        onGenerateBatch={handleGenerateBatch}
+        onOpenFinalSchedule={handleOpenFinalSchedule}
+        onDeleteAllForBatch={handleDeleteAllForBatch}
+        onDeleteAllForFacility={handleDeleteAllForFacility}
+        onUpdatePatient={handleUpdatePatient}
+        onDeletePatient={handleDeletePatient}
+        onAnalyzeOnePatient={handleAnalyzePatient}
+      />
 
       {/* Canonical calendar shared by PCS, ACS, Plexus IQ, and Dashboard. */}
       <CanonicalCommandCalendar
@@ -881,11 +968,11 @@ export default function PlexusIQPage() {
       />
 
       {(addPatientMut.isPending || createBatchMut.isPending) && (
-        <div className="fixed bottom-6 right-6 inline-flex items-center gap-2 rounded-full bg-plexus-navy-800 text-white shadow-lg px-4 py-2 z-40">
+        <div className="fixed bottom-6 right-6 inline-flex items-center gap-2 rounded bg-[#101115] text-white shadow-lg px-4 py-2 z-40 border border-white/10">
           <Loader2 className="w-4 h-4 animate-spin" />
           <span className="text-xs">Saving…</span>
         </div>
       )}
-    </div>
+    </PremiumPageShell>
   );
 }
