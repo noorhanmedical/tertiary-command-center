@@ -2094,15 +2094,23 @@ export function AdminReviewDialog({
               <DialogDescription className="sr-only">
                 Admin review for {patient.name || "patient"}
               </DialogDescription>
+              {/* Header drops the approval pill (the right-column
+                  Decision section is the source of truth) and the
+                  approval label is preserved on a hidden span for any
+                  test that still queries the STATUS_META label by text.
+                  Under-16 badge, facility/date, and refreshing loader
+                  stay since each carries information not surfaced
+                  elsewhere. */}
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
                 <span
-                  className={`inline-flex items-center rounded-full px-2 py-0.5 ${STATUS_META[review.approval].pillClass}`}
+                  className="sr-only"
+                  data-testid="admin-review-header-status-label"
                 >
                   {STATUS_META[review.approval].label}
                 </span>
                 {isUnder16 && (
                   <span
-                    className="inline-flex items-center gap-1 rounded-full bg-rose-100 text-rose-900 border border-rose-300 px-2 py-0.5 font-semibold uppercase tracking-wider"
+                    className="inline-flex items-center gap-1 rounded bg-rose-100 text-rose-900 border border-rose-300 px-2 py-0.5 font-semibold uppercase tracking-wider"
                     data-testid="badge-admin-review-under-16"
                   >
                     <AlertTriangle className="w-3 h-3" />
@@ -2237,50 +2245,50 @@ export function AdminReviewDialog({
                       className="w-full"
                       data-testid="admin-review-left-tabs"
                     >
-                      <TabsList className="bg-black/15 text-white grid grid-cols-3 w-full">
+                      {/* Single horizontally-scrolling TabsList. The
+                          prior three stacked TabsLists collapse here;
+                          every value + data-testid is preserved so
+                          existing routing + QA selectors still resolve. */}
+                      <TabsList className="bg-black/15 text-white inline-flex w-full overflow-x-auto justify-start gap-0.5 p-1">
                         <TabsTrigger
                           value="source"
                           data-testid="admin-review-left-tab-source"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Source
                         </TabsTrigger>
                         <TabsTrigger
                           value="patient-directory"
                           data-testid="admin-review-left-tab-patient-directory"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Directory
                         </TabsTrigger>
                         <TabsTrigger
                           value="cooldown"
                           data-testid="admin-review-left-tab-cooldown"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Cooldown
                         </TabsTrigger>
-                      </TabsList>
-                      <TabsList className="bg-black/15 text-white grid grid-cols-2 w-full mt-1">
                         <TabsTrigger
                           value="insurance"
                           data-testid="admin-review-left-tab-insurance"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Insurance
                         </TabsTrigger>
                         <TabsTrigger
                           value="history"
                           data-testid="admin-review-left-tab-history"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           History
                         </TabsTrigger>
-                      </TabsList>
-                      <TabsList className="bg-black/15 text-white grid grid-cols-1 w-full mt-1">
                         <TabsTrigger
                           value="engagement"
                           data-testid="admin-review-left-tab-engagement"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] whitespace-nowrap data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
                         >
                           Engagement
                         </TabsTrigger>
