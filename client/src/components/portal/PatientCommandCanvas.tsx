@@ -26,6 +26,7 @@ import {
 import { LogCommunicationDialog } from "@/components/portal/LogCommunicationDialog";
 import { PatientCallHistoryPanel } from "@/components/portal/PatientCallHistoryPanel";
 import { InvoiceDraftPanel } from "@/components/portal/InvoiceDraftPanel";
+import { PatientDirectoryFactsCard } from "@/components/portal/PatientDirectoryFactsCard";
 
 // Canonical document checklist for the readiness panel. Keys must
 // match `documentType` values written by the document-readiness
@@ -377,6 +378,12 @@ export function PatientCommandCanvas({
           <ClinicalField label="Notes" value={clinicalProfile.notes} />
         </div>
       </Card>
+
+      {/* PR B — Patient Directory facts wired into the center canvas.
+          DNC / cooldown / prior ancillaries / engagement history come
+          from the canonical /api/patient-directory/:id snapshot.
+          Read-only. The card renders nothing when no facts apply. */}
+      <PatientDirectoryFactsCard patientScreeningId={patientScreeningId} />
 
       {/* Phase 1 Segment E Batch 7 — call-history panel. The panel
           owns its own client-side flag check and returns null when
