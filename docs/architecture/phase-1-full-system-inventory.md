@@ -281,3 +281,87 @@ authorized for via `/api/portal/my-facilities`.
   on a known list).
 
 Full repo `qa-*.mjs` gauntlet green (0 failures) after the fix.
+
+---
+
+## 12. Slice 1.3 update — Admin Review commit fan-out (completed)
+
+### 12.1 Current fan-out (as-of audit)
+
+`POST /api/patient-screenings/:id/admin-approval` (handler in
+`server/routes/patients.ts`) writes to:
+
+| # | Surface | Required? | Tx? |
+|---|---|---|---|
+| 1 | `patient_screenings.adminApprovalStatus / adminApprovedAt / adminApprovedByUserId / adminApprovalNote` via `storage.updatePatientScreening` | required | own tx (single UPDATE) |
+| 2 | `commitPatient(id, userId, { auto: true })` — execution case create-or-update + engagement assignment routing | required (on approve+Draft) | not in caller tx |
+| 3 | `patient_journey_events` row `eventType: "admin_approval_updated"` | optional (logged on failure) | own tx |
+| 4 | `logAudit(...)` — fire-and-forget audit row | optional (fire-and-forget) | own tx |
+| 5 | `invalidatePatientDatabase()` — in-process cache flush | optional (cache only) | n/a |
+
+### 12.2 Gap fixed
+
+Before Slice 1.3, when `commitPatient` threw on an approve+Draft path,
+the handler returned `ok: true` + `routedToEngagement: false` with no
+other signal. This shape was indistinguishable from the legitimate
+"approval set to needs_info / rejected" cases where no commit was
+attempted. The audit log captured `routedToEngagement: false` but
+not the failure reason.
+
+The fix adds two new response fields and audit-metadata fields:
+
+- `commitFailed: boolean` — true iff `commitPatient` was attempted
+  AND threw or returned `{ ok: false, error }`.
+- `commitError: string | null` — a stable string rendering of the
+  failure (e.g. `validation: name, dob`, `not_found`, the thrown
+  exception message). Null when no commit was attempted or when it
+  succeeded.
+
+Both fields travel through:
+
+- the `res.json(...)` response payload, so the client can
+  surface "approved, but engagement routing failed — retry from
+  the Engagement Center";
+- the `patient_journey_events` row's metadata + summary, so the
+  failure is captured in the canonical audit trail; and
+- the `logAudit(...)` call.
+
+The `commitPatient(...)` return shape `{ ok: true; data } | { ok: false;
+error: CommitError }` is now handled exhaustively: the
+`{ ok: false }` branch is captured into `commitError` rather than
+being silently dropped.
+
+### 12.3 What was NOT done in this slice
+
+Wrapping the fan-out (1) + (2) + (3) in a single DB transaction is
+intentionally deferred. `commitPatient` is a multi-write service
+(execution case insert + engagement assignment + journey events of its
+own + scheduler routing) that needs its own tx-safety audit before
+being placed inside a tx. Doing so without that audit could
+deadlock or create partial-commit states that are worse than the
+current silent-failure mode.
+
+This deferral is honest: the silent-failure mode is now *surfaced*
+even when the writes aren't atomic. Phase 2 is responsible for
+landing the full transactional wrapper.
+
+### 12.4 Rollback
+
+Single-commit revert. The fix is additive (new fields appended to
+the response + audit metadata). Reverting restores the prior shape;
+the client tolerates missing fields because they're optional in the
+response type. No migration required.
+
+### 12.5 QA
+
+- `scripts/qa-phase-1-admin-review-transactional-commit.mjs` —
+  source-level assertion that the handler still contains the
+  required fan-out + the new `commitFailed` / `commitError` surface
+  + the `PHASE-1 ADMIN-REVIEW COMMIT FAN-OUT` marker.
+- `scripts/qa-phase-1-no-silent-execution-case-failure.mjs` —
+  asserts that `commitFailed` and `commitError` appear inside the
+  `res.json(...)` call body and that the audit metadata carries
+  them.
+
+Full repo `qa-*.mjs` gauntlet still green; `npm run check` + `npm run
+build` green.
