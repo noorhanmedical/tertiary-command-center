@@ -330,14 +330,20 @@ export function registerExecutionCaseRoutes(app: Express) {
       const data = parsed.data;
 
       // Settings (with task-spec defaults)
-      const [callbackSetting, mgrReviewSetting, ownershipSetting] = await Promise.all([
+      const [callbackSetting, mgrReviewSetting, ownershipSetting, noAnswerSetting, voicemailSetting] = await Promise.all([
         getGlobalAdminSettingValue<{ hours?: number }>("scheduling_triage", "default_callback_due_hours"),
         getGlobalAdminSettingValue<{ required?: boolean }>("scheduling_triage", "manager_review_requires_task"),
         getGlobalAdminSettingValue<{ enabled?: boolean }>("engagement_center", "preserve_scheduler_ownership"),
+        getGlobalAdminSettingValue<{ hours?: number }>("engagement_center", "no_answer_callback_hours"),
+        getGlobalAdminSettingValue<{ hours?: number }>("engagement_center", "voicemail_callback_hours"),
       ]);
       const callbackHours = typeof callbackSetting?.hours === "number" ? callbackSetting.hours : 24;
       const managerReviewRequiresTask = mgrReviewSetting?.required ?? true;
       const preserveSchedulerOwnership = ownershipSetting?.enabled ?? true;
+      // PR C — admin-settings-driven LVM / no-answer re-queue intervals.
+      // Defaults match the canonical planner's defaultCallbackTarget (4h).
+      const noAnswerCallbackHours = typeof noAnswerSetting?.hours === "number" ? noAnswerSetting.hours : 4;
+      const voicemailCallbackHours = typeof voicemailSetting?.hours === "number" ? voicemailSetting.hours : 4;
 
       // Resolve patient context — executionCaseId → patientScreeningId → name+dob
       let executionCaseId: number | null = data.executionCaseId ?? null;
@@ -393,20 +399,34 @@ export function registerExecutionCaseRoutes(app: Express) {
         });
       }
 
-      // Compute next-action timestamp — explicit value wins, otherwise default
-      // to "now + callback hours" only for callback-style results.
+      // Compute next-action timestamp — explicit value wins, otherwise
+      // default from admin settings:
+      //   callback / patient_requested_call_later → scheduling_triage.default_callback_due_hours
+      //   no_answer                               → engagement_center.no_answer_callback_hours
+      //   voicemail (LVM)                          → engagement_center.voicemail_callback_hours
+      // Outcomes outside this set get nextActionAt = null (terminal or
+      // task-driven). PR C — re-queues LVM / no-answer onto the
+      // appropriate call list per admin settings instead of relying on
+      // the canonical planner's hardcoded 4-hour fallback.
       let computedNextActionAt: Date | null = null;
       if (data.nextActionAt) {
         const dt = new Date(data.nextActionAt);
         if (!isNaN(dt.getTime())) computedNextActionAt = dt;
       }
-      if (
-        !computedNextActionAt &&
-        (data.callResult === "callback" || data.callResult === "patient_requested_call_later")
-      ) {
-        const dt = new Date();
-        dt.setHours(dt.getHours() + callbackHours);
-        computedNextActionAt = dt;
+      if (!computedNextActionAt) {
+        let hours: number | null = null;
+        if (data.callResult === "callback" || data.callResult === "patient_requested_call_later") {
+          hours = callbackHours;
+        } else if (data.callResult === "no_answer") {
+          hours = noAnswerCallbackHours;
+        } else if (data.callResult === "voicemail") {
+          hours = voicemailCallbackHours;
+        }
+        if (hours !== null) {
+          const dt = new Date();
+          dt.setHours(dt.getHours() + hours);
+          computedNextActionAt = dt;
+        }
       }
 
       // ─── Engagement-route DELEGATION (Batch 3 of Engagement completion run) ──
