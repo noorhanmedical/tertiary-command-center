@@ -1,12 +1,16 @@
 # Team Portal Left Tools Rail
 
-**Status:** Phase 1.6 — Team Portal Operating Layer.
-**Branch:** `fix/team-portal-left-tools-rail`
-**Base:** `main` at `cabbaa7` (PR #280 merged).
+**Status:** Phase 1.7 — Team Portal Operating Layer completion.
+**Working branch:** `fix/team-portal-left-tools-complete`
+**Latest base:** `main` at `e303707` (PR #281 merged).
 **Premium UI PR #278:** untouched.
 
 This document records the shared PCS/ACS left tools rail design + the
-underlying tool wiring.
+underlying tool wiring. It was first written in PR #281 (Phase 1.6) and
+extended in Phase 1.7 with: Global Calendar isolation, Document Library
+tool, honest-state guarantees on email send, right-queue-safety proofs
+for the other tools, and explicit Deferred decisions for Quick Note +
+Internal Contacts.
 
 ---
 
@@ -208,3 +212,287 @@ Quality-of-life follow-ups that are NOT blocking the operating layer:
 | `npm run build` | clean |
 | QA gauntlet | **250 scripts, 0 failed** (11 new + 239 pre-existing) |
 | Smoke gauntlet | **8 / 8 PASS** (incl. the new `smoke-team-portal-left-tools-rail.mjs` and the Phase 1 wiring + view-as smokes) |
+
+---
+
+# Phase 1.7 addenda
+
+The sections below extend the Phase 1.6 doc above with the Phase 1.7
+work. The Phase 1.6 design is the foundation; Phase 1.7 makes the rail
+operating-layer-complete so visual / premium-UI work can resume.
+
+## 1.7-A — Final left rail tools
+
+The rail now ships **7 tools** in this canonical order:
+
+| Order | Tool | Tab kind | Center-canvas component |
+|---|---|---|---|
+| 1 | **Calendar** (button) | promotes via `centerMode="playground"` | reuses the existing playground |
+| 2 | **Email** | `email` | `PortalEmailComposerTab` |
+| 3 | **Marketing** | `marketing` | `PortalMarketingTab` |
+| 4 | **Documents** (NEW in 1.7) | `documentLibrary` | `PortalDocumentLibraryTab` |
+| 5 | **Patient Search** | `patientSearch` | `PortalPatientSearchTab` |
+| 6 | **Tasks** | `plexusTasks` | `PortalPlexusTasksTab` |
+| 7 | **Templates** | `resources` | `PortalTemplatesResourcesTab` |
+
+Below the icon grid the rail still renders `LeftRailCompactCalendar`
+(see §1.7-B for the isolation guarantee).
+
+Quick Note and Internal Contacts are **NOT** added — see §1.7-H and
+§1.7-I for the deferred-decision rationale.
+
+## 1.7-B — Global Calendar isolation
+
+**Before (PR #281):** the `LeftRailCompactCalendar` bound directly to
+the shell's `selectedDate` state. That same state keys the right-rail
+feed queries:
+
+- `["team-workspace-call-list", role, facility, selectedDate, viewAs]`
+- `["team-workspace-clinic-schedule", facility, selectedDate, viewAs]`
+- `["team-workspace-ancillary-schedule", facility, selectedDate, viewAs]`
+
+So clicking a date in the left calendar refetched the right-rail
+assigned-work queue. That violates the "left rail is general tools" rule.
+
+**Now (Phase 1.7):** the shell holds a separate `globalCalendarDate`
+state. The compact calendar binds to it; the right-rail feed queries
+stay on `selectedDate`. The expand-to-canvas handler uses
+`globalCalendarDate` for the title so the center playground reflects
+the user's left-calendar selection without ever touching the queue.
+
+| Surface | Date state used |
+|---|---|
+| `LeftRailCompactCalendar` | `globalCalendarDate` |
+| "Calendar" left-rail tool button (expand to canvas) | `globalCalendarDate` |
+| Center playground calendar / scheduling context (existing flows) | `selectedDate` (unchanged) |
+| Right-rail call list / clinic schedule / ancillary schedule | `selectedDate` (unchanged) |
+| `/api/portal/today-schedule` query | `selectedDate` (unchanged) |
+| Admin view-as queries | `selectedDate` (unchanged) |
+
+Enforced by `scripts/qa-team-portal-global-calendar-isolated.mjs` and
+`scripts/qa-team-portal-left-calendar-does-not-touch-right-queue.mjs`.
+
+## 1.7-C — Document Library vs Marketing Materials
+
+The two surfaces are **fully separate** at every layer.
+
+| Aspect | Marketing Materials | Document Library |
+|---|---|---|
+| Backend | `server/services/marketingMaterials.ts` | `server/routes/documentLibrary.ts` |
+| API | `GET /api/outreach/materials` | `GET /api/documents-library` (+ versions, meta) |
+| Client helper | `fetchMarketingMaterials` | `useDocumentLibrary` hook |
+| Tab component | `PortalMarketingTab` | `PortalDocumentLibraryTab` |
+| Audience | **Patient-facing brochures** (sent to patients via email) | **Internal / shared documents** (forms, reports, templates) |
+| Surface in this PR | Marketing tool + Email Composer attach picker | Documents tool (read-only browse) |
+
+The Document Library tool is **read-only** — upload / supersede /
+delete remain in the admin `/document-library` page. The tool reuses
+the canonical `useDocumentLibrary` hook so any future filter / meta
+additions automatically reflect here.
+
+Enforced by `scripts/qa-team-portal-marketing-vs-document-library-boundary.mjs`
+and `scripts/qa-team-portal-document-library-tool.mjs`.
+
+## 1.7-D — Email + Marketing attachment workflow (final)
+
+The workflow already shipped in PR #281 is unchanged in 1.7:
+
+1. Right-panel patient row → opens patient in center canvas.
+2. Operator opens Marketing tool from the left rail.
+3. Operator selects a brochure → "Compose email with selected material".
+4. Shell stages the material id in `pendingEmailAttachments` and
+   switches the active tab to `email`.
+5. `PortalEmailComposerTab` adopts the staged ids on mount via an
+   `useEffect`.
+6. Active patient's email pre-fills the To field.
+7. Operator can edit the To field; subject + body are auto-generated by
+   the per-material send route when materials are attached.
+8. Send → `POST /api/outreach/send-material` per attached material.
+
+**Honest send state (Phase 1.7 verification):**
+
+- Backend requires `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` /
+  `SMTP_FROM`. Without those `sendOutreachEmail()` throws
+  `"Email is not configured. Set SMTP_HOST..."`.
+- The route returns the error message with a 5xx status.
+- The composer surfaces the literal backend error in the inline error
+  panel (`data-testid="portal-email-composer-error"`).
+- There is NO mock / random / setTimeout success path inside the
+  composer — `qa-team-portal-email-honest-send-state.mjs` enforces this
+  by forbidding the relevant tokens.
+
+**Communication logging:** `logPatientCommunication` is available
+client-side (in `commandCenterApi.ts`) but not yet auto-called after a
+composer send. This is a documented Phase-2 follow-up — wiring the
+composer's `onSuccess` to log a communication event so it lands in the
+patient timeline / history surface.
+
+## 1.7-E — Patient Search behavior (final)
+
+The Patient Search tool stays a **general utility** with explicit
+right-queue safety:
+
+- Opens in the center canvas via the `patientSearch` tab.
+- Searches via the canonical `searchPatients` helper →
+  `GET /api/portal/patient-search`.
+- Selecting a row calls `openPatientTabById` (opens the patient in the
+  center canvas).
+- Does **not** mutate `selectedDate`, `facility`,
+  `activeWorkspaceMode`, or `viewAsTeamMemberId` — the right-rail queue
+  is untouched.
+
+Enforced by `scripts/qa-team-portal-patient-search-does-not-change-right-queue.mjs`.
+
+## 1.7-F — Tasks behavior (final)
+
+The Tasks tool stays **task management**, not a productivity dashboard:
+
+- Opens in the center canvas via the existing `plexusTasks` tab.
+- Reads from `/api/portal/my-tasks`.
+- Live unread / urgent count badge sourced from the shell's existing
+  `tasksData` query.
+- Forbidden: KPIs, leaderboards, SLA trackers, revenue / conversion
+  metrics, Mission Control surfacing. Enforced by
+  `scripts/qa-team-portal-tasks-not-productivity-dashboard.mjs`.
+
+## 1.7-G — Templates / Staff Resources behavior (final)
+
+- Opens in the center canvas via the `resources` tab.
+- Pulls from the in-code `STAFF_RESOURCES` catalog.
+- "Insert into composer" button appears only on `email-template` items
+  and hands `{ subject, body }` to the Email Composer via the shell's
+  `pendingEmailTemplate` bridge. Non-template kinds (call scripts, prep
+  language, SOP, FAQ) are read-only with a Copy button.
+
+Enforced by `scripts/qa-team-portal-templates-insert-email-composer.mjs`.
+
+## 1.7-H — Quick Note decision: **Deferred**
+
+**Backend audit:** `server/routes/generatedNotes.ts` exposes
+`generated-notes`, `generated-notes/service`, `generated-notes/batch`,
+`procedure-notes`. All are domain-specific (qualification notes,
+procedure-side notes, batch notes). There is **no general patient
+"quick note" writer** — no `patient_notes` table, no general note
+journal route.
+
+**Decision:** Quick Note is **deferred to Phase 2**. Adding a tool
+button now would force one of:
+- Repurpose `generated_notes` for the wrong domain (bad — pollutes
+  AI-generated qualification notes with operator scratchpad text).
+- Write to `patient_journey_events` directly (bad — that table is the
+  Slice 1.3 audit trail and is append-only via canonical helpers).
+- Fabricate a write surface that returns "ok" without persisting (bad
+  — fakes a working state).
+
+Phase 2 acceptance criteria: a `patient_notes` table or canonical
+note-writer service + a Quick Note tool + a `qa-team-portal-quick-note-tool.mjs`
+QA. Until those exist, the rail does not show a Quick Note button.
+
+Enforced by `scripts/qa-team-portal-quick-note-deferred-doc.mjs`.
+
+## 1.7-I — Internal Contacts decision: **Deferred**
+
+**Backend audit:** the closest existing structured contact data is
+`outreach_schedulers` (one row per scheduler with `userId` + `facility`).
+There is **no canonical clinic-phone, physician-contact, vendor,
+escalation, or facility-contact table**.
+
+**Decision:** Internal Contacts / Clinic Directory is **deferred to
+Phase 2**. Adding the tool now would either:
+
+- Show only outreach schedulers, which is a misleading partial view of
+  "contacts" (operators expect phones, facility numbers, physician
+  on-call, etc.).
+- Hardcode contact data into the client tree, which is the antithesis
+  of a directory tool.
+
+Phase 2 acceptance criteria: a `contacts` table (or sufficiently rich
+clinic-config / facility schema) + the tool component + the QA
+`qa-team-portal-internal-contacts-tool.mjs`. Until then, the rail does
+not show a Contacts button.
+
+Enforced by `scripts/qa-team-portal-contacts-deferred-doc.mjs`.
+
+## 1.7-J — What must stay out of the left rail
+
+Re-stated for clarity. The Phase 1.7 boundary QA forbids any of these
+inside the rail region (between `data-testid="left-rail-tools-rail"`
+and the end of the rail IIFE):
+
+- Patient timeline / detail / Patient Directory profile drawer
+- Call result history surface
+- Admin Review history / Admin Review dialog
+- Prior ancillary detail / DNC / cooldown detail page
+- The right-rail work queue (outreach call list rows)
+- Marketing metrics / outreach campaign dashboards
+- Revenue / productivity / financial / operational analytics
+- Mission Control
+
+Enforced by `scripts/qa-team-portal-left-panel-no-patient-timeline.mjs`,
+`scripts/qa-team-portal-left-panel-no-execution-metrics.mjs`, and
+`scripts/qa-team-portal-right-panel-remains-work-queue.mjs`.
+
+## 1.7-K — PCS / ACS identical layout proof
+
+Phase 1.7 changes are all inside the shared `TeamPortalShell`. PCS and
+ACS continue to mount `ClinicWorkflowPortal` with only the role prop
+differing. There is no PCS-only or ACS-only shell, page, or layout.
+
+Enforced by `scripts/qa-team-portals-identical-pcs-acs-layout.mjs`
+(unchanged from PR #281).
+
+## 1.7-L — QA results (Phase 1.7)
+
+11 new Phase 1.7 QA scripts added:
+
+| Script | Purpose |
+|---|---|
+| `qa-team-portal-global-calendar-isolated.mjs` | `globalCalendarDate` state present + right-rail keys do not include it |
+| `qa-team-portal-left-calendar-does-not-touch-right-queue.mjs` | `LeftRailCompactCalendar` usage does not call `setSelectedDate` / `setFacility` / `setActiveWorkspaceMode` |
+| `qa-team-portal-document-library-tool.mjs` | Document Library tab uses `useDocumentLibrary` + `/api/documents-library`; left-rail button + center-canvas branch wired |
+| `qa-team-portal-marketing-vs-document-library-boundary.mjs` | Marketing tab does not pull `/api/documents-library`; Document Library tab does not pull `/api/outreach/*` |
+| `qa-team-portal-email-honest-send-state.mjs` | Composer has no fake-send path; SMTP env required by backend; surfaces literal backend error |
+| `qa-team-portal-patient-search-does-not-change-right-queue.mjs` | Patient Search render branch does not mutate queue state |
+| `qa-team-portal-tasks-not-productivity-dashboard.mjs` | Tasks tab has no KPI / leaderboard / SLA / Mission Control markers |
+| `qa-team-portal-templates-insert-email-composer.mjs` | Templates insert-into-composer handoff plumbed end-to-end |
+| `qa-team-portal-quick-note-deferred-doc.mjs` | No Quick Note button + audit doc labels Deferred |
+| `qa-team-portal-contacts-deferred-doc.mjs` | No Contacts button + audit doc labels Deferred |
+| `qa-team-portal-right-panel-remains-work-queue.mjs` | Right-rail region does not mount left-rail tool components |
+
+## 1.7-M — Smoke results (Phase 1.7)
+
+The `smoke-team-portal-left-tools-rail.mjs` smoke is extended to cover:
+
+- Global Calendar isolation (`globalCalendarDate` exists, calendar
+  uses it, right-rail keys do not include it).
+- Document Library tool wired into the center canvas via the
+  `documentLibrary` tab kind.
+- Honest-send-state guarantees in the composer.
+- Right-panel-remains-work-queue assertion.
+- Quick Note + Internal Contacts honest Deferred labels in the doc.
+
+STAGE 13 still re-runs `smoke-phase-1-full-system-wiring.mjs` so any
+regression in Phase 1 wiring trips the smoke. DB-only probes still
+skip honestly.
+
+## 1.7-N — What remains for Phase 2
+
+Phase 1.7 closes the operating layer. Phase 2 follow-ups:
+
+- **Wire `logPatientCommunication`** into the Email Composer's
+  `onSuccess` so sent emails land in the patient timeline / history
+  surface without a manual log step.
+- **Quick Note** — canonical `patient_notes` writer + tool.
+- **Internal Contacts** — canonical contacts schema + tool.
+- **Drive-backed marketing materials** — replace the in-code catalog
+  with a Drive-folder-backed listing once the Document Library
+  marketing-kind filter is reliable.
+- **Communication-log surfacing inside Patient Directory** — so
+  admins can search by "patient who received the BrainWave brochure
+  in the last 30 days".
+- **Tasks tool quick filters** — per-status, per-priority filters.
+- **Text / SMS send** — replace the disabled "Text/SMS · not wired yet"
+  button once an SMS gateway is canonical.
+
+These items are explicitly **out of scope** for this PR — no fake
+buttons, no scaffolding-only surfaces.
