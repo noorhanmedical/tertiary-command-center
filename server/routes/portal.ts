@@ -66,13 +66,80 @@ const SIGNED_BY_VALUES = new Set(["patient", "clinician", "technician", "liaison
 // the clinics they are mapped to via outreach_schedulers.userId. This is the
 // same mapping table used by the scheduler-assignment service so we don't
 // introduce a new ownership concept.
-export async function allowedFacilities(req: Request): Promise<{ all: boolean; facilities: Set<string> }> {
-  if ((req.session.role ?? "") === "admin") return { all: true, facilities: new Set() };
+//
+// Admin view-as: when `opts.viewAsUserId` is supplied AND the caller is an
+// admin, the function returns the allow-list of the *viewed-as* team
+// member — admin observes what that team member would see. The admin's
+// own role / identity is preserved in the session for audit purposes;
+// only the facility allow-list narrows. Non-admin callers cannot use
+// this override (silently dropped — defense in depth).
+export async function allowedFacilities(
+  req: Request,
+  opts: { viewAsUserId?: string | null } = {},
+): Promise<{ all: boolean; facilities: Set<string> }> {
+  const isAdmin = (req.session.role ?? "") === "admin";
+  const viewAs = isAdmin ? (opts.viewAsUserId ?? null) : null;
+  if (viewAs) {
+    const all = await storage.getOutreachSchedulers();
+    const mine = all.filter((s) => s.userId === viewAs).map((s) => s.facility);
+    // Admin view-as: scope the response to the team-member's allow-list
+    // EVEN THOUGH the caller is admin. The session role stays "admin"
+    // so writes still log the real admin identity.
+    return { all: false, facilities: new Set(mine) };
+  }
+  if (isAdmin) return { all: true, facilities: new Set() };
   const userId = req.session.userId;
   if (!userId) return { all: false, facilities: new Set() };
   const all = await storage.getOutreachSchedulers();
   const mine = all.filter((s) => s.userId === userId).map((s) => s.facility);
   return { all: false, facilities: new Set(mine) };
+}
+
+// Workspace types used by the admin view-as feature. Mirrors the
+// ClinicWorkflowPortal mapping:
+//   PCS → users with role "liaison"  (call-oriented)
+//   ACS → users with role "technician" (clinic-day-oriented)
+const VIEWAS_WORKSPACE_TYPES = ["pcs", "acs"] as const;
+type ViewAsWorkspaceType = (typeof VIEWAS_WORKSPACE_TYPES)[number];
+
+const VIEWAS_WORKSPACE_TO_ROLE: Record<ViewAsWorkspaceType, "liaison" | "technician"> = {
+  pcs: "liaison",
+  acs: "technician",
+};
+
+export { VIEWAS_WORKSPACE_TYPES, type ViewAsWorkspaceType };
+
+// Resolves the `viewAsTeamMemberId` query param into a validated user-id
+// when the caller is admin. Returns null for non-admin callers, or when
+// the param is missing / invalid. The optional `workspace` argument
+// additionally enforces that the viewed-as user's role matches the
+// workspace type (PCS↔liaison, ACS↔technician); when omitted the helper
+// only verifies the user exists + is active.
+export async function resolveAdminViewAsUserId(
+  req: Request,
+  rawViewAsId: string | undefined,
+  workspace?: ViewAsWorkspaceType,
+): Promise<string | null> {
+  if ((req.session.role ?? "") !== "admin") return null;
+  const candidate = (rawViewAsId ?? "").trim();
+  if (!candidate) return null;
+  const u = await storage.getUser(candidate);
+  if (!u || u.active === false) return null;
+  if (workspace) {
+    const expected = VIEWAS_WORKSPACE_TO_ROLE[workspace];
+    if (u.role !== expected) return null;
+  }
+  return u.id;
+}
+
+export async function listTeamMembersForWorkspace(
+  workspace: ViewAsWorkspaceType,
+): Promise<Array<{ id: string; username: string; role: string; active: boolean }>> {
+  const expected = VIEWAS_WORKSPACE_TO_ROLE[workspace];
+  const users = await storage.getUsersByRole(expected);
+  return users
+    .filter((u) => u.active !== false)
+    .map((u) => ({ id: u.id, username: u.username, role: u.role, active: u.active }));
 }
 
 function ensureFacility(allowed: { all: boolean; facilities: Set<string> }, facility: string | null): string | null {
@@ -128,6 +195,9 @@ function consentForTest(
 
 export function registerPortalRoutes(app: Express) {
   // ── Today's clinic schedule for a facility (anchored on ancillary_appointments) ──
+  // ADMIN VIEW-AS: when `?viewAsTeamMemberId=<userId>` is supplied AND the
+  // caller is admin, the facility allow-list is scoped to that team
+  // member. The admin session identity is preserved for audit.
   app.get("/api/portal/today-schedule", requirePortalRole, async (req, res) => {
     try {
       const facility = String(req.query.facility ?? "").trim();
@@ -135,7 +205,9 @@ export function registerPortalRoutes(app: Express) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         return res.status(400).json({ error: "date must be YYYY-MM-DD" });
       }
-      const allowed = await allowedFacilities(req);
+      const q = req.query as Record<string, string | undefined>;
+      const viewAsUserId = await resolveAdminViewAsUserId(req, q.viewAsTeamMemberId);
+      const allowed = await allowedFacilities(req, { viewAsUserId });
       const denied = ensureFacility(allowed, facility || null);
       if (denied) return res.status(403).json({ error: denied });
 
@@ -842,9 +914,14 @@ export function registerPortalRoutes(app: Express) {
   });
 
   // ── List the facilities this user is allowed to view ───────────────────────
+  // Admin view-as: when `?viewAsTeamMemberId=<userId>` is supplied AND the
+  // caller is admin, the response is scoped to the team-member's allow-list
+  // (so the admin observer surfaces what that team member would see).
   app.get("/api/portal/my-facilities", requirePortalRole, async (req, res) => {
     try {
-      const allowed = await allowedFacilities(req);
+      const q = req.query as Record<string, string | undefined>;
+      const viewAsUserId = await resolveAdminViewAsUserId(req, q.viewAsTeamMemberId);
+      const allowed = await allowedFacilities(req, { viewAsUserId });
       if (allowed.all) {
         // Admin gets every facility ever used by an appointment.
         const rows = await db.selectDistinct({ facility: ancillaryAppointments.facility })
@@ -855,6 +932,32 @@ export function registerPortalRoutes(app: Express) {
       }
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to load facilities" });
+    }
+  });
+
+  // ── Admin-only: list team members eligible for view-as ────────────────────
+  // Returns active users with the role for the requested workspace:
+  //   workspace=pcs → role "liaison"
+  //   workspace=acs → role "technician"
+  // Non-admin callers receive 403 (defense in depth — the workspace shell
+  // also hides the selector for non-admins).
+  //
+  // ADMIN VIEW-AS — Phase 1.5 admin observer mode. The selected team
+  // member's facility allow-list narrows the workspace feeds; the actual
+  // session identity (admin) is preserved for audit / write semantics.
+  app.get("/api/portal/team-members", requirePortalRole, async (req, res) => {
+    try {
+      if ((req.session.role ?? "") !== "admin") {
+        return res.status(403).json({ error: "Forbidden — admin role required" });
+      }
+      const workspace = String(req.query.workspace ?? "").toLowerCase();
+      if (workspace !== "pcs" && workspace !== "acs") {
+        return res.status(400).json({ error: "workspace must be 'pcs' or 'acs'" });
+      }
+      const rows = await listTeamMembersForWorkspace(workspace as ViewAsWorkspaceType);
+      res.json({ workspace, teamMembers: rows });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to list team members" });
     }
   });
 }

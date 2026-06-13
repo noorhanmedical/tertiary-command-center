@@ -1,18 +1,16 @@
 // Team Member Portals landing page.
 //
-// Two team-member portal workspaces:
-//   1. Patient Care Specialist Portal
-//   2. Ancillary Care Specialist Portal
+// The ONLY execution portals are:
+//   1. Patient Care Specialist Workspace
+//   2. Ancillary Care Specialist Workspace
 //
-// Plus the Outreach / Engagement Center — the command-center surface that
-// owns engagement assignments, follow-up queues, and the outreach pipeline.
-//
-// Scheduler Portal is the legacy name for Patient Care Specialist Portal.
-// Technician / Liaison capabilities are consolidated under Ancillary Care
-// Specialist Portal. Liaison is not a separate portal.
+// Engagement Center (assignment / disbursement of approved patients to
+// PCS/ACS) and Outreach Center (marketing campaigns / call metrics) are
+// surfaced from the main app nav — they are NOT execution portals and
+// must not appear as tiles on this landing page.
 
 import { Link } from "wouter";
-import { ArrowRight, Headphones, Megaphone, Stethoscope } from "lucide-react";
+import { ArrowRight, Headphones, Stethoscope } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 
 type PortalCard = {
@@ -23,6 +21,12 @@ type PortalCard = {
   testId: string;
 };
 
+// PHASE-1 TEAM-PORTAL ROUTING:
+//   - Only PCS + ACS tiles render here.
+//   - No Outreach tile.
+//   - No Engagement tile.
+//   - No legacy scheduler tile.
+//   - No phase-7 control surfaces.
 const PORTALS: PortalCard[] = [
   {
     title: "Patient Care Specialist Workspace",
@@ -39,14 +43,6 @@ const PORTALS: PortalCard[] = [
     href: "/ancillary-care-specialist-portal",
     icon: <Stethoscope className="w-7 h-7" strokeWidth={1.75} />,
     testId: "card-ancillary-care-specialist-workspace",
-  },
-  {
-    title: "Outreach / Engagement Center",
-    subtitle:
-      "Engagement assignments, follow-up queue, outreach pipeline, and team-member coordination across PCS and ACS.",
-    href: "/engagement-center",
-    icon: <Megaphone className="w-7 h-7" strokeWidth={1.75} />,
-    testId: "card-engagement-center",
   },
 ];
 
@@ -72,7 +68,7 @@ export default function TeamMemberPortalsPage() {
 
       <main className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-6xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto">
             {PORTALS.map((portal) => (
               <Link key={portal.href} href={portal.href}>
                 <div

@@ -19,16 +19,23 @@ import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 // portal/cases through the same role + facility access checks the
 // other portal endpoints already use. See the matching block in
 // server/routes/globalSchedule.ts.
-import { requirePortalRole, allowedFacilities } from "./portal";
+import { requirePortalRole, allowedFacilities, resolveAdminViewAsUserId, type ViewAsWorkspaceType } from "./portal";
 
+// ADMIN VIEW-AS — same shape as the helper in globalSchedule.ts so the
+// /api/scheduler-portal/cases endpoint honors `?viewAsTeamMemberId=`
+// when the caller is admin. Workspace-role check defends against
+// cross-workspace impersonation (PCS↔liaison, ACS↔technician).
 async function resolvePhase1FacilityScope(
   req: Request,
   res: Response,
   rawFacilityId: string | undefined,
-): Promise<{ ok: true; facilityId: string | null } | { ok: false }> {
-  const allowed = await allowedFacilities(req);
+  rawViewAsTeamMemberId?: string,
+  workspace?: ViewAsWorkspaceType,
+): Promise<{ ok: true; facilityId: string | null; viewAsUserId: string | null } | { ok: false }> {
+  const viewAsUserId = await resolveAdminViewAsUserId(req, rawViewAsTeamMemberId, workspace);
+  const allowed = await allowedFacilities(req, { viewAsUserId });
   const facilityId = (rawFacilityId ?? "").trim() || null;
-  if (allowed.all) return { ok: true, facilityId };
+  if (allowed.all) return { ok: true, facilityId, viewAsUserId };
   if (!facilityId) {
     res
       .status(400)
@@ -41,7 +48,7 @@ async function resolvePhase1FacilityScope(
       .json({ error: "Forbidden — clinic not assigned to this user" });
     return { ok: false };
   }
-  return { ok: true, facilityId };
+  return { ok: true, facilityId, viewAsUserId };
 }
 import {
   createSchedulingTriageCase,
@@ -843,7 +850,9 @@ export function registerExecutionCaseRoutes(app: Express) {
   app.get("/api/scheduler-portal/cases", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
-      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId);
+      // /api/scheduler-portal/cases is the PCS Workspace call list, so
+      // view-as restricts to liaison-role users.
+      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId, "pcs");
       if (!scope.ok) return;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listSchedulerPortalCases>[0] = {};

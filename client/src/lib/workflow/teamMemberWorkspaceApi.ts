@@ -62,6 +62,9 @@ type ScheduleParams = {
   startDate?: string | null;
   endDate?: string | null;
   limit?: number;
+  /** ADMIN VIEW-AS — only honored when the caller is admin. The
+   *  backend ignores it for non-admin callers (defense in depth). */
+  viewAsTeamMemberId?: string | null;
 };
 
 type AncillaryParams = ScheduleParams & {
@@ -75,6 +78,8 @@ type CallListParams = {
   startDate?: string | null;
   endDate?: string | null;
   limit?: number;
+  /** ADMIN VIEW-AS — only honored when the caller is admin. */
+  viewAsTeamMemberId?: string | null;
 };
 
 function appendIf(params: URLSearchParams, key: string, value: unknown) {
@@ -100,6 +105,7 @@ export async function fetchWorkspaceClinicSchedule(
   appendIf(qs, "startDate", params.startDate);
   appendIf(qs, "endDate", params.endDate);
   appendIf(qs, "limit", params.limit ?? 100);
+  appendIf(qs, "viewAsTeamMemberId", params.viewAsTeamMemberId);
   const url = `/api/technician-liaison/clinic-visits${qs.toString() ? `?${qs}` : ""}`;
   const rows = await fetchJson<unknown[]>(url);
   return Array.isArray(rows) ? (rows as TeamWorkspaceClinicVisit[]) : [];
@@ -115,6 +121,7 @@ export async function fetchWorkspaceAncillarySchedule(
   appendIf(qs, "startDate", params.startDate);
   appendIf(qs, "endDate", params.endDate);
   appendIf(qs, "limit", params.limit ?? 100);
+  appendIf(qs, "viewAsTeamMemberId", params.viewAsTeamMemberId);
   const url = `/api/technician-liaison/ancillary-schedule${qs.toString() ? `?${qs}` : ""}`;
   const rows = await fetchJson<unknown[]>(url);
   return Array.isArray(rows) ? (rows as TeamWorkspaceAncillaryAppointment[]) : [];
@@ -267,6 +274,7 @@ export async function fetchWorkspaceCallList(
   appendIf(qs, "assignedTeamMemberId", params.assignedTeamMemberId);
   appendIf(qs, "assignedRole", params.assignedRole);
   appendIf(qs, "limit", params.limit ?? 100);
+  appendIf(qs, "viewAsTeamMemberId", params.viewAsTeamMemberId);
   const url = `/api/scheduler-portal/cases${qs.toString() ? `?${qs}` : ""}`;
   const rows = await fetchJson<unknown[]>(url);
   if (!Array.isArray(rows)) return [];
@@ -281,4 +289,26 @@ export async function fetchWorkspaceCallList(
     });
   }
   return out;
+}
+
+// ADMIN VIEW-AS — list of team members the admin observer can select
+// for the named workspace. Backend returns 403 for non-admin callers.
+export type ViewAsWorkspaceType = "pcs" | "acs";
+
+export type ViewAsTeamMember = {
+  id: string;
+  username: string;
+  role: string;
+  active: boolean;
+};
+
+export async function fetchTeamMembersForWorkspace(
+  workspace: ViewAsWorkspaceType,
+): Promise<ViewAsTeamMember[]> {
+  const res = await fetch(`/api/portal/team-members?workspace=${workspace}`, {
+    credentials: "include",
+  });
+  if (!res.ok) return [];
+  const body = (await res.json()) as { teamMembers?: ViewAsTeamMember[] };
+  return Array.isArray(body.teamMembers) ? body.teamMembers : [];
 }
