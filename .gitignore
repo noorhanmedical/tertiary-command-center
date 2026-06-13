@@ -3,7 +3,15 @@ dist
 .DS_Store
 server/public
 vite.config.ts.*
-*.tar.gzstorage/
+*.tar.gz
+storage/
+
+# Local recovery/dev dirs — never commit. tmp_recovery/ holds backup
+# copies of WIP/broken files; artifacts/ holds local mockup sandboxes
+# and design experiments. Both are operator-local and should never
+# leak into source control.
+tmp_recovery/
+artifacts/
 
 # Secrets — Phase 1 AWS deployment contract (H1) enforces never
 # committing .env files. Secrets come from injected env at process
