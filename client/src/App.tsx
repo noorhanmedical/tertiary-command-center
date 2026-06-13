@@ -45,7 +45,8 @@ import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
 import EngagementCenterPage from "@/pages/engagement-center";
-import PatientDirectoryLiveRoute from "@/pages/patient-directory-live";
+// Slice 1.5: PatientDirectoryLiveRoute import removed — the
+// /patient-directory/live route now redirects to /patient-directory.
 
 const SIDEBAR_STYLE = {
   "--sidebar-width": "18rem",
@@ -98,7 +99,15 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   </SidebarProvider>
                 </Route>
                 <Route path="/schedule" component={SchedulePage} />
-                <Route path="/patient-directory/live" component={PatientDirectoryLiveRoute} />
+                {/* Phase 1 Slice 1.5: /patient-directory/live consolidated
+                    back into the canonical /patient-directory route.
+                    The redirect (instead of 404) preserves existing
+                    bookmarks. PatientDirectoryLivePage components
+                    remain in client/src/components/patient-directory/
+                    for reuse inside the canonical surface. */}
+                <Route path="/patient-directory/live">
+                  <Redirect to="/patient-directory" />
+                </Route>
                 <Route path="/patient-directory" component={PatientDatabasePage} />
                 <Route path="/patient-database">
                   <Redirect to="/patient-directory" />
