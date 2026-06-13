@@ -22,21 +22,31 @@ import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 // the portal endpoints already use. Without this, an authenticated
 // user could request any facilityId in the query string and bypass
 // the assigned-facility allow-list returned by /api/portal/my-facilities.
-import { requirePortalRole, allowedFacilities } from "./portal";
+import { requirePortalRole, allowedFacilities, resolveAdminViewAsUserId, type ViewAsWorkspaceType } from "./portal";
 
 // Resolves the requested facilityId for a Phase-1 team-portal feed.
 // Returns either an HTTP error to send or the (admin-pass-through or
 // scoped) facilityId to apply to the underlying repository call.
+//
+// ADMIN VIEW-AS: when the caller is admin AND a `viewAsTeamMemberId`
+// query param is supplied, the facility allow-list narrows to that team
+// member's assigned facilities. Admin's session identity is preserved
+// so writes still log the real admin. The `workspace` argument
+// additionally enforces role compatibility (PCS↔liaison, ACS↔technician).
 async function resolvePhase1FacilityScope(
   req: Request,
   res: Response,
   rawFacilityId: string | undefined,
-): Promise<{ ok: true; facilityId: string | null } | { ok: false }> {
-  const allowed = await allowedFacilities(req);
+  rawViewAsTeamMemberId?: string,
+  workspace?: ViewAsWorkspaceType,
+): Promise<{ ok: true; facilityId: string | null; viewAsUserId: string | null } | { ok: false }> {
+  const viewAsUserId = await resolveAdminViewAsUserId(req, rawViewAsTeamMemberId, workspace);
+  const allowed = await allowedFacilities(req, { viewAsUserId });
   const facilityId = (rawFacilityId ?? "").trim() || null;
   if (allowed.all) {
-    // Admin: pass through whatever was requested (or null = unfiltered).
-    return { ok: true, facilityId };
+    // Admin (no view-as): pass through whatever was requested (or null
+    // = unfiltered).
+    return { ok: true, facilityId, viewAsUserId };
   }
   if (!facilityId) {
     res
@@ -50,7 +60,7 @@ async function resolvePhase1FacilityScope(
       .json({ error: "Forbidden — clinic not assigned to this user" });
     return { ok: false };
   }
-  return { ok: true, facilityId };
+  return { ok: true, facilityId, viewAsUserId };
 }
 
 const scheduleAncillaryBodySchema = z.object({
@@ -120,7 +130,7 @@ export function registerGlobalScheduleRoutes(app: Express) {
   app.get("/api/technician-liaison/clinic-visits", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
-      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId);
+      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId);
       if (!scope.ok) return;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listTechnicianLiaisonClinicVisits>[0] = {};
@@ -149,7 +159,7 @@ export function registerGlobalScheduleRoutes(app: Express) {
   app.get("/api/technician-liaison/ancillary-schedule", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
-      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId);
+      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId, q.viewAsTeamMemberId);
       if (!scope.ok) return;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listTechnicianLiaisonAncillarySchedule>[0] = {};

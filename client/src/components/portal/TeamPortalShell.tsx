@@ -4,7 +4,7 @@ import {
   Stethoscope, HeartHandshake, Calendar as CalendarIcon, Phone, FileSignature,
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
   Sparkles, Send, Minimize2, Maximize2, FileBarChart, FilePlus, User, Bell, Bot,
-  ClipboardPen, Pill, History, ShieldCheck, Users, Search, Megaphone,
+  Home, ClipboardPen, Pill, History, ShieldCheck, Users, Search, Megaphone,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,8 +27,12 @@ import {
   fetchWorkspaceCallList,
   fetchWorkspaceClinicSchedule,
   fetchWorkspaceAncillarySchedule,
+  fetchTeamMembersForWorkspace,
+  type ViewAsTeamMember,
+  type ViewAsWorkspaceType,
 } from "@/lib/workflow/teamMemberWorkspaceApi";
 import { fetchTeamMemberProfile } from "@/lib/workflow/teamMemberProfileApi";
+import { useLocation } from "wouter";
 import {
   SchedulePatientDialog,
   type SchedulePatientDialogPatient,
@@ -696,13 +700,6 @@ export function TeamPortalShell({
   void workspaceCanPrimaryConsentScreening;
   void workspaceCanUploadProcedureReport;
   const { toast } = useToast();
-  const { data: facData } = useQuery<{ facilities: string[] }>({
-    queryKey: ["/api/portal/my-facilities"],
-    queryFn: async () => {
-      const res = await fetch("/api/portal/my-facilities", { credentials: "include" });
-      return res.json();
-    },
-  });
   // Profile fetch — pulls the logged-in user's workspace profile from
   // admin_settings via /api/admin-settings/effective. Falls back to a
   // role-derived default when no row exists. Read-only here; profile
@@ -719,10 +716,66 @@ export function TeamPortalShell({
   });
   const currentUserId = currentUser?.id ?? null;
   const currentUserRole = currentUser?.role ?? null;
+  const isAdmin = currentUserRole === "admin";
+  // Wouter navigation — used by the admin-only Home dock button to
+  // return to /home (the existing main app dashboard).
+  const [, setLocation] = useLocation();
+
+  // ADMIN VIEW-AS (Phase 1.5):
+  //   - PCS workspace → list users with role "liaison"
+  //   - ACS workspace → list users with role "technician"
+  //   - Non-admin users never see the selector and the backend ignores
+  //     the param if it leaks through.
+  // The selected team member's facility allow-list narrows the feeds;
+  // the admin's actual identity is preserved for audit / writes.
+  const viewAsWorkspaceType: ViewAsWorkspaceType = workspaceIsAncillaryCareSpecialist
+    ? "acs"
+    : "pcs";
+  const [viewAsTeamMemberId, setViewAsTeamMemberId] = useState<string | null>(null);
+  const { data: viewAsCandidates = [] as ViewAsTeamMember[] } = useQuery({
+    queryKey: ["/api/portal/team-members", viewAsWorkspaceType, isAdmin],
+    queryFn: () => fetchTeamMembersForWorkspace(viewAsWorkspaceType),
+    enabled: isAdmin,
+  });
+  // Reset the view-as selection if the workspace switches role or the
+  // selected user is no longer in the candidate list.
+  useEffect(() => {
+    if (!isAdmin) {
+      if (viewAsTeamMemberId !== null) setViewAsTeamMemberId(null);
+      return;
+    }
+    if (
+      viewAsTeamMemberId !== null &&
+      !viewAsCandidates.some((u) => u.id === viewAsTeamMemberId)
+    ) {
+      setViewAsTeamMemberId(null);
+    }
+  }, [isAdmin, viewAsWorkspaceType, viewAsCandidates, viewAsTeamMemberId]);
+
+  // Profile fetch is keyed on the *viewed-as* user when an admin is
+  // observing, so capabilities / facility allow-list / allowedServiceTypes
+  // reflect what the team member would see.
+  const profileTargetUserId = isAdmin && viewAsTeamMemberId ? viewAsTeamMemberId : currentUserId;
+  const profileTargetRole = isAdmin && viewAsTeamMemberId
+    ? (viewAsWorkspaceType === "acs" ? "technician" : "liaison")
+    : currentUserRole;
   const { data: workspaceProfile } = useQuery({
-    queryKey: ["/api/admin-settings/effective", "team_member", "workspace_profile", currentUserId],
-    queryFn: () => fetchTeamMemberProfile(currentUserId as string, currentUserRole),
-    enabled: !!currentUserId,
+    queryKey: ["/api/admin-settings/effective", "team_member", "workspace_profile", profileTargetUserId],
+    queryFn: () => fetchTeamMemberProfile(profileTargetUserId as string, profileTargetRole),
+    enabled: !!profileTargetUserId,
+  });
+
+  // facData refetches on admin view-as change so the facility picker
+  // narrows to the selected team-member's allow-list.
+  const { data: facData } = useQuery<{ facilities: string[] }>({
+    queryKey: ["/api/portal/my-facilities", viewAsTeamMemberId],
+    queryFn: async () => {
+      const url = viewAsTeamMemberId
+        ? `/api/portal/my-facilities?viewAsTeamMemberId=${encodeURIComponent(viewAsTeamMemberId)}`
+        : "/api/portal/my-facilities";
+      const res = await fetch(url, { credentials: "include" });
+      return res.json();
+    },
   });
 
   const profileViewAllFacilities = !!workspaceProfile?.capabilities?.viewAllFacilities;
@@ -861,12 +914,17 @@ export function TeamPortalShell({
   const workspaceDayStartIso = `${selectedDate}T00:00:00.000Z`;
   const workspaceDayEndIso = `${selectedDate}T23:59:59.999Z`;
 
+  // ADMIN VIEW-AS: every workspace feed key carries viewAsTeamMemberId
+  // so the query refetches on selection change. The param is forwarded
+  // to the canonical feed helpers; the backend ignores it for non-admin
+  // callers as a defense-in-depth measure.
   const { data: workspaceCallList = [], isLoading: workspaceCallListLoading } = useQuery({
     queryKey: [
       "team-workspace-call-list",
       workspaceRole ?? role,
       facility,
       selectedDate,
+      viewAsTeamMemberId,
     ],
     queryFn: () =>
       // assignedRole is intentionally omitted — both workspaces read the
@@ -879,6 +937,7 @@ export function TeamPortalShell({
         startDate: workspaceDayStartIso,
         endDate: workspaceDayEndIso,
         limit: 100,
+        viewAsTeamMemberId,
       }),
     enabled: !!facility,
   });
@@ -888,6 +947,7 @@ export function TeamPortalShell({
       "team-workspace-clinic-schedule",
       facility,
       selectedDate,
+      viewAsTeamMemberId,
     ],
     queryFn: () =>
       fetchWorkspaceClinicSchedule({
@@ -895,6 +955,7 @@ export function TeamPortalShell({
         startDate: workspaceDayStartIso,
         endDate: workspaceDayEndIso,
         limit: 100,
+        viewAsTeamMemberId,
       }),
     enabled: !!facility,
   });
@@ -904,6 +965,7 @@ export function TeamPortalShell({
       "team-workspace-ancillary-schedule",
       facility,
       selectedDate,
+      viewAsTeamMemberId,
     ],
     // Facility filter is the primary scope so ancillary appointments written
     // to global_schedule_events by remote schedulers still surface for that
@@ -914,6 +976,7 @@ export function TeamPortalShell({
         startDate: workspaceDayStartIso,
         endDate: workspaceDayEndIso,
         limit: 100,
+        viewAsTeamMemberId,
       }),
     enabled: !!facility,
   });
@@ -962,11 +1025,12 @@ export function TeamPortalShell({
     workspaceIsAncillaryCareSpecialist ? "ancillaryCareSpecialist" : "patientCareSpecialist";
 
   const { data: scheduleData } = useQuery<{ patients: TodayPatient[] }>({
-    queryKey: ["/api/portal/today-schedule", facility, selectedDate],
+    queryKey: ["/api/portal/today-schedule", facility, selectedDate, viewAsTeamMemberId],
     queryFn: async () => {
       const u = new URL("/api/portal/today-schedule", window.location.origin);
       u.searchParams.set("facility", facility);
       u.searchParams.set("date", selectedDate);
+      if (viewAsTeamMemberId) u.searchParams.set("viewAsTeamMemberId", viewAsTeamMemberId);
       const res = await fetch(u.pathname + u.search, { credentials: "include" });
       return res.json();
     },
@@ -1356,7 +1420,54 @@ export function TeamPortalShell({
               {subtitle ? <p className="text-sm text-white/70">{subtitle}</p> : null}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* ADMIN VIEW-AS selector — only rendered for admins. The
+                 list contains active users with the workspace role
+                 (PCS→liaison, ACS→technician). Selecting a team
+                 member narrows feeds + facility allow-list; admin
+                 identity is preserved for audit/writes. */}
+            {isAdmin && (
+              <div
+                className="flex items-center gap-2"
+                data-testid="admin-viewas-selector-wrap"
+              >
+                <Label
+                  htmlFor="admin-viewas-team-member-select"
+                  className="text-sm text-white/80"
+                  data-testid="admin-viewas-label"
+                >
+                  View as
+                </Label>
+                <Select
+                  value={viewAsTeamMemberId ?? "__self__"}
+                  onValueChange={(v) =>
+                    setViewAsTeamMemberId(v === "__self__" ? null : v)
+                  }
+                >
+                  <SelectTrigger
+                    id="admin-viewas-team-member-select"
+                    className="w-[220px] border-white/20 bg-white/90 text-slate-900"
+                    data-testid="admin-viewas-team-member-select"
+                  >
+                    <SelectValue placeholder="Admin (self)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__self__" data-testid="admin-viewas-option-self">
+                      Admin (self)
+                    </SelectItem>
+                    {viewAsCandidates.map((u) => (
+                      <SelectItem
+                        key={u.id}
+                        value={u.id}
+                        data-testid={`admin-viewas-option-${u.id}`}
+                      >
+                        {u.username} · {viewAsWorkspaceType.toUpperCase()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <Label htmlFor="facility-select" className="text-sm text-white/80">Clinic</Label>
             <Select value={facility} onValueChange={setFacility}>
               <SelectTrigger id="facility-select" className="w-[220px] border-white/20 bg-white/90 text-slate-900" data-testid="select-facility">
@@ -2376,6 +2487,26 @@ export function TeamPortalShell({
         </div>
         <div className="absolute bottom-5 left-1/2 z-50 -translate-x-1/2 w-full max-w-[95vw] overflow-x-auto">
           <div className="group/dock mx-auto flex w-fit items-center gap-1 rounded-2xl border border-white/10 bg-slate-900/40 px-2 py-2 opacity-60 backdrop-blur-xl transition-all duration-300 ease-out hover:gap-2 hover:border-white/20 hover:bg-slate-900/60 hover:px-3 hover:py-2 hover:opacity-100 hover:shadow-2xl">
+            {/* Admin Home dock button — only rendered for admins. Routes
+                 back to /home (the existing main app dashboard route).
+                 PCS and ACS users keep the standard 6-app dock; the
+                 button is appended for admins so we don't re-engineer
+                 the existing dock structure. */}
+            {isAdmin && (
+              <div className="flex items-center" data-testid="dock-icon-home-wrap">
+                <button
+                  type="button"
+                  onClick={() => setLocation("/home")}
+                  aria-label="Return to main app home"
+                  title="Home"
+                  className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-[#4863A0]/25 text-[#6F8FD6] shadow-md transition-all duration-300 ease-out group-hover/dock:h-11 group-hover/dock:w-11 hover:-translate-y-0.5 hover:scale-105 hover:bg-[#4863A0]/35"
+                  data-testid="dock-icon-home"
+                >
+                  <Home className="h-5 w-5 text-white" />
+                </button>
+                <div className="mx-1 h-6 w-px bg-white/15" />
+              </div>
+            )}
             {[
               { key: "tasks", icon: Bell },
               { key: "schedule", icon: CalendarIcon },

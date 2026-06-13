@@ -19,6 +19,7 @@ export interface IUsersRepository {
   updateRole(id: string, role: string): Promise<void>;
   validatePassword(username: string, plaintext: string): Promise<User | null>;
   listAll(): Promise<Omit<User, "password">[]>;
+  listByRole(role: string): Promise<Omit<User, "password">[]>;
   deactivate(id: string): Promise<void>;
   remove(id: string): Promise<void>;
 }
@@ -68,6 +69,15 @@ export class DbUsersRepository implements IUsersRepository {
       role: users.role,
       active: users.active,
     }).from(users).orderBy(asc(users.username));
+  }
+
+  async listByRole(role: string): Promise<Omit<User, "password">[]> {
+    return db.select({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      active: users.active,
+    }).from(users).where(eq(users.role, role)).orderBy(asc(users.username));
   }
 
   async deactivate(id: string): Promise<void> {

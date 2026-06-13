@@ -113,17 +113,30 @@ requireFile(pcs);
 requireFile(acs);
 requireFile(ec);
 
+// Team Portal landing tile contract — updated by the Phase-1.5 Team
+// Portal routing correction (PR: Correct Team Portal routing and add
+// admin team-member view-as). The landing must list ONLY PCS + ACS
+// execution-portal tiles. Engagement Center (assignment / disbursement)
+// and Outreach Center (marketing / metrics) are NOT execution portals
+// and must not appear as tiles. The /engagement-center route is still
+// reachable from the main app nav.
 requireText(hub, [
   '"/patient-care-specialist-portal"',
   '"/ancillary-care-specialist-portal"',
-  '"/engagement-center"',
   "Patient Care Specialist",
   "Ancillary Care Specialist",
-  "Engagement Center",
   "card-patient-care-specialist-workspace",
   "card-ancillary-care-specialist-workspace",
-  "card-engagement-center",
 ]);
+// And explicitly forbid the Engagement Center tile.
+requireNotText(
+  hub,
+  [
+    '"/engagement-center"',
+    "card-engagement-center",
+  ],
+  "Team Portals landing must not list Engagement Center as an execution tile (Phase-1.5 correction)",
+);
 
 requireText(pcs, [
   "ClinicWorkflowPortal",

@@ -110,6 +110,7 @@ export interface IStorage {
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   getAllUsers(): Promise<Omit<User, "password">[]>;
+  getUsersByRole(role: string): Promise<Omit<User, "password">[]>;
   getUserCount(): Promise<number>;
   updateUserPassword(id: string, plaintext: string): Promise<void>;
   updateUserRole(id: string, role: string): Promise<void>;
@@ -319,6 +320,7 @@ export class DatabaseStorage implements IStorage {
   updateUserRole(id: string, role: string) { return usersRepository.updateRole(id, role); }
   validateUserPassword(username: string, plaintext: string) { return usersRepository.validatePassword(username, plaintext); }
   getAllUsers() { return usersRepository.listAll(); }
+  getUsersByRole(role: string) { return usersRepository.listByRole(role); }
   deactivateUser(id: string) { return usersRepository.deactivate(id); }
   deleteUser(id: string) { return usersRepository.remove(id); }
 

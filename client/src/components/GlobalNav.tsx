@@ -31,7 +31,14 @@ type NavItemDef = {
 const NAV_ITEMS: NavItemDef[] = [
   { href: "/home",             label: "Home",             Icon: HomeIcon,     roles: ["admin", "clinician", "scheduler"] },
   { href: "/schedule",         label: "Schedule",         Icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
-  { href: "/scheduler-portal",         label: "Scheduler Portal",  Icon: Phone,        roles: ["admin", "clinician", "scheduler"] },
+  // Phase-1 team-portal correction: there is no standalone Scheduler
+  // Portal product. The legacy /scheduler-portal route mounts the
+  // OutreachPage (marketing / scheduler-coverage metrics) and is
+  // relabeled here as "Outreach Center" so users find the correct
+  // surface. Patient call execution lives in PCS Workspace; ancillary
+  // execution lives in ACS Workspace. The route path stays
+  // /scheduler-portal for back-compat with deep links.
+  { href: "/scheduler-portal",         label: "Outreach Center",   Icon: Phone,        roles: ["admin", "clinician", "scheduler"] },
   { href: "/ancillary-documents",        label: "Ancillary Documents",   Icon: FileText,     roles: ["admin", "clinician"] },
   { href: "/billing",          label: "Billing",          Icon: CreditCard,   roles: ["admin", "biller"] },
   { href: "/invoices",         label: "Invoices",         Icon: Receipt,      roles: ["admin", "biller"] },
