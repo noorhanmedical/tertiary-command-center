@@ -39,6 +39,7 @@ import { LeftRailToolsButton } from "@/components/portal/leftRail/LeftRailToolsB
 import { LeftRailCompactCalendar } from "@/components/portal/leftRail/LeftRailCompactCalendar";
 import { PortalEmailComposerTab } from "@/components/portal/PortalEmailComposerTab";
 import { PortalTemplatesResourcesTab } from "@/components/portal/PortalTemplatesResourcesTab";
+import { PortalDocumentLibraryTab } from "@/components/portal/PortalDocumentLibraryTab";
 import {
   SchedulePatientDialog,
   type SchedulePatientDialogPatient,
@@ -125,7 +126,11 @@ type PortalTabKind =
   // Left-rail Templates / Staff Resources tool → center-canvas
   // resources catalog. Patient-facing brochures live in
   // "marketing"; staff-facing helpers live in "resources".
-  | "resources";
+  | "resources"
+  // Left-rail Document Library tool → center-canvas read-only
+  // browse over the canonical /api/documents-library. Separate from
+  // patient-facing marketing materials.
+  | "documentLibrary";
 type PortalTab = {
   id: string;
   kind: PortalTabKind;
@@ -910,6 +915,15 @@ export function TeamPortalShell({
   const [pendingEmailTemplate, setPendingEmailTemplate] = useState<
     { subject: string; body: string } | null
   >(null);
+  // GLOBAL CALENDAR ISOLATION (Phase 1.7) — the left-rail Compact
+  // Global Calendar maintains its own date state independent of the
+  // right-rail work queue. The right-rail feeds (call list / clinic
+  // schedule / ancillary schedule) still key off `selectedDate`; this
+  // separate `globalCalendarDate` is used by the center-canvas
+  // calendar view only. Clicking a date in the left calendar must NOT
+  // refetch the assigned-work queries, change the active patient,
+  // change the facility, or affect activeWorkspaceMode.
+  const [globalCalendarDate, setGlobalCalendarDate] = useState<string>(todayIso());
   const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
   const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
   const [aiMinimized, setAiMinimized] = useState(false);
@@ -1769,6 +1783,13 @@ export function TeamPortalShell({
                     </div>
                   );
                 }
+                if (activeTab?.kind === "documentLibrary") {
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-document-library">
+                      <PortalDocumentLibraryTab />
+                    </div>
+                  );
+                }
                 // Canonical command canvas for any patient tab whose
                 // patient id maps to a real patientScreeningId.
                 if (
@@ -1996,9 +2017,11 @@ export function TeamPortalShell({
                     onClick={() => {
                       // Promote the compact calendar into the center
                       // canvas via the existing centerMode pipeline so
-                      // operators get the full month / day view.
+                      // operators get the full month / day view. Uses
+                      // globalCalendarDate (NOT selectedDate) so the
+                      // right-rail queue is untouched.
                       setCenterMode("playground");
-                      setCenterTitle(`Calendar — ${selectedDate}`);
+                      setCenterTitle(`Calendar — ${globalCalendarDate}`);
                     }}
                     testId="left-rail-tool-calendar"
                   />
@@ -2015,6 +2038,13 @@ export function TeamPortalShell({
                     active={activeKind === "marketing"}
                     onClick={() => openPortalTab("marketing")}
                     testId="left-rail-tool-marketing"
+                  />
+                  <LeftRailToolsButton
+                    label="Documents"
+                    icon={FileText}
+                    active={activeKind === "documentLibrary"}
+                    onClick={() => openPortalTab("documentLibrary")}
+                    testId="left-rail-tool-document-library"
                   />
                   <LeftRailToolsButton
                     label="Patient Search"
@@ -2040,16 +2070,17 @@ export function TeamPortalShell({
                   />
                 </div>
 
-                {/* Compact Global Calendar — NOT patient-centric. Date
-                    selection updates the workspace's selectedDate (the
-                    right rail / center canvas react). Clicking the
-                    month header expands to the center playground. */}
+                {/* Compact Global Calendar — NOT patient-centric and
+                    ISOLATED from the right-rail queue (Phase 1.7).
+                    Selecting a date only updates globalCalendarDate;
+                    the right-rail feeds + center-canvas patient
+                    context remain on their own selectedDate. */}
                 <LeftRailCompactCalendar
-                  selectedDate={selectedDate}
-                  onSelectDate={(d) => setSelectedDate(d)}
+                  selectedDate={globalCalendarDate}
+                  onSelectDate={(d) => setGlobalCalendarDate(d)}
                   onExpandToCanvas={() => {
                     setCenterMode("playground");
-                    setCenterTitle(`Calendar — ${selectedDate}`);
+                    setCenterTitle(`Calendar — ${globalCalendarDate}`);
                   }}
                 />
               </div>

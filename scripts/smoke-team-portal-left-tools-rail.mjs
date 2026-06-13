@@ -199,6 +199,128 @@ expectContains(
 );
 
 // ════════════════════════════════════════════════════════════════════
+// STAGE 9a — Phase 1.7: Document Library tool
+// ════════════════════════════════════════════════════════════════════
+header("STAGE 9a — Document Library tool (Phase 1.7)");
+
+expectContains(
+  "Document Library button in the rail",
+  "client/src/components/portal/TeamPortalShell.tsx",
+  'testId="left-rail-tool-document-library"',
+);
+expectContains(
+  "Document Library tab component exists",
+  "client/src/components/portal/PortalDocumentLibraryTab.tsx",
+  "PortalDocumentLibraryTab",
+);
+expectContains(
+  "Document Library uses the canonical hook",
+  "client/src/components/portal/PortalDocumentLibraryTab.tsx",
+  "useDocumentLibrary",
+);
+expectContains(
+  "Center canvas branch for documentLibrary kind",
+  "client/src/components/portal/TeamPortalShell.tsx",
+  'data-testid="playground-document-library"',
+);
+
+// ════════════════════════════════════════════════════════════════════
+// STAGE 9b — Global Calendar isolation (Phase 1.7)
+// ════════════════════════════════════════════════════════════════════
+header("STAGE 9b — Global Calendar isolation (Phase 1.7)");
+
+expectContains(
+  "globalCalendarDate state present in the shell",
+  "client/src/components/portal/TeamPortalShell.tsx",
+  "GLOBAL CALENDAR ISOLATION",
+);
+expectContains(
+  "Compact calendar binds to globalCalendarDate",
+  "client/src/components/portal/TeamPortalShell.tsx",
+  "selectedDate={globalCalendarDate}",
+);
+const shellSrcForCalendar = read("client/src/components/portal/TeamPortalShell.tsx") ?? "";
+function rightQueueKeyDoesNotIncludeGlobal(label, marker) {
+  const m = new RegExp(`"${marker}"[\\s\\S]{0,200}\\]`).exec(shellSrcForCalendar);
+  if (!m) {
+    failures.push(`✗ ${label} — could not locate key`);
+    return false;
+  }
+  if (m[0].includes("globalCalendarDate")) {
+    failures.push(`✗ ${label} — query key includes globalCalendarDate (breaks isolation)`);
+    return false;
+  }
+  console.log(`  ✓ ${label}`);
+  return true;
+}
+rightQueueKeyDoesNotIncludeGlobal(
+  "team-workspace-call-list key excludes globalCalendarDate",
+  "team-workspace-call-list",
+);
+rightQueueKeyDoesNotIncludeGlobal(
+  "team-workspace-clinic-schedule key excludes globalCalendarDate",
+  "team-workspace-clinic-schedule",
+);
+rightQueueKeyDoesNotIncludeGlobal(
+  "team-workspace-ancillary-schedule key excludes globalCalendarDate",
+  "team-workspace-ancillary-schedule",
+);
+
+// ════════════════════════════════════════════════════════════════════
+// STAGE 9c — Honest-state checks (Phase 1.7)
+// ════════════════════════════════════════════════════════════════════
+header("STAGE 9c — Honest-state guarantees");
+
+expectContains(
+  "Email composer surfaces backend errors literally",
+  "client/src/components/portal/PortalEmailComposerTab.tsx",
+  'data-testid="portal-email-composer-error"',
+);
+expectContains(
+  "Email backend throws on missing SMTP env",
+  "server/services/emailService.ts",
+  "Email is not configured",
+);
+expectContains(
+  "Quick Note documented as Deferred",
+  "docs/architecture/team-portal-left-tools-rail.md",
+  "Quick Note decision: **Deferred**",
+);
+expectContains(
+  "Internal Contacts documented as Deferred",
+  "docs/architecture/team-portal-left-tools-rail.md",
+  "Internal Contacts decision: **Deferred**",
+);
+
+// ════════════════════════════════════════════════════════════════════
+// STAGE 9d — Right panel remains the work queue
+// ════════════════════════════════════════════════════════════════════
+header("STAGE 9d — Right panel remains work queue");
+
+const rightRailStartIdx = shellSrcForCalendar.indexOf('data-testid="portal-right-rail"');
+const dockIdx = shellSrcForCalendar.indexOf("group/dock", rightRailStartIdx);
+const rightRegion = dockIdx > rightRailStartIdx
+  ? shellSrcForCalendar.slice(rightRailStartIdx, dockIdx)
+  : shellSrcForCalendar.slice(rightRailStartIdx);
+const FORBIDDEN_IN_RIGHT = [
+  "PortalEmailComposerTab",
+  "PortalDocumentLibraryTab",
+  "PortalTemplatesResourcesTab",
+  "PortalMarketingTab",
+  "PortalPatientSearchTab",
+  "PortalPlexusTasksTab",
+  "LeftRailCompactCalendar",
+];
+let rightPollution = 0;
+for (const f of FORBIDDEN_IN_RIGHT) {
+  if (rightRegion.includes(f)) {
+    rightPollution += 1;
+    failures.push(`Right rail must not mount "${f}"`);
+  }
+}
+expect("Right rail free of left-tool components", rightPollution === 0);
+
+// ════════════════════════════════════════════════════════════════════
 // STAGE 10 — No patient timeline / profile / metrics in left rail
 // ════════════════════════════════════════════════════════════════════
 header("STAGE 10 — Left rail boundary checks");
