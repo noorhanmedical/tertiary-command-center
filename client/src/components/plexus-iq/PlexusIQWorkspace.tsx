@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import {
   AlertTriangle,
+  BrainCircuit,
+  Building2,
   CalendarCheck,
   CalendarDays,
   CheckCircle2,
@@ -9,6 +11,8 @@ import {
   Loader2,
   Sparkles,
   Trash2,
+  Users,
+  Workflow,
 } from "lucide-react";
 import {
   Accordion,
@@ -1040,19 +1044,69 @@ export function PlexusIQWorkspace({
     // Global stat cards, qualification jobs, recent qualification cards,
     // and recently-deleted panels are NOT rendered here per the
     // facility-first rule. Clicking a tile opens its facility interior.
+    //
+    // Hero strip derives entirely from `summary` so no fake data ever
+    // appears: total patients, active facilities, active batches,
+    // unscheduled. This is the only premium-dark surface here — the
+    // canonical H1 lives in plexus-iq.tsx and is not duplicated.
+    const heroTotalPatients = summary.reduce((acc, r) => acc + (r.patientCount ?? 0), 0);
+    const heroFacilityCount = new Set(
+      summary.filter((r) => (r.patientCount ?? 0) > 0).map((r) => r.facility ?? "Unassigned"),
+    ).size;
+    const heroActiveBatches = summary.filter((r) => (r.patientCount ?? 0) > 0).length;
+    const heroUnscheduled = summary.filter(
+      (r) => !r.scheduleDate && (r.patientCount ?? 0) > 0,
+    ).length;
     return (
       <div
-        className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-3"
+        className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-6 space-y-4"
         data-testid="plexus-iq-facility-overview"
       >
+        <section
+          className="rounded bg-[#101115] text-white p-4 sm:p-5"
+          data-testid="plexus-iq-overview-hero"
+          aria-label="Plexus IQ workspace summary"
+        >
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-white/55">
+            <Workflow className="h-3 w-3" />
+            Plexus IQ Workspace
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+            <HeroStat
+              icon={<Users className="h-3.5 w-3.5" />}
+              label="Total Patients"
+              value={heroTotalPatients}
+              testId="plexus-iq-hero-total"
+            />
+            <HeroStat
+              icon={<Building2 className="h-3.5 w-3.5" />}
+              label="Facilities"
+              value={heroFacilityCount}
+              testId="plexus-iq-hero-facilities"
+            />
+            <HeroStat
+              icon={<BrainCircuit className="h-3.5 w-3.5" />}
+              label="Active Batches"
+              value={heroActiveBatches}
+              testId="plexus-iq-hero-active-batches"
+            />
+            <HeroStat
+              icon={<CalendarDays className="h-3.5 w-3.5" />}
+              label="Unscheduled"
+              value={heroUnscheduled}
+              testId="plexus-iq-hero-unscheduled"
+            />
+          </div>
+        </section>
+
         <div className="flex items-center justify-between gap-2">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#667085]">
             Clinics
           </div>
           <button
             type="button"
             onClick={() => setViewMode("all")}
-            className="text-[11px] text-slate-500 hover:text-slate-700"
+            className="text-[11px] text-[#667085] hover:text-[#101115] transition-colors"
             data-testid="button-plexus-iq-legacy-full-view"
           >
             Legacy full view →
@@ -1717,10 +1771,10 @@ function ClinicDetailPackets({
               data-dropdown-default-closed="?? true"
             >
               <div
-                className={`relative flex items-center justify-between gap-2 pl-4 pr-2 py-2 rounded-xl border border-slate-200/70 transition-colors ${
+                className={`relative flex items-center justify-between gap-2 pl-4 pr-2 py-2 rounded border border-[#DCE2EA] transition-colors ${
                   active
                     ? "bg-[#7283B0]/10 ring-1 ring-[#7283B0]/40"
-                    : "bg-white hover:bg-slate-50/80"
+                    : "bg-white hover:bg-[#F8F9FB]"
                 }`}
               >
                 <span
@@ -1786,7 +1840,7 @@ function ClinicDetailPackets({
       >
         {activeEntry ? (
           <div
-            className="rounded-2xl bg-[#7283B0] text-white p-3 shadow-[0_8px_24px_rgba(114,131,176,0.30)] max-h-[72vh] overflow-y-auto"
+            className="rounded bg-[#7283B0] text-white p-2 max-h-[72vh] overflow-y-auto"
             data-testid="plexus-iq-dropdown-panel"
             data-panel-style="plexus-iq-dropdown-contained-panel"
             data-indent-style="plexus-iq-dropdown-indented-panel"
@@ -1857,7 +1911,7 @@ function ClinicDetailPackets({
               )}
             </div>
             <div
-              className="rounded-xl bg-white p-2 shadow-[0_2px_6px_rgba(15,23,42,0.10)]"
+              className="rounded bg-white p-2"
               data-testid="plexus-iq-dropdown-white-row"
               data-row-surface="plexus-iq-dropdown-white-row"
             >
@@ -1904,6 +1958,33 @@ function ClinicDetailPackets({
           handlePacket(packetSel.mode, packetSel.scheduleDate, filtered);
         }}
       />
+    </div>
+  );
+}
+
+// Premium hero stat — used by the overview top strip. Derives from
+// `summary` only (no fake data). Uses the platform-token palette so it
+// stays visually distinct from the white H1 header without copying it.
+function HeroStat({
+  icon,
+  label,
+  value,
+  testId,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  testId: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1" data-testid={testId}>
+      <div className="inline-flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/55">
+        <span className="text-white/70">{icon}</span>
+        {label}
+      </div>
+      <div className="text-[28px] font-light tabular-nums leading-none text-white">
+        {value}
+      </div>
     </div>
   );
 }
