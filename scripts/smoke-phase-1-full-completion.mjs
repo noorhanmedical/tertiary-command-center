@@ -76,10 +76,24 @@ step(2, "Migrations 0026-0029 committed + additive only", () => {
   }
 });
 
-// 3) Live nav route.
-step(3, "Patient Directory navigation route /patient-directory/live present", () => {
-  requireText("client/src/App.tsx", ['path="/patient-directory/live"', 'component={PatientDirectoryLiveRoute}']);
-  requireText("client/src/components/GlobalNav.tsx", ["/patient-directory/live", "Patient Directory · Live"]);
+// 3) Patient Directory route consolidation (Slice 1.5).
+//    The previous /patient-directory/live component route was a guardrail
+//    violation. Slice 1.5 collapsed it to a redirect into the canonical
+//    /patient-directory route; the duplicate nav entry was removed.
+step(3, "Patient Directory navigation route consolidated (Slice 1.5)", () => {
+  requireText("client/src/App.tsx", [
+    '<Route path="/patient-directory/live">',
+    '<Redirect to="/patient-directory" />',
+    'component={PatientDatabasePage}',
+  ]);
+  const app = read("client/src/App.tsx") ?? "";
+  if (app.includes("component={PatientDirectoryLiveRoute}")) {
+    throw new Error("App.tsx still mounts the duplicate /patient-directory/live component route — Slice 1.5 forbids this");
+  }
+  const nav = read("client/src/components/GlobalNav.tsx") ?? "";
+  if (nav.includes('"Patient Directory · Live"') || nav.includes('"/patient-directory/live"')) {
+    throw new Error("GlobalNav still lists the duplicate Patient Directory entry — Slice 1.5 forbids this");
+  }
 });
 
 // 4) Live page uses client API.

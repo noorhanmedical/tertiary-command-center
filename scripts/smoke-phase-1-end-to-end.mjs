@@ -274,9 +274,12 @@ step(23, "Live HTTP probe (boot server, hit /api/health)", () => {
   return { status: STATUSES.SKIP, detail: "boot probe deferred — handled by H5 staging runbook" };
 });
 
-// Bonus — Production flag default sanity: every Phase 1 server flag accessor
-// must default to OFF when the env var is unset.
-step(24, "All Phase 1 server flag accessors default OFF when env is empty", () => {
+// Bonus — Production flag default sanity: every Phase 1 server flag
+// accessor must default to OFF when the env var is unset, EXCEPT the
+// engagement-canonical-call-results endpoint flag which now defaults
+// ON per Phase 1 Slice 1.4 (canonical writeback is the new default;
+// LEGACY_CALL_RESULT_ROLLBACK is the rollback flag).
+step(24, "Phase 1 server flag accessors default to documented values when env is empty", () => {
   // Use a child invocation so we can scrub process.env.
   const probe = `
     process.env = {};
@@ -291,22 +294,27 @@ step(24, "All Phase 1 server flag accessors default OFF when env is empty", () =
       "../server/services/billingReadiness/billingReadinessAggregator.ts",
       "../server/services/invoicing/invoicingScaffold.ts",
     ];
+    // [modName, accessor, expectedDefault]
+    // Slice 1.4: engagementCanonicalCallResultsEndpointFlag defaults ON
+    // (canonical writeback is now the production default; the legacy
+    // singular endpoint is reachable only via LEGACY_CALL_RESULT_ROLLBACK=1).
     const accessors = [
-      ["engagementCanonicalCallResultsEndpointFlag", "isEngagementCanonicalCallResultsEndpointEnabled"],
-      ["engagementCanonicalCallListReadFlag", "isEngagementCanonicalCallListReadEnabled"],
-      ["recordCallResultEngagementDelegateFlag", "isRecordCallResultEngagementDelegateEnabled"],
-      ["recordCallResultOutreachDelegateFlag", "isRecordCallResultOutreachDelegateEnabled"],
-      ["ringCentralAdapter", "isRingCentralAdapterEnabled"],
-      ["ancillaryReadModel", "isAncillaryReadModelEnabled"],
-      ["signingService", "isSigningServiceEnabled"],
-      ["billingReadinessAggregator", "isBillingReadinessAggregatorEnabled"],
-      ["invoicingScaffold", "isInvoicingScaffoldEnabled"],
+      ["engagementCanonicalCallResultsEndpointFlag", "isEngagementCanonicalCallResultsEndpointEnabled", true],
+      ["engagementCanonicalCallListReadFlag", "isEngagementCanonicalCallListReadEnabled", false],
+      ["recordCallResultEngagementDelegateFlag", "isRecordCallResultEngagementDelegateEnabled", false],
+      ["recordCallResultOutreachDelegateFlag", "isRecordCallResultOutreachDelegateEnabled", false],
+      ["ringCentralAdapter", "isRingCentralAdapterEnabled", false],
+      ["ancillaryReadModel", "isAncillaryReadModelEnabled", false],
+      ["signingService", "isSigningServiceEnabled", false],
+      ["billingReadinessAggregator", "isBillingReadinessAggregatorEnabled", false],
+      ["invoicingScaffold", "isInvoicingScaffoldEnabled", false],
     ];
     (async () => {
-      for (const [modName, accessor] of accessors) {
+      for (const [modName, accessor, expected] of accessors) {
         const m = await import(mods.find((p) => p.includes(modName)));
         if (typeof m[accessor] !== "function") throw new Error(modName + " missing accessor " + accessor);
-        if (m[accessor]() !== false) throw new Error(modName + "." + accessor + "() must default OFF");
+        const actual = m[accessor]();
+        if (actual !== expected) throw new Error(modName + "." + accessor + "() expected " + expected + " but got " + actual);
       }
       console.log("OK");
     })().catch((e) => { console.error(e); process.exit(1); });
