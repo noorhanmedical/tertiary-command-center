@@ -211,18 +211,30 @@ export function evidenceForUltrasoundTest(
       continue;
     }
     if (venous) {
+      // Phase 1 Slice 1.6 — venous studies require true venous
+      // indications only. Vascular / metabolic risk diagnoses (HTN /
+      // DM / HLD / arterial-vascular) do NOT qualify a venous study
+      // by themselves; the prior Dx-fallback was removed because it
+      // surfaced venous studies for patients without leg-vein
+      // pathology, violating the clinical mapping in
+      // CLAUDE_PHASE_GUARDRAILS.md §6.
       if (
-        ["edema", "swelling", "venous", "dvt", "varicose", "leg swelling", "calf pain", "leg pain"].some((t) => label.includes(t))
-      ) {
-        out.push(chip);
-        continue;
-      }
-      // Vascular risk diagnoses qualify a venous test only when they
-      // arrived from Dx (i.e. an explicit diagnosis), never from a med.
-      if (
-        chip.kind === "diagnosis" &&
-        chip.source !== "Rx" &&
-        ["diabetes", "hypertension", "hyperlipidemia", "pvd", "peripheral vascular"].some((t) => label.includes(t))
+        [
+          "edema",
+          "swelling",
+          "venous",
+          "dvt",
+          "varicose",
+          "leg swelling",
+          "leg edema",
+          "calf pain",
+          "leg pain",
+          "leg redness",
+          "venous insufficiency",
+          "post-op leg",
+          "immobility",
+          "pe", // history of pulmonary embolism — DVT proxy
+        ].some((t) => label.includes(t))
       ) {
         out.push(chip);
         continue;
