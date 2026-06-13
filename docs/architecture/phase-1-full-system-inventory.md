@@ -218,3 +218,66 @@ These are **not** edited during Phase 1:
 | 1.5 | Removing `/patient-directory/live` may break existing bookmarks | Add a redirect, not a 404. Preserve backend wiring. |
 
 Authored as part of Slice 1.0. Updated by each later slice.
+
+---
+
+## 11. Slice 1.2 update — Facility scoping (completed)
+
+**Decision:** No new master `facilities` table added in Phase 1.
+
+**Rationale:** The pre-existing `docs/architecture/facility-string-
+inventory.md` documents 27 columns storing facility identity as plain
+text. A canonical migration to a master `facilities` table + FK
+enforcement is a Phase-2/5 effort that needs a dual-write window,
+backfill of 3 canonical names + every historical string variation, and
+parity QA. The migration ADR (`migration-policy-adr.md` §2/§3)
+explicitly defers this to a later phase.
+
+Phase 1 surfaces work correctly with the current text-column shape;
+no Phase 1 slice is blocked by the missing master table.
+
+**Gap fixed:** Server-side facility scoping was missing on three Phase 1
+team-portal feed endpoints. An authenticated user could pass any
+`facilityId` in the query string and get back data for a facility they
+were not assigned to. The fix wires `requirePortalRole` +
+`resolvePhase1FacilityScope` into:
+
+| Endpoint | File |
+|---|---|
+| `GET /api/technician-liaison/clinic-visits` | `server/routes/globalSchedule.ts` |
+| `GET /api/technician-liaison/ancillary-schedule` | `server/routes/globalSchedule.ts` |
+| `GET /api/scheduler-portal/cases` | `server/routes/executionCases.ts` |
+
+`requirePortalRole` and `allowedFacilities` were promoted to `export`
+from `server/routes/portal.ts` so they can be reused without duplicating
+the role+facility logic.
+
+**Behavior after fix:**
+
+| Role | facilityId param | Result |
+|---|---|---|
+| admin | any | 200 — pass through |
+| admin | missing | 200 — unfiltered |
+| technician / liaison | in their assigned set | 200 — filtered to that facility |
+| technician / liaison | NOT in their assigned set | 403 `Forbidden — clinic not assigned to this user` |
+| technician / liaison | missing | 400 `facilityId is required for non-admin callers` |
+| clinician / scheduler / biller | any | 403 `Forbidden — technician or liaison role required` |
+
+**Rollback:** Single-commit revert. The endpoints had no enforcement
+before, so reverting restores the prior (open) behavior. The fix is
+behaviorally additive (it tightens access); no client change needed
+because the client was already passing the facility it had been
+authorized for via `/api/portal/my-facilities`.
+
+**QA:**
+
+- `scripts/qa-phase-1-facility-scoping.mjs` — asserts each endpoint
+  applies `requirePortalRole` + the `PHASE-1 FACILITY SCOPE` marker is
+  present so future refactors don't accidentally strip the check.
+- `scripts/qa-phase-1-facility-dual-write-parity.mjs` — asserts the
+  canonical `VALID_FACILITIES` list in `shared/plexus.ts` is the source
+  of truth and that no new schema file regresses to the legacy
+  `facility: text("facility")` shape (existing grandfathered files are
+  on a known list).
+
+Full repo `qa-*.mjs` gauntlet green (0 failures) after the fix.

@@ -15,6 +15,34 @@ import {
   assignEngagementCases,
 } from "../repositories/executionCase.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+// PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires /api/scheduler-
+// portal/cases through the same role + facility access checks the
+// other portal endpoints already use. See the matching block in
+// server/routes/globalSchedule.ts.
+import { requirePortalRole, allowedFacilities } from "./portal";
+
+async function resolvePhase1FacilityScope(
+  req: Request,
+  res: Response,
+  rawFacilityId: string | undefined,
+): Promise<{ ok: true; facilityId: string | null } | { ok: false }> {
+  const allowed = await allowedFacilities(req);
+  const facilityId = (rawFacilityId ?? "").trim() || null;
+  if (allowed.all) return { ok: true, facilityId };
+  if (!facilityId) {
+    res
+      .status(400)
+      .json({ error: "facilityId is required for non-admin callers" });
+    return { ok: false };
+  }
+  if (!allowed.facilities.has(facilityId)) {
+    res
+      .status(403)
+      .json({ error: "Forbidden — clinic not assigned to this user" });
+    return { ok: false };
+  }
+  return { ok: true, facilityId };
+}
 import {
   createSchedulingTriageCase,
   upsertOpenSchedulingTriageCase,
@@ -810,16 +838,20 @@ export function registerExecutionCaseRoutes(app: Express) {
   // Defaults to scheduler-relevant buckets (visit, outreach, scheduling_triage)
   // and excludes terminal engagement statuses (completed, closed) unless caller
   // provides explicit filters.
-  app.get("/api/scheduler-portal/cases", async (req, res) => {
+  // PHASE-1 FACILITY SCOPE: same role + facility access pattern as
+  // /api/technician-liaison/clinic-visits in globalSchedule.ts.
+  app.get("/api/scheduler-portal/cases", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
+      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId);
+      if (!scope.ok) return;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listSchedulerPortalCases>[0] = {};
       if (q.assignedTeamMemberId) {
         const id = parseInt(q.assignedTeamMemberId, 10);
         if (!isNaN(id)) filters.assignedTeamMemberId = id;
       }
-      if (q.facilityId) filters.facilityId = q.facilityId;
+      if (scope.facilityId) filters.facilityId = scope.facilityId;
       if (q.engagementBucket) filters.engagementBucket = q.engagementBucket;
       if (q.lifecycleStatus) filters.lifecycleStatus = q.lifecycleStatus;
       if (q.engagementStatus) filters.engagementStatus = q.engagementStatus;
