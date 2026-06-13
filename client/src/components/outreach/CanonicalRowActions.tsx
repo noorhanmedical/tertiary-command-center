@@ -222,6 +222,14 @@ function CanonicalLogCallDialog({
       queryClient.invalidateQueries({ queryKey: ["/api/portal/outreach-call-list"] });
       queryClient.invalidateQueries({ queryKey: ["/api/portal/my-tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/portal/today-schedule"] });
+      // Slice 1.4: PCS Workspace shell reads call list via the
+      // canonical /api/scheduler-portal/cases feed under a separate
+      // React-Query key (`team-workspace-call-list`). Invalidate by
+      // predicate so the workspace refreshes regardless of which
+      // facility/date suffix is in the key.
+      queryClient.invalidateQueries({
+        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "team-workspace-call-list",
+      });
       onSuccess?.();
       onOpenChange(false);
     },
@@ -349,6 +357,12 @@ function CanonicalScheduleDialog({
       queryClient.invalidateQueries({ queryKey: ["/api/portal/outreach-call-list"] });
       queryClient.invalidateQueries({ queryKey: ["/api/portal/my-tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/portal/today-schedule"] });
+      // Slice 1.4: also refresh the PCS Workspace call list + ancillary
+      // schedule keys so the workspace reflects the scheduled
+      // ancillary without a manual refresh.
+      queryClient.invalidateQueries({
+        predicate: (q) => Array.isArray(q.queryKey) && (q.queryKey[0] === "team-workspace-call-list" || q.queryKey[0] === "team-workspace-ancillary-schedule"),
+      });
       onSuccess?.();
       onOpenChange(false);
     },
