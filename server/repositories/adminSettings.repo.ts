@@ -69,6 +69,24 @@ const DEFAULT_ADMIN_SETTINGS: DefaultAdminSetting[] = [
   // engagement_center
   { settingDomain: "engagement_center", settingKey: "enabled", settingValue: { enabled: true }, description: "Engagement Center is enabled." },
   { settingDomain: "engagement_center", settingKey: "default_priority_window_minutes", settingValue: { minutes: 60 }, description: "Default look-ahead window for next-action prioritization (minutes)." },
+  // PR C — Call-result lifecycle intervals. Drive the next-action
+  // timestamp the route writes for "no answer" and "voicemail"
+  // outcomes when the caller does not supply an explicit nextActionAt.
+  // "callback" continues to use scheduling_triage.default_callback_due_hours
+  // (kept backwards-compatible). Defaults: 4h LVM / 4h no-answer
+  // (matches the canonical planner's defaultCallbackTarget).
+  { settingDomain: "engagement_center", settingKey: "no_answer_callback_hours", settingValue: { hours: 4 }, description: "Hours to wait before re-queuing a no-answer call result (when no explicit nextActionAt is supplied)." },
+  { settingDomain: "engagement_center", settingKey: "voicemail_callback_hours", settingValue: { hours: 4 }, description: "Hours to wait before re-queuing a voicemail (LVM) call result (when no explicit nextActionAt is supplied)." },
+
+  // scheduling_triage — drives the route handler's callback timer for
+  // the "callback" / "patient_requested_call_later" outcomes. Existing
+  // code already read this key (server/routes/executionCases.ts) but
+  // it was never seeded; PR C makes the default explicit so the
+  // surface is honestly admin-controlled instead of falling back to a
+  // hardcoded 24-hour constant.
+  { settingDomain: "scheduling_triage", settingKey: "default_callback_due_hours", settingValue: { hours: 24 }, description: "Hours to wait before re-queuing a callback call result (when no explicit nextActionAt is supplied)." },
+  { settingDomain: "scheduling_triage", settingKey: "manager_review_requires_task", settingValue: { required: true }, description: "Manager-review call outcomes always create a plexus task." },
+  { settingDomain: "engagement_center", settingKey: "preserve_scheduler_ownership", settingValue: { enabled: true }, description: "A call result does not reassign the case unless metadata.forceReassign is true." },
 
   // global_schedule
   { settingDomain: "global_schedule", settingKey: "source_of_truth", settingValue: { enabled: true }, description: "Global Schedule is the source of truth for assignments." },
