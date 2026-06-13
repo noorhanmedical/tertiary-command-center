@@ -118,14 +118,10 @@ type PortalTab = {
   label: string;
 };
 
-type DemoProfile = {
-  demographics: { mrn: string; sex: string; phone: string; insurance: string };
-  history: string[];
-  diagnoses: string[];
-  medications: string[];
-  previousAncillaries: Array<{ test: string; completedOn: string }>;
-  cooldowns: Array<{ test: string; cooldownUntil: string }>;
-};
+// The hardcoded demo-patient injection was removed during Phase 1
+// Slice 1.1. The workspace now reads exclusively from
+// `/api/portal/today` + the canonical workspace feeds. See
+// docs/architecture/actual-care-tech-portals-phase-1-audit.md.
 
 type LibraryDoc = {
   id: number;
@@ -576,126 +572,9 @@ function PatientDetail({ patient, role, onConsent }: { patient: TodayPatient; ro
 }
 
 
-function DemoPatientProfile({
-  patient,
-  profile,
-  consentComplete,
-  screeningComplete,
-  onOpenConsent,
-}: {
-  patient: TodayPatient;
-  profile: DemoProfile;
-  consentComplete: boolean;
-  screeningComplete: boolean;
-  onOpenConsent: () => void;
-}) {
-  return (
-    <div className="space-y-5" data-testid="demo-patient-profile">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-2xl font-semibold text-slate-900">{patient.name}</div>
-          <div className="mt-1 text-sm text-slate-500">
-            DOB {patient.dob ?? "—"} · {profile.demographics.sex} · MRN {profile.demographics.mrn}
-          </div>
-          <div className="mt-1 text-sm text-slate-500">
-            {profile.demographics.phone} · {profile.demographics.insurance}
-          </div>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <Badge className={consentComplete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}>
-            <ShieldCheck className="h-3 w-3 mr-1" /> {consentComplete ? "Consent Complete" : "Consent Needed"}
-          </Badge>
-          <Badge className={screeningComplete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}>
-            <ClipboardPen className="h-3 w-3 mr-1" /> {screeningComplete ? "Screening Form Complete" : "Screening Form Needed"}
-          </Badge>
-        </div>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card className="p-4 bg-white">
-          <div className="text-sm font-semibold text-slate-900 mb-2">Demographics</div>
-          <div className="space-y-1 text-sm text-slate-700">
-            <div><span className="font-medium">Facility:</span> {patient.facility}</div>
-            <div><span className="font-medium">Time Today:</span> {formatTime(patient.time)}</div>
-            <div><span className="font-medium">Clinician:</span> {patient.clinicianName ?? "—"}</div>
-            <div><span className="font-medium">Phone:</span> {profile.demographics.phone}</div>
-            <div><span className="font-medium">Insurance:</span> {profile.demographics.insurance}</div>
-          </div>
-        </Card>
-
-        <Card className="p-4 bg-white">
-          <div className="text-sm font-semibold text-slate-900 mb-2">Scheduled Today / Qualified For</div>
-          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Scheduled Today</div>
-          <div className="mb-3 flex flex-wrap gap-2">
-            {patient.appointments.map((appt) => (
-              <Badge key={appt.id} variant="outline">
-                {appt.testType} · {formatTime(appt.scheduledTime)}
-              </Badge>
-            ))}
-          </div>
-          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Qualified For</div>
-          <div className="flex flex-wrap gap-2">
-            {patient.qualifyingTests.map((test) => (
-              <Badge key={test} className="bg-indigo-100 text-indigo-700">{test}</Badge>
-            ))}
-          </div>
-        </Card>
-
-        <Card className="p-4 bg-white">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 mb-2">
-            <History className="h-4 w-4 text-slate-500" /> History / Diagnoses
-          </div>
-          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">HX</div>
-          <ul className="mb-3 list-disc pl-5 text-sm text-slate-700 space-y-1">
-            {profile.history.map((item) => <li key={item}>{item}</li>)}
-          </ul>
-          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">DX</div>
-          <ul className="list-disc pl-5 text-sm text-slate-700 space-y-1">
-            {profile.diagnoses.map((item) => <li key={item}>{item}</li>)}
-          </ul>
-        </Card>
-
-        <Card className="p-4 bg-white">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 mb-2">
-            <Pill className="h-4 w-4 text-slate-500" /> Medications / Prior Ancillaries
-          </div>
-          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">RX</div>
-          <ul className="mb-3 list-disc pl-5 text-sm text-slate-700 space-y-1">
-            {profile.medications.map((item) => <li key={item}>{item}</li>)}
-          </ul>
-          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Previous Ancillary Tests</div>
-          <ul className="list-disc pl-5 text-sm text-slate-700 space-y-1">
-            {profile.previousAncillaries.map((item) => <li key={item.test}>{item.test} · {item.completedOn}</li>)}
-          </ul>
-        </Card>
-
-        <Card className="p-4 bg-white xl:col-span-2">
-          <div className="text-sm font-semibold text-slate-900 mb-2">Cooldown / Documents</div>
-          <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
-            <div>
-              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Cooldown Status</div>
-              <ul className="list-disc pl-5 text-sm text-slate-700 space-y-1">
-                {profile.cooldowns.map((item) => <li key={item.test}>{item.test} cooldown until {item.cooldownUntil}</li>)}
-              </ul>
-            </div>
-            <div className="flex flex-wrap gap-2 self-start">
-              <Button variant="outline" size="sm">
-                <FilePlus className="h-3.5 w-3.5 mr-1" /> Plexus PDF
-              </Button>
-              <Button variant="outline" size="sm">
-                <FileText className="h-3.5 w-3.5 mr-1" /> Clinician PDF
-              </Button>
-              <Button size="sm" onClick={onOpenConsent}>
-                <FileSignature className="h-3.5 w-3.5 mr-1" /> Open Consent
-              </Button>
-            </div>
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
+// The legacy demo-patient profile renderer was removed in Phase 1
+// Slice 1.1. The canonical PatientDetail + PatientCommandCanvas path
+// renders every real-feed patient instead.
 function ExpandedSectionView({ mode, src, title, onClose }: { mode: CenterMode; src: string; title: string; onClose: () => void }) {
   return (
     <div className="rounded-2xl bg-white shadow-sm h-full flex flex-col" data-testid={`expanded-${mode}`}>
@@ -961,51 +840,19 @@ export function TeamPortalShell({
   const [aiOpen, setAiOpen] = useState(false);
   const [aiDraft, setAiDraft] = useState("");
   const [schedulePeekPatient, setSchedulePeekPatient] = useState<TodayPatient | null>(null);
-  const [aliConsentComplete, setAliConsentComplete] = useState(false);
-  const [aliScreeningComplete, setAliScreeningComplete] = useState(false);
+  // Demo-patient consent / screening toggles removed in Phase 1
+  // Slice 1.1. Consent / screening state for real patients now comes
+  // from the live feed (p.consentSigned) and from the canonical
+  // patient-detail surfaces.
   const [dockOpenApps, setDockOpenApps] = useState<Array<"tasks" | "schedule" | "consent" | "chart" | "documents">>([]);
   const [dockActiveApp, setDockActiveApp] = useState<null | "tasks" | "schedule" | "consent" | "chart" | "documents">(null);
 
-  const aliBoomayePatient = useMemo<TodayPatient>(() => ({
-    patientScreeningId: 900001,
-    name: "Ali Boomaye",
-    dob: "05/14/1968",
-    time: "09:30",
-    facility: facility || "NWPG - Spring",
-    clinicianName: "Dr. Imran",
-    qualifyingTests: ["BrainWave", "VitalWave"],
-    appointmentStatus: "scheduled",
-    consentByTest: [{ testType: "BrainWave", signed: aliConsentComplete, documentId: null }],
-    consentSigned: aliConsentComplete,
-    appointments: [
-      { id: 1, testType: "BrainWave", scheduledTime: "09:30", status: "scheduled" },
-      { id: 2, testType: "VitalWave", scheduledTime: "10:30", status: "scheduled" },
-    ],
-    batchId: 9001,
-    plexusPdfUrl: "about:blank",
-    clinicianPdfUrl: "about:blank",
-    scheduleUrl: "about:blank",
-  }), [facility, aliConsentComplete]);
-
-  const aliBoomayeProfile = useMemo<DemoProfile>(() => ({
-    demographics: {
-      mrn: "ALI-900001",
-      sex: "Male",
-      phone: "(602) 555-0199",
-      insurance: "Straight Medicare",
-    },
-    history: ["Hypertension", "Type 2 diabetes mellitus", "Chronic fatigue symptoms"],
-    diagnoses: ["Neuropathy", "Cognitive concern", "Dizziness"],
-    medications: ["Metformin", "Losartan", "Atorvastatin"],
-    previousAncillaries: [
-      { test: "Urinalysis", completedOn: "2026-03-14" },
-      { test: "VitalWave", completedOn: "2026-02-01" },
-    ],
-    cooldowns: [
-      { test: "VitalWave", cooldownUntil: "2026-05-01" },
-      { test: "BrainWave", cooldownUntil: "2026-04-30" },
-    ],
-  }), []);
+  // The hardcoded demo-patient + demo-profile useMemo blocks were
+  // removed in Phase 1 Slice 1.1. They previously prepended a
+  // demo patient to every workspace's `patients` list and blocked
+  // real-feed verification on staging. The workspace now renders
+  // only patients returned by /api/portal/today + the three
+  // canonical workspace feeds.
 
   // ───── Canonical right-panel mode queries ──────────────────────────
   // Day window for date-bounded endpoints (clinic + ancillary schedule).
@@ -1162,10 +1009,10 @@ export function TeamPortalShell({
   });
 
   const livePatients = scheduleData?.patients ?? [];
-  const patients = useMemo(() => {
-    const withoutAli = livePatients.filter((p) => p.patientScreeningId !== aliBoomayePatient.patientScreeningId);
-    return [aliBoomayePatient, ...withoutAli];
-  }, [livePatients, aliBoomayePatient]);
+  // Phase 1 Slice 1.1: render only real-feed patients. The legacy
+  // demo-patient prepend was removed to expose the actual canonical
+  // /api/portal/today + workspace feeds.
+  const patients = livePatients;
 
   const selected = useMemo(() => patients.find((p) => p.patientScreeningId === selectedPatientId) ?? null, [patients, selectedPatientId]);
 
@@ -1661,21 +1508,11 @@ export function TeamPortalShell({
                 </div>
               ) : centerMode === "patient" && selected ? (
                 <div className="h-full rounded-[28px] bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto">
-                  {selected.patientScreeningId === aliBoomayePatient.patientScreeningId ? (
-                    <DemoPatientProfile
-                      patient={selected}
-                      profile={aliBoomayeProfile}
-                      consentComplete={aliConsentComplete}
-                      screeningComplete={aliScreeningComplete}
-                      onOpenConsent={() => setCenterMode("consent")}
-                    />
-                  ) : (
-                    <PatientDetail
-                      patient={selected}
-                      role={role}
-                      onConsent={(testType) => setConsentDialog({ patient: selected, testType })}
-                    />
-                  )}
+                  <PatientDetail
+                    patient={selected}
+                    role={role}
+                    onConsent={(testType) => setConsentDialog({ patient: selected, testType })}
+                  />
                 </div>
               ) : schedulePatientPlaygroundContext ? (
                 <div className="h-full" data-testid="playground-schedule-patient">
@@ -1750,15 +1587,11 @@ export function TeamPortalShell({
                   );
                 }
                 // Canonical command canvas for any patient tab whose
-                // patient id maps to a real patientScreeningId. The
-                // demo Ali Boomaye flow above still handles its own
-                // legacy id range, so this is a no-op when the active
-                // tab is the demo patient.
+                // patient id maps to a real patientScreeningId.
                 if (
                   activeTab?.kind === "patient" &&
                   typeof activeTab.patientId === "number" &&
-                  activeTab.patientId > 0 &&
-                  activeTab.patientId !== aliBoomayePatient.patientScreeningId
+                  activeTab.patientId > 0
                 ) {
                   return (
                     <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-patient-command-canvas">
@@ -2006,7 +1839,10 @@ export function TeamPortalShell({
                     <div className="text-sm font-semibold text-slate-900">Calendar</div>
                     <button
                       type="button"
-                      onClick={() => openPortalTab("schedule", selected ?? aliBoomayePatient)}
+                      onClick={() => {
+                        if (!selected) return;
+                        openPortalTab("schedule", selected);
+                      }}
                       className="absolute -right-3 top-1/2 z-10 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50"
                       data-testid="button-left-calendar-expand"
                       title="Expand to Playground"
@@ -2229,9 +2065,11 @@ export function TeamPortalShell({
                   <div className="space-y-2">
                     {patients.map((p) => {
                       const isSelected = p.patientScreeningId === selectedPatientId;
-                      const isAli = p.patientScreeningId === aliBoomayePatient.patientScreeningId;
-                      const consentDone = isAli ? aliConsentComplete : p.consentSigned;
-                      const screeningDone = isAli ? aliScreeningComplete : false;
+                      // Phase 1 Slice 1.1: consent / screening flags come
+                      // from the real-feed patient row. The legacy
+                      // isAli branch was removed with the demo patient.
+                      const consentDone = !!p.consentSigned;
+                      const screeningDone = false;
 
                       return (
                         <div
@@ -2325,7 +2163,6 @@ export function TeamPortalShell({
                               type="button"
                               onClick={() => {
                                 if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
-                                if (isAli) setAliConsentComplete((v) => !v);
                                 setCenterMode("consent");
                                 markDockOpen("consent");
                               }}
@@ -2344,7 +2181,6 @@ export function TeamPortalShell({
                               type="button"
                               onClick={() => {
                                 if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
-                                if (isAli) setAliScreeningComplete((v) => !v);
                                 setCenterMode("patient");
                                 markDockOpen("chart");
                               }}
@@ -2635,13 +2471,11 @@ export function TeamPortalShell({
               <div><span className="font-medium">Clinician:</span> {scheduleDialogPatient.clinicianName ?? "—"}</div>
               <div><span className="font-medium">Qualifying Tests:</span> {scheduleDialogPatient.qualifyingTests.length ? scheduleDialogPatient.qualifyingTests.join(", ") : "None"}</div>
               <div><span className="font-medium">Appointment Status:</span> {scheduleDialogPatient.appointmentStatus || "pending"}</div>
-              {scheduleDialogPatient.patientScreeningId === aliBoomayePatient.patientScreeningId && (
-                <>
-                  <div><span className="font-medium">Insurance:</span> {aliBoomayeProfile.demographics.insurance}</div>
-                  <div><span className="font-medium">Previous Ancillary Tests:</span> {aliBoomayeProfile.previousAncillaries.map((x) => `${x.test} (${x.completedOn})`).join(", ")}</div>
-                  <div><span className="font-medium">Cooldown:</span> {aliBoomayeProfile.cooldowns.map((x) => `${x.test} until ${x.cooldownUntil}`).join(", ")}</div>
-                </>
-              )}
+              {/* Phase 1 Slice 1.1: the legacy hardcoded demo-patient
+                  insurance / prior-ancillary / cooldown block was
+                  removed. Real-feed Insurance / Cooldown / Prior
+                  Ancillary visibility lives in the Patient Directory
+                  warning facts surfaces. */}
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setScheduleDialogPatient(null)}>

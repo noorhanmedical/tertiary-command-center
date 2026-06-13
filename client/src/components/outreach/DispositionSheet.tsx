@@ -275,6 +275,14 @@ export function DispositionSheet({
       queryClient.invalidateQueries({ queryKey: ["/api/portal/my-tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/portal/today-schedule"] });
       queryClient.invalidateQueries({ queryKey: ["portal-call-history", patientId] });
+      // Slice 1.4: PCS Workspace shell reads call list via the
+      // canonical /api/scheduler-portal/cases feed under a separate
+      // React-Query key. Invalidate both keys so the workspace shows
+      // the next call without a manual refresh.
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-portal/cases"] });
+      queryClient.invalidateQueries({
+        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "team-workspace-call-list",
+      });
       onLogged?.();
       onOpenChange(false);
     },
@@ -336,6 +344,14 @@ export function DispositionSheet({
       queryClient.invalidateQueries({ queryKey: ["/api/portal/my-tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/portal/today-schedule"] });
       queryClient.invalidateQueries({ queryKey: ["portal-call-history", patientId] });
+      // Slice 1.4: PCS Workspace shell reads call list via the
+      // canonical /api/scheduler-portal/cases feed under a separate
+      // React-Query key. Invalidate both keys so the workspace shows
+      // the next call without a manual refresh.
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-portal/cases"] });
+      queryClient.invalidateQueries({
+        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "team-workspace-call-list",
+      });
       onLogged?.();
       onOpenChange(false);
     },

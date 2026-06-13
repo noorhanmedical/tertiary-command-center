@@ -30,7 +30,7 @@ const upload = multer({
 
 const PORTAL_ROLES = new Set(["admin", "technician", "liaison"]);
 
-const requirePortalRole = (req: Request, res: Response, next: NextFunction) => {
+export const requirePortalRole = (req: Request, res: Response, next: NextFunction) => {
   if (!req.session.userId) return res.status(401).json({ error: "Not authenticated" });
   const role = req.session.role ?? "";
   if (!PORTAL_ROLES.has(role)) {
@@ -66,7 +66,7 @@ const SIGNED_BY_VALUES = new Set(["patient", "clinician", "technician", "liaison
 // the clinics they are mapped to via outreach_schedulers.userId. This is the
 // same mapping table used by the scheduler-assignment service so we don't
 // introduce a new ownership concept.
-async function allowedFacilities(req: Request): Promise<{ all: boolean; facilities: Set<string> }> {
+export async function allowedFacilities(req: Request): Promise<{ all: boolean; facilities: Set<string> }> {
   if ((req.session.role ?? "") === "admin") return { all: true, facilities: new Set() };
   const userId = req.session.userId;
   if (!userId) return { all: false, facilities: new Set() };

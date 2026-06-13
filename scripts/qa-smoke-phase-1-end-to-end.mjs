@@ -41,7 +41,10 @@ else {
     "Admin Review dialog contains no redesign markers",
     "Team Portal protected surfaces still on disk",
     "Live HTTP probe",
-    "All Phase 1 server flag accessors default OFF",
+    // Slice 1.4 flipped the engagement-canonical-call-results endpoint
+    // flag default from OFF to ON. The smoke step description was
+    // updated in lockstep to "default to documented values".
+    "Phase 1 server flag accessors default to documented values",
   ]) if (!src.includes(n)) failures.push(`${SCRIPT}: missing step description "${n}"`);
 
   // The smoke MUST be DB-agnostic — never importing db / drizzle / schema.

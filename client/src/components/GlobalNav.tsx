@@ -37,7 +37,9 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/invoices",         label: "Invoices",         Icon: Receipt,      roles: ["admin", "biller"] },
   { href: "/team-ops",         label: "Team Ops",         Icon: Users2,       roles: ["admin"] },
   { href: "/patient-directory", label: "Patient Directory", Icon: Database,     roles: ["admin", "clinician", "biller"] },
-  { href: "/patient-directory/live", label: "Patient Directory · Live", Icon: Database, roles: ["admin", "clinician", "biller"] },
+  // Slice 1.5: legacy duplicate Patient-Directory-live nav item
+  // removed. The /patient-directory/live URL still redirects to
+  // /patient-directory for back-compat with existing bookmarks.
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/drive",            label: "Plexus Drive",     Icon: FolderOpen,   roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },

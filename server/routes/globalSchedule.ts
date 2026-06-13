@@ -1,4 +1,4 @@
-import type { Express, Request } from "express";
+import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
@@ -17,6 +17,41 @@ import {
   getExecutionCaseByScreeningId,
 } from "../repositories/executionCase.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+// PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires the team-portal
+// feeds through the same role + facility access checks the rest of
+// the portal endpoints already use. Without this, an authenticated
+// user could request any facilityId in the query string and bypass
+// the assigned-facility allow-list returned by /api/portal/my-facilities.
+import { requirePortalRole, allowedFacilities } from "./portal";
+
+// Resolves the requested facilityId for a Phase-1 team-portal feed.
+// Returns either an HTTP error to send or the (admin-pass-through or
+// scoped) facilityId to apply to the underlying repository call.
+async function resolvePhase1FacilityScope(
+  req: Request,
+  res: Response,
+  rawFacilityId: string | undefined,
+): Promise<{ ok: true; facilityId: string | null } | { ok: false }> {
+  const allowed = await allowedFacilities(req);
+  const facilityId = (rawFacilityId ?? "").trim() || null;
+  if (allowed.all) {
+    // Admin: pass through whatever was requested (or null = unfiltered).
+    return { ok: true, facilityId };
+  }
+  if (!facilityId) {
+    res
+      .status(400)
+      .json({ error: "facilityId is required for non-admin callers" });
+    return { ok: false };
+  }
+  if (!allowed.facilities.has(facilityId)) {
+    res
+      .status(403)
+      .json({ error: "Forbidden — clinic not assigned to this user" });
+    return { ok: false };
+  }
+  return { ok: true, facilityId };
+}
 
 const scheduleAncillaryBodySchema = z.object({
   executionCaseId: z.number().int().optional().nullable(),
@@ -76,12 +111,20 @@ export function registerGlobalScheduleRoutes(app: Express) {
 
   // GET /api/technician-liaison/clinic-visits
   // Filters: facilityId, assignedUserId, startDate, endDate, limit
-  app.get("/api/technician-liaison/clinic-visits", async (req, res) => {
+  //
+  // PHASE-1 FACILITY SCOPE: requirePortalRole gates the session role
+  // and resolvePhase1FacilityScope verifies the requested facilityId
+  // against allowedFacilities(req). Non-admin callers without a
+  // facilityId receive 400; non-admin callers requesting a facility
+  // outside their assigned set receive 403.
+  app.get("/api/technician-liaison/clinic-visits", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
+      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId);
+      if (!scope.ok) return;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listTechnicianLiaisonClinicVisits>[0] = {};
-      if (q.facilityId) filters.facilityId = q.facilityId;
+      if (scope.facilityId) filters.facilityId = scope.facilityId;
       if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
       if (q.startDate) {
         const d = new Date(q.startDate);
@@ -100,12 +143,17 @@ export function registerGlobalScheduleRoutes(app: Express) {
 
   // GET /api/technician-liaison/ancillary-schedule
   // Filters: facilityId, assignedUserId, serviceType, startDate, endDate, limit
-  app.get("/api/technician-liaison/ancillary-schedule", async (req, res) => {
+  //
+  // PHASE-1 FACILITY SCOPE: same role + facility access pattern as
+  // /api/technician-liaison/clinic-visits above.
+  app.get("/api/technician-liaison/ancillary-schedule", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
+      const scope = await resolvePhase1FacilityScope(req, res, q.facilityId);
+      if (!scope.ok) return;
       const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 100, 500) : 100;
       const filters: Parameters<typeof listTechnicianLiaisonAncillarySchedule>[0] = {};
-      if (q.facilityId) filters.facilityId = q.facilityId;
+      if (scope.facilityId) filters.facilityId = scope.facilityId;
       if (q.assignedUserId) filters.assignedUserId = q.assignedUserId;
       if (q.serviceType) filters.serviceType = q.serviceType;
       if (q.startDate) {

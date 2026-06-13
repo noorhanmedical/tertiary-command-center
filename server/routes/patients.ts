@@ -577,6 +577,25 @@ export function registerPatientRoutes(
   // SOURCE MARKER: Engagement assignment creation/update
   // SOURCE MARKER: Engagement Center source of truth
   // SOURCE MARKER: Scheduler assignment runtime
+  //
+  // PHASE-1 ADMIN-REVIEW COMMIT FAN-OUT (Slice 1.3 audit):
+  //   REQUIRED writes (must succeed together):
+  //     1. patient_screenings.adminApprovalStatus + audit columns
+  //     2. commitPatient(id, userId, { auto: true }) on approve+Draft
+  //        → execution case create-or-update
+  //        → engagement assignment via Scheduler Settings
+  //   OPTIONAL writes (logged on failure, not blocking):
+  //     3. patientJourneyEvents insert "admin_approval_updated"
+  //     4. logAudit (fire-and-forget)
+  //     5. invalidatePatientDatabase (cache only)
+  //
+  //   No-silent-failure contract: on commitPatient failure, the
+  //   response includes commitFailed: true + commitError: string so the
+  //   client and the audit trail can distinguish "no commit was
+  //   attempted" from "commit attempted and failed". Wrapping
+  //   1 + 2 + 3 in a single DB transaction is deferred to Phase 2 —
+  //   commitPatient is a multi-write service that needs its own
+  //   tx-safety audit before being placed inside a transaction.
   app.post(
     "/api/patient-screenings/:id/admin-approval",
     async (req, res) => {
@@ -629,6 +648,12 @@ export function registerPatientRoutes(
           | "outreach-schedulers-table"
           | "missing" = "missing";
         let routedByScheduledSettings = false;
+        // Slice 1.3: explicit commit-failure surface. When commitPatient
+        // throws on an approve+Draft path, the client must be able to
+        // tell that the commit was *attempted and failed* (vs not
+        // attempted because no commit was needed).
+        let commitFailed = false;
+        let commitError: string | null = null;
         if (isApproved) {
           const { lookupSchedulerFromSettings } = await import(
             "../services/schedulerSettings"
@@ -648,11 +673,30 @@ export function registerPatientRoutes(
                 routedToEngagement = true;
                 routedSchedulerName =
                   routedSchedulerName ?? result.data.schedulerName ?? null;
+              } else {
+                // commitPatient returned a structured failure; surface
+                // it without throwing. CommitError is a discriminated
+                // union; render to a stable string for the audit /
+                // client surface.
+                commitFailed = true;
+                const errObj = (result as { error?: { code?: string; missing?: string[] } }).error;
+                if (errObj?.code === "validation") {
+                  commitError = `validation: ${(errObj.missing ?? []).join(", ") || "missing fields"}`;
+                } else if (errObj?.code) {
+                  commitError = errObj.code;
+                } else {
+                  commitError = "commitPatient returned ok: false";
+                }
               }
             } catch (commitErr) {
+              commitFailed = true;
+              commitError =
+                commitErr instanceof Error
+                  ? commitErr.message
+                  : String(commitErr);
               console.error(
                 "[admin-approval] commit/scheduler routing failed:",
-                commitErr instanceof Error ? commitErr.message : commitErr,
+                commitError,
               );
             }
           } else {
@@ -686,7 +730,9 @@ export function registerPatientRoutes(
               patientDob: patient.dob ?? null,
               eventType: "admin_approval_updated",
               eventSource: "plexus_iq_admin_review",
-              summary: `Admin approval set to ${status}`,
+              summary: commitFailed
+                ? `Admin approval set to ${status} — engagement routing FAILED: ${commitError}`
+                : `Admin approval set to ${status}`,
               metadata: {
                 status,
                 note,
@@ -694,6 +740,11 @@ export function registerPatientRoutes(
                 routedSchedulerName,
                 routedSchedulerSettingsSource,
                 routedByScheduledSettings,
+                // Slice 1.3: include commit-failure flags so the
+                // audit trail preserves the failure even when the
+                // client refresh might miss it.
+                commitFailed,
+                commitError,
               },
             });
           }
@@ -709,6 +760,8 @@ export function registerPatientRoutes(
           note,
           routedToEngagement,
           routedSchedulerName,
+          commitFailed,
+          commitError,
         });
         invalidatePatientDatabase();
         const fresh = routedToEngagement ? await storage.getPatientScreening(id) : updated;
@@ -719,6 +772,12 @@ export function registerPatientRoutes(
           routedSchedulerName,
           routedSchedulerSettingsSource,
           routedByScheduledSettings,
+          // Slice 1.3: no-silent-failure surface. The client uses
+          // these to show "approved but engagement routing failed —
+          // retry from the Engagement Center" instead of a misleading
+          // success state.
+          commitFailed,
+          commitError,
         });
       } catch (error: any) {
         console.error(
