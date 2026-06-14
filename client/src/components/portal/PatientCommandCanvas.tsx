@@ -28,6 +28,7 @@ import { PatientCallHistoryPanel } from "@/components/portal/PatientCallHistoryP
 import { InvoiceDraftPanel } from "@/components/portal/InvoiceDraftPanel";
 import { PatientDirectoryFactsCard } from "@/components/portal/PatientDirectoryFactsCard";
 import { AcsWorkflowPanel } from "@/components/portal/AcsWorkflowPanel";
+import { ReportUploadPanel } from "@/components/portal/ReportUploadPanel";
 import { PatientNotesPanel } from "@/components/portal/PatientNotesPanel";
 import { CommunicationTimeline } from "@/components/patient/CommunicationTimeline";
 
@@ -393,6 +394,17 @@ export function PatientCommandCanvas({
           needed states come from missing source rows, never faked. */}
       {isAcs && patient.executionCaseId != null ? (
         <AcsWorkflowPanel executionCaseId={patient.executionCaseId} />
+      ) : null}
+
+      {/* PR 2.9 — Report upload + readiness in one combined action,
+          using canonical /api/portal/uploads + /api/case-document-
+          readiness/complete. ACS-only. */}
+      {isAcs && patient.executionCaseId != null && patient.facility != null ? (
+        <ReportUploadPanel
+          executionCaseId={patient.executionCaseId}
+          patientScreeningId={patientScreeningId}
+          serviceType={"general"}
+        />
       ) : null}
 
       {/* PR 2.6 — canonical patient notes panel. Read-only here;
