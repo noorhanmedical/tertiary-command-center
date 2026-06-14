@@ -19,7 +19,11 @@ import { useToast } from "@/hooks/use-toast";
 type Props = {
   executionCaseId: number;
   patientScreeningId: number;
-  serviceType: string;
+  /** Phase 2 hardening item 3 — must be the real test type from
+   *  the canonical sources. null disables the upload and renders
+   *  an honest "pick a test type first" message instead of
+   *  silently uploading as "general". */
+  serviceType: string | null;
 };
 
 type Stage = "idle" | "uploading" | "marking" | "done" | "error";
@@ -34,6 +38,7 @@ export function ReportUploadPanel({ executionCaseId, patientScreeningId, service
   const mutation = useMutation({
     mutationFn: async () => {
       if (!file) throw new Error("Pick a file first");
+      if (!serviceType) throw new Error("No test type — cannot upload");
       setStage("uploading");
       const fd = new FormData();
       fd.append("file", file);
@@ -53,6 +58,8 @@ export function ReportUploadPanel({ executionCaseId, patientScreeningId, service
       const uploaded = (await upRes.json()) as { id?: number; storageKey?: string };
 
       setStage("marking");
+      // serviceType non-null check at the top of mutationFn means
+      // we can safely send it here.
       const markRes = await fetch("/api/case-document-readiness/complete", {
         method: "POST",
         credentials: "include",
@@ -60,7 +67,7 @@ export function ReportUploadPanel({ executionCaseId, patientScreeningId, service
         body: JSON.stringify({
           executionCaseId,
           patientScreeningId,
-          serviceType,
+          serviceType: serviceType as string,
           documentType: "report",
           documentStatus: "uploaded",
           documentId: uploaded.id ?? null,
@@ -88,10 +95,33 @@ export function ReportUploadPanel({ executionCaseId, patientScreeningId, service
     },
   });
 
+  // Phase 2 hardening item 3 — honest disabled state when no test
+  // type is resolvable from the canonical sources.
+  if (!serviceType) {
+    return (
+      <Card
+        className="p-3 bg-white"
+        data-testid="report-upload-panel-disabled"
+      >
+        <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <FileText className="h-4 w-4 text-slate-500" /> Report upload
+        </div>
+        <div className="text-[11px] text-slate-500">
+          Select or attach a test type before uploading a report.
+          No active test was found from document readiness rows or
+          qualifying tests for this patient.
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card className="p-3 bg-white" data-testid="report-upload-panel">
-      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
+      <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-900">
         <FileText className="h-4 w-4 text-slate-500" /> Report upload
+      </div>
+      <div className="mb-2 text-[11px] text-slate-500">
+        Active test type: <span className="font-medium text-slate-700">{serviceType}</span>
       </div>
       <input
         type="file"

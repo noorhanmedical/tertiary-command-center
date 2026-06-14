@@ -33,6 +33,10 @@ export const adminSettings = pgTable("admin_settings", {
   settingValue: jsonb("setting_value").notNull().default({}),
   facilityId: text("facility_id"),
   userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
+  // Phase 2 hardening item 5 — test-specific override scope.
+  // null when the row applies to all test types in the
+  // (facility, user) context.
+  testType: text("test_type"),
   active: boolean("active").notNull().default(true),
   description: text("description"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -42,9 +46,13 @@ export const adminSettings = pgTable("admin_settings", {
   index("idx_admin_settings_key").on(table.settingKey),
   index("idx_admin_settings_facility_id").on(table.facilityId),
   index("idx_admin_settings_user_id").on(table.userId),
+  index("idx_admin_settings_test_type").on(table.testType),
   index("idx_admin_settings_active").on(table.active),
-  uniqueIndex("idx_admin_settings_domain_key_facility_user").on(
-    table.settingDomain, table.settingKey, table.facilityId, table.userId,
+  // The new unique constraint includes test_type so the same
+  // (domain, key) can carry per-test overrides at facility / user
+  // scope without colliding with the test-null base row.
+  uniqueIndex("idx_admin_settings_domain_key_facility_user_test").on(
+    table.settingDomain, table.settingKey, table.facilityId, table.userId, table.testType,
   ),
 ]);
 

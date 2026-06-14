@@ -106,6 +106,27 @@ export function AcsWorkflowPanel({ executionCaseId }: Props) {
           {new Date(data.nextScheduleEvent.startsAt).toLocaleString()}
         </div>
       ) : null}
+
+      {/* Phase 2 hardening item 4 — explicit physician-signing
+          pending block. When the workflow surfaces the
+          physician_signature_pending status, we show an explicit
+          honest message instead of letting the small status pill
+          stand alone. No fake "sign now" button. */}
+      {data.statuses.includes("physician_signature_pending") ? (
+        <div
+          className="mt-3 rounded border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900"
+          data-testid="acs-physician-signing-pending-block"
+        >
+          <div className="font-semibold">Physician signing pending</div>
+          <div>
+            Physician signing writer not configured yet — the order
+            note is present but no canonical
+            <code className="mx-1">physician_signed_order</code>
+            writer / route exists. See
+            docs/architecture/phase-2-hardening-physician-signing.md.
+          </div>
+        </div>
+      ) : null}
     </Card>
   );
 }

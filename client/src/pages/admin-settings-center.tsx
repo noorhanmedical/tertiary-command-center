@@ -26,6 +26,8 @@ import {
 } from "@/lib/adminSettingsApi";
 
 function sourceTone(src: string): "default" | "secondary" | "outline" {
+  // test_type wins most-specific — use the most prominent tone.
+  if (src === "test_type") return "default";
   if (src === "facility") return "default";
   if (src === "user") return "secondary";
   return "outline";
@@ -158,7 +160,7 @@ function Field({
 }: {
   label: string;
   value: string;
-  source?: "facility" | "user" | "global" | "default";
+  source?: "test_type" | "facility" | "user" | "global" | "default";
 }) {
   return (
     <div className="flex items-center justify-between rounded border border-slate-100 bg-slate-50/40 p-2">
@@ -198,11 +200,11 @@ function SettingRow({
             <div className="text-[11px] text-slate-500">{row.description}</div>
           ) : null}
           <div className="text-[10px] text-slate-400 mt-1">
-            {row.facilityId
-              ? `facility: ${row.facilityId}`
-              : row.userId
-                ? `user: ${row.userId}`
-                : "global default"}
+            {[
+              row.facilityId ? `facility: ${row.facilityId}` : null,
+              row.userId ? `user: ${row.userId}` : null,
+              row.testType ? `test: ${row.testType}` : null,
+            ].filter(Boolean).join(" · ") || "global default"}
           </div>
         </div>
         <div className="flex flex-col gap-1 w-[260px]">

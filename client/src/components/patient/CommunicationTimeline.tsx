@@ -27,6 +27,15 @@ function iconFor(eventType: string, kind: string | undefined) {
   return FileText;
 }
 
+// Phase 2 hardening item 6 — when the metadata kind is the SMS
+// scaffold, we MUST NOT label the row as "sent" — SMS is dormant.
+function labelFor(kind: string | undefined, summary: string | null, fallback: string): string {
+  if (kind === "sms_scaffold" || kind === "sms") {
+    return summary ? `${summary} (SMS scaffold — not sent)` : "SMS scaffold (not sent)";
+  }
+  return summary ?? fallback;
+}
+
 function fmt(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -81,7 +90,9 @@ export function CommunicationTimeline({ patientScreeningId }: Props) {
             >
               <Icon className="h-3.5 w-3.5 shrink-0 mt-0.5 text-slate-500" />
               <div className="min-w-0">
-                <div>{r.summary ?? r.eventType}</div>
+                <div data-testid={`communication-timeline-label-${r.id}`}>
+                  {labelFor(kind, r.summary, r.eventType)}
+                </div>
                 <div className="text-[10px] text-slate-500">
                   {fmt(r.createdAt)}
                   {meta.recipient ? ` · to ${String(meta.recipient)}` : ""}

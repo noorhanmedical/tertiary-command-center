@@ -27,6 +27,8 @@ import {
 } from "../services/callResult/callResultAuditIdentity";
 import { applyCallResultRouting } from "../services/callResult/applyCallResultRouting";
 import { getEffectiveAdminSettings } from "../services/adminSettings/adminSettingsEffectiveService";
+import { planCallAttempt } from "../services/callResult/callAttemptRuntime";
+import { deriveRoutingApplication } from "../services/callResult/callResultRoutingApplier";
 
 // ADMIN VIEW-AS — same shape as the helper in globalSchedule.ts so the
 // /api/scheduler-portal/cases endpoint honors `?viewAsTeamMemberId=`
@@ -689,14 +691,29 @@ export function registerExecutionCaseRoutes(app: Express) {
         facilityId: facilityId ?? null,
         userId: auditIdentity.actorUserId ?? null,
       });
+      // Phase 2 hardening — read the prior attempt count from the
+      // resolved execution case (may be null/undefined for legacy
+      // rows without the column populated; treat as 0).
+      const previousAttemptCount = executionCase?.callAttemptCount ?? 0;
+      const attemptPlan = planCallAttempt({
+        currentAttemptCount: previousAttemptCount,
+        outcome: data.callResult,
+        maxCallAttempts: effectiveBundle.callResult.maxCallAttempts,
+      });
       const routingPlan = applyCallResultRouting(
         {
           outcome: data.callResult,
           explicitCallbackAt: data.nextActionAt ?? null,
-          currentAttemptCount: 0,
+          currentAttemptCount: previousAttemptCount,
         },
         effectiveBundle,
       );
+      // Phase 2 hardening item 2 — derive the application outcome
+      // so journey metadata records which downstream actions are
+      // wired vs. honestly pending. The route still performs the
+      // existing triage / task writes; this just makes the contract
+      // visible to audits.
+      const routingApplication = deriveRoutingApplication(routingPlan);
 
       // Always append journey event (best-effort — never blocks the response)
       const journeyMetadata = {
@@ -717,6 +734,16 @@ export function registerExecutionCaseRoutes(app: Express) {
           open_follow_up_task: routingPlan.openFollowUpTask,
           should_transition_to_unable_to_reach: routingPlan.shouldTransitionToUnableToReach,
           applied_settings: routingPlan.appliedSettings,
+          // Phase 2 hardening item 2 — honest pending audit.
+          requires_writer: routingApplication.requiresWriter,
+        },
+        // Phase 2 hardening — canonical attempt tracking.
+        call_attempt: {
+          previous_attempt_count: previousAttemptCount,
+          new_attempt_count: attemptPlan.newAttemptCount,
+          counted_as_attempt: attemptPlan.countedAsAttempt,
+          transitioned_to_unable_to_reach: attemptPlan.transitionToUnableToReach,
+          max_call_attempts: attemptPlan.maxCallAttempts,
         },
       };
       let journeyEvent: Awaited<ReturnType<typeof appendJourneyEvent>> | null = null;
@@ -808,6 +835,7 @@ export function registerExecutionCaseRoutes(app: Express) {
       let ownershipUpdated = false;
       if (executionCase) {
         const updates: Record<string, unknown> = { updatedAt: new Date() };
+        const nowTimestamp = new Date();
 
         if (computedNextActionAt) updates.nextActionAt = computedNextActionAt;
         if (!TERMINAL_ENGAGEMENT_STATUSES_FOR_CALL_RESULT.has(executionCase.engagementStatus)) {
@@ -815,6 +843,20 @@ export function registerExecutionCaseRoutes(app: Express) {
         }
         if (data.assignedRole && data.assignedRole !== executionCase.assignedRole) {
           updates.assignedRole = data.assignedRole;
+        }
+
+        // Phase 2 hardening — apply the canonical attempt-count plan.
+        // We always write the new count (which may equal the old one
+        // when the outcome did not count as an attempt) so the column
+        // is always consistent with the latest call.
+        updates.callAttemptCount = attemptPlan.newAttemptCount;
+        updates.lastCallOutcome = data.callResult;
+        if (attemptPlan.updateLastAttempt) {
+          updates.lastAttemptAt = nowTimestamp;
+        }
+        if (attemptPlan.transitionToUnableToReach) {
+          updates.unableToReachAt = nowTimestamp;
+          updates.engagementStatus = "unable_to_reach";
         }
 
         // Ownership: assignedTeamMemberId is integer. Coerce only when the

@@ -11,6 +11,7 @@ export type ListAdminSettingsFilters = {
   settingKey?: string;
   facilityId?: string;
   userId?: string;
+  testType?: string;
   active?: boolean;
 };
 
@@ -191,6 +192,8 @@ export async function seedDefaultAdminSettings(): Promise<SeedDefaultAdminSettin
 export type AdminSettingScope = {
   facilityId?: string | null;
   userId?: string | null;
+  /** Phase 2 hardening item 5 — test-specific override scope. */
+  testType?: string | null;
 };
 
 async function findOneSetting(
@@ -198,6 +201,7 @@ async function findOneSetting(
   key: string,
   facilityId: string | null,
   userId: string | null,
+  testType: string | null = null,
 ): Promise<AdminSetting | undefined> {
   const conditions = [
     eq(adminSettings.settingDomain, domain),
@@ -205,6 +209,7 @@ async function findOneSetting(
     eq(adminSettings.active, true),
     facilityId === null ? isNull(adminSettings.facilityId) : eq(adminSettings.facilityId, facilityId),
     userId === null ? isNull(adminSettings.userId) : eq(adminSettings.userId, userId),
+    testType === null ? isNull(adminSettings.testType) : eq(adminSettings.testType, testType),
   ];
   const [row] = await db
     .select()
@@ -216,7 +221,15 @@ async function findOneSetting(
 }
 
 /** Look up a single admin setting value with scope precedence:
- *    (facility, user) → (facility, NULL) → (NULL, user) → (NULL, NULL).
+ *  (Phase 2 hardening item 5: testType included most-specific)
+ *    1. (facility, user, testType)
+ *    2. (facility, testType)
+ *    3. (user, testType)
+ *    4. (testType, null, null)
+ *    5. (facility, user, null)
+ *    6. (facility, null, null)
+ *    7. (null, user, null)
+ *    8. (null, null, null)  // global
  *  Returns the most-specific matching active row's settingValue, or null. */
 export async function getAdminSettingValue<T = unknown>(
   settingDomain: string,
@@ -225,6 +238,24 @@ export async function getAdminSettingValue<T = unknown>(
 ): Promise<T | null> {
   const facilityId = scope?.facilityId ?? null;
   const userId = scope?.userId ?? null;
+  const testType = scope?.testType ?? null;
+
+  if (testType !== null) {
+    if (facilityId !== null && userId !== null) {
+      const r = await findOneSetting(settingDomain, settingKey, facilityId, userId, testType);
+      if (r) return (r.settingValue as T) ?? null;
+    }
+    if (facilityId !== null) {
+      const r = await findOneSetting(settingDomain, settingKey, facilityId, null, testType);
+      if (r) return (r.settingValue as T) ?? null;
+    }
+    if (userId !== null) {
+      const r = await findOneSetting(settingDomain, settingKey, null, userId, testType);
+      if (r) return (r.settingValue as T) ?? null;
+    }
+    const testGlobal = await findOneSetting(settingDomain, settingKey, null, null, testType);
+    if (testGlobal) return (testGlobal.settingValue as T) ?? null;
+  }
 
   if (facilityId !== null && userId !== null) {
     const r = await findOneSetting(settingDomain, settingKey, facilityId, userId);
@@ -339,6 +370,7 @@ export async function listAdminSettings(
   if (filters.settingKey) conditions.push(eq(adminSettings.settingKey, filters.settingKey));
   if (filters.facilityId) conditions.push(eq(adminSettings.facilityId, filters.facilityId));
   if (filters.userId) conditions.push(eq(adminSettings.userId, filters.userId));
+  if (filters.testType) conditions.push(eq(adminSettings.testType, filters.testType));
   if (filters.active !== undefined) conditions.push(eq(adminSettings.active, filters.active));
 
   const query = db.select().from(adminSettings).$dynamic();

@@ -194,6 +194,25 @@ export type HistorySection =
   | "marketing"
   | "journey";
 
+// Phase 2 hardening item 3 — resolve the active test type for a
+// patient canvas from canonical sources. Returns null when no source
+// is available; the ReportUploadPanel renders an honest disabled
+// state in that case rather than defaulting to "general".
+function resolveActiveTestType(data: CommandCenterResponse): string | null {
+  // 1. Document readiness rows — the row the operator is most likely
+  //    working on. Prefer the first non-empty serviceType.
+  const dr = data.documentReadiness ?? [];
+  const fromReadiness = dr.find((r) => (r.serviceType ?? "").trim().length > 0);
+  if (fromReadiness?.serviceType) return fromReadiness.serviceType;
+
+  // 2. Qualifying tests from the clinical profile (first entry).
+  const qt = data.clinicalProfile?.qualifyingTests ?? [];
+  if (qt.length > 0 && qt[0].trim().length > 0) return qt[0];
+
+  // No canonical source — let the panel render honest disabled state.
+  return null;
+}
+
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -396,14 +415,16 @@ export function PatientCommandCanvas({
         <AcsWorkflowPanel executionCaseId={patient.executionCaseId} />
       ) : null}
 
-      {/* PR 2.9 — Report upload + readiness in one combined action,
-          using canonical /api/portal/uploads + /api/case-document-
-          readiness/complete. ACS-only. */}
+      {/* PR 2.9 + Hardening item 3 — Report upload + readiness.
+          Active test type is resolved from canonical sources in this
+          order: next scheduled ancillary appointment → first document-
+          readiness row → first qualifying test. When nothing matches
+          we pass null so the panel renders an honest disabled state. */}
       {isAcs && patient.executionCaseId != null && patient.facility != null ? (
         <ReportUploadPanel
           executionCaseId={patient.executionCaseId}
           patientScreeningId={patientScreeningId}
-          serviceType={"general"}
+          serviceType={resolveActiveTestType(data)}
         />
       ) : null}
 

@@ -25,6 +25,7 @@ const createBodySchema = z.object({
   description: z.string().optional().nullable(),
   facilityId: z.string().optional().nullable(),
   userId: z.string().optional().nullable(),
+  testType: z.string().optional().nullable(),
   active: z.boolean().optional(),
 });
 
@@ -56,16 +57,16 @@ export function registerAdminSettingsRoutes(app: Express) {
   });
 
   // GET /api/admin-settings/effective — resolves the effective
-  // settings bundle for an optional (facilityId, userId) scope.
-  // Returns the typed bundle + a per-key "sources" ledger that the
-  // Admin Settings Center renders as facility-override / user-override
-  // / global-default / compile-time-default labels.
+  // settings bundle for an optional (facilityId, userId, testType)
+  // scope. Phase 2 hardening item 5 adds testType. The sources
+  // ledger now also surfaces "test_type" as a source label.
   app.get("/api/admin-settings/effective", async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
       const bundle = await getEffectiveAdminSettings({
         facilityId: q.facilityId ?? null,
         userId: q.userId ?? null,
+        testType: q.testType ?? null,
       });
       res.json(bundle);
     } catch (error: any) {
@@ -100,6 +101,7 @@ export function registerAdminSettingsRoutes(app: Express) {
         description: parsed.data.description ?? null,
         facilityId: parsed.data.facilityId ?? null,
         userId: parsed.data.userId ?? null,
+        testType: parsed.data.testType ?? null,
         active: parsed.data.active ?? true,
       });
       res.status(201).json(row);

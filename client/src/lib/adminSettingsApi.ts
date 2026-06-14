@@ -12,13 +12,15 @@ export type AdminSettingRow = {
   description: string | null;
   facilityId: string | null;
   userId: string | null;
+  /** Phase 2 hardening item 5 — test-specific override scope. */
+  testType: string | null;
   active: boolean;
   createdAt: string | Date;
   updatedAt: string | Date;
 };
 
 export type EffectiveAdminSettingsBundle = {
-  scope: { facilityId: string | null; userId: string | null };
+  scope: { facilityId: string | null; userId: string | null; testType: string | null };
   callResult: {
     callbackDueHours: number;
     noAnswerCallbackHours: number;
@@ -42,7 +44,7 @@ export type EffectiveAdminSettingsBundle = {
     pcsAssignmentRespectsFacilityScope: boolean;
     acsAssignmentRespectsFacilityScope: boolean;
   };
-  sources: Record<string, "facility" | "user" | "global" | "default">;
+  sources: Record<string, "test_type" | "facility" | "user" | "global" | "default">;
 };
 
 async function jsonOrThrow<T>(res: Response, fallback?: T): Promise<T> {
@@ -72,10 +74,12 @@ export async function fetchAdminSettings(filters: {
 export async function fetchEffectiveAdminSettings(scope: {
   facilityId?: string | null;
   userId?: string | null;
+  testType?: string | null;
 } = {}): Promise<EffectiveAdminSettingsBundle> {
   const qs = new URLSearchParams();
   if (scope.facilityId) qs.set("facilityId", scope.facilityId);
   if (scope.userId) qs.set("userId", scope.userId);
+  if (scope.testType) qs.set("testType", scope.testType);
   const res = await fetch(
     `/api/admin-settings/effective${qs.toString() ? `?${qs}` : ""}`,
     { credentials: "include" },
@@ -90,6 +94,7 @@ export async function createAdminSettingRow(input: {
   description?: string | null;
   facilityId?: string | null;
   userId?: string | null;
+  testType?: string | null;
   active?: boolean;
 }): Promise<AdminSettingRow> {
   const res = await fetch("/api/admin-settings", {
