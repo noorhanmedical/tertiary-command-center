@@ -17,6 +17,10 @@ import {
   getExecutionCaseByScreeningId,
 } from "../repositories/executionCase.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+import {
+  applyScheduleTransition,
+  type ScheduleTransition,
+} from "../services/scheduling/scheduleStatusService";
 // PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires the team-portal
 // feeds through the same role + facility access checks the rest of
 // the portal endpoints already use. Without this, an authenticated
@@ -62,6 +66,13 @@ async function resolvePhase1FacilityScope(
   }
   return { ok: true, facilityId, viewAsUserId };
 }
+
+const transitionBodySchema = z.object({
+  transition: z.enum(["cancel", "reschedule", "no_show", "confirm"]),
+  newStartsAt: z.string().optional().nullable(),
+  newEndsAt: z.string().optional().nullable(),
+  note: z.string().optional().nullable(),
+});
 
 const scheduleAncillaryBodySchema = z.object({
   executionCaseId: z.number().int().optional().nullable(),
@@ -360,6 +371,41 @@ export function registerGlobalScheduleRoutes(app: Express) {
         executionCase: updatedExecutionCase,
         journeyEvent,
       });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/global-schedule-events/:id/transition  — PR 2.4
+  //
+  // Body: { transition: "cancel"|"reschedule"|"no_show"|"confirm",
+  //         newStartsAt? (required for reschedule), newEndsAt?, note? }
+  // Uses scheduleStatusService.applyScheduleTransition to update the
+  // existing global_schedule_events row, append a canonical journey
+  // event, and reflect status on the execution case. No local-only
+  // events — single canonical writer.
+  app.post("/api/global-schedule-events/:id/transition", async (req, res) => {
+    try {
+      const rawId = req.params.id as string;
+      const id = parseInt(rawId, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const parsed = transitionBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      }
+      const actorUserId = sessionUserIdFromGlobalSchedule(req);
+      const result = await applyScheduleTransition({
+        eventId: id,
+        transition: parsed.data.transition as ScheduleTransition,
+        actorUserId,
+        newStartsAt: parsed.data.newStartsAt ? new Date(parsed.data.newStartsAt) : null,
+        newEndsAt: parsed.data.newEndsAt ? new Date(parsed.data.newEndsAt) : null,
+        note: parsed.data.note ?? null,
+      });
+      if (!result.ok) {
+        return res.status(result.status).json({ error: result.error });
+      }
+      return res.json(result);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }

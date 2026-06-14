@@ -21,6 +21,12 @@ import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 // server/routes/globalSchedule.ts.
 import { requirePortalRole, allowedFacilities, resolveAdminViewAsUserId, type ViewAsWorkspaceType } from "./portal";
 import { resolveCallListAssignmentScope } from "../services/teamMemberScope";
+import {
+  resolveCallResultAuditIdentity,
+  callResultAuditMetadata,
+} from "../services/callResult/callResultAuditIdentity";
+import { applyCallResultRouting } from "../services/callResult/applyCallResultRouting";
+import { getEffectiveAdminSettings } from "../services/adminSettings/adminSettingsEffectiveService";
 
 // ADMIN VIEW-AS — same shape as the helper in globalSchedule.ts so the
 // /api/scheduler-portal/cases endpoint honors `?viewAsTeamMemberId=`
@@ -329,6 +335,14 @@ export function registerExecutionCaseRoutes(app: Express) {
       }
       const data = parsed.data;
 
+      // PR 2.2 — Resolve the actor audit identity. View-as never
+      // overrides actorUserId; impersonation is logged separately
+      // via metadata.view_as_user_id.
+      const auditIdentity = resolveCallResultAuditIdentity(
+        req,
+        (data.metadata as Record<string, unknown> | undefined)?.viewAsTeamMemberId as string | undefined,
+      );
+
       // Settings (with task-spec defaults)
       const [callbackSetting, mgrReviewSetting, ownershipSetting, noAnswerSetting, voicemailSetting] = await Promise.all([
         getGlobalAdminSettingValue<{ hours?: number }>("scheduling_triage", "default_callback_due_hours"),
@@ -457,6 +471,8 @@ export function registerExecutionCaseRoutes(app: Express) {
           assignedRole: data.assignedRole ?? null,
           facilityId: facilityId ?? null,
           ...(data.metadata ?? {}),
+          // PR 2.2 — same audit trail as the legacy path.
+          ...callResultAuditMetadata(auditIdentity),
         };
 
         // Parse assignedTeamCandidate identically to the legacy path so
@@ -663,6 +679,25 @@ export function registerExecutionCaseRoutes(app: Express) {
 
       // ─── Legacy code path (flag OFF, non-canonical outcome, or no screening) ─
 
+      // PR 2.2 — resolve the effective settings + the routing plan
+      // so the legacy path also records WHICH settings drove the
+      // outcome. The plan is currently advisory (the route still
+      // owns DB writes) but the appliedSettings + nextActionReason
+      // get added to the journey-event metadata so QA / audits can
+      // trace settings-driven decisions across PRs.
+      const effectiveBundle = await getEffectiveAdminSettings({
+        facilityId: facilityId ?? null,
+        userId: auditIdentity.actorUserId ?? null,
+      });
+      const routingPlan = applyCallResultRouting(
+        {
+          outcome: data.callResult,
+          explicitCallbackAt: data.nextActionAt ?? null,
+          currentAttemptCount: 0,
+        },
+        effectiveBundle,
+      );
+
       // Always append journey event (best-effort — never blocks the response)
       const journeyMetadata = {
         callResult: data.callResult,
@@ -673,6 +708,16 @@ export function registerExecutionCaseRoutes(app: Express) {
         assignedRole: data.assignedRole ?? null,
         facilityId: facilityId ?? null,
         ...(data.metadata ?? {}),
+        // PR 2.2 audit trail.
+        ...callResultAuditMetadata(auditIdentity),
+        routing_plan: {
+          terminal: routingPlan.terminal,
+          next_action_reason: routingPlan.nextActionReason,
+          open_triage_case: routingPlan.openTriageCase,
+          open_follow_up_task: routingPlan.openFollowUpTask,
+          should_transition_to_unable_to_reach: routingPlan.shouldTransitionToUnableToReach,
+          applied_settings: routingPlan.appliedSettings,
+        },
       };
       let journeyEvent: Awaited<ReturnType<typeof appendJourneyEvent>> | null = null;
       try {

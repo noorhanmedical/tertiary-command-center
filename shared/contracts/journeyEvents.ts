@@ -38,6 +38,11 @@ export const PATIENT_JOURNEY_EVENT_TYPES = [
   "scheduler_assigned",
   "call_result_logged",
   "scheduled_ancillary",
+  // PR 2.4 — canonical schedule status transitions.
+  "schedule_cancelled",
+  "schedule_rescheduled",
+  "schedule_no_show",
+  "schedule_confirmed",
   "task_created",
   "document_sent",
   "document_completed",

@@ -5,6 +5,7 @@ import {
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
   Sparkles, Send, Minimize2, Maximize2, FileBarChart, FilePlus, User, Bell, Bot,
   Home, BookOpen, CalendarDays, Mail, ClipboardPen, Pill, History, ShieldCheck, Users, Search, Megaphone,
+  NotebookPen,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,11 @@ import {
   type TeamMemberWorkspaceMode,
 } from "@/components/portal/WorkspaceModeSwitcher";
 import {
+  QueueFilterTabs,
+  applyTagFilter,
+} from "@/components/portal/QueueFilterTabs";
+import type { FollowUpFilterTag } from "@/lib/portal/followUpQueueClassifier";
+import {
   fetchWorkspaceCallList,
   fetchWorkspaceClinicSchedule,
   fetchWorkspaceAncillarySchedule,
@@ -40,6 +46,8 @@ import { LeftRailCompactCalendar } from "@/components/portal/leftRail/LeftRailCo
 import { PortalEmailComposerTab } from "@/components/portal/PortalEmailComposerTab";
 import { PortalTemplatesResourcesTab } from "@/components/portal/PortalTemplatesResourcesTab";
 import { PortalDocumentLibraryTab } from "@/components/portal/PortalDocumentLibraryTab";
+import { QuickNoteTool } from "@/components/portal/QuickNoteTool";
+import { InternalContactsTool } from "@/components/portal/InternalContactsTool";
 import {
   SchedulePatientDialog,
   type SchedulePatientDialogPatient,
@@ -130,7 +138,13 @@ type PortalTabKind =
   // Left-rail Document Library tool → center-canvas read-only
   // browse over the canonical /api/documents-library. Separate from
   // patient-facing marketing materials.
-  | "documentLibrary";
+  | "documentLibrary"
+  // Phase 2 PR 2.6 — Quick Note tool. Writes through canonical
+  // /api/patient-notes.
+  | "quickNote"
+  // Phase 2 PR 2.7 — Internal Contacts tool. Reads from canonical
+  // /api/contacts.
+  | "internalContacts";
 type PortalTab = {
   id: string;
   kind: PortalTabKind;
@@ -683,6 +697,9 @@ export function TeamPortalShell({
   // selection.
   const [activeWorkspaceMode, setActiveWorkspaceMode] =
     useState<TeamMemberWorkspaceMode>(defaultMode ?? "clinicSchedule");
+  // PR 2.3 — operational queue filter tag for the call-list mode.
+  const [callListFilterTag, setCallListFilterTag] =
+    useState<FollowUpFilterTag | null>(null);
 
   // Capability gating per the team-member-workspace spec:
   //   - Both PCS and ACS can call and schedule (call list, scheduling
@@ -1812,6 +1829,20 @@ export function TeamPortalShell({
                     </div>
                   );
                 }
+                if (activeTab?.kind === "quickNote") {
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-quick-note">
+                      <QuickNoteTool />
+                    </div>
+                  );
+                }
+                if (activeTab?.kind === "internalContacts") {
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-internal-contacts">
+                      <InternalContactsTool />
+                    </div>
+                  );
+                }
                 // Canonical command canvas for any patient tab whose
                 // patient id maps to a real patientScreeningId.
                 if (
@@ -2090,6 +2121,20 @@ export function TeamPortalShell({
                     onClick={() => openPortalTab("resources")}
                     testId="left-rail-tool-resources"
                   />
+                  <LeftRailToolsButton
+                    label="Quick Note"
+                    icon={NotebookPen}
+                    active={activeKind === "quickNote"}
+                    onClick={() => openPortalTab("quickNote")}
+                    testId="left-rail-tool-quick-note"
+                  />
+                  <LeftRailToolsButton
+                    label="Contacts"
+                    icon={Phone}
+                    active={activeKind === "internalContacts"}
+                    onClick={() => openPortalTab("internalContacts")}
+                    testId="left-rail-tool-internal-contacts"
+                  />
                 </div>
 
                 {/* Compact Global Calendar — NOT patient-centric and
@@ -2317,6 +2362,21 @@ export function TeamPortalShell({
 
                 {activeWorkspaceMode === "callList" && (
                   <div className="space-y-2" data-testid="workspace-mode-body-callList">
+                    {/* PR 2.3 — operational queue filter tabs. The
+                        tabs live inside portal-right-rail (right
+                        panel = work queue contract) and only narrow
+                        the visible rows — they never mutate them. */}
+                    <QueueFilterTabs
+                      rows={workspaceCallList as unknown as Array<{
+                        engagementStatus?: string | null;
+                        lifecycleStatus?: string | null;
+                        qualificationStatus?: string | null;
+                        nextActionAt?: string | Date | null;
+                        lastCallOutcome?: string | null;
+                      }>}
+                      activeTag={callListFilterTag}
+                      onSelect={setCallListFilterTag}
+                    />
                     {workspaceCallListLoading ? (
                       <div className="text-xs text-slate-200 py-4 text-center">Loading call list…</div>
                     ) : workspaceCallList.length === 0 ? (
@@ -2324,7 +2384,7 @@ export function TeamPortalShell({
                         No calls for this facility/date.
                       </div>
                     ) : (
-                      workspaceCallList.map((row, idx) => (
+                      (applyTagFilter(workspaceCallList as any, callListFilterTag) as typeof workspaceCallList).map((row, idx) => (
                         <div
                           key={`${row.id ?? idx}`}
                           className="rounded-lg border border-white/10 bg-white px-2.5 py-2 text-slate-900"
