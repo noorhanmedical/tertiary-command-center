@@ -24,6 +24,11 @@ import {
   type TeamMemberWorkspaceMode,
 } from "@/components/portal/WorkspaceModeSwitcher";
 import {
+  QueueFilterTabs,
+  applyTagFilter,
+} from "@/components/portal/QueueFilterTabs";
+import type { FollowUpFilterTag } from "@/lib/portal/followUpQueueClassifier";
+import {
   fetchWorkspaceCallList,
   fetchWorkspaceClinicSchedule,
   fetchWorkspaceAncillarySchedule,
@@ -683,6 +688,9 @@ export function TeamPortalShell({
   // selection.
   const [activeWorkspaceMode, setActiveWorkspaceMode] =
     useState<TeamMemberWorkspaceMode>(defaultMode ?? "clinicSchedule");
+  // PR 2.3 — operational queue filter tag for the call-list mode.
+  const [callListFilterTag, setCallListFilterTag] =
+    useState<FollowUpFilterTag | null>(null);
 
   // Capability gating per the team-member-workspace spec:
   //   - Both PCS and ACS can call and schedule (call list, scheduling
@@ -2317,6 +2325,21 @@ export function TeamPortalShell({
 
                 {activeWorkspaceMode === "callList" && (
                   <div className="space-y-2" data-testid="workspace-mode-body-callList">
+                    {/* PR 2.3 — operational queue filter tabs. The
+                        tabs live inside portal-right-rail (right
+                        panel = work queue contract) and only narrow
+                        the visible rows — they never mutate them. */}
+                    <QueueFilterTabs
+                      rows={workspaceCallList as unknown as Array<{
+                        engagementStatus?: string | null;
+                        lifecycleStatus?: string | null;
+                        qualificationStatus?: string | null;
+                        nextActionAt?: string | Date | null;
+                        lastCallOutcome?: string | null;
+                      }>}
+                      activeTag={callListFilterTag}
+                      onSelect={setCallListFilterTag}
+                    />
                     {workspaceCallListLoading ? (
                       <div className="text-xs text-slate-200 py-4 text-center">Loading call list…</div>
                     ) : workspaceCallList.length === 0 ? (
@@ -2324,7 +2347,7 @@ export function TeamPortalShell({
                         No calls for this facility/date.
                       </div>
                     ) : (
-                      workspaceCallList.map((row, idx) => (
+                      (applyTagFilter(workspaceCallList as any, callListFilterTag) as typeof workspaceCallList).map((row, idx) => (
                         <div
                           key={`${row.id ?? idx}`}
                           className="rounded-lg border border-white/10 bg-white px-2.5 py-2 text-slate-900"
