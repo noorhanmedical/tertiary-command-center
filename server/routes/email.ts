@@ -6,6 +6,7 @@ import { db } from "../db";
 import { patientScreenings, screeningBatches, outreachSchedulers } from "../../shared/schema";
 import { sendOutreachEmail } from "../services/emailService";
 import { MARKETING_MATERIALS, getMarketingMaterial } from "../services/marketingMaterials";
+import { logPatientCommunicationEvent } from "../services/communication/communicationLogService";
 
 function sessionUserId(req: Request): string | null {
   const sess = (req as Request & { session?: { userId?: string } }).session;
@@ -108,6 +109,26 @@ export function registerEmailRoutes(app: Express) {
         subject: parsed.data.subject,
         body: parsed.data.body,
       });
+      // PR 2.8 — communication timeline: append a journey event so
+      // every outbound email shows up in the Patient Directory +
+      // center-canvas timeline. Best-effort: log a warning on
+      // failure but never block the send response.
+      try {
+        await logPatientCommunicationEvent({
+          patientScreeningId: patient.id,
+          patientName: patient.name,
+          patientDob: patient.dob ?? null,
+          executionCaseId: null,
+          kind: "email",
+          actorUserId: sessionUserId(req),
+          subject: parsed.data.subject,
+          recipient: trimmedTo,
+          messageId: result.messageId ?? null,
+          sentAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.warn("[email] journey log failed:", (err as Error)?.message);
+      }
       res.json({ ok: true, messageId: result.messageId });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -169,6 +190,25 @@ export function registerEmailRoutes(app: Express) {
           },
         ],
       });
+      // PR 2.8 — communication timeline for marketing material sends.
+      try {
+        await logPatientCommunicationEvent({
+          patientScreeningId: patient.id,
+          patientName: patient.name,
+          patientDob: patient.dob ?? null,
+          executionCaseId: null,
+          kind: "marketing_material",
+          actorUserId: sessionUserId(req),
+          subject,
+          recipient,
+          materialId: material.id ?? null,
+          materialTitle: material.title ?? null,
+          messageId: result.messageId ?? null,
+          sentAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.warn("[email] marketing journey log failed:", (err as Error)?.message);
+      }
       res.json({ ok: true, messageId: result.messageId });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

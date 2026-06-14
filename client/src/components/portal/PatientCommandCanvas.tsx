@@ -29,6 +29,7 @@ import { InvoiceDraftPanel } from "@/components/portal/InvoiceDraftPanel";
 import { PatientDirectoryFactsCard } from "@/components/portal/PatientDirectoryFactsCard";
 import { AcsWorkflowPanel } from "@/components/portal/AcsWorkflowPanel";
 import { PatientNotesPanel } from "@/components/portal/PatientNotesPanel";
+import { CommunicationTimeline } from "@/components/patient/CommunicationTimeline";
 
 // Canonical document checklist for the readiness panel. Keys must
 // match `documentType` values written by the document-readiness
@@ -397,6 +398,10 @@ export function PatientCommandCanvas({
       {/* PR 2.6 — canonical patient notes panel. Read-only here;
           QuickNoteTool in the left rail is the writer. */}
       <PatientNotesPanel patientScreeningId={patientScreeningId} />
+
+      {/* PR 2.8 — communication timeline. Calls + emails + marketing
+          sends pulled from canonical patient_journey_events. */}
+      <CommunicationTimeline patientScreeningId={patientScreeningId} />
 
       {/* Phase 1 Segment E Batch 7 — call-history panel. The panel
           owns its own client-side flag check and returns null when
