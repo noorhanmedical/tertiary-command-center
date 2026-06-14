@@ -31,7 +31,7 @@ export function InvoiceFinancialPanel({ invoiceId }: Props) {
   const [adj, setAdj] = useState({ amount: "", type: "manual", reason: "" });
   const [den, setDen] = useState({ code: "", reason: "", payer: "" });
 
-  const inv = (k: string[]) => queryClient.invalidateQueries({ queryKey: k });
+  const inv = (k: ReadonlyArray<string | number>) => queryClient.invalidateQueries({ queryKey: k });
 
   const paymentMut = useMutation({
     mutationFn: async () =>

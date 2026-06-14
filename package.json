@@ -45,7 +45,8 @@
     "probe:phase4-invoice-batches": "tsx script/livePhase4InvoiceBatchProbe.ts",
     "probe:phase4-invoice-approval": "tsx script/livePhase4InvoiceApprovalProbe.ts",
     "probe:phase4-invoice-delivery": "tsx script/livePhase4InvoiceDeliveryProbe.ts",
-    "probe:phase4-financial-events": "tsx script/livePhase4FinancialEventsProbe.ts"
+    "probe:phase4-financial-events": "tsx script/livePhase4FinancialEventsProbe.ts",
+    "probe:phase4-billing-auditor": "tsx script/livePhase4BillingAuditorProbe.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",

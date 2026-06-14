@@ -30,6 +30,7 @@ import InvoiceBatchesPage from "@/pages/invoice-batches";
 import InvoiceReviewPage from "@/pages/invoice-review";
 import InvoiceDeliveryPage from "@/pages/invoice-delivery";
 import RemittanceAuditPage from "@/pages/remittance-audit";
+import BillingAuditorPage from "@/pages/billing-auditor";
 import AuditLogPage from "@/pages/audit-log";
 import AdminAnalysisJobsPage from "@/pages/admin-analysis-jobs";
 import AdminOutboxPage from "@/pages/admin-outbox";
@@ -223,6 +224,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/billing/remittance">
                   <AdminGuard user={user}><RemittanceAuditPage /></AdminGuard>
+                </Route>
+                <Route path="/billing/auditor">
+                  <AdminGuard user={user}><BillingAuditorPage /></AdminGuard>
                 </Route>
                 <Route path="/admin/users">
                   <AdminGuard user={user}><AdminUsersPage /></AdminGuard>
