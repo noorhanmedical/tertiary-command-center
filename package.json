@@ -43,7 +43,8 @@
     "seed:billing-policies": "tsx script/seedBillingPolicies.ts",
     "probe:phase4-invoice-readiness": "tsx script/livePhase4InvoiceReadinessProbe.ts",
     "probe:phase4-invoice-batches": "tsx script/livePhase4InvoiceBatchProbe.ts",
-    "probe:phase4-invoice-approval": "tsx script/livePhase4InvoiceApprovalProbe.ts"
+    "probe:phase4-invoice-approval": "tsx script/livePhase4InvoiceApprovalProbe.ts",
+    "probe:phase4-invoice-delivery": "tsx script/livePhase4InvoiceDeliveryProbe.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",

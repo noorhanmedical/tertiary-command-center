@@ -31,6 +31,7 @@ export * from "./patientNotes";
 export * from "./contacts";
 export * from "./invoiceReadiness";
 export * from "./invoiceBatches";
+export * from "./invoiceDelivery";
 export * from "./billing";
 export * from "./appointments";
 export * from "./analysisJobs";
