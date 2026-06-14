@@ -7,12 +7,16 @@
 //
 // Honest skip when DATABASE_URL is unavailable. Does not mutate.
 
+import type { Pool } from "pg";
+
+let pool: Pool | null = null;
+
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) {
     console.log("[probe:phase2-scheduling] DATABASE_URL unavailable — skipped live DB probe.");
     return;
   }
-  const { pool } = await import("../server/db");
+  pool = (await import("../server/db")).pool;
 
   const cols = await pool.query<{ column_name: string; data_type: string }>(
     `SELECT column_name, data_type FROM information_schema.columns
@@ -22,12 +26,10 @@ async function main(): Promise<void> {
   const REQUIRED = ["id", "status", "starts_at", "event_type", "execution_case_id"];
   const missing = REQUIRED.filter((c) => !map.has(c));
   if (missing.length > 0) {
-    console.error(`[probe:phase2-scheduling] missing columns: ${missing.join(", ")}`);
-    process.exit(1);
+    throw new Error(`missing columns: ${missing.join(", ")}`);
   }
   if (map.get("status") !== "text") {
-    console.error(`[probe:phase2-scheduling] status column is "${map.get("status")}" — expected text`);
-    process.exit(1);
+    throw new Error(`status column is "${map.get("status")}" — expected text`);
   }
   console.log("[probe:phase2-scheduling] global_schedule_events shape OK ✓");
 
@@ -38,7 +40,22 @@ async function main(): Promise<void> {
   console.log(`[probe:phase2-scheduling] ${r.rows[0]?.count ?? 0} schedule rows in production.`);
 }
 
-main().catch((err) => {
-  console.error("[probe:phase2-scheduling] failed:", err);
-  process.exit(1);
-});
+async function closePool(): Promise<void> {
+  if (!pool) return;
+  try {
+    await pool.end();
+  } catch {
+    /* ignore — best-effort pool shutdown */
+  }
+}
+
+main()
+  .then(async () => {
+    await closePool();
+    process.exit(0);
+  })
+  .catch(async (err) => {
+    console.error("[probe:phase2-scheduling] failed:", err instanceof Error ? err.message : err);
+    await closePool();
+    process.exit(1);
+  });

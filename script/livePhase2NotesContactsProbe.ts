@@ -5,12 +5,16 @@
 //
 // Honest skip when DATABASE_URL is unavailable.
 
+import type { Pool } from "pg";
+
+let pool: Pool | null = null;
+
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) {
     console.log("[probe:phase2-notes-contacts] DATABASE_URL unavailable — skipped live DB probe.");
     return;
   }
-  const { pool } = await import("../server/db");
+  pool = (await import("../server/db")).pool;
 
   const tables = await pool.query<{ table_name: string }>(
     `SELECT table_name FROM information_schema.tables
@@ -18,12 +22,10 @@ async function main(): Promise<void> {
   );
   const present = new Set(tables.rows.map((r) => r.table_name));
   if (!present.has("patient_notes")) {
-    console.error("[probe:phase2-notes-contacts] patient_notes table missing — apply migration 0030");
-    process.exit(1);
+    throw new Error("patient_notes table missing — apply migration 0030");
   }
   if (!present.has("contacts")) {
-    console.error("[probe:phase2-notes-contacts] contacts table missing — apply migration 0031");
-    process.exit(1);
+    throw new Error("contacts table missing — apply migration 0031");
   }
   console.log("[probe:phase2-notes-contacts] both new tables present ✓");
 
@@ -40,8 +42,7 @@ async function main(): Promise<void> {
   ];
   const missingNote = REQUIRED_NOTE_COLS.filter((c) => !noteCols.has(c));
   if (missingNote.length > 0) {
-    console.error(`[probe:phase2-notes-contacts] patient_notes missing columns: ${missingNote.join(", ")}`);
-    process.exit(1);
+    throw new Error(`patient_notes missing columns: ${missingNote.join(", ")}`);
   }
   console.log("[probe:phase2-notes-contacts] patient_notes shape OK ✓");
 
@@ -58,13 +59,27 @@ async function main(): Promise<void> {
   ];
   const missingContact = REQUIRED_CONTACT_COLS.filter((c) => !contactCols.has(c));
   if (missingContact.length > 0) {
-    console.error(`[probe:phase2-notes-contacts] contacts missing columns: ${missingContact.join(", ")}`);
-    process.exit(1);
+    throw new Error(`contacts missing columns: ${missingContact.join(", ")}`);
   }
   console.log("[probe:phase2-notes-contacts] contacts shape OK ✓");
 }
 
-main().catch((err) => {
-  console.error("[probe:phase2-notes-contacts] failed:", err);
-  process.exit(1);
-});
+async function closePool(): Promise<void> {
+  if (!pool) return;
+  try {
+    await pool.end();
+  } catch {
+    /* ignore — best-effort pool shutdown */
+  }
+}
+
+main()
+  .then(async () => {
+    await closePool();
+    process.exit(0);
+  })
+  .catch(async (err) => {
+    console.error("[probe:phase2-notes-contacts] failed:", err instanceof Error ? err.message : err);
+    await closePool();
+    process.exit(1);
+  });

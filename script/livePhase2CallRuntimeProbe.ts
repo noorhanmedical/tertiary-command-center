@@ -7,12 +7,16 @@
 //
 // Honest skip when DATABASE_URL is unavailable.
 
+import type { Pool } from "pg";
+
+let pool: Pool | null = null;
+
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) {
     console.log("[probe:phase2-call-runtime] DATABASE_URL unavailable — skipped live DB probe.");
     return;
   }
-  const { pool } = await import("../server/db");
+  pool = (await import("../server/db")).pool;
 
   // 1. assignedTeamMemberId is integer.
   const colRes = await pool.query<{ data_type: string }>(
@@ -23,8 +27,7 @@ async function main(): Promise<void> {
   );
   const dataType = colRes.rows[0]?.data_type;
   if (dataType !== "integer") {
-    console.error(`[probe:phase2-call-runtime] assigned_team_member_id is "${dataType}" — expected integer`);
-    process.exit(1);
+    throw new Error(`assigned_team_member_id is "${dataType}" — expected integer`);
   }
   console.log("[probe:phase2-call-runtime] assigned_team_member_id is integer ✓");
 
@@ -36,8 +39,7 @@ async function main(): Promise<void> {
         AND column_name = 'event_type'`,
   );
   if (journeyCol.rows.length === 0) {
-    console.error("[probe:phase2-call-runtime] patient_journey_events.event_type column missing");
-    process.exit(1);
+    throw new Error("patient_journey_events.event_type column missing");
   }
   console.log("[probe:phase2-call-runtime] patient_journey_events.event_type exists ✓");
 
@@ -63,7 +65,22 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error("[probe:phase2-call-runtime] failed:", err);
-  process.exit(1);
-});
+async function closePool(): Promise<void> {
+  if (!pool) return;
+  try {
+    await pool.end();
+  } catch {
+    /* ignore — best-effort pool shutdown */
+  }
+}
+
+main()
+  .then(async () => {
+    await closePool();
+    process.exit(0);
+  })
+  .catch(async (err) => {
+    console.error("[probe:phase2-call-runtime] failed:", err instanceof Error ? err.message : err);
+    await closePool();
+    process.exit(1);
+  });

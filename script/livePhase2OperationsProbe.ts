@@ -5,6 +5,8 @@
 //
 // Honest skip when DATABASE_URL is unavailable.
 
+import type { Pool } from "pg";
+
 const REQUIRED_TABLES = [
   "patient_execution_cases",
   "patient_journey_events",
@@ -27,12 +29,14 @@ const REQUIRED_SETTING_KEYS = [
   ["engagement_center", "queue_reentry_enabled"],
 ];
 
+let pool: Pool | null = null;
+
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) {
     console.log("[probe:phase2-ops] DATABASE_URL unavailable — skipped live DB probe.");
     return;
   }
-  const { pool } = await import("../server/db");
+  pool = (await import("../server/db")).pool;
   const placeholders = REQUIRED_TABLES.map((_, i) => `$${i + 1}`).join(", ");
   const tableRes = await pool.query<{ table_name: string }>(
     `SELECT table_name FROM information_schema.tables
@@ -42,8 +46,7 @@ async function main(): Promise<void> {
   const present = new Set(tableRes.rows.map((r) => r.table_name));
   const missing = REQUIRED_TABLES.filter((t) => !present.has(t));
   if (missing.length > 0) {
-    console.error(`[probe:phase2-ops] missing tables: ${missing.join(", ")}`);
-    process.exit(1);
+    throw new Error(`missing tables: ${missing.join(", ")}`);
   }
   console.log(`[probe:phase2-ops] all ${REQUIRED_TABLES.length} tables present.`);
 
@@ -60,16 +63,30 @@ async function main(): Promise<void> {
     if (c === 0) missingSettings.push(`${domain}.${key}`);
   }
   if (missingSettings.length > 0) {
-    console.error(
-      `[probe:phase2-ops] missing global admin_settings seed rows: ${missingSettings.join(", ")} ` +
+    throw new Error(
+      `missing global admin_settings seed rows: ${missingSettings.join(", ")} ` +
       `— run npm run seed:admin-settings`,
     );
-    process.exit(1);
   }
   console.log(`[probe:phase2-ops] all ${REQUIRED_SETTING_KEYS.length} admin settings present.`);
 }
 
-main().catch((err) => {
-  console.error("[probe:phase2-ops] failed:", err);
-  process.exit(1);
-});
+async function closePool(): Promise<void> {
+  if (!pool) return;
+  try {
+    await pool.end();
+  } catch {
+    /* ignore — best-effort pool shutdown */
+  }
+}
+
+main()
+  .then(async () => {
+    await closePool();
+    process.exit(0);
+  })
+  .catch(async (err) => {
+    console.error("[probe:phase2-ops] failed:", err instanceof Error ? err.message : err);
+    await closePool();
+    process.exit(1);
+  });

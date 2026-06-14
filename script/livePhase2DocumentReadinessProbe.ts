@@ -5,12 +5,16 @@
 //
 // Honest skip when DATABASE_URL is unavailable.
 
+import type { Pool } from "pg";
+
+let pool: Pool | null = null;
+
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) {
     console.log("[probe:phase2-documents] DATABASE_URL unavailable — skipped live DB probe.");
     return;
   }
-  const { pool } = await import("../server/db");
+  pool = (await import("../server/db")).pool;
 
   const REQUIRED = [
     "case_document_readiness",
@@ -28,8 +32,7 @@ async function main(): Promise<void> {
   const present = new Set(res.rows.map((r) => r.table_name));
   const missing = REQUIRED.filter((t) => !present.has(t));
   if (missing.length > 0) {
-    console.error(`[probe:phase2-documents] missing tables: ${missing.join(", ")}`);
-    process.exit(1);
+    throw new Error(`missing tables: ${missing.join(", ")}`);
   }
   console.log("[probe:phase2-documents] all 5 document workflow tables present ✓");
 
@@ -42,13 +45,27 @@ async function main(): Promise<void> {
   const REQUIRED_COLS = ["document_type", "document_status", "completed_at", "blocks_billing"];
   const missingCols = REQUIRED_COLS.filter((c) => !cnames.has(c));
   if (missingCols.length > 0) {
-    console.error(`[probe:phase2-documents] case_document_readiness missing columns: ${missingCols.join(", ")}`);
-    process.exit(1);
+    throw new Error(`case_document_readiness missing columns: ${missingCols.join(", ")}`);
   }
   console.log("[probe:phase2-documents] case_document_readiness shape OK ✓");
 }
 
-main().catch((err) => {
-  console.error("[probe:phase2-documents] failed:", err);
-  process.exit(1);
-});
+async function closePool(): Promise<void> {
+  if (!pool) return;
+  try {
+    await pool.end();
+  } catch {
+    /* ignore — best-effort pool shutdown */
+  }
+}
+
+main()
+  .then(async () => {
+    await closePool();
+    process.exit(0);
+  })
+  .catch(async (err) => {
+    console.error("[probe:phase2-documents] failed:", err instanceof Error ? err.message : err);
+    await closePool();
+    process.exit(1);
+  });
