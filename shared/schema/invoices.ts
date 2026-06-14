@@ -1,5 +1,5 @@
 import {
-  sql, pgTable, serial, text, varchar, integer, timestamp, index, numeric,
+  sql, pgTable, serial, text, varchar, integer, timestamp, jsonb, index, numeric,
   createInsertSchema, z,
 } from "./_common";
 import { users } from "./users";
@@ -28,12 +28,50 @@ export const invoices = pgTable("invoices", {
   sentTo: text("sent_to"),
   sentAt: timestamp("sent_at"),
   lastRemindedAt: timestamp("last_reminded_at"),
+  // Phase 4 PR 4.4 — approval workflow + draft provenance.
+  // Approval lives alongside the legacy `status` text column so
+  // existing billing pages continue to work unchanged.
+  invoiceBatchId: integer("invoice_batch_id"),
+  approvalStatus: text("approval_status").notNull().default("draft"),
+  approvedByUserId: varchar("approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  approvedAt: timestamp("approved_at"),
+  voidedAt: timestamp("voided_at"),
+  voidReason: text("void_reason"),
+  policySnapshot: jsonb("policy_snapshot").notNull().default({}),
+  recipientSnapshot: jsonb("recipient_snapshot").notNull().default({}),
+  deliveryStatus: text("delivery_status").notNull().default("pending"),
+  dueDate: text("due_date"),
+  paymentTerms: text("payment_terms"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
   index("idx_invoices_facility").on(table.facility),
   index("idx_invoices_status").on(table.status),
   index("idx_invoices_invoice_date").on(table.invoiceDate),
+  index("idx_invoices_approval_status").on(table.approvalStatus),
+  index("idx_invoices_delivery_status").on(table.deliveryStatus),
+  index("idx_invoices_invoice_batch_id").on(table.invoiceBatchId),
 ]);
+
+export const INVOICE_APPROVAL_STATUSES = [
+  "draft",
+  "pending_review",
+  "approved",
+  "voided",
+  "revised",
+] as const;
+export type InvoiceApprovalStatus = (typeof INVOICE_APPROVAL_STATUSES)[number];
+
+export const INVOICE_DELIVERY_STATUSES = [
+  "pending",
+  "ready_to_send",
+  "queued",
+  "sent",
+  "failed",
+  "download_only",
+  "blocked_missing_recipient",
+  "blocked_not_approved",
+] as const;
+export type InvoiceDeliveryStatus = (typeof INVOICE_DELIVERY_STATUSES)[number];
 
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({
   id: true,
