@@ -88,6 +88,20 @@ const DEFAULT_ADMIN_SETTINGS: DefaultAdminSetting[] = [
   { settingDomain: "scheduling_triage", settingKey: "manager_review_requires_task", settingValue: { required: true }, description: "Manager-review call outcomes always create a plexus task." },
   { settingDomain: "engagement_center", settingKey: "preserve_scheduler_ownership", settingValue: { enabled: true }, description: "A call result does not reassign the case unless metadata.forceReassign is true." },
 
+  // PR 2.1 — Phase 2 effective-settings additions. Each is read by
+  // server/services/adminSettings/adminSettingsEffectiveService.ts.
+  { settingDomain: "engagement_center", settingKey: "max_call_attempts", settingValue: { count: 6 }, description: "Maximum call attempts before a case is marked unable-to-reach." },
+  { settingDomain: "engagement_center", settingKey: "dnc_is_terminal", settingValue: { terminal: true }, description: "When true, a DNC call result closes the assignment immediately." },
+  { settingDomain: "engagement_center", settingKey: "declined_is_terminal", settingValue: { terminal: true }, description: "When true, a 'declined' call result closes the assignment immediately." },
+  { settingDomain: "engagement_center", settingKey: "ready_to_schedule_routes_to_triage", settingValue: { routes_to_triage: true }, description: "When true, ready-to-schedule outcomes open a scheduling triage case." },
+  { settingDomain: "engagement_center", settingKey: "scheduled_closes_assignment", settingValue: { closes_assignment: true }, description: "When true, a 'scheduled' call result closes the open assignment." },
+  { settingDomain: "engagement_center", settingKey: "queue_reentry_enabled", settingValue: { enabled: true }, description: "When true, callback-style outcomes re-enter the call list via nextActionAt." },
+
+  // assignment domain — PR 2.1
+  { settingDomain: "assignment", settingKey: "scheduler_auto_assign_enabled", settingValue: { enabled: true }, description: "Auto-assign new patients to schedulers based on capacity + facility allow-list." },
+  { settingDomain: "assignment", settingKey: "pcs_assignment_respects_facility_scope", settingValue: { enabled: true }, description: "PCS assignments must stay within the user's facility allow-list." },
+  { settingDomain: "assignment", settingKey: "acs_assignment_respects_facility_scope", settingValue: { enabled: true }, description: "ACS assignments must stay within the user's facility allow-list." },
+
   // global_schedule
   { settingDomain: "global_schedule", settingKey: "source_of_truth", settingValue: { enabled: true }, description: "Global Schedule is the source of truth for assignments." },
   { settingDomain: "global_schedule", settingKey: "pto_blocks_assignment", settingValue: { enabled: true }, description: "Approved PTO blocks new assignments to that team member." },
