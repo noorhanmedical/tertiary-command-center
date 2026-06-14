@@ -27,6 +27,7 @@ import { LogCommunicationDialog } from "@/components/portal/LogCommunicationDial
 import { PatientCallHistoryPanel } from "@/components/portal/PatientCallHistoryPanel";
 import { InvoiceDraftPanel } from "@/components/portal/InvoiceDraftPanel";
 import { PatientDirectoryFactsCard } from "@/components/portal/PatientDirectoryFactsCard";
+import { AcsWorkflowPanel } from "@/components/portal/AcsWorkflowPanel";
 
 // Canonical document checklist for the readiness panel. Keys must
 // match `documentType` values written by the document-readiness
@@ -384,6 +385,13 @@ export function PatientCommandCanvas({
           from the canonical /api/patient-directory/:id snapshot.
           Read-only. The card renders nothing when no facts apply. */}
       <PatientDirectoryFactsCard patientScreeningId={patientScreeningId} />
+
+      {/* PR 2.5 — ACS workflow panel. Renders for ACS users when an
+          execution case is linked. Each status is honest: pending /
+          needed states come from missing source rows, never faked. */}
+      {isAcs && patient.executionCaseId != null ? (
+        <AcsWorkflowPanel executionCaseId={patient.executionCaseId} />
+      ) : null}
 
       {/* Phase 1 Segment E Batch 7 — call-history panel. The panel
           owns its own client-side flag check and returns null when
