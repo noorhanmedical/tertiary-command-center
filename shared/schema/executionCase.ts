@@ -23,7 +23,7 @@ export type QualificationStatus = typeof QUALIFICATION_STATUSES[number];
 export const LIFECYCLE_STATUSES = ["active", "completed", "archived", "cancelled"] as const;
 export type LifecycleStatus = typeof LIFECYCLE_STATUSES[number];
 
-export const ENGAGEMENT_STATUSES = ["new", "contacted", "scheduled", "completed", "not_reached"] as const;
+export const ENGAGEMENT_STATUSES = ["new", "contacted", "scheduled", "completed", "not_reached", "unable_to_reach"] as const;
 export type EngagementStatus = typeof ENGAGEMENT_STATUSES[number];
 
 export const patientExecutionCases = pgTable("patient_execution_cases", {
@@ -42,6 +42,11 @@ export const patientExecutionCases = pgTable("patient_execution_cases", {
   assignedRole: text("assigned_role"),
   priorityScore: integer("priority_score"),
   nextActionAt: timestamp("next_action_at"),
+  // Phase 2 hardening — canonical call-attempt tracking.
+  callAttemptCount: integer("call_attempt_count").notNull().default(0),
+  lastAttemptAt: timestamp("last_attempt_at"),
+  lastCallOutcome: text("last_call_outcome"),
+  unableToReachAt: timestamp("unable_to_reach_at"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
@@ -49,6 +54,8 @@ export const patientExecutionCases = pgTable("patient_execution_cases", {
   index("idx_execution_cases_patient_name_dob").on(table.patientName, table.patientDob),
   index("idx_execution_cases_lifecycle_status").on(table.lifecycleStatus),
   index("idx_execution_cases_engagement_bucket").on(table.engagementBucket),
+  index("idx_execution_cases_call_attempt_count").on(table.callAttemptCount),
+  index("idx_execution_cases_unable_to_reach_at").on(table.unableToReachAt),
 ]);
 
 export const insertPatientExecutionCaseSchema = createInsertSchema(patientExecutionCases).omit({

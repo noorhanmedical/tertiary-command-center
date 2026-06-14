@@ -59,20 +59,31 @@ export type EffectiveAssignmentSettings = {
 };
 
 export type EffectiveAdminSettingsBundle = {
-  scope: { facilityId: string | null; userId: string | null };
+  scope: { facilityId: string | null; userId: string | null; testType: string | null };
   callResult: EffectiveCallResultSettings;
   scheduling: EffectiveSchedulingSettings;
   assignment: EffectiveAssignmentSettings;
   // Source ledger — for the Admin Settings Center to show "facility
   // override" vs "global default" vs "compile-time default" labels.
-  sources: Record<string, "facility" | "user" | "global" | "default">;
+  sources: Record<string, "test_type" | "facility" | "user" | "global" | "default">;
 };
 
 async function readWithSource<T>(
   domain: string,
   key: string,
   scope: AdminSettingScope,
-): Promise<{ value: T | null; source: "facility" | "user" | "global" | "default" }> {
+): Promise<{ value: T | null; source: "test_type" | "facility" | "user" | "global" | "default" }> {
+  // Phase 2 hardening item 5 — testType precedence (most-specific
+  // wins). A row matching the active test takes precedence over a
+  // bare facility / user / global default.
+  if (scope.testType != null) {
+    const testScoped = await getAdminSettingValue<T>(domain, key, {
+      facilityId: scope.facilityId ?? null,
+      userId: scope.userId ?? null,
+      testType: scope.testType,
+    });
+    if (testScoped !== null) return { value: testScoped, source: "test_type" };
+  }
   if (scope.facilityId != null) {
     const facilityScoped = await getAdminSettingValue<T>(domain, key, { facilityId: scope.facilityId });
     if (facilityScoped !== null) return { value: facilityScoped, source: "facility" };
@@ -89,7 +100,7 @@ async function readWithSource<T>(
 export async function getEffectiveAdminSettings(
   scope: AdminSettingScope = {},
 ): Promise<EffectiveAdminSettingsBundle> {
-  const sources: Record<string, "facility" | "user" | "global" | "default"> = {};
+  const sources: Record<string, "test_type" | "facility" | "user" | "global" | "default"> = {};
 
   // Call-result domain
   const callback = await readWithSource<{ hours?: number }>(
@@ -201,7 +212,7 @@ export async function getEffectiveAdminSettings(
   sources["assignment.acs_assignment_respects_facility_scope"] = acsScope.source;
 
   return {
-    scope: { facilityId: scope.facilityId ?? null, userId: scope.userId ?? null },
+    scope: { facilityId: scope.facilityId ?? null, userId: scope.userId ?? null, testType: scope.testType ?? null },
     callResult: {
       callbackDueHours: callback.value?.hours ?? 24,
       noAnswerCallbackHours: noAnswer.value?.hours ?? 4,
