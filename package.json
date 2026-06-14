@@ -39,7 +39,8 @@
     "probe:phase2-scheduling": "tsx script/livePhase2SchedulingProbe.ts",
     "probe:phase2-documents": "tsx script/livePhase2DocumentReadinessProbe.ts",
     "probe:phase2-notes-contacts": "tsx script/livePhase2NotesContactsProbe.ts",
-    "probe:phase2-call-attempt": "tsx script/livePhase2CallAttemptProbe.ts"
+    "probe:phase2-call-attempt": "tsx script/livePhase2CallAttemptProbe.ts",
+    "seed:billing-policies": "tsx script/seedBillingPolicies.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",

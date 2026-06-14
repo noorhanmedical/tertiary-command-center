@@ -33,6 +33,7 @@ import { registerGlobalScheduleRoutes } from "./routes/globalSchedule";
 import { registerAcsWorkflowRoutes } from "./routes/acsWorkflow";
 import { registerPatientNotesRoutes } from "./routes/patientNotes";
 import { registerContactsRoutes } from "./routes/contacts";
+import { registerBillingPolicyRoutes } from "./routes/billingPolicy";
 import { registerSchedulingTriageRoutes } from "./routes/schedulingTriage";
 import { registerInsuranceEligibilityRoutes } from "./routes/insuranceEligibility";
 import { registerCooldownRoutes } from "./routes/cooldown";
@@ -248,6 +249,7 @@ export async function registerRoutes(
   registerAcsWorkflowRoutes(app);
   registerPatientNotesRoutes(app);
   registerContactsRoutes(app);
+  registerBillingPolicyRoutes(app);
   registerGlobalScheduleRoutes(app);
   registerSchedulingTriageRoutes(app);
   registerInsuranceEligibilityRoutes(app);
