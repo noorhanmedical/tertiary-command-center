@@ -34,6 +34,7 @@ import { registerAcsWorkflowRoutes } from "./routes/acsWorkflow";
 import { registerPatientNotesRoutes } from "./routes/patientNotes";
 import { registerContactsRoutes } from "./routes/contacts";
 import { registerBillingPolicyRoutes } from "./routes/billingPolicy";
+import { registerInvoiceReadinessRoutes } from "./routes/invoiceReadiness";
 import { registerSchedulingTriageRoutes } from "./routes/schedulingTriage";
 import { registerInsuranceEligibilityRoutes } from "./routes/insuranceEligibility";
 import { registerCooldownRoutes } from "./routes/cooldown";
@@ -250,6 +251,7 @@ export async function registerRoutes(
   registerPatientNotesRoutes(app);
   registerContactsRoutes(app);
   registerBillingPolicyRoutes(app);
+  registerInvoiceReadinessRoutes(app);
   registerGlobalScheduleRoutes(app);
   registerSchedulingTriageRoutes(app);
   registerInsuranceEligibilityRoutes(app);
