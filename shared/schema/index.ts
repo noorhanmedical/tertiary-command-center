@@ -32,6 +32,7 @@ export * from "./contacts";
 export * from "./invoiceReadiness";
 export * from "./invoiceBatches";
 export * from "./invoiceDelivery";
+export * from "./invoiceFinancialEvents";
 export * from "./billing";
 export * from "./appointments";
 export * from "./analysisJobs";
