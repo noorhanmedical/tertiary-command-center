@@ -31,6 +31,7 @@ import { registerPortalRoutes } from "./routes/portal";
 import { registerExecutionCaseRoutes } from "./routes/executionCases";
 import { registerGlobalScheduleRoutes } from "./routes/globalSchedule";
 import { registerAcsWorkflowRoutes } from "./routes/acsWorkflow";
+import { registerPatientNotesRoutes } from "./routes/patientNotes";
 import { registerSchedulingTriageRoutes } from "./routes/schedulingTriage";
 import { registerInsuranceEligibilityRoutes } from "./routes/insuranceEligibility";
 import { registerCooldownRoutes } from "./routes/cooldown";
@@ -244,6 +245,7 @@ export async function registerRoutes(
   registerPortalRoutes(app);
   registerExecutionCaseRoutes(app);
   registerAcsWorkflowRoutes(app);
+  registerPatientNotesRoutes(app);
   registerGlobalScheduleRoutes(app);
   registerSchedulingTriageRoutes(app);
   registerInsuranceEligibilityRoutes(app);

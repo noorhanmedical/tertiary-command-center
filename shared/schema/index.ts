@@ -27,6 +27,7 @@ export * from "./users";
 export * from "./screening";
 export * from "./patientHistory";
 export * from "./notes";
+export * from "./patientNotes";
 export * from "./billing";
 export * from "./appointments";
 export * from "./analysisJobs";

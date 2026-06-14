@@ -1,19 +1,14 @@
-// QA — Quick Note left-rail tool decision.
+// QA — Phase 2 PR 2.6 promoted Quick Note from deferred to live.
 //
-// Phase 1.7 audit found no honest backend for a general patient
-// "quick note" write: only `generated_notes` (qualification / batch /
-// procedure-generated) exists. Adding a Quick Note tool would either
-// repurpose an existing table for the wrong domain or fabricate a
-// write surface.
+// History:
+//   - Phase 1.7 audit deferred Quick Note because there was no
+//     canonical patient_notes writer.
+//   - Phase 2 PR 2.6 added the patient_notes table + the
+//     canonical /api/patient-notes route + the QuickNoteTool.
 //
-// Decision: **Deferred** to Phase 2 once a `patient_notes` table or
-// equivalent is canonical. The decision must be documented in
-// docs/architecture/team-portal-left-tools-rail.md so a future
-// engineer doesn't accidentally add a fake Quick Note button.
-//
-// This QA asserts:
-//   1. No `left-rail-tool-quick-note` button exists in the shell.
-//   2. The audit doc explicitly labels Quick Note as Deferred.
+// This QA used to assert "Quick Note is NOT in the shell". It now
+// asserts the opposite: Quick Note IS wired AND the audit doc
+// reflects that.
 //
 // Run: node scripts/qa-team-portal-quick-note-deferred-doc.mjs
 
@@ -23,41 +18,34 @@ import path from "node:path";
 const root = process.cwd();
 const failures = [];
 
-function read(rel) {
-  const abs = path.join(root, rel);
-  return fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : null;
-}
-
-function requireText(rel, needles) {
-  const src = read(rel);
-  if (src === null) { failures.push(`Missing file: ${rel}`); return; }
-  for (const n of needles) if (!src.includes(n)) failures.push(`Missing "${n}" in ${rel}`);
-}
-
-function requireNotText(rel, needles, label) {
-  const src = read(rel);
-  if (src === null) return;
-  for (const n of needles) if (src.includes(n)) failures.push(`${label}: forbidden "${n}" in ${rel}`);
-}
-
-requireNotText(
-  "client/src/components/portal/TeamPortalShell.tsx",
-  [
-    "left-rail-tool-quick-note",
-    "QuickNoteTab",
-    "PortalQuickNoteTab",
-  ],
-  "Quick Note must not appear in the shell until a canonical patient-note writer exists",
+const shell = fs.readFileSync(
+  path.join(root, "client/src/components/portal/TeamPortalShell.tsx"),
+  "utf8",
 );
+if (!shell.includes("left-rail-tool-quick-note")) {
+  failures.push("TeamPortalShell must mount the Quick Note left-rail button (PR 2.6)");
+}
+if (!shell.includes("QuickNoteTool")) {
+  failures.push("TeamPortalShell must render <QuickNoteTool /> in the playground");
+}
 
-requireText("docs/architecture/team-portal-left-tools-rail.md", [
-  "Quick Note",
-  "Deferred",
-]);
+const newDoc = fs.existsSync(path.join(root, "docs/architecture/phase-2-patient-notes-runtime.md"))
+  ? fs.readFileSync(path.join(root, "docs/architecture/phase-2-patient-notes-runtime.md"), "utf8")
+  : "";
+if (!newDoc) {
+  failures.push("phase-2-patient-notes-runtime.md must exist (PR 2.6)");
+} else {
+  if (!newDoc.includes("/api/patient-notes")) {
+    failures.push("phase-2-patient-notes-runtime.md must document the /api/patient-notes endpoint");
+  }
+  if (!newDoc.includes("QuickNoteTool")) {
+    failures.push("phase-2-patient-notes-runtime.md must reference the QuickNoteTool surface");
+  }
+}
 
 if (failures.length > 0) {
-  console.error("Quick Note deferred-doc QA failed:");
+  console.error("Quick-Note (PR 2.6) live QA failed:");
   for (const f of failures) console.error(`- ${f}`);
   process.exit(1);
 }
-console.log("Quick Note deferred-doc QA passed.");
+console.log("Quick-Note (PR 2.6) live QA passed.");
