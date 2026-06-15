@@ -1,0 +1,22 @@
+{
+  "name": "plexus-infrastructure",
+  "version": "1.0.0",
+  "bin": {
+    "plexus-infra": "bin/app.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "cdk": "cdk",
+    "deploy": "cdk deploy --all --require-approval never",
+    "destroy": "cdk destroy --all",
+    "diff": "cdk diff"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.175.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.175.0",
+    "typescript": "~5.6.0"
+  }
+}
