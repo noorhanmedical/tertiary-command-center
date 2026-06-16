@@ -4,6 +4,9 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { evaluateExceptions } from "../services/exceptionIntelligence/exceptionSnapshotEngine";
 import { listExceptions, getException } from "../repositories/exceptionSnapshots.repo";
+import {
+  acknowledge, assign, addNote, dismiss, resolve, reopen, listReviewEvents,
+} from "../services/exceptionIntelligence/exceptionReviewService";
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.session?.userId) return res.status(401).json({ error: "Not authenticated" });
@@ -83,5 +86,95 @@ export function registerExceptionsRoutes(app: Express) {
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
+  });
+
+  // PR 3.3 — human review workflow.
+  const reasonBody = z.object({ reason: z.string().min(1).max(2048) });
+  const noteBody = z.object({ note: z.string().min(1).max(4096) });
+  const assignBody = z.object({
+    assignedToUserId: z.string().optional().nullable(),
+    assignedRole: z.string().optional().nullable(),
+  });
+
+  function intId(req: Request): number | null {
+    const v = parseInt(req.params.id as string, 10);
+    return Number.isFinite(v) ? v : null;
+  }
+
+  app.post("/api/exceptions/:id/acknowledge", requireAuth, async (req, res) => {
+    try {
+      const id = intId(req);
+      if (id == null) return res.status(400).json({ error: "Invalid id" });
+      const r = await acknowledge(id, { actorUserId: req.session?.userId ?? null });
+      if (!r.ok) return res.status(r.status).json({ error: r.error });
+      res.json(r);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  app.post("/api/exceptions/:id/assign", requireAuth, async (req, res) => {
+    try {
+      const id = intId(req);
+      if (id == null) return res.status(400).json({ error: "Invalid id" });
+      const parsed = assignBody.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      const r = await assign(id, { actorUserId: req.session?.userId ?? null, ...parsed.data });
+      if (!r.ok) return res.status(r.status).json({ error: r.error });
+      res.json(r);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  app.post("/api/exceptions/:id/note", requireAuth, async (req, res) => {
+    try {
+      const id = intId(req);
+      if (id == null) return res.status(400).json({ error: "Invalid id" });
+      const parsed = noteBody.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      const r = await addNote(id, { actorUserId: req.session?.userId ?? null, note: parsed.data.note });
+      if (!r.ok) return res.status(r.status).json({ error: r.error });
+      res.json(r);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  app.post("/api/exceptions/:id/dismiss", requireAdminOrBiller, async (req, res) => {
+    try {
+      const id = intId(req);
+      if (id == null) return res.status(400).json({ error: "Invalid id" });
+      const parsed = reasonBody.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      const r = await dismiss(id, { actorUserId: req.session?.userId ?? null, reason: parsed.data.reason });
+      if (!r.ok) return res.status(r.status).json({ error: r.error });
+      res.json(r);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  app.post("/api/exceptions/:id/resolve", requireAdminOrBiller, async (req, res) => {
+    try {
+      const id = intId(req);
+      if (id == null) return res.status(400).json({ error: "Invalid id" });
+      const parsed = reasonBody.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      const r = await resolve(id, { actorUserId: req.session?.userId ?? null, reason: parsed.data.reason });
+      if (!r.ok) return res.status(r.status).json({ error: r.error });
+      res.json(r);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  app.post("/api/exceptions/:id/reopen", requireAdminOrBiller, async (req, res) => {
+    try {
+      const id = intId(req);
+      if (id == null) return res.status(400).json({ error: "Invalid id" });
+      const r = await reopen(id, { actorUserId: req.session?.userId ?? null });
+      if (!r.ok) return res.status(r.status).json({ error: r.error });
+      res.json(r);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  app.get("/api/exceptions/:id/review-events", requireAuth, async (req, res) => {
+    try {
+      const id = intId(req);
+      if (id == null) return res.status(400).json({ error: "Invalid id" });
+      const rows = await listReviewEvents(id);
+      res.json(rows);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
   });
 }

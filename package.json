@@ -50,7 +50,8 @@
     "probe:phase4-billing-reports": "tsx script/livePhase4BillingReportsProbe.ts",
     "probe:phase4-billing-policy": "tsx script/livePhase4BillingPolicyProbe.ts",
     "seed:exception-settings": "tsx script/seedExceptionSettings.ts",
-    "probe:phase3-exception-snapshots": "tsx script/livePhase3ExceptionSnapshotsProbe.ts"
+    "probe:phase3-exception-snapshots": "tsx script/livePhase3ExceptionSnapshotsProbe.ts",
+    "probe:phase3-exception-review": "tsx script/livePhase3ExceptionReviewProbe.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
