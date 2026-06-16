@@ -35,6 +35,7 @@ export * from "./invoiceDelivery";
 export * from "./invoiceFinancialEvents";
 export * from "./exceptionSnapshots";
 export * from "./exceptionReviews";
+export * from "./aiRecommendationLogs";
 export * from "./billing";
 export * from "./appointments";
 export * from "./analysisJobs";

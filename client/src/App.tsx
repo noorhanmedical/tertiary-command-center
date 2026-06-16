@@ -34,6 +34,7 @@ import BillingAuditorPage from "@/pages/billing-auditor";
 import BillingReportsPage from "@/pages/billing-reports";
 import ExceptionSettingsPage from "@/pages/exception-settings";
 import ExceptionsPage from "@/pages/exceptions";
+import AiRecommendationsPage from "@/pages/ai-recommendations";
 import AuditLogPage from "@/pages/audit-log";
 import AdminAnalysisJobsPage from "@/pages/admin-analysis-jobs";
 import AdminOutboxPage from "@/pages/admin-outbox";
@@ -239,6 +240,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/exceptions">
                   <AdminGuard user={user}><ExceptionsPage /></AdminGuard>
+                </Route>
+                <Route path="/admin/ai-recommendations">
+                  <AdminGuard user={user}><AiRecommendationsPage /></AdminGuard>
                 </Route>
                 <Route path="/admin/users">
                   <AdminGuard user={user}><AdminUsersPage /></AdminGuard>
