@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Play, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
-  fetchExceptions, postEvaluateAll, postEvaluate,
+  fetchExceptions, postEvaluateAll, postEvaluate, postRecommend,
   type ExceptionRow,
   SEVERITY_TONE,
 } from "@/lib/exceptionsApi";
@@ -53,6 +53,16 @@ export default function ExceptionsPage() {
     onError: (e: Error) => toast({ title: "Evaluation failed", description: e.message, variant: "destructive" }),
   });
 
+  const recommendMut = useMutation({
+    mutationFn: async () => postRecommend({ facilityId: facility.trim() || null }),
+    onSuccess: (r) => {
+      toast({ title: `Recommendations — proposed ${r.proposed}, skipped ${r.skipped}, unsupported ${r.unsupported}` });
+      queryClient.invalidateQueries({ queryKey: ["exception-recommendations"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-recommendations"] });
+    },
+    onError: (e: Error) => toast({ title: "Propose failed", description: e.message, variant: "destructive" }),
+  });
+
   return (
     <div className="flex h-full w-full flex-col gap-3 overflow-y-auto p-6" data-testid="exceptions-page">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -75,6 +85,10 @@ export default function ExceptionsPage() {
           </Button>
           <Button size="sm" variant="outline" disabled={!facility.trim() || evalFacilityMut.isPending} onClick={() => evalFacilityMut.mutate()} data-testid="exceptions-evaluate-facility">
             Evaluate facility
+          </Button>
+          <Button size="sm" variant="outline" disabled={recommendMut.isPending} onClick={() => recommendMut.mutate()} data-testid="exceptions-propose-recommendations">
+            {recommendMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+            Propose recommendations
           </Button>
           <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ["exceptions"] })} data-testid="exceptions-refresh">
             <RefreshCw className="h-4 w-4 mr-1" /> Refresh

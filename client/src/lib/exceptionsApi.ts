@@ -68,6 +68,13 @@ export async function postEvaluateAll(): Promise<{ detected: number; refreshed: 
   return jsonOrThrow(res);
 }
 
+export async function postRecommend(body: { facilityId?: string | null; testType?: string | null } = {}): Promise<{ proposed: number; skipped: number; unsupported: number }> {
+  const res = await fetch(`/api/exceptions/recommend`, {
+    method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  return jsonOrThrow(res);
+}
+
 // PR 3.3 client functions.
 export async function postAcknowledge(id: number) {
   const res = await fetch(`/api/exceptions/${id}/acknowledge`, { method: "POST", credentials: "include" });

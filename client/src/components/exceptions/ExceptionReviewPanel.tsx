@@ -13,6 +13,10 @@ import {
   postAcknowledge, postAssign, postNote, postDismiss, postResolve, postReopen,
   type ExceptionRow, SEVERITY_TONE,
 } from "@/lib/exceptionsApi";
+import {
+  fetchAiRecommendations, PROVIDER_TONE, CONFIDENCE_TONE,
+  type AiRecommendation,
+} from "@/lib/aiRecommendationsApi";
 
 type Props = { exceptionId: number };
 
@@ -26,6 +30,10 @@ export function ExceptionReviewPanel({ exceptionId }: Props) {
   const { data: events = [] } = useQuery<any[]>({
     queryKey: ["exception-review-events", exceptionId],
     queryFn: () => fetchReviewEvents(exceptionId) as Promise<any[]>,
+  });
+  const { data: recs = [] } = useQuery<AiRecommendation[]>({
+    queryKey: ["exception-recommendations", exceptionId],
+    queryFn: () => fetchAiRecommendations({ exceptionSnapshotId: exceptionId }),
   });
 
   const [note, setNote] = useState("");
@@ -132,6 +140,27 @@ export function ExceptionReviewPanel({ exceptionId }: Props) {
         <summary className="cursor-pointer text-slate-500">policy snapshot</summary>
         <pre className="text-[10px] text-slate-600 bg-slate-50 p-2 rounded mt-1 overflow-auto">{JSON.stringify(ex.policySnapshot, null, 2)}</pre>
       </details>
+
+      {recs.length > 0 && (
+        <div className="mt-3" data-testid={`exception-recommendations-${exceptionId}`}>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Recommendations</div>
+          <ul className="space-y-2">
+            {recs.map((r) => (
+              <li key={r.id} className="border rounded p-2" data-testid={`exception-recommendation-${r.id}`}>
+                <div className="flex flex-wrap items-center gap-1 mb-1">
+                  <Badge variant="outline" className={`text-[10px] ${PROVIDER_TONE[r.modelProvider]}`}>{r.modelProvider}</Badge>
+                  <Badge variant="outline" className={`text-[10px] ${CONFIDENCE_TONE[r.confidenceLabel]}`}>{r.confidenceLabel}</Badge>
+                  <Badge variant="outline" className="text-[10px]">{r.status}</Badge>
+                  <span className="text-[11px] text-slate-500">{r.recommendedAction}</span>
+                </div>
+                <div className="text-[12px] font-semibold text-slate-900">{r.title}</div>
+                <div className="text-[11px] text-slate-700">{r.body}</div>
+                <div className="text-[10px] text-slate-500 mt-1">rationale: {r.rationale}</div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {events.length > 0 && (
         <div className="mt-3" data-testid={`exception-review-events-${exceptionId}`}>

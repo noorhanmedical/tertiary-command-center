@@ -53,6 +53,7 @@
     "probe:phase3-exception-snapshots": "tsx script/livePhase3ExceptionSnapshotsProbe.ts",
     "probe:phase3-exception-review": "tsx script/livePhase3ExceptionReviewProbe.ts",
     "probe:phase3-ai-recommendation-log": "tsx script/livePhase3AiRecommendationLogProbe.ts",
+    "probe:phase3-recommendation-engine": "tsx script/livePhase3RecommendationEngineProbe.ts",
     "seed:ai-safety": "tsx script/seedAiSafetyDefaults.ts"
   },
   "dependencies": {

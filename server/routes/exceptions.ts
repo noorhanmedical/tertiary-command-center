@@ -7,6 +7,7 @@ import { listExceptions, getException } from "../repositories/exceptionSnapshots
 import {
   acknowledge, assign, addNote, dismiss, resolve, reopen, listReviewEvents,
 } from "../services/exceptionIntelligence/exceptionReviewService";
+import { proposeRecommendationsForOpenExceptions } from "../services/exceptionIntelligence/recommendationEngine";
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.session?.userId) return res.status(401).json({ error: "Not authenticated" });
@@ -82,6 +83,22 @@ export function registerExceptionsRoutes(app: Express) {
   app.post("/api/exceptions/evaluate-all-safe", requireAdminOrBiller, async (_req, res) => {
     try {
       const result = await evaluateExceptions();
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // PR 3.5 — propose recommendations for currently open exceptions.
+  // Writes to ai_recommendation_logs. Never executes the proposals.
+  app.post("/api/exceptions/recommend", requireAdminOrBiller, async (req, res) => {
+    try {
+      const parsed = evalBody.safeParse(req.body ?? {});
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+      const result = await proposeRecommendationsForOpenExceptions({
+        facilityId: parsed.data.facilityId ?? null,
+        testType: parsed.data.testType ?? null,
+      });
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
