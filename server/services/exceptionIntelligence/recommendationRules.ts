@@ -12,7 +12,7 @@ import type {
   RecommendationAction,
 } from "@shared/contracts/aiRecommendation";
 
-export const RECOMMENDATION_VERSION = "3.5.0";
+export const RECOMMENDATION_VERSION = "3.6.0";
 
 export type RecommendationProposal = {
   recommendationType: string;
@@ -145,6 +145,93 @@ const denialFollowupDueRule: RuleFn = ({ exception }) => {
   };
 };
 
+// ── PR 3.6 — document + billing rules ──────────────────────────────
+
+const missingDocumentRule = (label: string): RuleFn => ({ exception }) => {
+  const snap = (exception.sourceSnapshot ?? {}) as Record<string, unknown>;
+  return {
+    recommendationType: `${label}_request`,
+    recommendedAction: "request_more_info",
+    title: `Request missing ${label}`,
+    body: `${label} missing for ${fact(snap, "patientLabel")} (${fact(snap, "hoursMissing")}h). Propose to request the document from the responsible team.`,
+    ruleIds: [`${label}_missing::request_more_info`],
+    rationale: `Detected ${label}_missing. Rule proposes an information request; no document is fabricated or auto-uploaded.`,
+    inputs: { documentType: snap.documentType, hoursMissing: snap.hoursMissing },
+  };
+};
+
+const billingReadinessBlockedRule: RuleFn = ({ exception }) => {
+  const snap = (exception.sourceSnapshot ?? {}) as Record<string, unknown>;
+  return {
+    recommendationType: "billing_readiness_unblock",
+    recommendedAction: "request_more_info",
+    title: "Collect missing billing requirements",
+    body: `Billing readiness blocked on: ${fact(snap, "missingRequirements")}. Propose to request the missing items.`,
+    ruleIds: ["billing_readiness_blocked::request_more_info"],
+    rationale:
+      "Detected billing_readiness_blocked. Rule proposes information collection; billing is not marked ready automatically.",
+    inputs: {
+      executionCaseId: exception.executionCaseId,
+      missingRequirements: snap.missingRequirements ?? null,
+    },
+  };
+};
+
+const invoiceBatchStaleRule: RuleFn = ({ exception }) => {
+  const snap = (exception.sourceSnapshot ?? {}) as Record<string, unknown>;
+  return {
+    recommendationType: "invoice_batch_review",
+    recommendedAction: "escalate_to_admin",
+    title: "Escalate stale invoice batch",
+    body: `Invoice batch #${exception.entityId ?? "—"} has been in ${fact(snap, "batchStatus")} for ${fact(snap, "hoursStale")}h. Propose to escalate for review.`,
+    ruleIds: ["invoice_batch_stale::escalate"],
+    rationale:
+      "Detected invoice_batch_stale. Rule proposes escalation; the batch is not auto-closed or auto-approved.",
+    inputs: { batchId: exception.entityId, batchStatus: snap.batchStatus },
+  };
+};
+
+const invoiceDraftStaleRule: RuleFn = ({ exception }) => {
+  const snap = (exception.sourceSnapshot ?? {}) as Record<string, unknown>;
+  return {
+    recommendationType: "invoice_draft_review",
+    recommendedAction: "reassign_owner",
+    title: "Reassign stale draft invoice",
+    body: `Invoice #${exception.invoiceId ?? "—"} has been in Draft for ${fact(snap, "hoursStale")}h. Propose to reassign owner for review.`,
+    ruleIds: ["invoice_draft_stale::reassign_owner"],
+    rationale:
+      "Detected invoice_draft_stale. Rule proposes ownership reassignment only; no status changes happen automatically.",
+    inputs: { invoiceId: exception.invoiceId, hoursStale: snap.hoursStale },
+  };
+};
+
+const missingInvoiceRecipientRule: RuleFn = ({ exception }) => {
+  return {
+    recommendationType: "invoice_recipient_collection",
+    recommendedAction: "request_more_info",
+    title: "Collect invoice recipient",
+    body: `Invoice #${exception.invoiceId ?? "—"} cannot deliver — recipient missing. Propose to request recipient details from the patient or facility.`,
+    ruleIds: ["missing_invoice_recipient::request_more_info"],
+    rationale:
+      "Detected missing_invoice_recipient. Rule proposes request; recipient is never auto-populated from external sources.",
+    inputs: { invoiceId: exception.invoiceId },
+  };
+};
+
+const highBalanceAgingRule: RuleFn = ({ exception }) => {
+  const snap = (exception.sourceSnapshot ?? {}) as Record<string, unknown>;
+  return {
+    recommendationType: "high_balance_review",
+    recommendedAction: "escalate_to_admin",
+    title: "Escalate aging high-balance invoice",
+    body: `Invoice #${exception.invoiceId ?? "—"} balance ${fact(snap, "totalBalance")} has aged ${fact(snap, "daysAging")}d. Propose escalation to admin/biller.`,
+    ruleIds: ["high_balance_aging::escalate"],
+    rationale:
+      "Detected high_balance_aging. Rule proposes escalation; no write-off, no auto-collection.",
+    inputs: { invoiceId: exception.invoiceId, totalBalance: snap.totalBalance, daysAging: snap.daysAging },
+  };
+};
+
 export const RECOMMENDATION_RULES: Partial<Record<string, RuleFn>> = {
   callback_overdue: callbackOverdueRule,
   payment_overdue: paymentOverdueRule,
@@ -152,6 +239,14 @@ export const RECOMMENDATION_RULES: Partial<Record<string, RuleFn>> = {
   invoice_readiness_blocked: invoiceReadinessBlockedRule,
   physician_signature_pending: physicianSignaturePendingRule,
   denial_followup_due: denialFollowupDueRule,
+  report_missing: missingDocumentRule("report"),
+  order_note_missing: missingDocumentRule("order_note"),
+  procedure_note_missing: missingDocumentRule("procedure_note"),
+  billing_readiness_blocked: billingReadinessBlockedRule,
+  invoice_batch_stale: invoiceBatchStaleRule,
+  invoice_draft_stale: invoiceDraftStaleRule,
+  missing_invoice_recipient: missingInvoiceRecipientRule,
+  high_balance_aging: highBalanceAgingRule,
 };
 
 /** Return the rule for an exception type, or null if no rule is registered. */

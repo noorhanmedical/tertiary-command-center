@@ -11,19 +11,25 @@
 // + 3.7 register the rest into the registry-driven loop.
 
 import { db } from "../../db";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, inArray, sql } from "drizzle-orm";
 import { patientExecutionCases } from "@shared/schema/executionCase";
 import { invoices } from "@shared/schema/invoices";
 import { invoiceDeliveryEvents } from "@shared/schema/invoiceDelivery";
 import { invoiceReadinessSnapshots } from "@shared/schema/invoiceReadiness";
 import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
+import { billingReadinessChecks } from "@shared/schema/billingReadiness";
+import { invoiceBatches } from "@shared/schema/invoiceBatches";
 import { invoiceDenials } from "@shared/schema/invoiceFinancialEvents";
 import { getEffectiveExceptionPolicy } from "./exceptionSettingsService";
 import { DETECTOR_REGISTRY } from "./detectorRegistry";
 import { upsertException, markSuperseded, listExceptions } from "../../repositories/exceptionSnapshots.repo";
 import type { ExceptionType, ExceptionSeverity, ExceptionOwnerRole } from "@shared/contracts/exceptionIntelligence";
 
-const DETECTOR_VERSION = "3.2.0";
+const DETECTOR_VERSION = "3.6.0";
+
+const PRESENT_DOC_STATUS = new Set([
+  "completed", "complete", "uploaded", "generated", "approved", "signed", "verified", "present",
+]);
 
 function hoursBetween(a: Date | string | null | undefined, b: Date = new Date()): number {
   if (!a) return 0;
@@ -272,6 +278,182 @@ async function detectDenialFollowupDue(ctx: DetectorContext): Promise<{ detected
   return { detected, refreshed, keys };
 }
 
+// ── PR 3.6 document detectors ───────────────────────────────────────
+
+async function detectMissingDocument(
+  ctx: DetectorContext,
+  documentType: string,
+  exceptionType: "report_missing" | "order_note_missing" | "procedure_note_missing",
+): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors[exceptionType];
+  const rows = await db.select().from(caseDocumentReadiness)
+    .where(eq(caseDocumentReadiness.documentType, documentType));
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const r of rows) {
+    if (ctx.facilityId && r.facilityId !== ctx.facilityId) continue;
+    const status = (r.documentStatus ?? "").toLowerCase();
+    if (PRESENT_DOC_STATUS.has(status)) continue;
+    if (!r.blocksBilling) continue;
+    const hoursMissing = hoursBetween(r.createdAt as any, ctx.now);
+    if (hoursMissing < eff.thresholdValue) continue;
+    const key = `${exceptionType}:${r.id}`;
+    keys.add(key);
+    const ev = await emit(ctx, {
+      type: exceptionType,
+      entityType: "execution_case",
+      entityId: r.executionCaseId ?? null,
+      exceptionKey: key,
+      executionCaseId: r.executionCaseId ?? null,
+      patientScreeningId: r.patientScreeningId ?? null,
+      facilityId: r.facilityId ?? null,
+      testType: r.serviceType,
+      facts: {
+        documentType,
+        documentStatus: r.documentStatus,
+        hoursMissing: hoursMissing.toFixed(1),
+        patientLabel: r.patientName ?? "—",
+      },
+    });
+    if (ev === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectBillingReadinessBlocked(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors["billing_readiness_blocked"];
+  const rows = await db.select().from(billingReadinessChecks)
+    .where(inArray(billingReadinessChecks.readinessStatus, ["not_ready", "missing_requirements"]));
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const r of rows) {
+    if (ctx.facilityId && r.facilityId !== ctx.facilityId) continue;
+    const hoursBlocked = hoursBetween(r.updatedAt as any, ctx.now);
+    if (hoursBlocked < eff.thresholdValue) continue;
+    const key = `billing_readiness_blocked:${r.id}`;
+    keys.add(key);
+    const missing = Array.isArray(r.missingRequirements) ? (r.missingRequirements as unknown[]).join(", ") : "(unknown)";
+    const ev = await emit(ctx, {
+      type: "billing_readiness_blocked",
+      entityType: "execution_case",
+      entityId: r.executionCaseId ?? null,
+      exceptionKey: key,
+      executionCaseId: r.executionCaseId ?? null,
+      patientScreeningId: r.patientScreeningId ?? null,
+      facilityId: r.facilityId ?? null,
+      testType: r.serviceType,
+      facts: {
+        readinessStatus: r.readinessStatus,
+        hoursBlocked: hoursBlocked.toFixed(1),
+        missingRequirements: missing,
+      },
+    });
+    if (ev === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectInvoiceBatchStale(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors["invoice_batch_stale"];
+  const rows = await db.select().from(invoiceBatches)
+    .where(inArray(invoiceBatches.batchStatus, ["draft_preview", "draft", "pending_approval"]));
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const b of rows) {
+    if (ctx.facilityId && b.facilityId !== ctx.facilityId) continue;
+    const hoursStale = hoursBetween(b.createdAt as any, ctx.now);
+    if (hoursStale < eff.thresholdValue) continue;
+    const key = `invoice_batch_stale:${b.id}`;
+    keys.add(key);
+    const ev = await emit(ctx, {
+      type: "invoice_batch_stale",
+      entityType: "invoice_batch",
+      entityId: b.id,
+      exceptionKey: key,
+      facilityId: b.facilityId,
+      facts: { batchStatus: b.batchStatus, hoursStale: hoursStale.toFixed(1) },
+    });
+    if (ev === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectInvoiceDraftStale(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors["invoice_draft_stale"];
+  const rows = await db.select().from(invoices).where(eq(invoices.status, "Draft"));
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const i of rows) {
+    if (ctx.facilityId && i.facility !== ctx.facilityId) continue;
+    const hoursStale = hoursBetween(i.createdAt as any, ctx.now);
+    if (hoursStale < eff.thresholdValue) continue;
+    const key = `invoice_draft_stale:${i.id}`;
+    keys.add(key);
+    const ev = await emit(ctx, {
+      type: "invoice_draft_stale",
+      entityType: "invoice",
+      entityId: i.id,
+      exceptionKey: key,
+      invoiceId: i.id,
+      facilityId: i.facility,
+      facts: { hoursStale: hoursStale.toFixed(1), approvalStatus: i.approvalStatus },
+    });
+    if (ev === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectMissingInvoiceRecipient(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const rows = await db.select().from(invoices)
+    .where(eq(invoices.deliveryStatus, "blocked_missing_recipient" as any));
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const i of rows) {
+    if (ctx.facilityId && i.facility !== ctx.facilityId) continue;
+    const key = `missing_invoice_recipient:${i.id}`;
+    keys.add(key);
+    const ev = await emit(ctx, {
+      type: "missing_invoice_recipient",
+      entityType: "invoice",
+      entityId: i.id,
+      exceptionKey: key,
+      invoiceId: i.id,
+      facilityId: i.facility,
+      facts: { deliveryStatus: i.deliveryStatus, recipientSnapshot: i.recipientSnapshot },
+    });
+    if (ev === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectHighBalanceAging(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors["high_balance_aging"];
+  const rows = await db.select().from(invoices);
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const i of rows) {
+    if (ctx.facilityId && i.facility !== ctx.facilityId) continue;
+    if (i.status === "Paid") continue;
+    const balanceNum = Number(i.totalBalance ?? 0);
+    if (!Number.isFinite(balanceNum) || balanceNum <= 0) continue;
+    const daysAging = daysBetween(i.createdAt as any, ctx.now);
+    if (daysAging < eff.thresholdValue) continue;
+    const key = `high_balance_aging:${i.id}`;
+    keys.add(key);
+    const ev = await emit(ctx, {
+      type: "high_balance_aging",
+      entityType: "invoice",
+      entityId: i.id,
+      exceptionKey: key,
+      invoiceId: i.id,
+      facilityId: i.facility,
+      facts: { totalBalance: balanceNum.toFixed(2), daysAging: daysAging.toFixed(1) },
+    });
+    if (ev === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
 // ── public engine API ───────────────────────────────────────────────
 
 export type EvaluateInput = { facilityId?: string | null; testType?: string | null };
@@ -287,6 +469,15 @@ export async function evaluateExceptions(input: EvaluateInput = {}): Promise<Eva
     detectInvoiceReadinessBlocked,
     detectPhysicianSignaturePending,
     detectDenialFollowupDue,
+    // PR 3.6 — document + billing intelligence
+    (c: DetectorContext) => detectMissingDocument(c, "report", "report_missing"),
+    (c: DetectorContext) => detectMissingDocument(c, "order_note", "order_note_missing"),
+    (c: DetectorContext) => detectMissingDocument(c, "procedure_note", "procedure_note_missing"),
+    detectBillingReadinessBlocked,
+    detectInvoiceBatchStale,
+    detectInvoiceDraftStale,
+    detectMissingInvoiceRecipient,
+    detectHighBalanceAging,
   ];
 
   let detected = 0;
@@ -310,7 +501,14 @@ export async function evaluateExceptions(input: EvaluateInput = {}): Promise<Eva
     // Only auto-supersede detectors that the engine ran in this
     // pass (PR 3.6/3.7 detectors are added later; until they run
     // their snapshots must remain open).
-    const myTypes = new Set(["callback_overdue", "payment_overdue", "invoice_delivery_failed", "invoice_readiness_blocked", "physician_signature_pending", "denial_followup_due"]);
+    const myTypes = new Set([
+      "callback_overdue", "payment_overdue", "invoice_delivery_failed",
+      "invoice_readiness_blocked", "physician_signature_pending", "denial_followup_due",
+      // PR 3.6 additions
+      "report_missing", "order_note_missing", "procedure_note_missing",
+      "billing_readiness_blocked", "invoice_batch_stale", "invoice_draft_stale",
+      "missing_invoice_recipient", "high_balance_aging",
+    ]);
     if (!myTypes.has(row.exceptionType)) continue;
     await markSuperseded(row.id);
     superseded++;
