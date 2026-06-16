@@ -55,6 +55,9 @@
     "probe:phase3-ai-recommendation-log": "tsx script/livePhase3AiRecommendationLogProbe.ts",
     "probe:phase3-recommendation-engine": "tsx script/livePhase3RecommendationEngineProbe.ts",
     "probe:phase3-operational-summary": "tsx script/livePhase3OperationalSummaryProbe.ts",
+    "probe:phase3-exception-settings": "tsx script/livePhase3ExceptionSettingsProbe.ts",
+    "probe:phase3-call-priority": "tsx script/livePhase3CallPriorityProbe.ts",
+    "phase3:final-validation": "tsx script/livePhase3FinalValidation.ts",
     "seed:ai-safety": "tsx script/seedAiSafetyDefaults.ts"
   },
   "dependencies": {
