@@ -1,0 +1,320 @@
+// exceptionSnapshotEngine — Phase 3 PR 3.2.
+//
+// Evaluates exceptions from canonical Phase 2/4 sources and upserts
+// rows in exception_snapshots. Read-only with respect to patient,
+// billing, scheduling, and invoice state — only writes exception
+// snapshots.
+//
+// PR 3.2 ships the engine skeleton + the highest-value detectors
+// (callback_overdue, payment_overdue, invoice_delivery_failed,
+// invoice_readiness_blocked, physician_signature_pending). PR 3.6
+// + 3.7 register the rest into the registry-driven loop.
+
+import { db } from "../../db";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { patientExecutionCases } from "@shared/schema/executionCase";
+import { invoices } from "@shared/schema/invoices";
+import { invoiceDeliveryEvents } from "@shared/schema/invoiceDelivery";
+import { invoiceReadinessSnapshots } from "@shared/schema/invoiceReadiness";
+import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
+import { invoiceDenials } from "@shared/schema/invoiceFinancialEvents";
+import { getEffectiveExceptionPolicy } from "./exceptionSettingsService";
+import { DETECTOR_REGISTRY } from "./detectorRegistry";
+import { upsertException, markSuperseded, listExceptions } from "../../repositories/exceptionSnapshots.repo";
+import type { ExceptionType, ExceptionSeverity, ExceptionOwnerRole } from "@shared/contracts/exceptionIntelligence";
+
+const DETECTOR_VERSION = "3.2.0";
+
+function hoursBetween(a: Date | string | null | undefined, b: Date = new Date()): number {
+  if (!a) return 0;
+  const t = a instanceof Date ? a.getTime() : new Date(a).getTime();
+  if (Number.isNaN(t)) return 0;
+  return Math.max(0, (b.getTime() - t) / 3600_000);
+}
+function daysBetween(a: Date | string | null | undefined, b: Date = new Date()): number {
+  return hoursBetween(a, b) / 24;
+}
+
+function fillTemplate(template: string, facts: Record<string, unknown>): string {
+  return template.replace(/\{(\w+)\}/g, (_, k) => (facts[k] != null ? String(facts[k]) : "—"));
+}
+
+export type EvaluationResult = {
+  detected: number;
+  refreshed: number;
+  superseded: number;
+};
+
+type DetectorContext = {
+  policy: Awaited<ReturnType<typeof getEffectiveExceptionPolicy>>;
+  now: Date;
+  facilityId?: string | null;
+};
+
+type EmitArgs = {
+  type: ExceptionType;
+  entityType: string;
+  entityId: number | null;
+  exceptionKey: string;
+  patientScreeningId?: number | null;
+  executionCaseId?: number | null;
+  invoiceId?: number | null;
+  facilityId?: string | null;
+  testType?: string | null;
+  facts: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+};
+
+async function emit(ctx: DetectorContext, args: EmitArgs): Promise<"detected" | "refreshed"> {
+  const def = DETECTOR_REGISTRY.find((d) => d.exceptionType === args.type);
+  if (!def) throw new Error(`unknown detector ${args.type}`);
+  const eff = ctx.policy.detectors[args.type];
+  const explanation = fillTemplate(def.explanationTemplate, {
+    ...args.facts,
+    thresholdValue: eff?.thresholdValue ?? def.defaultThresholdValue,
+  });
+  const { created } = await upsertException({
+    exceptionKey: args.exceptionKey,
+    exceptionType: args.type,
+    entityType: args.entityType,
+    entityId: args.entityId ?? null,
+    patientScreeningId: args.patientScreeningId ?? null,
+    executionCaseId: args.executionCaseId ?? null,
+    invoiceId: args.invoiceId ?? null,
+    facilityId: args.facilityId ?? null,
+    testType: args.testType ?? null,
+    severity: (eff?.severity ?? def.defaultSeverity) as ExceptionSeverity,
+    status: "open",
+    title: def.title,
+    explanation,
+    recommendedOwnerRole: (eff?.ownerRole ?? def.defaultOwnerRole) as ExceptionOwnerRole,
+    sourceSnapshot: args.facts,
+    detectorVersion: DETECTOR_VERSION,
+    policySnapshot: {
+      severity: eff?.severity ?? def.defaultSeverity,
+      ownerRole: eff?.ownerRole ?? def.defaultOwnerRole,
+      thresholdValue: eff?.thresholdValue ?? def.defaultThresholdValue,
+      thresholdUnit: def.thresholdUnit,
+      humanReviewRequired: ctx.policy.humanReviewRequired,
+      autoActionsEnabled: ctx.policy.autoActionsEnabled,
+    },
+    metadata: args.metadata ?? {},
+  } as any);
+  return created ? "detected" : "refreshed";
+}
+
+// ── individual detectors ────────────────────────────────────────────
+
+async function detectCallbackOverdue(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors["callback_overdue"];
+  const cases = await db.select().from(patientExecutionCases).where(isNotNull(patientExecutionCases.nextActionAt));
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const c of cases) {
+    if (ctx.facilityId && c.facilityId !== ctx.facilityId) continue;
+    if (!c.nextActionAt) continue;
+    const hoursOverdue = hoursBetween(c.nextActionAt as any, ctx.now);
+    if (hoursOverdue < eff.thresholdValue) continue;
+    const key = `callback_overdue:${c.id}`;
+    keys.add(key);
+    const r = await emit(ctx, {
+      type: "callback_overdue",
+      entityType: "execution_case",
+      entityId: c.id,
+      exceptionKey: key,
+      patientScreeningId: c.patientScreeningId ?? null,
+      executionCaseId: c.id,
+      facilityId: c.facilityId ?? null,
+      facts: { nextActionAt: (c.nextActionAt as Date).toISOString(), hoursOverdue: hoursOverdue.toFixed(1) },
+    });
+    if (r === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectPaymentOverdue(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors["payment_overdue"];
+  const rows = await db.select().from(invoices);
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const i of rows) {
+    if (ctx.facilityId && i.facility !== ctx.facilityId) continue;
+    if (i.status === "Paid") continue;
+    const due = (i as any).dueDate as string | null;
+    if (!due) continue;
+    const dueDate = new Date(due);
+    if (Number.isNaN(dueDate.getTime())) continue;
+    const daysOverdue = (ctx.now.getTime() - dueDate.getTime()) / (24 * 3600 * 1000);
+    if (daysOverdue < eff.thresholdValue) continue;
+    const key = `payment_overdue:${i.id}`;
+    keys.add(key);
+    const r = await emit(ctx, {
+      type: "payment_overdue",
+      entityType: "invoice",
+      entityId: i.id,
+      exceptionKey: key,
+      invoiceId: i.id,
+      facilityId: i.facility,
+      facts: { invoiceId: i.id, totalBalance: i.totalBalance, daysOverdue: daysOverdue.toFixed(1), dueDate: due },
+    });
+    if (r === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectInvoiceDeliveryFailed(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const rows = await db.select().from(invoices).where(eq(invoices.deliveryStatus, "failed" as any));
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const i of rows) {
+    if (ctx.facilityId && i.facility !== ctx.facilityId) continue;
+    const [evt] = await db.select().from(invoiceDeliveryEvents).where(and(eq(invoiceDeliveryEvents.invoiceId, i.id), eq(invoiceDeliveryEvents.eventType, "failed"))).limit(1);
+    const key = `invoice_delivery_failed:${i.id}`;
+    keys.add(key);
+    const r = await emit(ctx, {
+      type: "invoice_delivery_failed",
+      entityType: "invoice",
+      entityId: i.id,
+      exceptionKey: key,
+      invoiceId: i.id,
+      facilityId: i.facility,
+      facts: { invoiceId: i.id, failedAt: (evt?.createdAt as Date | undefined)?.toISOString?.() ?? "unknown", errorMessage: evt?.errorMessage ?? null },
+    });
+    if (r === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectInvoiceReadinessBlocked(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors["invoice_readiness_blocked"];
+  const rows = await db.select().from(invoiceReadinessSnapshots).where(eq(invoiceReadinessSnapshots.readinessStatus, "blocked"));
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const s of rows) {
+    if (ctx.facilityId && s.facilityId !== ctx.facilityId) continue;
+    const hoursBlocked = hoursBetween(s.evaluatedAt as any, ctx.now);
+    if (hoursBlocked < eff.thresholdValue) continue;
+    const key = `invoice_readiness_blocked:${s.id}`;
+    keys.add(key);
+    const blockers = Array.isArray(s.blockers) ? (s.blockers as unknown[]).join(", ") : "(unknown)";
+    const r = await emit(ctx, {
+      type: "invoice_readiness_blocked",
+      entityType: "invoice_readiness",
+      entityId: s.id,
+      exceptionKey: key,
+      executionCaseId: s.executionCaseId ?? null,
+      facilityId: s.facilityId ?? null,
+      testType: s.serviceType ?? null,
+      facts: { hoursBlocked: hoursBlocked.toFixed(1), blockers },
+    });
+    if (r === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectPhysicianSignaturePending(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors["physician_signature_pending"];
+  // Cases that have an order_note present but no physician_signed_order
+  // with status in the present set.
+  const orderRows = await db.select().from(caseDocumentReadiness).where(eq(caseDocumentReadiness.documentType, "order_note"));
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  const PRESENT = new Set(["completed", "complete", "uploaded", "generated", "approved", "signed", "verified", "present"]);
+  for (const o of orderRows) {
+    if (!PRESENT.has((o.documentStatus ?? "").toLowerCase())) continue;
+    if (ctx.facilityId && o.facilityId !== ctx.facilityId) continue;
+    const [signed] = await db.select().from(caseDocumentReadiness).where(and(
+      eq(caseDocumentReadiness.executionCaseId, o.executionCaseId ?? -1),
+      eq(caseDocumentReadiness.documentType, "physician_signed_order"),
+    )).limit(1);
+    const isSigned = signed && PRESENT.has((signed.documentStatus ?? "").toLowerCase());
+    if (isSigned) continue;
+    const hoursPending = hoursBetween(o.completedAt as any, ctx.now);
+    if (hoursPending < eff.thresholdValue) continue;
+    const key = `physician_signature_pending:${o.executionCaseId}:${o.serviceType}`;
+    keys.add(key);
+    const r = await emit(ctx, {
+      type: "physician_signature_pending",
+      entityType: "execution_case",
+      entityId: o.executionCaseId ?? null,
+      exceptionKey: key,
+      executionCaseId: o.executionCaseId ?? null,
+      patientScreeningId: o.patientScreeningId ?? null,
+      facilityId: o.facilityId ?? null,
+      testType: o.serviceType,
+      facts: { hoursPending: hoursPending.toFixed(1) },
+    });
+    if (r === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectDenialFollowupDue(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors["denial_followup_due"];
+  const rows = await db.select().from(invoiceDenials).where(eq(invoiceDenials.status, "open"));
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const d of rows) {
+    const daysOpen = daysBetween(d.createdAt as any, ctx.now);
+    if (daysOpen < eff.thresholdValue) continue;
+    const key = `denial_followup_due:${d.id}`;
+    keys.add(key);
+    const r = await emit(ctx, {
+      type: "denial_followup_due",
+      entityType: "denial",
+      entityId: d.id,
+      exceptionKey: key,
+      invoiceId: d.invoiceId ?? null,
+      facts: { denialId: d.id, denialCode: d.denialCode ?? "—", daysOpen: daysOpen.toFixed(1) },
+    });
+    if (r === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+// ── public engine API ───────────────────────────────────────────────
+
+export type EvaluateInput = { facilityId?: string | null; testType?: string | null };
+
+export async function evaluateExceptions(input: EvaluateInput = {}): Promise<EvaluationResult> {
+  const policy = await getEffectiveExceptionPolicy({ facilityId: input.facilityId ?? null, testType: input.testType ?? null });
+  const ctx: DetectorContext = { policy, now: new Date(), facilityId: input.facilityId ?? null };
+
+  const detectors = [
+    detectCallbackOverdue,
+    detectPaymentOverdue,
+    detectInvoiceDeliveryFailed,
+    detectInvoiceReadinessBlocked,
+    detectPhysicianSignaturePending,
+    detectDenialFollowupDue,
+  ];
+
+  let detected = 0;
+  let refreshed = 0;
+  const liveKeys = new Set<string>();
+  for (const fn of detectors) {
+    const r = await fn(ctx);
+    detected += r.detected;
+    refreshed += r.refreshed;
+    for (const k of r.keys) liveKeys.add(k);
+  }
+
+  // Supersede open exceptions whose keys are no longer emitted by
+  // the engine — the source condition has cleared. Only supersedes
+  // open / acknowledged / in_review rows (not resolved/dismissed).
+  let superseded = 0;
+  const stale = await listExceptions({ status: ["open", "acknowledged", "in_review"] }, 1000);
+  for (const row of stale) {
+    if (input.facilityId && row.facilityId !== input.facilityId) continue;
+    if (liveKeys.has(row.exceptionKey)) continue;
+    // Only auto-supersede detectors that the engine ran in this
+    // pass (PR 3.6/3.7 detectors are added later; until they run
+    // their snapshots must remain open).
+    const myTypes = new Set(["callback_overdue", "payment_overdue", "invoice_delivery_failed", "invoice_readiness_blocked", "physician_signature_pending", "denial_followup_due"]);
+    if (!myTypes.has(row.exceptionType)) continue;
+    await markSuperseded(row.id);
+    superseded++;
+  }
+
+  return { detected, refreshed, superseded };
+}

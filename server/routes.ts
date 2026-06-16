@@ -42,6 +42,7 @@ import { registerInvoiceFinancialRoutes } from "./routes/invoiceFinancialEvents"
 import { registerBillingAuditorRoutes } from "./routes/billingAuditor";
 import { registerBillingReportsRoutes } from "./routes/billingReports";
 import { registerExceptionSettingsRoutes } from "./routes/exceptionSettings";
+import { registerExceptionsRoutes } from "./routes/exceptions";
 import { registerSchedulingTriageRoutes } from "./routes/schedulingTriage";
 import { registerInsuranceEligibilityRoutes } from "./routes/insuranceEligibility";
 import { registerCooldownRoutes } from "./routes/cooldown";
@@ -266,6 +267,7 @@ export async function registerRoutes(
   registerBillingAuditorRoutes(app);
   registerBillingReportsRoutes(app);
   registerExceptionSettingsRoutes(app);
+  registerExceptionsRoutes(app);
   registerGlobalScheduleRoutes(app);
   registerSchedulingTriageRoutes(app);
   registerInsuranceEligibilityRoutes(app);
