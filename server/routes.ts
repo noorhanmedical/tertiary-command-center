@@ -44,6 +44,7 @@ import { registerBillingReportsRoutes } from "./routes/billingReports";
 import { registerExceptionSettingsRoutes } from "./routes/exceptionSettings";
 import { registerExceptionsRoutes } from "./routes/exceptions";
 import { registerAiRecommendationsRoutes } from "./routes/aiRecommendations";
+import { registerCallPriorityRoutes } from "./routes/callPriority";
 import { registerSchedulingTriageRoutes } from "./routes/schedulingTriage";
 import { registerInsuranceEligibilityRoutes } from "./routes/insuranceEligibility";
 import { registerCooldownRoutes } from "./routes/cooldown";
@@ -270,6 +271,7 @@ export async function registerRoutes(
   registerExceptionSettingsRoutes(app);
   registerExceptionsRoutes(app);
   registerAiRecommendationsRoutes(app);
+  registerCallPriorityRoutes(app);
   registerGlobalScheduleRoutes(app);
   registerSchedulingTriageRoutes(app);
   registerInsuranceEligibilityRoutes(app);

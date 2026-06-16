@@ -23,9 +23,10 @@ if (failures.length) {
 const engine = read("server/services/exceptionIntelligence/exceptionSnapshotEngine.ts");
 const rules = read("server/services/exceptionIntelligence/recommendationRules.ts");
 
-// 1) Engine version bumped to PR 3.6
-if (!/DETECTOR_VERSION\s*=\s*"3\.6\.0"/.test(engine)) {
-  fail("DETECTOR_VERSION must be bumped to 3.6.0");
+// 1) Engine version bumped to PR 3.6 or later
+const detectorVersionMatch = engine.match(/DETECTOR_VERSION\s*=\s*"3\.(\d+)\.\d+"/);
+if (!detectorVersionMatch || Number(detectorVersionMatch[1]) < 6) {
+  fail("DETECTOR_VERSION must be ≥ 3.6.0");
 }
 
 // 2) Engine must register all 8 new detector functions
@@ -57,8 +58,9 @@ for (const t of [
 }
 
 // 5) RECOMMENDATION_VERSION bumped
-if (!/RECOMMENDATION_VERSION\s*=\s*"3\.6\.0"/.test(rules)) {
-  fail("RECOMMENDATION_VERSION must be bumped to 3.6.0");
+const recVersionMatch = rules.match(/RECOMMENDATION_VERSION\s*=\s*"3\.(\d+)\.\d+"/);
+if (!recVersionMatch || Number(recVersionMatch[1]) < 6) {
+  fail("RECOMMENDATION_VERSION must be ≥ 3.6.0");
 }
 
 // 6) No autonomous mutations of source tables

@@ -12,7 +12,7 @@ import type {
   RecommendationAction,
 } from "@shared/contracts/aiRecommendation";
 
-export const RECOMMENDATION_VERSION = "3.6.0";
+export const RECOMMENDATION_VERSION = "3.7.0";
 
 export type RecommendationProposal = {
   recommendationType: string;
@@ -232,6 +232,60 @@ const highBalanceAgingRule: RuleFn = ({ exception }) => {
   };
 };
 
+// ── PR 3.7 — scheduling / call rules ──────────────────────────────
+
+const missingPatientContactRule: RuleFn = ({ exception }) => {
+  const snap = (exception.sourceSnapshot ?? {}) as Record<string, unknown>;
+  return {
+    recommendationType: "patient_contact_collection",
+    recommendedAction: "request_more_info",
+    title: "Collect missing patient contact info",
+    body: `Patient ${fact(snap, "patientLabel")} is missing ${snap.phoneMissing ? "phone" : ""}${snap.phoneMissing && snap.emailMissing ? " and " : ""}${snap.emailMissing ? "email" : ""}. Propose to collect from intake.`,
+    ruleIds: ["missing_patient_contact::request_more_info"],
+    rationale: "Detected missing_patient_contact. Rule proposes information collection; no autopopulation from external systems.",
+    inputs: { patientScreeningId: exception.patientScreeningId, phoneMissing: snap.phoneMissing, emailMissing: snap.emailMissing },
+  };
+};
+
+const lvmFollowupRule: RuleFn = ({ exception }) => {
+  const snap = (exception.sourceSnapshot ?? {}) as Record<string, unknown>;
+  return {
+    recommendationType: "lvm_followup",
+    recommendedAction: "schedule_callback",
+    title: "Schedule callback after voicemail",
+    body: `Voicemail attempt ${fact(snap, "attemptNumber")} was ${fact(snap, "hoursOverdue")}h ago. Propose to schedule a follow-up callback.`,
+    ruleIds: ["lvm_followup_overdue::schedule_callback"],
+    rationale: "Detected lvm_followup_overdue. Rule proposes a schedule; no auto-dial.",
+    inputs: { patientScreeningId: exception.patientScreeningId, attemptNumber: snap.attemptNumber },
+  };
+};
+
+const noAnswerFollowupRule: RuleFn = ({ exception }) => {
+  const snap = (exception.sourceSnapshot ?? {}) as Record<string, unknown>;
+  return {
+    recommendationType: "no_answer_followup",
+    recommendedAction: "schedule_callback",
+    title: "Schedule retry after no-answer",
+    body: `Last attempt outcome was no-answer ${fact(snap, "hoursOverdue")}h ago. Propose retry via the next allowed channel.`,
+    ruleIds: ["no_answer_followup_overdue::schedule_callback"],
+    rationale: "Detected no_answer_followup_overdue. Rule proposes retry; biller / PCS confirms.",
+    inputs: { patientScreeningId: exception.patientScreeningId },
+  };
+};
+
+const unableToReachRule: RuleFn = ({ exception }) => {
+  const snap = (exception.sourceSnapshot ?? {}) as Record<string, unknown>;
+  return {
+    recommendationType: "unable_to_reach_escalation",
+    recommendedAction: "escalate_to_admin",
+    title: "Escalate unable-to-reach threshold",
+    body: `Patient has ${fact(snap, "attempts")} failed contact attempts. Propose escalation to admin or shift to mail-based outreach.`,
+    ruleIds: ["unable_to_reach_threshold_met::escalate"],
+    rationale: "Detected unable_to_reach_threshold_met. Rule proposes escalation; case state is not changed.",
+    inputs: { patientScreeningId: exception.patientScreeningId, attempts: snap.attempts },
+  };
+};
+
 export const RECOMMENDATION_RULES: Partial<Record<string, RuleFn>> = {
   callback_overdue: callbackOverdueRule,
   payment_overdue: paymentOverdueRule,
@@ -247,6 +301,11 @@ export const RECOMMENDATION_RULES: Partial<Record<string, RuleFn>> = {
   invoice_draft_stale: invoiceDraftStaleRule,
   missing_invoice_recipient: missingInvoiceRecipientRule,
   high_balance_aging: highBalanceAgingRule,
+  // PR 3.7 — scheduling / call
+  missing_patient_contact: missingPatientContactRule,
+  lvm_followup_overdue: lvmFollowupRule,
+  no_answer_followup_overdue: noAnswerFollowupRule,
+  unable_to_reach_threshold_met: unableToReachRule,
 };
 
 /** Return the rule for an exception type, or null if no rule is registered. */

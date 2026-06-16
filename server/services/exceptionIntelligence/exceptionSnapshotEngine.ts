@@ -20,12 +20,14 @@ import { caseDocumentReadiness } from "@shared/schema/documentReadiness";
 import { billingReadinessChecks } from "@shared/schema/billingReadiness";
 import { invoiceBatches } from "@shared/schema/invoiceBatches";
 import { invoiceDenials } from "@shared/schema/invoiceFinancialEvents";
+import { patientScreenings } from "@shared/schema/screening";
+import { outreachCalls } from "@shared/schema/outreach";
 import { getEffectiveExceptionPolicy } from "./exceptionSettingsService";
 import { DETECTOR_REGISTRY } from "./detectorRegistry";
 import { upsertException, markSuperseded, listExceptions } from "../../repositories/exceptionSnapshots.repo";
 import type { ExceptionType, ExceptionSeverity, ExceptionOwnerRole } from "@shared/contracts/exceptionIntelligence";
 
-const DETECTOR_VERSION = "3.6.0";
+const DETECTOR_VERSION = "3.7.0";
 
 const PRESENT_DOC_STATUS = new Set([
   "completed", "complete", "uploaded", "generated", "approved", "signed", "verified", "present",
@@ -454,6 +456,115 @@ async function detectHighBalanceAging(ctx: DetectorContext): Promise<{ detected:
   return { detected, refreshed, keys };
 }
 
+// ── PR 3.7 scheduling / call detectors ──────────────────────────────
+
+async function detectMissingPatientContact(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const rows = await db.select({
+    id: patientScreenings.id,
+    facility: patientScreenings.facility,
+    phoneNumber: patientScreenings.phoneNumber,
+    email: patientScreenings.email,
+    name: patientScreenings.name,
+    deletedAt: patientScreenings.deletedAt,
+  }).from(patientScreenings);
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const p of rows) {
+    if (p.deletedAt) continue;
+    if (ctx.facilityId && p.facility !== ctx.facilityId) continue;
+    const phoneEmpty = !p.phoneNumber || !p.phoneNumber.toString().trim();
+    const emailEmpty = !p.email || !p.email.toString().trim();
+    if (!phoneEmpty && !emailEmpty) continue;
+    const key = `missing_patient_contact:${p.id}`;
+    keys.add(key);
+    const r = await emit(ctx, {
+      type: "missing_patient_contact",
+      entityType: "patient_screening",
+      entityId: p.id,
+      exceptionKey: key,
+      patientScreeningId: p.id,
+      facilityId: p.facility ?? null,
+      facts: {
+        patientLabel: p.name ?? "—",
+        phoneMissing: phoneEmpty,
+        emailMissing: emailEmpty,
+      },
+    });
+    if (r === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectCallOutcomeOverdue(
+  ctx: DetectorContext,
+  outcome: "voicemail" | "no_answer",
+  exceptionType: "lvm_followup_overdue" | "no_answer_followup_overdue",
+): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors[exceptionType];
+  // Latest outreach_call per patient with the given outcome.
+  const calls = await db.select().from(outreachCalls);
+  type CallRow = typeof calls[number];
+  const latestByPatient = new Map<number, CallRow>();
+  for (const c of calls) {
+    const prev = latestByPatient.get(c.patientScreeningId);
+    if (!prev) { latestByPatient.set(c.patientScreeningId, c); continue; }
+    const ts = c.startedAt instanceof Date ? c.startedAt.getTime() : new Date(c.startedAt as any).getTime();
+    const pts = prev.startedAt instanceof Date ? prev.startedAt.getTime() : new Date(prev.startedAt as any).getTime();
+    if (ts > pts) latestByPatient.set(c.patientScreeningId, c);
+  }
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const [patientScreeningId, c] of latestByPatient) {
+    if (c.outcome !== outcome) continue;
+    const hoursOverdue = hoursBetween(c.startedAt as any, ctx.now);
+    if (hoursOverdue < eff.thresholdValue) continue;
+    const key = `${exceptionType}:${patientScreeningId}`;
+    keys.add(key);
+    const r = await emit(ctx, {
+      type: exceptionType,
+      entityType: "patient_screening",
+      entityId: patientScreeningId,
+      exceptionKey: key,
+      patientScreeningId,
+      facts: {
+        attemptNumber: c.attemptNumber,
+        outcome,
+        hoursOverdue: hoursOverdue.toFixed(1),
+      },
+    });
+    if (r === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
+async function detectUnableToReachThreshold(ctx: DetectorContext): Promise<{ detected: number; refreshed: number; keys: Set<string> }> {
+  const eff = ctx.policy.detectors["unable_to_reach_threshold_met"];
+  const counts = await db.execute<{ patient_screening_id: number; attempts: string }>(sql`
+    select patient_screening_id, count(*)::text as attempts
+    from outreach_calls
+    where outcome in ('no_answer','voicemail','mailbox_full','busy','hung_up','disconnected')
+    group by 1
+  `);
+  let detected = 0, refreshed = 0;
+  const keys = new Set<string>();
+  for (const row of counts.rows) {
+    const attempts = Number(row.attempts);
+    if (!Number.isFinite(attempts) || attempts < eff.thresholdValue) continue;
+    const key = `unable_to_reach_threshold_met:${row.patient_screening_id}`;
+    keys.add(key);
+    const r = await emit(ctx, {
+      type: "unable_to_reach_threshold_met",
+      entityType: "patient_screening",
+      entityId: row.patient_screening_id,
+      exceptionKey: key,
+      patientScreeningId: row.patient_screening_id,
+      facts: { attempts: String(attempts) },
+    });
+    if (r === "detected") detected++; else refreshed++;
+  }
+  return { detected, refreshed, keys };
+}
+
 // ── public engine API ───────────────────────────────────────────────
 
 export type EvaluateInput = { facilityId?: string | null; testType?: string | null };
@@ -478,6 +589,11 @@ export async function evaluateExceptions(input: EvaluateInput = {}): Promise<Eva
     detectInvoiceDraftStale,
     detectMissingInvoiceRecipient,
     detectHighBalanceAging,
+    // PR 3.7 — scheduling / call detectors
+    detectMissingPatientContact,
+    (c: DetectorContext) => detectCallOutcomeOverdue(c, "voicemail", "lvm_followup_overdue"),
+    (c: DetectorContext) => detectCallOutcomeOverdue(c, "no_answer", "no_answer_followup_overdue"),
+    detectUnableToReachThreshold,
   ];
 
   let detected = 0;
@@ -508,6 +624,9 @@ export async function evaluateExceptions(input: EvaluateInput = {}): Promise<Eva
       "report_missing", "order_note_missing", "procedure_note_missing",
       "billing_readiness_blocked", "invoice_batch_stale", "invoice_draft_stale",
       "missing_invoice_recipient", "high_balance_aging",
+      // PR 3.7 additions
+      "missing_patient_contact", "lvm_followup_overdue",
+      "no_answer_followup_overdue", "unable_to_reach_threshold_met",
     ]);
     if (!myTypes.has(row.exceptionType)) continue;
     await markSuperseded(row.id);
