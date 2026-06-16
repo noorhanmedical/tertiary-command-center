@@ -45,6 +45,7 @@ import { registerExceptionSettingsRoutes } from "./routes/exceptionSettings";
 import { registerExceptionsRoutes } from "./routes/exceptions";
 import { registerAiRecommendationsRoutes } from "./routes/aiRecommendations";
 import { registerCallPriorityRoutes } from "./routes/callPriority";
+import { registerOperationalSummaryRoutes } from "./routes/operationalSummary";
 import { registerSchedulingTriageRoutes } from "./routes/schedulingTriage";
 import { registerInsuranceEligibilityRoutes } from "./routes/insuranceEligibility";
 import { registerCooldownRoutes } from "./routes/cooldown";
@@ -272,6 +273,7 @@ export async function registerRoutes(
   registerExceptionsRoutes(app);
   registerAiRecommendationsRoutes(app);
   registerCallPriorityRoutes(app);
+  registerOperationalSummaryRoutes(app);
   registerGlobalScheduleRoutes(app);
   registerSchedulingTriageRoutes(app);
   registerInsuranceEligibilityRoutes(app);

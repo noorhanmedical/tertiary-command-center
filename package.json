@@ -54,6 +54,7 @@
     "probe:phase3-exception-review": "tsx script/livePhase3ExceptionReviewProbe.ts",
     "probe:phase3-ai-recommendation-log": "tsx script/livePhase3AiRecommendationLogProbe.ts",
     "probe:phase3-recommendation-engine": "tsx script/livePhase3RecommendationEngineProbe.ts",
+    "probe:phase3-operational-summary": "tsx script/livePhase3OperationalSummaryProbe.ts",
     "seed:ai-safety": "tsx script/seedAiSafetyDefaults.ts"
   },
   "dependencies": {
