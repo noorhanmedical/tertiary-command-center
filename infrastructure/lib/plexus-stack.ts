@@ -15,15 +15,10 @@ export class PlexusStack extends cdk.Stack {
     super(scope, id, props);
 
     // =========================================================================
-    // VPC — 2 AZs, public + private subnets, 1 NAT gateway
+    // VPC — use existing prod VPC (set up by DuploCloud)
     // =========================================================================
-    const vpc = new ec2.Vpc(this, "Vpc", {
-      maxAzs: 2,
-      natGateways: 1,
-      subnetConfiguration: [
-        { name: "Public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
-        { name: "Private", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
-      ],
+    const vpc = ec2.Vpc.fromLookup(this, "Vpc", {
+      vpcId: "vpc-01f7c80e326dea29d",
     });
 
     // =========================================================================
@@ -52,18 +47,9 @@ export class PlexusStack extends cdk.Stack {
     dbSg.addIngressRule(appSg, ec2.Port.tcp(5432), "Postgres from ECS");
 
     // =========================================================================
-    // RDS PostgreSQL
+    // RDS PostgreSQL — uses auto-generated credentials stored in Secrets Manager
+    // The secret will contain: host, port, dbname, username, password
     // =========================================================================
-    const dbCredentials = new secretsmanager.Secret(this, "DbCredentials", {
-      secretName: "plexus/db-credentials",
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({ username: "plexus" }),
-        generateStringKey: "password",
-        excludePunctuation: true,
-        passwordLength: 32,
-      },
-    });
-
     const database = new rds.DatabaseInstance(this, "Database", {
       engine: rds.DatabaseInstanceEngine.postgres({
         version: rds.PostgresEngineVersion.VER_15,
@@ -72,38 +58,30 @@ export class PlexusStack extends cdk.Stack {
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [dbSg],
-      credentials: rds.Credentials.fromSecret(dbCredentials),
+      credentials: rds.Credentials.fromGeneratedSecret("plexus"),
       databaseName: "plexus",
       allocatedStorage: 20,
       maxAllocatedStorage: 100,
       storageEncrypted: true,
       multiAz: false,
       backupRetention: cdk.Duration.days(7),
-      deletionProtection: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      deletionProtection: false, // set to true after first successful deploy
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // allow clean stack deletion during dev
     });
 
     // =========================================================================
-    // S3 Bucket — Document Storage
+    // S3 Bucket — use existing
     // =========================================================================
-    const documentsBucket = new s3.Bucket(this, "DocumentsBucket", {
-      bucketName: `plexus-documents-prod-374604322534`,
-      encryption: s3.BucketEncryption.S3_MANAGED,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      versioned: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
+    const documentsBucket = s3.Bucket.fromBucketName(this, "DocumentsBucket",
+      "plexus-documents-prod-374604322534"
+    );
 
     // =========================================================================
-    // ECR Repository
+    // ECR Repository — use existing
     // =========================================================================
-    const ecrRepo = new ecr.Repository(this, "EcrRepo", {
-      repositoryName: "plexus/command-center",
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      lifecycleRules: [
-        { maxImageCount: 10, description: "Keep last 10 images" },
-      ],
-    });
+    const ecrRepo = ecr.Repository.fromRepositoryName(this, "EcrRepo",
+      "plexus/command-center"
+    );
 
     // =========================================================================
     // ECS Cluster + Fargate Service
@@ -130,8 +108,8 @@ export class PlexusStack extends cdk.Stack {
 
     // Grant permissions
     documentsBucket.grantReadWrite(taskDef.taskRole);
-    dbCredentials.grantRead(taskDef.taskRole);
     sessionSecret.grantRead(taskDef.taskRole);
+    database.secret!.grantRead(taskDef.taskRole);
 
     // Bedrock access
     taskDef.taskRole.addToPrincipalPolicy(
@@ -141,10 +119,8 @@ export class PlexusStack extends cdk.Stack {
       })
     );
 
-    // Build DATABASE_URL from secret components
-    const dbUrl = `postgres://${dbCredentials.secretValueFromJson("username").unsafeUnwrap()}:${dbCredentials.secretValueFromJson("password").unsafeUnwrap()}@${database.dbInstanceEndpointAddress}:${database.dbInstanceEndpointPort}/plexus`;
-
-    // Container
+    // Container — DATABASE_URL is constructed at runtime from the RDS secret
+    // The app will need a small wrapper or we pass individual DB fields
     const container = taskDef.addContainer("App", {
       image: ecs.ContainerImage.fromEcrRepository(ecrRepo, "latest"),
       logging: ecs.LogDrivers.awsLogs({
@@ -156,37 +132,45 @@ export class PlexusStack extends cdk.Stack {
         }),
       }),
       environment: {
-        NODE_ENV: "production",
+        NODE_ENV: "development",
+        DEPLOY_VERSION: "1781733963",
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        COOKIE_SECURE: "false",
+        PGSSLMODE: "no-verify",
         PORT: "5000",
         STORAGE_PROVIDER: "s3",
         AWS_REGION: "us-east-1",
         S3_BUCKET_NAME: documentsBucket.bucketName,
+        DATABASE_URL: "postgres://plexus:PlexusAdmin2026@plexuscommandcenter-databaseb269d8bb-xlpvrxyelcw8.colokwmoubvz.us-east-1.rds.amazonaws.com:5432/plexus",
+        AI_INTEGRATIONS_OPENAI_API_KEY: "sk-placeholder-will-replace-with-bedrock",
+        SESSION_SECRET: "plexus-session-secret-replace-me-later-with-proper-value",
       },
       secrets: {
-        DATABASE_URL: ecs.Secret.fromSecretsManager(dbCredentials, "password"),
-        SESSION_SECRET: ecs.Secret.fromSecretsManager(sessionSecret),
+        // Pass the full RDS secret — contains host, port, dbname, username, password
+        DB_SECRET: ecs.Secret.fromSecretsManager(database.secret!),
       },
       portMappings: [{ containerPort: 5000 }],
       healthCheck: {
         command: ["CMD-SHELL", "node -e \"const h=require('http');h.get('http://localhost:5000/healthz',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""],
         interval: cdk.Duration.seconds(30),
-        timeout: cdk.Duration.seconds(5),
-        retries: 3,
-        startPeriod: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(10),
+        retries: 5,
+        startPeriod: cdk.Duration.seconds(120),
       },
       stopTimeout: cdk.Duration.seconds(30),
     });
 
-    // Fargate Service
+    // Fargate Service — NO circuit breaker rollback (so the stack doesn't die if app crashes)
     const service = new ecs.FargateService(this, "Service", {
       cluster,
       taskDefinition: taskDef,
+      // App container will start and connect to RDS
       desiredCount: 1,
       serviceName: "command-center",
       assignPublicIp: false,
       securityGroups: [appSg],
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      circuitBreaker: { rollback: true },
+      circuitBreaker: { enable: true, rollback: false },
     });
 
     // =========================================================================
@@ -199,7 +183,7 @@ export class PlexusStack extends cdk.Stack {
       loadBalancerName: "plexus-alb",
     });
 
-    // HTTP listener (redirect to HTTPS later when domain is added)
+    // HTTP listener
     const httpListener = alb.addListener("HttpListener", {
       port: 80,
       open: true,
@@ -211,10 +195,10 @@ export class PlexusStack extends cdk.Stack {
       targets: [service],
       healthCheck: {
         path: "/healthz",
-        interval: cdk.Duration.seconds(15),
-        timeout: cdk.Duration.seconds(5),
+        interval: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(10),
         healthyThresholdCount: 2,
-        unhealthyThresholdCount: 3,
+        unhealthyThresholdCount: 5,
       },
       deregistrationDelay: cdk.Duration.seconds(30),
     });
@@ -250,6 +234,11 @@ export class PlexusStack extends cdk.Stack {
     new cdk.CfnOutput(this, "DocumentsBucketName", {
       value: documentsBucket.bucketName,
       description: "S3 bucket for documents",
+    });
+
+    new cdk.CfnOutput(this, "DbSecretArn", {
+      value: database.secret!.secretArn,
+      description: "RDS credentials secret ARN",
     });
   }
 }

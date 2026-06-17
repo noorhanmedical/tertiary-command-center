@@ -71,7 +71,7 @@ app.use(
     cookie: {
       httpOnly: true,
       // `trust proxy` above lets express-session detect TLS termination at the ALB.
-      secure: process.env.NODE_ENV === "production",
+      secure: process.env["COOKIE_SECURE"] === "true",
       sameSite: "lax",
       maxAge: 24 * 60 * 60 * 1000,
     },
