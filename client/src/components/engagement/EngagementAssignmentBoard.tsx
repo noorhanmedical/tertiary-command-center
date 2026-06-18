@@ -47,6 +47,8 @@ import {
   type PdfPacketSourcePatient,
   type SchedulerPdfPacket,
 } from "@/lib/pdfPacketGrouping";
+import { auditPacketPatients, type PacketQaReport } from "@/lib/packetQa";
+import { PacketQaBlockingDialog } from "@/components/plexus-iq/PacketQaBlockingDialog";
 
 // Engagement Assignment Board.
 //
@@ -153,6 +155,14 @@ export function EngagementAssignmentBoard() {
   const [pdfProgressByGroup, setPdfProgressByGroup] = useState<
     Record<string, { current: number; total: number } | null>
   >({});
+  // Packet QA Gate — opened when auditPacketPatients finds blockers
+  // for a single-group or scheduler-split packet. `proceedFn` carries
+  // the printable-subset path forward so each caller can re-enter its
+  // own scheduler-split or single-group preview logic.
+  const [packetQa, setPacketQa] = useState<{
+    report: PacketQaReport;
+    proceed: () => void;
+  } | null>(null);
   // All grouped cards start COLLAPSED. The operator opens a group by
   // clicking the chevron / group header; the action bar (Select All,
   // PDF buttons, Assign, Delete All) stays visible even when
@@ -638,23 +648,46 @@ export function EngagementAssignmentBoard() {
     // SOURCE MARKER: Engagement Center date packets use print preview
     // SOURCE MARKER: Engagement Center facility packets use print preview
     // SOURCE MARKER: Engagement Center packet print preview avoids html2canvas
-    try {
-      const result = openPatientPacketPrintPreview({
-        mode,
-        batchName,
-        patients: validation.patients,
-        scheduleDate: validation.scheduleDate,
-        createdAt: null,
-      });
-      if (!result.ok && result.reason === "popup-blocked") {
-        // SOURCE MARKER: Engagement Center print preview popup blocked is surfaced
-        reportGenerationError(
-          "Popup blocked. Allow popups to print this packet.",
-        );
+    //
+    // Packet QA Gate — audit every patient before opening preview.
+    // No auto-regenerate; operator either cancels or proceeds with
+    // the printable subset.
+    const openWithSubset = (subset: PatientScreening[]) => {
+      try {
+        const result = openPatientPacketPrintPreview({
+          mode,
+          batchName,
+          patients: subset,
+          scheduleDate: validation.scheduleDate,
+          createdAt: null,
+        });
+        if (!result.ok && result.reason === "popup-blocked") {
+          // SOURCE MARKER: Engagement Center print preview popup blocked is surfaced
+          reportGenerationError(
+            "Popup blocked. Allow popups to print this packet.",
+          );
+        }
+      } catch (err) {
+        reportGenerationError(err instanceof Error ? err.message : "Unknown PDF export error");
       }
-    } catch (err) {
-      reportGenerationError(err instanceof Error ? err.message : "Unknown PDF export error");
+    };
+
+    const qaReport = auditPacketPatients(validation.patients, mode);
+    if (qaReport.blockedCount > 0) {
+      const printable = validation.patients.filter(
+        (p) => !qaReport.blockedPatients.some((b) => b.patientId === p.id),
+      );
+      setPacketQa({
+        report: qaReport,
+        proceed: () => {
+          setPacketQa(null);
+          openWithSubset(printable);
+        },
+      });
+      return;
     }
+
+    openWithSubset(validation.patients);
   }
 
   // Scheduler-tab PDF: split the scheduler's selected patients into
@@ -692,6 +725,88 @@ export function EngagementAssignmentBoard() {
     }
 
     const schedulerName = group.label;
+
+    // Packet QA Gate — audit across every packet's patients. If any
+    // patient is blocked, surface the report; on proceed, drop the
+    // blocked rows from each group before opening preview.
+    const openWithGroups = (groups: SchedulerPacketPreviewGroup[]) => {
+      let result: ReturnType<typeof openSchedulerPacketPrintPreview>;
+      try {
+        result = openSchedulerPacketPrintPreview({
+          mode,
+          schedulerName,
+          groups,
+          createdAt: null,
+        });
+      } catch (err) {
+        helpers.reportGenerationError(
+          err instanceof Error ? err.message : "Could not open print preview",
+        );
+        return;
+      }
+
+      if (result.ok) {
+        const rendered = result.renderedGroupCount;
+        const droppedFacility = split.skipped.length;
+        const droppedEmpty = result.droppedGroups.length;
+        const totalDropped = droppedFacility + droppedEmpty;
+        toast({
+          title:
+            rendered === 1
+              ? `Opened 1 packet for ${schedulerName}.`
+              : `Opened ${rendered} packets for ${schedulerName} in one preview.`,
+          description:
+            totalDropped > 0
+              ? `${droppedFacility ? `${droppedFacility} patient${droppedFacility === 1 ? "" : "s"} with no facility skipped. ` : ""}${droppedEmpty ? `${droppedEmpty} group${droppedEmpty === 1 ? "" : "s"} dropped (no qualifying tests).` : ""}`.trim()
+              : undefined,
+        });
+        return;
+      }
+
+      if (result.reason === "popup-blocked") {
+        // SOURCE MARKER: Engagement Center scheduler print preview popup blocked is surfaced
+        helpers.reportGenerationError(
+          "Popup blocked. Allow popups to print this packet.",
+        );
+        return;
+      }
+      // no-groups (every group produced an empty body)
+      helpers.reportGenerationError(
+        mode === "plexus"
+          ? "Plexus packet has no qualifying tests for any selected patient."
+          : "No patients to render in this packet.",
+      );
+    };
+
+    const allPatients = split.packets.flatMap((p) => p.patients);
+    const qaReport = auditPacketPatients(allPatients, mode);
+    if (qaReport.blockedCount > 0) {
+      const blockedIds = new Set(
+        qaReport.blockedPatients.map((b) => b.patientId),
+      );
+      const filteredPreviewGroups: SchedulerPacketPreviewGroup[] = split.packets
+        .map((packet) => ({
+          label: packetLabelFor(packet),
+          patients: packet.patients.filter((p) => !blockedIds.has(p.id)),
+          scheduleDate: packet.scheduleDate,
+        }))
+        .filter((g) => g.patients.length > 0);
+      setPacketQa({
+        report: qaReport,
+        proceed: () => {
+          setPacketQa(null);
+          if (filteredPreviewGroups.length === 0) {
+            helpers.reportGenerationError(
+              "Every selected patient is blocked by the QA gate — nothing to print.",
+            );
+            return;
+          }
+          openWithGroups(filteredPreviewGroups);
+        },
+      });
+      return;
+    }
+
     const previewGroups: SchedulerPacketPreviewGroup[] = split.packets.map(
       (packet) => ({
         label: packetLabelFor(packet),
@@ -699,53 +814,7 @@ export function EngagementAssignmentBoard() {
         scheduleDate: packet.scheduleDate,
       }),
     );
-
-    let result: ReturnType<typeof openSchedulerPacketPrintPreview>;
-    try {
-      result = openSchedulerPacketPrintPreview({
-        mode,
-        schedulerName,
-        groups: previewGroups,
-        createdAt: null,
-      });
-    } catch (err) {
-      helpers.reportGenerationError(
-        err instanceof Error ? err.message : "Could not open print preview",
-      );
-      return;
-    }
-
-    if (result.ok) {
-      const rendered = result.renderedGroupCount;
-      const droppedFacility = split.skipped.length;
-      const droppedEmpty = result.droppedGroups.length;
-      const totalDropped = droppedFacility + droppedEmpty;
-      toast({
-        title:
-          rendered === 1
-            ? `Opened 1 packet for ${schedulerName}.`
-            : `Opened ${rendered} packets for ${schedulerName} in one preview.`,
-        description:
-          totalDropped > 0
-            ? `${droppedFacility ? `${droppedFacility} patient${droppedFacility === 1 ? "" : "s"} with no facility skipped. ` : ""}${droppedEmpty ? `${droppedEmpty} group${droppedEmpty === 1 ? "" : "s"} dropped (no qualifying tests).` : ""}`.trim()
-            : undefined,
-      });
-      return;
-    }
-
-    if (result.reason === "popup-blocked") {
-      // SOURCE MARKER: Engagement Center scheduler print preview popup blocked is surfaced
-      helpers.reportGenerationError(
-        "Popup blocked. Allow popups to print this packet.",
-      );
-      return;
-    }
-    // no-groups (every group produced an empty body)
-    helpers.reportGenerationError(
-      mode === "plexus"
-        ? "Plexus packet has no qualifying tests for any selected patient."
-        : "No patients to render in this packet.",
-    );
+    openWithGroups(previewGroups);
   }
 
   function packetLabelFor(packet: SchedulerPdfPacket): string {
@@ -1584,6 +1653,14 @@ export function EngagementAssignmentBoard() {
         </div>
       </Card>
       )}
+      <PacketQaBlockingDialog
+        open={packetQa !== null}
+        report={packetQa?.report ?? null}
+        onCancel={() => setPacketQa(null)}
+        onProceed={() => {
+          packetQa?.proceed?.();
+        }}
+      />
     </div>
   );
 }

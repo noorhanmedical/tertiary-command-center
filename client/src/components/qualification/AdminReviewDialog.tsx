@@ -51,6 +51,8 @@ import {
   validateSameFacilityDatePacket,
   type PdfPacketSourcePatient,
 } from "@/lib/pdfPacketGrouping";
+import { auditPacketPatients, type PacketQaReport } from "@/lib/packetQa";
+import { PacketQaBlockingDialog } from "@/components/plexus-iq/PacketQaBlockingDialog";
 import {
   categoryIcons,
   categoryLabels,
@@ -844,6 +846,12 @@ export function AdminReviewDialog({
   const [selectedByScheduler, setSelectedByScheduler] = useState<
     Record<string, Set<number>>
   >({});
+  // Packet QA Gate — opened on per-scheduler PDF preview when audit
+  // finds blockers. proceed() carries the printable subset forward.
+  const [packetQa, setPacketQa] = useState<{
+    report: PacketQaReport;
+    proceed: () => void;
+  } | null>(null);
 
   function toggleSelectedForScheduler(schedulerKey: string, patientId: number) {
     setSelectedByScheduler((prev) => {
@@ -924,28 +932,48 @@ export function AdminReviewDialog({
       const batchName = `${validation.patients[0]?.facility ?? group.schedulerName} · ${
         validation.isOutreachPacket ? "Outreach" : validation.scheduleDate
       }`;
-      const result = openPatientPacketPrintPreview({
-        mode,
-        batchName,
-        patients: validation.patients,
-        scheduleDate: validation.scheduleDate,
-        createdAt: null,
-      });
-      if (!result.ok && result.reason === "popup-blocked") {
-        // SOURCE MARKER: Admin Review print preview popup blocked is surfaced
-        toast({
-          title: "Popup blocked. Allow popups to print this packet.",
-          description:
-            "Your browser blocked the print preview window. Re-enable popups for this site and try again.",
-          variant: "destructive",
+      // Packet QA Gate — audit before opening preview.
+      const openWithSubset = (subset: PatientScreening[]) => {
+        const result = openPatientPacketPrintPreview({
+          mode,
+          batchName,
+          patients: subset,
+          scheduleDate: validation.scheduleDate,
+          createdAt: null,
+        });
+        if (!result.ok && result.reason === "popup-blocked") {
+          // SOURCE MARKER: Admin Review print preview popup blocked is surfaced
+          toast({
+            title: "Popup blocked. Allow popups to print this packet.",
+            description:
+              "Your browser blocked the print preview window. Re-enable popups for this site and try again.",
+            variant: "destructive",
+          });
+          return;
+        }
+        recordAdminReviewUpdate(
+          "pdf_previewed",
+          `Generated ${mode === "plexus" ? "Plexus" : "Clinician"} PDF for ${group.schedulerName} (${subset.length})`,
+          { scheduler: group.schedulerName, kind: mode },
+        );
+      };
+
+      const qaReport = auditPacketPatients(validation.patients, mode);
+      if (qaReport.blockedCount > 0) {
+        const printable = validation.patients.filter(
+          (p) => !qaReport.blockedPatients.some((b) => b.patientId === p.id),
+        );
+        setPacketQa({
+          report: qaReport,
+          proceed: () => {
+            setPacketQa(null);
+            openWithSubset(printable);
+          },
         });
         return;
       }
-      recordAdminReviewUpdate(
-        "pdf_previewed",
-        `Generated ${mode === "plexus" ? "Plexus" : "Clinician"} PDF for ${group.schedulerName} (${fullPatients.length})`,
-        { scheduler: group.schedulerName, kind: mode },
-      );
+
+      openWithSubset(validation.patients);
     } catch (err) {
       toast({
         title: "Could not open print preview",
@@ -3638,6 +3666,14 @@ export function AdminReviewDialog({
             )}
           </div>
       </DialogContent>
+      <PacketQaBlockingDialog
+        open={packetQa !== null}
+        report={packetQa?.report ?? null}
+        onCancel={() => setPacketQa(null)}
+        onProceed={() => {
+          packetQa?.proceed?.();
+        }}
+      />
     </Dialog>
   );
 }

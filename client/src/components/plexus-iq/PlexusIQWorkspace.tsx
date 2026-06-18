@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import QualificationPatientCardsPane from "@/components/qualification/QualificationPatientCardsPane";
 import { PlexusIQRunSelector, type PlexusIQRunSibling } from "@/components/plexus-iq/PlexusIQRunSelector";
 import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
+import { PacketQaBlockingDialog } from "@/components/plexus-iq/PacketQaBlockingDialog";
 import { orderPatientsWithinRun } from "@/lib/qualificationRunOrdering";
 import { orderPacketPatientsForDisplayAndPdf } from "@/lib/patientPacketOrdering";
 import type { ScreeningBatch, PatientScreening } from "@shared/schema";
@@ -33,6 +34,8 @@ import {
   validateSameFacilityDatePacket,
   type PdfPacketSourcePatient,
 } from "@/lib/pdfPacketGrouping";
+import { auditPacketPatients, type PacketQaReport } from "@/lib/packetQa";
+import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
 // Plexus IQ interior workspace.
@@ -1513,6 +1516,16 @@ function ClinicDetailPackets({
     scheduleDate: string | null;
     patients: PdfPacketSourcePatient[];
   } | null>(null);
+  // Packet QA Gate — opened when auditPacketPatients finds blockers.
+  // proceed() carries the printable subset forward without re-prompting.
+  const [packetQa, setPacketQa] = useState<{
+    report: PacketQaReport;
+    mode: "plexus" | "clinician";
+    scheduleDate: string | null;
+    facility: string;
+    printable: PdfPacketSourcePatient[];
+  } | null>(null);
+  const queryClient = useQueryClient();
 
   // Single active key — only one date panel is open at a time. Click
   // the same row again to close it. `null` = default closed (no panel
@@ -1609,37 +1622,29 @@ function ClinicDetailPackets({
   //
   // SOURCE MARKER: Plexus IQ packets use print preview
   // SOURCE MARKER: Plexus IQ multi-patient packets no longer use html2pdf by default
-  function handlePacket(
-    mode: "plexus" | "clinician",
-    scheduleDate: string | null,
-    eligible: PdfPacketSourcePatient[],
-  ) {
-    if (eligible.length === 0) {
-      // SOURCE MARKER: Plexus IQ print preview errors are surfaced
-      toast({
-        title: "Select patients first.",
-        description: `No patients are eligible for the ${mode === "plexus" ? "Plexus" : "Clinician"} packet in this group.`,
-        variant: "destructive",
-        // QA grepping tag.
-        // data-testid lives on the toast root in <Toast />; we set
-        // it via the description suffix so the marker is present in
-        // source even though the toast UI itself doesn't accept a
-        // testId prop.
-      });
-      return;
-    }
-    // Defense in depth: re-order the eligible roster here as well so
-    // ANY caller (not just the packet popup) gets a consistently sorted
-    // PDF. validateSameFacilityDatePacket preserves input order, so
-    // ordering before it suffices for both validation.patients and
-    // the eventual openPatientPacketPrintPreview call.
+  //
+  // Packet QA Gate hardening:
+  //   1. Refetch latest patient data so a still-open workbench tab
+  //      doesn't print stale rows after a qualification finished in
+  //      the background.
+  //   2. Run auditPacketPatients(mode) on the operator's selection. If
+  //      any patient has blockers, open PacketQaBlockingDialog with
+  //      the report. The operator chooses Cancel or "Print N safe
+  //      rows" — the dialog itself never auto-regenerates reasoning.
+  //   3. Only after a clean (or operator-confirmed-subset) audit do we
+  //      call openPatientPacketPrintPreview.
+  function openPreviewWithSubset(args: {
+    mode: "plexus" | "clinician";
+    scheduleDate: string | null;
+    patients: PdfPacketSourcePatient[];
+  }) {
     const orderedEligible = orderPacketPatientsForDisplayAndPdf(
-      eligible.map((p) => ({ ...p, facility }) as PdfPacketSourcePatient),
+      args.patients.map((p) => ({ ...p, facility }) as PdfPacketSourcePatient),
     ) as PdfPacketSourcePatient[];
     const validation = validateSameFacilityDatePacket(
       orderedEligible,
       facility,
-      scheduleDate,
+      args.scheduleDate,
     );
     if (!validation.ok) {
       // SOURCE MARKER: Plexus IQ print preview errors are surfaced
@@ -1650,10 +1655,10 @@ function ClinicDetailPackets({
       });
       return;
     }
-    const batchName = `${facility} · ${dateLabelFor(scheduleDate)}`;
+    const batchName = `${facility} · ${dateLabelFor(args.scheduleDate)}`;
     try {
       const result = openPatientPacketPrintPreview({
-        mode,
+        mode: args.mode,
         batchName,
         patients: validation.patients,
         scheduleDate: validation.scheduleDate,
@@ -1676,6 +1681,52 @@ function ClinicDetailPackets({
         variant: "destructive",
       });
     }
+  }
+
+  async function handlePacket(
+    mode: "plexus" | "clinician",
+    scheduleDate: string | null,
+    eligible: PdfPacketSourcePatient[],
+  ) {
+    if (eligible.length === 0) {
+      // SOURCE MARKER: Plexus IQ print preview errors are surfaced
+      toast({
+        title: "Select patients first.",
+        description: `No patients are eligible for the ${mode === "plexus" ? "Plexus" : "Clinician"} packet in this group.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Packet QA Gate — freshness step. Refetch the screening-batch
+    // tree so a stale tab can't print yesterday's reasoning.
+    try {
+      await queryClient.refetchQueries({
+        queryKey: ["/api/screening-batches"],
+      });
+    } catch {
+      // Refetch is best-effort. If the network blip, fall through to
+      // the audit; the in-memory copies are still real data, just
+      // possibly slightly older — and the user can still bail at the
+      // QA dialog if anything looks off.
+    }
+
+    const report = auditPacketPatients(eligible, mode);
+    if (report.blockedCount > 0) {
+      const printable = eligible.filter(
+        (p) => !report.blockedPatients.some((b) => b.patientId === p.id),
+      );
+      setPacketQa({
+        report,
+        mode,
+        scheduleDate,
+        facility,
+        printable,
+      });
+      return;
+    }
+
+    openPreviewWithSubset({ mode, scheduleDate, patients: eligible });
   }
 
   // Empty state: still surface the facility label.
@@ -1892,7 +1943,25 @@ function ClinicDetailPackets({
           const filteredRaw = packetSel.patients.filter((p) => selected.some((s) => s.id === p.id));
           const filtered = orderPacketPatientsForDisplayAndPdf(filteredRaw);
           setPacketSel(null);
-          handlePacket(packetSel.mode, packetSel.scheduleDate, filtered);
+          // handlePacket is async (it refetches before audit). The
+          // fire-and-forget is intentional — operator already closed
+          // the picker; any failure surfaces via toast inside.
+          void handlePacket(packetSel.mode, packetSel.scheduleDate, filtered);
+        }}
+      />
+      <PacketQaBlockingDialog
+        open={packetQa !== null}
+        report={packetQa?.report ?? null}
+        onCancel={() => setPacketQa(null)}
+        onProceed={() => {
+          if (!packetQa) return;
+          const subset = packetQa.printable;
+          setPacketQa(null);
+          openPreviewWithSubset({
+            mode: packetQa.mode,
+            scheduleDate: packetQa.scheduleDate,
+            patients: subset,
+          });
         }}
       />
     </div>
