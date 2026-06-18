@@ -39,4 +39,4 @@ USER appuser
 
 # Start the production server
 ENV NODE_ENV=production
-CMD ["node", "dist/index.cjs"]
+CMD ["sh", "-c", "npx drizzle-kit push --force && node dist/index.cjs"]
