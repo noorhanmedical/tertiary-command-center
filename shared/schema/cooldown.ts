@@ -5,6 +5,7 @@ import {
 import { users } from "./users";
 import { patientExecutionCases } from "./executionCase";
 import { patientScreenings } from "./screening";
+import { clinics } from "./clinics";
 
 export const COOLDOWN_STATUSES = [
   "active",
@@ -24,6 +25,8 @@ export type CooldownOverrideStatus = typeof COOLDOWN_OVERRIDE_STATUSES[number];
 
 export const cooldownRecords = pgTable("cooldown_records", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   executionCaseId: integer("execution_case_id").references(() => patientExecutionCases.id, { onDelete: "set null" }),
   patientScreeningId: integer("patient_screening_id").references(() => patientScreenings.id, { onDelete: "set null" }),
   patientName: text("patient_name"),

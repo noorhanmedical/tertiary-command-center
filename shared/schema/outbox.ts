@@ -1,4 +1,5 @@
 import { sql, pgTable, serial, text, integer, timestamp, index, boolean, createInsertSchema, z } from "./_common";
+import { clinics } from "./clinics";
 
 export const OUTBOX_KINDS = [
   "drive_file",
@@ -12,6 +13,8 @@ export type OutboxStatus = typeof OUTBOX_STATUSES[number];
 
 export const outboxItems = pgTable("outbox_items", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   kind: text("kind").notNull(),
   blobId: integer("blob_id"),
   facility: text("facility"),

@@ -128,7 +128,10 @@ export async function registerRoutes(
     req.session.userId = user.id;
     req.session.username = user.username;
     req.session.role = user.role;
-    return res.json({ id: user.id, username: user.username, role: user.role });
+    // Store clinicId in session so clinicContext middleware can populate req.clinicId.
+    // Admin role ignores this value (clinicContext forces null for admins).
+    req.session.clinicId = user.clinicId ?? null;
+    return res.json({ id: user.id, username: user.username, role: user.role, clinicId: user.clinicId ?? null });
   });
 
   app.post("/api/auth/logout", (req, res) => {
@@ -142,7 +145,7 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ error: "Not authenticated" });
     }
-    return res.json({ id: req.session.userId, username: req.session.username, role: req.session.role ?? "clinician" });
+    return res.json({ id: req.session.userId, username: req.session.username, role: req.session.role ?? "clinician", clinicId: req.session.clinicId ?? null });
   });
 
   // ─── /api/healthz — pool telemetry (exempt from auth, debug-friendly) ────

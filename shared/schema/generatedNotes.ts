@@ -1,10 +1,11 @@
 import {
-  sql, pgTable, serial, text, integer, timestamp, jsonb, boolean, index, uniqueIndex,
+  sql, pgTable, serial, text, integer, timestamp, jsonb, index, boolean, uniqueIndex,
   createInsertSchema, z,
 } from "./_common";
 import { patientExecutionCases } from "./executionCase";
 import { patientScreenings } from "./screening";
 import { procedureEvents } from "./procedureEvents";
+import { clinics } from "./clinics";
 
 export const NOTE_TYPES = ["order_note", "post_procedure_note"] as const;
 export type NoteType = typeof NOTE_TYPES[number];
@@ -20,6 +21,8 @@ export type NoteGenerationStatus = typeof NOTE_GENERATION_STATUSES[number];
 
 export const procedureNotes = pgTable("procedure_notes", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   executionCaseId: integer("execution_case_id").references(() => patientExecutionCases.id, { onDelete: "set null" }),
   patientScreeningId: integer("patient_screening_id").references(() => patientScreenings.id, { onDelete: "set null" }),
   procedureEventId: integer("procedure_event_id").references(() => procedureEvents.id, { onDelete: "set null" }),

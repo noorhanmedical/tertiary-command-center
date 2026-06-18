@@ -2,9 +2,13 @@ import {
   sql, pgTable, serial, text, boolean, timestamp, jsonb, index, uniqueIndex,
   createInsertSchema, z,
 } from "./_common";
+import { clinics } from "./clinics";
+import { integer } from "./_common";
 
 export const cashPriceSettings = pgTable("cash_price_settings", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   serviceType: text("service_type").notNull(),
   facilityId: text("facility_id"),
   payerType: text("payer_type"),

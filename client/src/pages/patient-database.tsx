@@ -33,6 +33,7 @@ type RosterPatient = {
   cooldownActiveCount: number;
   nextCooldownClearsAt: string | null;
   daysUntilNextClear: number | null;
+  plexusId: string | null;
 };
 
 type ClinicGroup = { clinic: string; patients: RosterPatient[] };
@@ -64,6 +65,7 @@ type TestCooldown = {
 type ProfileResponse = {
   key: string;
   encodedKey: string;
+  plexusId: string | null;
   identity: { name: string; dob: string | null; age: number | null; gender: string | null; phoneNumber: string | null; insurance: string | null; clinic: string };
   clinical: { diagnoses: string | null; history: string | null; medications: string | null; notes: string | null };
   testHistory: Array<{ id: number; testName: string; dateOfService: string; insuranceType: string; clinic: string }>;
@@ -404,6 +406,11 @@ export default function PatientDatabasePage() {
                             </div>
                             <div className="min-w-0 flex-1">
                               <p className="font-semibold text-xs truncate" data-testid={`text-patient-name-${p.encodedKey}`}>{p.name}</p>
+                              {p.plexusId && (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-mono font-medium text-slate-600 dark:text-slate-300 mt-0.5" data-testid={`badge-plexus-id-${p.encodedKey}`}>
+                                  {p.plexusId}
+                                </span>
+                              )}
                               {p.dob && <p className="text-[10px] text-muted-foreground truncate">DOB {p.dob}</p>}
                             </div>
                           </div>
@@ -550,6 +557,11 @@ function ProfileBody({ profile }: { profile: ProfileResponse }) {
         <SheetTitle className="flex items-center gap-2">
           <div className="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 flex items-center justify-center text-xs font-semibold shrink-0">{initials(id.name)}</div>
           <span data-testid="text-profile-name">{id.name}</span>
+          {profile.plexusId && (
+            <span className="inline-block px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-xs font-mono font-medium text-slate-600 dark:text-slate-300" data-testid="badge-profile-plexus-id">
+              {profile.plexusId}
+            </span>
+          )}
         </SheetTitle>
         <SheetDescription className="text-xs">
           {id.clinic} · {id.dob ? `DOB ${id.dob}` : "DOB unknown"}

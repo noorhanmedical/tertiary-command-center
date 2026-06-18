@@ -23,6 +23,7 @@
 // crash on the zod `z` object's null prototype.
 export * from "./appSettings";
 export * from "./session";
+export * from "./clinics";
 export * from "./users";
 export * from "./screening";
 export * from "./patientHistory";

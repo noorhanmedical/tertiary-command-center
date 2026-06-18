@@ -150,6 +150,7 @@ export class PlexusStack extends cdk.Stack {
         DEPLOY_VERSION: "1781733963",
         NODE_TLS_REJECT_UNAUTHORIZED: "0",
         COOKIE_SECURE: "true",
+        USE_PATIENT_DIRECTORY_ACTIVATION: "true",
         PGSSLMODE: "no-verify",
         PORT: "5000",
         STORAGE_PROVIDER: "s3",

@@ -6,6 +6,7 @@ import { users } from "./users";
 import { patientExecutionCases } from "./executionCase";
 import { patientScreenings } from "./screening";
 import { globalScheduleEvents } from "./globalSchedule";
+import { clinics } from "./clinics";
 
 export const PROCEDURE_STATUSES = [
   "not_started",
@@ -19,6 +20,8 @@ export type ProcedureStatus = typeof PROCEDURE_STATUSES[number];
 
 export const procedureEvents = pgTable("procedure_events", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   executionCaseId: integer("execution_case_id").references(() => patientExecutionCases.id, { onDelete: "set null" }),
   patientScreeningId: integer("patient_screening_id").references(() => patientScreenings.id, { onDelete: "set null" }),
   globalScheduleEventId: integer("global_schedule_event_id").references(() => globalScheduleEvents.id, { onDelete: "set null" }),

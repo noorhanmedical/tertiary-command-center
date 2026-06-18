@@ -28,6 +28,16 @@ function softDeleteExpiresAt(): Date {
   return d;
 }
 
+/** Build a clinic condition or undefined (admin bypass when null). */
+function clinicFilter(clinicId: number | null | undefined) {
+  if (clinicId == null) return undefined;
+  return eq(screeningBatches.clinicId, clinicId);
+}
+function clinicFilterScreening(clinicId: number | null | undefined) {
+  if (clinicId == null) return undefined;
+  return eq(patientScreenings.clinicId, clinicId);
+}
+
 export type PatientRosterAggregateRow = {
   representativeId: number;
   batchId: number;
@@ -53,6 +63,8 @@ export type PatientRosterAggregateFilters = {
   cooldownWindow?: string;
   page?: number;
   pageSize?: number;
+  /** clinic_id for tenant isolation — null = admin (all data) */
+  clinicId?: number | null;
 };
 
 export type PatientRosterClinicTotal = { clinic: string; count: number };
@@ -114,12 +126,12 @@ function parseTimeToMinutes(time: string | null | undefined): number {
 export interface IScreeningRepository {
   createBatch(batch: InsertScreeningBatch): Promise<ScreeningBatch>;
   getBatch(id: number): Promise<ScreeningBatch | undefined>;
-  listBatches(): Promise<ScreeningBatch[]>;
+  listBatches(clinicId?: number | null): Promise<ScreeningBatch[]>;
   updateBatch(id: number, updates: Partial<InsertScreeningBatch>): Promise<ScreeningBatch | undefined>;
   deleteBatch(id: number): Promise<void>;
 
   createScreening(screening: InsertPatientScreening): Promise<PatientScreening>;
-  listAllScreenings(): Promise<PatientScreening[]>;
+  listAllScreenings(clinicId?: number | null): Promise<PatientScreening[]>;
   listScreeningsByBatch(batchId: number): Promise<PatientScreening[]>;
   getScreening(id: number): Promise<PatientScreening | undefined>;
   getScreeningIncludingDeleted(id: number): Promise<PatientScreening | undefined>;
@@ -129,14 +141,14 @@ export interface IScreeningRepository {
     options?: { userId?: string | null; reason?: string | null },
   ): Promise<void>;
   restoreScreening(id: number): Promise<PatientScreening | undefined>;
-  listRecentlyDeletedScreenings(limit?: number): Promise<PatientScreening[]>;
+  listRecentlyDeletedScreenings(limit?: number, clinicId?: number | null): Promise<PatientScreening[]>;
 
-  searchPatientsByName(query: string): Promise<PatientScreening[]>;
+  searchPatientsByName(query: string, clinicId?: number | null): Promise<PatientScreening[]>;
 
   getRosterAggregates(filters?: PatientRosterAggregateFilters): Promise<PatientRosterAggregateResult>;
-  getCooldownDashboard(): Promise<{ totals: PatientGroupTotals; counts: { oneDay: number; oneWeek: number; oneMonth: number }; byClinic: PatientCooldownClinicCount[]; allClinics: string[] }>;
+  getCooldownDashboard(clinicId?: number | null): Promise<{ totals: PatientGroupTotals; counts: { oneDay: number; oneWeek: number; oneMonth: number }; byClinic: PatientCooldownClinicCount[]; allClinics: string[] }>;
   getHistoryImportReport(sampleLimit: number): Promise<{ totalHistoryRows: number; unmatchedCount: number; unmatched: UnmatchedHistoryReportRow[] }>;
-  getGroupScreenings(name: string, dob: string | null): Promise<PatientScreening[]>;
+  getGroupScreenings(name: string, dob: string | null, clinicId?: number | null): Promise<PatientScreening[]>;
 }
 
 export class DbScreeningRepository implements IScreeningRepository {
@@ -150,8 +162,11 @@ export class DbScreeningRepository implements IScreeningRepository {
     return result;
   }
 
-  async listBatches(): Promise<ScreeningBatch[]> {
-    return db.select().from(screeningBatches).orderBy(desc(screeningBatches.createdAt));
+  async listBatches(clinicId?: number | null): Promise<ScreeningBatch[]> {
+    const cf = clinicFilter(clinicId);
+    return db.select().from(screeningBatches)
+      .where(cf)
+      .orderBy(desc(screeningBatches.createdAt));
   }
 
   async updateBatch(id: number, updates: Partial<InsertScreeningBatch>): Promise<ScreeningBatch | undefined> {
@@ -175,8 +190,10 @@ export class DbScreeningRepository implements IScreeningRepository {
     return rows.sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
   }
 
-  async listAllScreenings(): Promise<PatientScreening[]> {
-    return db.select().from(patientScreenings).where(ACTIVE);
+  async listAllScreenings(clinicId?: number | null): Promise<PatientScreening[]> {
+    const cf = clinicFilterScreening(clinicId);
+    return db.select().from(patientScreenings)
+      .where(cf ? and(ACTIVE, cf) : ACTIVE);
   }
 
   async getScreening(id: number): Promise<PatientScreening | undefined> {
@@ -197,10 +214,6 @@ export class DbScreeningRepository implements IScreeningRepository {
     return result;
   }
 
-  // Soft-delete: marks the patient as deleted with a 14-day restore
-  // window. The row stays in patient_screenings so analysis_jobs,
-  // execution_cases, journey events, and other references survive
-  // unbroken. Recently Deleted UI reads via listRecentlyDeleted.
   async deleteScreening(
     id: number,
     options: { userId?: string | null; reason?: string | null } = {},
@@ -232,27 +245,30 @@ export class DbScreeningRepository implements IScreeningRepository {
 
   async listRecentlyDeletedScreenings(
     limit: number = 100,
+    clinicId?: number | null,
   ): Promise<PatientScreening[]> {
     const now = new Date();
+    const cf = clinicFilterScreening(clinicId);
+    const base = and(
+      sql`${patientScreenings.deletedAt} IS NOT NULL`,
+      gte(patientScreenings.deleteExpiresAt, now),
+    );
     return db
       .select()
       .from(patientScreenings)
-      .where(
-        and(
-          sql`${patientScreenings.deletedAt} IS NOT NULL`,
-          gte(patientScreenings.deleteExpiresAt, now),
-        ),
-      )
+      .where(cf ? and(base, cf) : base)
       .orderBy(desc(patientScreenings.deletedAt))
       .limit(limit);
   }
 
-  async searchPatientsByName(query: string): Promise<PatientScreening[]> {
+  async searchPatientsByName(query: string, clinicId?: number | null): Promise<PatientScreening[]> {
+    const cf = clinicFilterScreening(clinicId);
+    const base = and(
+      sql`LOWER(${patientScreenings.name}) LIKE LOWER(${'%' + query + '%'})`,
+      ACTIVE,
+    );
     return db.select().from(patientScreenings)
-      .where(and(
-        sql`LOWER(${patientScreenings.name}) LIKE LOWER(${'%' + query + '%'})`,
-        ACTIVE,
-      ))
+      .where(cf ? and(base, cf) : base)
       .limit(20);
   }
 
@@ -260,6 +276,7 @@ export class DbScreeningRepository implements IScreeningRepository {
     const search = (filters.search ?? "").trim().toLowerCase();
     const clinic = (filters.clinic ?? "").trim();
     const cooldownWindow = (filters.cooldownWindow ?? "").trim();
+    const clinicId = filters.clinicId ?? null;
     const cooldownLimit =
       cooldownWindow === "1d" ? 1
       : cooldownWindow === "1w" ? 7
@@ -275,11 +292,16 @@ export class DbScreeningRepository implements IScreeningRepository {
     const page = Math.max(1, Math.trunc(requestedPage) || 1);
     const offset = (page - 1) * pageSize;
 
+    // clinic_id tenant filter injected into the base CTEs when set
+    const clinicCondition = clinicId != null
+      ? sql`AND ps.clinic_id = ${clinicId}`
+      : sql``;
+
     const baseCte = sql`
       WITH groups AS (
         SELECT name, dob, COUNT(*)::int AS screening_count
         FROM patient_screenings
-        WHERE deleted_at IS NULL
+        WHERE deleted_at IS NULL ${clinicCondition}
         GROUP BY name, dob
       ),
       repr AS (
@@ -289,14 +311,14 @@ export class DbScreeningRepository implements IScreeningRepository {
           sb.facility AS batch_facility, sb.schedule_date AS batch_schedule_date
         FROM patient_screenings ps
         LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
-        WHERE ps.deleted_at IS NULL
+        WHERE ps.deleted_at IS NULL ${clinicCondition}
         ORDER BY ps.name, ps.dob, ps.created_at DESC
       ),
       notes AS (
         SELECT ps.name, ps.dob, COUNT(gn.id)::int AS note_count
         FROM patient_screenings ps
         LEFT JOIN generated_notes gn ON gn.patient_id = ps.id
-        WHERE ps.deleted_at IS NULL
+        WHERE ps.deleted_at IS NULL ${clinicCondition}
         GROUP BY ps.name, ps.dob
       ),
       history AS (
@@ -312,7 +334,7 @@ export class DbScreeningRepository implements IScreeningRepository {
           ), '')) AS last_visit
         FROM patient_screenings ps
         LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
-        WHERE ps.deleted_at IS NULL
+        WHERE ps.deleted_at IS NULL ${clinicCondition}
         GROUP BY ps.name, ps.dob
       ),
       latest_test AS (
@@ -424,12 +446,16 @@ export class DbScreeningRepository implements IScreeningRepository {
     return { rows, total: Number(totalsRow.total ?? 0), clinicTotals };
   }
 
-  async getCooldownDashboard(): Promise<{
+  async getCooldownDashboard(clinicId?: number | null): Promise<{
     totals: PatientGroupTotals;
     counts: { oneDay: number; oneWeek: number; oneMonth: number };
     byClinic: PatientCooldownClinicCount[];
     allClinics: string[];
   }> {
+    const clinicCondition = clinicId != null
+      ? sql`AND ps.clinic_id = ${clinicId}`
+      : sql``;
+
     const result = await db.execute(sql`
       WITH patient_clinic AS (
         SELECT DISTINCT ON (ps.name, ps.dob)
@@ -437,7 +463,7 @@ export class DbScreeningRepository implements IScreeningRepository {
           COALESCE(NULLIF(ps.facility, ''), NULLIF(sb.facility, ''), 'Unassigned') AS clinic
         FROM patient_screenings ps
         LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
-        WHERE ps.deleted_at IS NULL
+        WHERE ps.deleted_at IS NULL ${clinicCondition}
         ORDER BY ps.name, ps.dob, ps.created_at DESC
       ),
       latest_test AS (
@@ -555,14 +581,16 @@ export class DbScreeningRepository implements IScreeningRepository {
     };
   }
 
-  async getGroupScreenings(name: string, dob: string | null): Promise<PatientScreening[]> {
-    return db.select().from(patientScreenings).where(and(
+  async getGroupScreenings(name: string, dob: string | null, clinicId?: number | null): Promise<PatientScreening[]> {
+    const cf = clinicFilterScreening(clinicId);
+    const base = and(
       eq(patientScreenings.name, name),
       dob === null
         ? sql`${patientScreenings.dob} IS NULL`
         : eq(patientScreenings.dob, dob),
       ACTIVE,
-    ));
+    );
+    return db.select().from(patientScreenings).where(cf ? and(base, cf) : base);
   }
 }
 

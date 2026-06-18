@@ -3,9 +3,12 @@ import {
   createInsertSchema, z,
 } from "./_common";
 import { users } from "./users";
+import { clinics } from "./clinics";
 
 export const screeningBatches = pgTable("screening_batches", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   clinicianName: text("clinician_name"),
   patientCount: integer("patient_count").notNull().default(0),

@@ -4,6 +4,7 @@ import {
 } from "./_common";
 import { patientScreenings } from "./screening";
 import { users } from "./users";
+import { clinics } from "./clinics";
 
 export const EXECUTION_CASE_SOURCES = [
   "manual_visit_upload",
@@ -28,6 +29,8 @@ export type EngagementStatus = typeof ENGAGEMENT_STATUSES[number];
 
 export const patientExecutionCases = pgTable("patient_execution_cases", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   patientScreeningId: integer("patient_screening_id").references(() => patientScreenings.id, { onDelete: "set null" }),
   patientName: text("patient_name").notNull(),
   patientDob: text("patient_dob"),

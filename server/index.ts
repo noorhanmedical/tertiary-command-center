@@ -5,6 +5,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { errorHandler } from "./middleware/errorHandler";
+import { clinicContext } from "./middleware/clinicContext";
 import { validateEnv } from "./lib/validateEnv";
 import { startBackgroundServices, stopBackgroundServices } from "./lifecycle";
 
@@ -77,6 +78,10 @@ app.use(
     },
   }),
 );
+
+// Attach req.clinicId from session. Must run after session middleware.
+// Admin role gets null (bypasses all clinic filters); others get their clinic.
+app.use(clinicContext);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

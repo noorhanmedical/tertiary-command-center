@@ -6,6 +6,7 @@ import {
 } from "./_common";
 import { users } from "./users";
 import { invoiceReadinessSnapshots } from "./invoiceReadiness";
+import { clinics } from "./clinics";
 
 export const INVOICE_BATCH_STATUSES = [
   "draft_preview",
@@ -17,6 +18,8 @@ export type InvoiceBatchStatus = (typeof INVOICE_BATCH_STATUSES)[number];
 
 export const invoiceBatches = pgTable("invoice_batches", {
   id: serial("id").primaryKey(),
+  // Multi-tenancy: nullable during backfill; filter enforced in repository layer.
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "set null" }),
   facilityId: text("facility_id").notNull(),
   invoicePeriodStart: text("invoice_period_start").notNull(),
   invoicePeriodEnd: text("invoice_period_end").notNull(),
