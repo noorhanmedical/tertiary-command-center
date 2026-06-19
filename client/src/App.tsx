@@ -50,6 +50,8 @@ import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
 import PlexusIQPage from "@/pages/plexus-iq";
+// Temporary design-prototype route — mock data only, not production.
+import PlexusIqPrototypePage from "@/pages/plexus-iq-prototype";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
@@ -169,6 +171,10 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
           <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
             <PlexusIQPage />
           </SidebarProvider>
+        </Route>
+        {/* Temporary design-prototype route — mock data only. */}
+        <Route path="/plexus-iq-prototype">
+          <PlexusIqPrototypePage />
         </Route>
         <Route path="/team-member-portals">
           <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
