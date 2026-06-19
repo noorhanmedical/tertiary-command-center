@@ -548,6 +548,121 @@ function chipKeyForAssignment(b: SupportingButton): string {
   return buttonKey(b);
 }
 
+// Patch 2 (admin-review persistence fix):
+//
+// Build the next `reasoning` blob with `adminReview:<ancillary>` and
+// `adminReview:test:<testName>` keys updated to reflect the operator's
+// current `assignments` state. Used by the persistence useEffect so an
+// attach/detach is durable across dialog close/reopen — not just
+// across the next regenerate.
+//
+// Merge rules (preserve everything else):
+//   - Other `adminReview:<a>` keys not touched here are passed through.
+//   - Each touched key spreads its existing block then overwrites
+//     `assignedEvidence` only, so any other admin metadata (ancillaryId,
+//     ancillaryNote, regeneratedAt, regeneratedMode) survives.
+//   - Existing `reasoning[testName]` canonical entries are untouched.
+//   - `adminReview:updates` audit log is untouched.
+//   - Per-ultrasound-child evidence lives under
+//     `reasoning["adminReview:test:<testName>"]`, mirroring the shape
+//     that `seedAssignmentsFromReasoning` reads back.
+function buildAssignedEvidenceReasoning(
+  prevReasoning: Record<string, unknown>,
+  assignments: AdminReviewAssignmentState,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...prevReasoning };
+  for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
+    const key = `adminReview:${id}`;
+    const existing =
+      next[key] && typeof next[key] === "object" && !Array.isArray(next[key])
+        ? (next[key] as Record<string, unknown>)
+        : {};
+    const newAssigned =
+      id === "ultrasound" ? assignments.ultrasound.parent : assignments[id];
+    next[key] = {
+      ...existing,
+      ancillaryId: id,
+      assignedEvidence: newAssigned,
+    };
+  }
+  // Ultrasound child tests live under their own key.
+  for (const [testName, assigned] of Object.entries(
+    assignments.ultrasound.byTestName,
+  )) {
+    const key = `adminReview:test:${testName}`;
+    const existing =
+      next[key] && typeof next[key] === "object" && !Array.isArray(next[key])
+        ? (next[key] as Record<string, unknown>)
+        : {};
+    next[key] = {
+      ...existing,
+      testName,
+      assignedEvidence: assigned,
+    };
+  }
+  return next;
+}
+
+function supportingButtonsEqualByKey(
+  a: SupportingButton[],
+  b: SupportingButton[],
+): boolean {
+  if (a.length !== b.length) return false;
+  const aKeys = new Set(a.map(chipKeyForAssignment));
+  for (const btn of b) {
+    if (!aKeys.has(chipKeyForAssignment(btn))) return false;
+  }
+  return true;
+}
+
+/**
+ * Compare a previously-persisted reasoning blob against the current
+ * `assignments` state. Returns true when no `assignedEvidence` field
+ * differs — i.e., calling `buildAssignedEvidenceReasoning` would be a
+ * no-op. The persistence useEffect uses this to skip the initial-mount
+ * commit (when assignments are freshly seeded from reasoning and
+ * therefore already match).
+ */
+function sameAssignedEvidenceState(
+  prevReasoning: Record<string, unknown>,
+  assignments: AdminReviewAssignmentState,
+): boolean {
+  for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
+    const key = `adminReview:${id}`;
+    const block = prevReasoning[key];
+    const existingAssigned: SupportingButton[] =
+      block &&
+      typeof block === "object" &&
+      Array.isArray((block as Record<string, unknown>).assignedEvidence)
+        ? ((block as Record<string, unknown>).assignedEvidence as SupportingButton[])
+        : [];
+    const newAssigned =
+      id === "ultrasound" ? assignments.ultrasound.parent : assignments[id];
+    if (!supportingButtonsEqualByKey(existingAssigned, newAssigned)) return false;
+  }
+  const newTestKeys = new Set(Object.keys(assignments.ultrasound.byTestName));
+  for (const k of Object.keys(prevReasoning)) {
+    if (!k.startsWith("adminReview:test:")) continue;
+    const testName = k.slice("adminReview:test:".length);
+    const block = prevReasoning[k];
+    const existingAssigned: SupportingButton[] =
+      block &&
+      typeof block === "object" &&
+      Array.isArray((block as Record<string, unknown>).assignedEvidence)
+        ? ((block as Record<string, unknown>).assignedEvidence as SupportingButton[])
+        : [];
+    const newAssigned = assignments.ultrasound.byTestName[testName] ?? [];
+    if (!supportingButtonsEqualByKey(existingAssigned, newAssigned)) return false;
+    newTestKeys.delete(testName);
+  }
+  // Test keys present in state but never persisted before — only a
+  // diff if they carry any chips (an empty new list is a no-op).
+  for (const testName of newTestKeys) {
+    if ((assignments.ultrasound.byTestName[testName] ?? []).length > 0) return false;
+  }
+  return true;
+}
+
 // ────────────────────────────────────────────────────────────────────
 // ICD search result type
 // ────────────────────────────────────────────────────────────────────
@@ -1008,7 +1123,56 @@ export function AdminReviewDialog({
     });
     const stored = reasoningAsObject(patient.reasoning)["adminReview:updates"];
     setUpdatesLog(Array.isArray(stored) ? (stored as AdminReviewUpdateEntry[]) : []);
-  }, [open, patient.id, patient.reasoning]);
+    // Patch 1 (admin-review persistence fix):
+    //   `patient.reasoning` is intentionally EXCLUDED from this
+    //   dependency list. Per-ancillary regenerate updates
+    //   patient.reasoning during an active editing session; including
+    //   it here would re-run this seeder and wipe the operator's
+    //   staged assignments for ancillaries that haven't been
+    //   regenerated yet (e.g., regenerate BrainWave → VitalWave and
+    //   Ultrasound staged evidence resets to the pre-regen saved
+    //   state). The seeder is now an "entry-point only" reset: it
+    //   runs when the dialog opens or the patient id changes, then
+    //   yields to operator-driven state mutation until next
+    //   open / patient swap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, patient.id]);
+
+  // Patch 2 (admin-review persistence fix):
+  //
+  // Persist `assignments` to patient.reasoning whenever the operator
+  // attaches or detaches evidence — not just on regenerate. Storage
+  // shape is the same one the regenerate routes use + the same one
+  // `seedAssignmentsFromReasoning` reads back, so close-and-reopen
+  // surfaces the latest staged state.
+  //
+  // Skip the initial commit after open/patient-swap (when assignments
+  // are freshly seeded from reasoning) by comparing the merged
+  // candidate against the current reasoning — if no assignedEvidence
+  // field actually differs, we do not call onUpdate. This avoids both
+  // (a) an extra PATCH on first open, and (b) any infinite-update loop
+  // when reasoning is replayed during the same editing session.
+  //
+  // The persisted shape carries `assignedEvidence` only; per-test
+  // canonical reasoning (clinician_understanding / patient_talking_points /
+  // qualifying_factors) is still updated exclusively by the regenerate
+  // routes server-side. So an attach without a follow-up regenerate
+  // is durable but stale — exactly the operator-model intent: staged
+  // but not yet flushed to the AI reasoning layer.
+  useEffect(() => {
+    if (!open) return;
+    const prevReasoning = reasoningAsObject(patient.reasoning);
+    if (sameAssignedEvidenceState(prevReasoning, assignments)) return;
+    const nextReasoning = buildAssignedEvidenceReasoning(prevReasoning, assignments);
+    onUpdate("reasoning", nextReasoning);
+    // Note: `patient.reasoning` is intentionally NOT in the dep list
+    // for the same reason as Patch 1 above — we read it via closure on
+    // every `assignments` change and avoid re-running this effect when
+    // the parent finishes propagating the PATCH response (which would
+    // otherwise re-fire on the same payload and is already a no-op via
+    // `sameAssignedEvidenceState`, but cleaner to skip the cycle).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignments, open]);
 
   // recordAdminReviewUpdate — append to the session log and persist
   // to patient.reasoning["adminReview:updates"] so the audit trail
