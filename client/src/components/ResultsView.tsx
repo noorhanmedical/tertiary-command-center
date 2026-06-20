@@ -4,8 +4,7 @@ import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
-  generateClinicianPDF,
-  generatePlexusPDF,
+  openPatientPacketPrintPreview,
   type ReasoningValue,
 } from "@/lib/pdfGeneration";
 import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
@@ -335,11 +334,32 @@ export function ResultsView({
   }, [toast, onUpdatePatient, setCompleteModalPatient]);
 
   const handlePdfGenerate = useCallback((selected: PatientScreening[]) => {
-    if (!batch) return;
+    if (!batch || !pdfMode) return;
     setPdfMode(null);
-    if (pdfMode === "clinician") generateClinicianPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
-    else if (pdfMode === "plexus") generatePlexusPDF(batch.name, selected, batch.scheduleDate, batch.createdAt);
-  }, [batch, pdfMode]);
+    try {
+      const result = openPatientPacketPrintPreview({
+        mode: pdfMode,
+        batchName: batch.name,
+        patients: selected,
+        scheduleDate: batch.scheduleDate,
+        createdAt: batch.createdAt,
+      });
+      if (!result.ok && result.reason === "popup-blocked") {
+        toast({
+          title: "Popup blocked. Allow popups to print this packet.",
+          description:
+            "Your browser blocked the print preview window. Re-enable popups for this site and try again.",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      toast({
+        title: "Could not open print preview",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    }
+  }, [batch, pdfMode, toast]);
 
   const handleOpenClinicianPdf = useCallback(() => {
     setPdfMode("clinician");
