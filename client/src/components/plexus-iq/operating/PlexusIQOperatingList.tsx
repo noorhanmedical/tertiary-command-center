@@ -445,7 +445,7 @@ export function PlexusIQOperatingList({
         </Select>
       </div>
 
-      <div className="grid grid-cols-[240px_minmax(0,1fr)] rounded-2xl border border-slate-200 overflow-hidden bg-white h-[calc(100vh-220px)] min-h-[480px]">
+      <div className="grid grid-cols-[240px_minmax(0,1fr)] rounded-2xl border border-slate-800 overflow-hidden bg-slate-950 h-[calc(100vh-220px)] min-h-[480px]">
         {/* Left: Date panel */}
         <PlexusIQDatePanel
           groups={dateGroups}
@@ -462,8 +462,8 @@ export function PlexusIQOperatingList({
         {reviewPatient ? (
           <div className="grid grid-cols-[200px_minmax(0,1fr)] min-h-0">
             {/* Name rail */}
-            <div className="flex flex-col min-h-0 border-r border-slate-200 bg-slate-50/40">
-              <div className="px-3 py-2.5 border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            <div className="flex flex-col min-h-0 border-r border-slate-800 bg-slate-900">
+              <div className="px-3 py-2.5 border-b border-slate-800 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                 Patients
               </div>
               <div className="flex-1 min-h-0 overflow-auto p-1.5 space-y-0.5">
@@ -478,18 +478,18 @@ export function PlexusIQOperatingList({
                       type="button"
                       onClick={() => setReviewPatientId(p.id)}
                       className={`w-full text-left px-2 py-1.5 rounded-lg transition-colors ${
-                        active ? "bg-indigo-50 ring-1 ring-indigo-200" : "hover:bg-white"
+                        active ? "bg-indigo-950 ring-1 ring-indigo-700" : "hover:bg-slate-800"
                       }`}
                       data-testid={`button-review-rail-${p.id}`}
                     >
                       <div
                         className={`text-xs font-medium truncate ${
-                          active ? "text-indigo-900" : "text-slate-700"
+                          active ? "text-indigo-200" : "text-slate-300"
                         }`}
                       >
                         {(p.name || "Unnamed").trim()}
                       </div>
-                      <div className="text-[10px] text-slate-400 truncate">{meta.label}</div>
+                      <div className="text-[10px] text-slate-500 truncate">{meta.label}</div>
                     </button>
                   );
                 })}
@@ -529,9 +529,9 @@ export function PlexusIQOperatingList({
               onClinicianPdf={() => runPdf("clinician")}
               onPlexusPdf={() => runPdf("plexus")}
             />
-            <div className="flex-1 min-h-0 overflow-auto p-3 space-y-1.5 bg-slate-50/30">
+            <div className="flex-1 min-h-0 overflow-auto p-3 space-y-1.5 bg-slate-950">
               {sortedPatients.length === 0 ? (
-                <div className="py-16 text-center text-xs text-slate-400">
+                <div className="py-16 text-center text-xs text-slate-500">
                   {selectedBatchId == null
                     ? "Select an import on the left."
                     : "No patients in this import."}
