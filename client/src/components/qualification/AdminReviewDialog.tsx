@@ -898,7 +898,7 @@ export function AdminReviewDialog({
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [leftTab, setLeftTab] = useState<
-    "source" | "patient-directory" | "cooldown" | "insurance" | "history" | "engagement"
+    "source" | "history" | "icd" | "engagement"
   >("source");
 
   // Engagement assignment for THIS patient — drives the scheduler
@@ -2525,7 +2525,7 @@ export function AdminReviewDialog({
     <>
         {/* Smoke header — black at ~70% opacity per Team Portal spec. */}
         <DialogHeader
-          className="px-6 pt-5 pb-4 border-b border-black/30 bg-black/70 backdrop-blur-md text-white"
+          className="px-6 pt-5 pb-4 border-b border-slate-700 bg-slate-900 text-white"
           data-testid="admin-review-smoke-header"
         >
           <div className="flex items-start justify-between gap-3">
@@ -2561,6 +2561,15 @@ export function AdminReviewDialog({
                 )}
                 {patient.facility && <span className="text-white/70">{patient.facility}</span>}
                 {scheduleDate && <span className="text-white/70">· {scheduleDate}</span>}
+                {patient.dob && (
+                  <span className="text-white/70" data-testid="admin-review-banner-dob">· DOB {patient.dob}</span>
+                )}
+                {patient.insurance && (
+                  <span className="text-white/70" data-testid="admin-review-banner-insurance">· {patient.insurance}</span>
+                )}
+                {patient.phoneNumber && (
+                  <span className="text-white/70" data-testid="admin-review-banner-phone">· {patient.phoneNumber}</span>
+                )}
                 {evidenceQuery.isFetching && (
                   <span className="text-white/60 inline-flex items-center gap-1">
                     <Loader2 className="w-3 h-3 animate-spin" /> Refreshing
@@ -2691,7 +2700,7 @@ export function AdminReviewDialog({
         </DialogHeader>
 
         <div
-          className="grid grid-cols-1 xl:grid-cols-[var(--left)_minmax(0,1fr)_var(--right)] gap-0 max-h-[calc(94vh-7.5rem)]"
+          className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_var(--left)] xl:grid-rows-[minmax(0,1fr)_auto] gap-0 h-[calc(94vh-7.5rem)]"
           style={{
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             ['--left' as any]: leftCol,
@@ -2701,13 +2710,11 @@ export function AdminReviewDialog({
           data-left-state={leftPanelOpen ? "admin-review-left-panel-open" : "admin-review-left-panel-collapsed"}
           data-right-state={rightPanelOpen ? "admin-review-right-panel-open" : "admin-review-right-panel-collapsed"}
         >
-            {/* ─── Column 1 — approved muted blue #7283B0, tabs, scrollable ─── */}
+            {/* ─── RIGHT panel — Source / History / ICD / Engagement tabs ─── */}
             <aside
-              className="bg-[#7283B0] text-white border-r border-black/10 flex flex-col min-h-0"
+              className="bg-slate-800 text-white border-l border-slate-900/40 flex flex-col min-h-0 xl:col-start-2 xl:row-start-1"
               data-testid="admin-review-left-column"
-              data-panel-style="admin-review-blue-left-panel"
-              data-panel-color="#7283B0"
-              style={{ backgroundColor: "#7283B0" }}
+              data-panel-style="admin-review-tabs-panel"
             >
               {!leftPanelOpen ? (
                 <div
@@ -2733,50 +2740,32 @@ export function AdminReviewDialog({
                       className="w-full"
                       data-testid="admin-review-left-tabs"
                     >
-                      <TabsList className="bg-black/15 text-white grid grid-cols-3 w-full">
+                      <TabsList className="bg-slate-900/60 text-white grid grid-cols-4 w-full">
                         <TabsTrigger
                           value="source"
                           data-testid="admin-review-left-tab-source"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-slate-900"
                         >
                           Source
                         </TabsTrigger>
                         <TabsTrigger
-                          value="patient-directory"
-                          data-testid="admin-review-left-tab-patient-directory"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Directory
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="cooldown"
-                          data-testid="admin-review-left-tab-cooldown"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Cooldown
-                        </TabsTrigger>
-                      </TabsList>
-                      <TabsList className="bg-black/15 text-white grid grid-cols-2 w-full mt-1">
-                        <TabsTrigger
-                          value="insurance"
-                          data-testid="admin-review-left-tab-insurance"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Insurance
-                        </TabsTrigger>
-                        <TabsTrigger
                           value="history"
                           data-testid="admin-review-left-tab-history"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-slate-900"
                         >
                           History
                         </TabsTrigger>
-                      </TabsList>
-                      <TabsList className="bg-black/15 text-white grid grid-cols-1 w-full mt-1">
+                        <TabsTrigger
+                          value="icd"
+                          data-testid="admin-review-left-tab-icd"
+                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-slate-900"
+                        >
+                          ICD
+                        </TabsTrigger>
                         <TabsTrigger
                           value="engagement"
                           data-testid="admin-review-left-tab-engagement"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
+                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-slate-900"
                         >
                           Engagement
                         </TabsTrigger>
@@ -2820,15 +2809,21 @@ export function AdminReviewDialog({
                             testId="admin-review-source-prior"
                           />
                         </section>
+                      </TabsContent>
 
+                      <TabsContent
+                        value="icd"
+                        className="mt-3 space-y-3"
+                        data-testid="admin-review-icd-tab-content"
+                      >
                         <section
                           className="space-y-1.5 rounded-2xl border border-white/15 bg-black/15 p-3"
                           data-testid="admin-review-icd-search-left"
                         >
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-white/70">
                   Search ICD-10
                 </div>
-                <div className="text-[11px] text-slate-500">
+                <div className="text-[11px] text-white/60">
                   Search ICD-10 codes beyond the current chart, then assign selected codes to ancillaries.
                 </div>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
@@ -2918,71 +2913,6 @@ export function AdminReviewDialog({
                   </div>
                 )}
                         </section>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="patient-directory"
-                        className="mt-3"
-                        data-testid="admin-review-patient-directory-tab-content"
-                      >
-                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-2">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Patient Directory
-                          </div>
-                          <div className="text-xs text-white/80">
-                            <div>{patient.name || "Unnamed patient"}</div>
-                            {patient.dob && <div className="text-white/60">DOB {patient.dob}</div>}
-                            {patient.phoneNumber && (
-                              <div className="text-white/60">{patient.phoneNumber}</div>
-                            )}
-                            {patient.facility && (
-                              <div className="text-white/60">{patient.facility}</div>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-white/50 italic">
-                            Full directory roster will appear here when the
-                            backend route is wired.
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="cooldown"
-                        className="mt-3"
-                        data-testid="admin-review-cooldown-tab-content"
-                      >
-                        <div
-                          className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1"
-                          data-testid="admin-review-patient-cooldown-summary"
-                        >
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Cooldown
-                          </div>
-                          <div className="text-xs text-white/80">
-                            No active cooldown rules detected for this patient.
-                          </div>
-                          <div className="text-[10px] text-white/50 italic">
-                            Cooldown engine wires here once the per-test
-                            cooldown route ships.
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="insurance"
-                        className="mt-3"
-                        data-testid="admin-review-insurance-tab-content"
-                      >
-                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Insurance
-                          </div>
-                          <div className="text-xs text-white/80">
-                            {patient.insurance || (
-                              <span className="italic text-white/50">No insurance on file</span>
-                            )}
-                          </div>
-                        </div>
                       </TabsContent>
 
                       <TabsContent
@@ -3198,9 +3128,9 @@ export function AdminReviewDialog({
               )}
             </aside>
 
-            {/* ─── Column 2 — Ancillary Playground (white) ─── */}
+            {/* ─── LEFT panel — Ancillaries (light workspace) ─── */}
             <main
-              className="bg-white min-h-0 flex flex-col"
+              className="bg-white min-h-0 flex flex-col border-r border-slate-200 xl:col-start-1 xl:row-start-1"
               data-testid="admin-review-middle-column"
               data-panel-style="admin-review-ancillary-playground-white-panel"
             >
@@ -3666,13 +3596,11 @@ export function AdminReviewDialog({
               </ScrollArea>
             </main>
 
-            {/* ─── Column 3 — approved muted blue #7283B0 actions panel ─── */}
+            {/* ─── FOOTER — decision + actions toolbar (full width) ─── */}
             <aside
-              className="bg-[#7283B0] text-white border-l border-black/10 flex flex-col min-h-0"
+              className="bg-slate-800 text-white border-t border-slate-900/40 flex flex-col min-h-0 xl:col-span-2 xl:col-start-1 xl:row-start-2 max-h-[42vh]"
               data-testid="admin-review-right-column"
-              data-panel-style="admin-review-blue-right-panel"
-              data-panel-color="#7283B0"
-              style={{ backgroundColor: "#7283B0" }}
+              data-panel-style="admin-review-decision-footer"
             >
               {!rightPanelOpen ? (
                 <div
@@ -3689,7 +3617,7 @@ export function AdminReviewDialog({
                 data-testid="admin-review-right-panel-scroll"
               >
               <div
-                className="space-y-4"
+                className="flex flex-row flex-wrap items-start gap-4 [&>section]:min-w-[220px] [&>section]:flex-1"
                 data-testid="admin-review-right-panel-open"
               >
               <section
