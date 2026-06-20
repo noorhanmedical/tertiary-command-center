@@ -10,15 +10,23 @@ import {
   computePlexusIqStatus,
   computePlexusIqFlags,
 } from "@/lib/plexusIqStatus";
+import {
+  categoryIcons,
+  categoryStyles,
+  getAncillaryCategory,
+  type AncillaryCategory,
+} from "@/features/schedule/ancillaryMeta";
+
+const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound"];
 
 // One patient row in the Plexus IQ clean operating list.
 //
 // Columns ONLY:
-//   Checkbox · Patient Name · DOB · Insurance · Plexus IQ Status · Flags · Review · Delete
+//   Checkbox · Patient Name · DOB · Insurance · Plexus IQ Status · Flags ·
+//   Ancillary Icons · Review · Delete
 //
-// No phone, facility, or ancillary icons. Missing info / cooldown /
-// stale evidence / packet blockers render as the ⚠ Flags popover —
-// never as a status.
+// No phone or facility. Missing info / cooldown / stale evidence / packet
+// blockers render as the ⚠ Flags popover — never as a status.
 
 export type PlexusIQOperatingRowProps = {
   patient: PatientScreening;
@@ -45,6 +53,15 @@ export function PlexusIQOperatingRow({
   const statusMeta = computePlexusIqStatus(patient, { isRunning });
   const flags = computePlexusIqFlags(patient, { saveFailed });
 
+  const tests = patient.qualifyingTests || [];
+  const ancillaryCounts = ANCILLARY_ORDER.reduce<Record<AncillaryCategory, number>>(
+    (acc, cat) => {
+      acc[cat] = tests.filter((t) => getAncillaryCategory(t) === cat).length;
+      return acc;
+    },
+    { brainwave: 0, vitalwave: 0, ultrasound: 0, other: 0 },
+  );
+
   const displayName = (patient.name || "").trim() || "Unnamed patient";
   const ageDisplay = typeof patient.age === "number" ? `${patient.age}yo` : null;
   const isUnder16 = typeof patient.age === "number" && patient.age < 16;
@@ -55,7 +72,7 @@ export function PlexusIQOperatingRow({
 
   return (
     <div
-      className="grid grid-cols-[auto_minmax(140px,1.6fr)_minmax(96px,0.9fr)_minmax(120px,1.1fr)_minmax(150px,0.9fr)_auto_auto_auto] gap-3 items-center px-3 py-2 border border-slate-200 rounded-xl bg-white hover:bg-slate-50/60 transition-colors"
+      className="grid grid-cols-[auto_minmax(140px,1.6fr)_minmax(96px,0.9fr)_minmax(120px,1.1fr)_minmax(150px,0.9fr)_auto_auto_auto_auto] gap-3 items-center px-3 py-2 border border-slate-200 rounded-xl bg-white hover:bg-slate-50/60 transition-colors"
       data-testid={`plexus-iq-operating-row-${patient.id}`}
       data-row-type="plexus-iq-operating-row"
     >
@@ -151,6 +168,31 @@ export function PlexusIQOperatingRow({
         ) : (
           <span className="text-slate-300 text-xs">—</span>
         )}
+      </div>
+
+      {/* Qualifying ancillary icons */}
+      <div className="flex items-center gap-2 justify-end">
+        {ANCILLARY_ORDER.map((cat) => {
+          const count = ancillaryCounts[cat];
+          if (count === 0) return null;
+          const Icon = categoryIcons[cat];
+          const style = categoryStyles[cat];
+          return (
+            <span
+              key={cat}
+              className="relative inline-flex items-center"
+              title={`${cat} (${count})`}
+              data-testid={`icon-operating-row-${cat}-${patient.id}`}
+            >
+              <Icon className={`h-4 w-4 ${style.icon}`} strokeWidth={2} fill="none" />
+              {count > 1 && (
+                <span className="absolute -top-1 -right-2 inline-flex items-center justify-center min-w-[12px] h-3 px-1 rounded-full bg-slate-900 text-white text-[8px] font-semibold leading-none">
+                  {count}
+                </span>
+              )}
+            </span>
+          );
+        })}
       </div>
 
       {/* Review */}
