@@ -57,12 +57,6 @@ function QualBadge({ state }: { state: PlexusIQListQualState }) {
           {state.errors} with errors
         </span>
       );
-    case "ready":
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
-          Ready
-        </span>
-      );
     case "pending":
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
@@ -94,15 +88,15 @@ export function PlexusIQListBar({
 }: PlexusIQListBarProps) {
   return (
     <div
-      className="flex items-center justify-between gap-3 flex-wrap px-3 py-2.5 border-b border-slate-200 bg-white"
+      className="flex items-center justify-between gap-3 flex-wrap px-3 py-2.5 border-b border-slate-800 bg-slate-900"
       data-testid="plexus-iq-list-bar"
     >
       <div className="flex items-center gap-2 min-w-0">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-slate-900 truncate" data-testid="text-list-bar-title">
+          <div className="text-sm font-semibold text-slate-100 truncate" data-testid="text-list-bar-title">
             {title}
           </div>
-          <div className="flex items-center gap-2 text-[11px] text-slate-500">
+          <div className="flex items-center gap-2 text-[11px] text-slate-400">
             {timeLabel && <span>{timeLabel}</span>}
             <span className="tabular-nums">
               {patientCount} patient{patientCount === 1 ? "" : "s"}
@@ -116,7 +110,7 @@ export function PlexusIQListBar({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 gap-1 px-2 text-xs"
+          className="h-7 gap-1 px-2 text-xs text-slate-200 hover:text-white hover:bg-slate-800 disabled:text-slate-500"
           disabled={!canAct || patientCount === 0}
           onClick={allSelected ? onClear : onSelectAll}
           data-testid="button-list-bar-select-all"
@@ -127,7 +121,7 @@ export function PlexusIQListBar({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 gap-1 px-2 text-xs text-rose-700 hover:text-rose-800 hover:bg-rose-50"
+          className="h-7 gap-1 px-2 text-xs text-rose-400 hover:text-rose-300 hover:bg-slate-800 disabled:text-slate-500"
           disabled={selectedCount === 0}
           onClick={onDeleteSelected}
           data-testid="button-list-bar-delete-selected"
@@ -136,7 +130,7 @@ export function PlexusIQListBar({
           Delete{selectedCount > 0 ? ` (${selectedCount})` : ""}
         </Button>
 
-        <span className="mx-0.5 h-5 w-px bg-slate-200" />
+        <span className="mx-0.5 h-5 w-px bg-slate-700" />
 
         <Button
           size="sm"
@@ -156,7 +150,7 @@ export function PlexusIQListBar({
           <Button
             variant="outline"
             size="sm"
-            className="h-7 gap-1 px-2.5 text-xs rounded-lg"
+            className="h-7 gap-1 px-2.5 text-xs rounded-lg border-slate-700 bg-transparent text-slate-200 hover:bg-slate-800 hover:text-white disabled:text-slate-500"
             disabled={!canAct || isGenerating}
             onClick={onRetryFailed}
             data-testid="button-list-bar-retry-failed"
@@ -166,12 +160,12 @@ export function PlexusIQListBar({
           </Button>
         )}
 
-        <span className="mx-0.5 h-5 w-px bg-slate-200" />
+        <span className="mx-0.5 h-5 w-px bg-slate-700" />
 
         <Button
           variant="outline"
           size="sm"
-          className="h-7 gap-1 px-2.5 text-xs rounded-lg"
+          className="h-7 gap-1 px-2.5 text-xs rounded-lg border-slate-700 bg-transparent text-slate-200 hover:bg-slate-800 hover:text-white disabled:text-slate-500"
           disabled={patientCount === 0}
           onClick={onClinicianPdf}
           data-testid="button-list-bar-clinician-pdf"
@@ -182,7 +176,7 @@ export function PlexusIQListBar({
         <Button
           variant="outline"
           size="sm"
-          className="h-7 gap-1 px-2.5 text-xs rounded-lg"
+          className="h-7 gap-1 px-2.5 text-xs rounded-lg border-slate-700 bg-transparent text-slate-200 hover:bg-slate-800 hover:text-white disabled:text-slate-500"
           disabled={patientCount === 0}
           onClick={onPlexusPdf}
           data-testid="button-list-bar-plexus-pdf"

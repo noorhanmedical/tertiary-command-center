@@ -53,8 +53,8 @@ export function PlexusIQDatePanel({
       className="flex flex-col h-full min-h-0 border-r border-slate-200 bg-white"
       data-testid="plexus-iq-date-panel"
     >
-      <div className="px-3 py-2.5 border-b border-slate-200">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+      <div className="px-3 py-2.5 border-b border-slate-800 bg-slate-900">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
           Date
         </div>
       </div>
@@ -96,7 +96,7 @@ export function PlexusIQDatePanel({
                         onClick={() => onSelectBatch(b.batchId)}
                         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
                           active
-                            ? "bg-indigo-50 ring-1 ring-indigo-200"
+                            ? "bg-slate-900 ring-1 ring-slate-700"
                             : "hover:bg-slate-50"
                         }`}
                         data-testid={`button-batch-node-${b.batchId}`}
@@ -107,12 +107,16 @@ export function PlexusIQDatePanel({
                         />
                         <span
                           className={`text-xs font-medium truncate flex-1 ${
-                            active ? "text-indigo-900" : "text-slate-700"
+                            active ? "text-slate-100" : "text-slate-700"
                           }`}
                         >
                           {b.timeLabel}
                         </span>
-                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
+                        <span
+                          className={`inline-flex items-center gap-1 text-[10px] ${
+                            active ? "text-slate-300" : "text-slate-400"
+                          }`}
+                        >
                           {b.statusTone === "running" && (
                             <Loader2 className="h-3 w-3 animate-spin text-sky-500" />
                           )}
