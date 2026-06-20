@@ -593,12 +593,33 @@ export default function PlexusIQPage() {
   );
 
   // ───── Per-patient mutations (used by PatientCard inside workspace) ──
+  // Patient IDs whose most recent edit (e.g. evidence attach/detach in
+  // Admin Review) failed to persist. Drives the "Save failed" attention
+  // flag on the operating row. Cleared once a later edit succeeds.
+  const [saveFailedPatientIds, setSaveFailedPatientIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+
   const handleUpdatePatient = useCallback(
     (id: number, updates: Record<string, unknown>) => {
       updatePatientMut.mutate(
         { id, updates },
         {
+          onSuccess: () => {
+            setSaveFailedPatientIds((prev) => {
+              if (!prev.has(id)) return prev;
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+          },
           onError: (err: unknown) => {
+            setSaveFailedPatientIds((prev) => {
+              if (prev.has(id)) return prev;
+              const next = new Set(prev);
+              next.add(id);
+              return next;
+            });
             toast({
               title: "Update failed",
               description: err instanceof Error ? err.message : "Something went wrong",
@@ -840,6 +861,7 @@ export default function PlexusIQPage() {
           batchDetails={batchDetails}
           runningBatchIds={runningBatchIds}
           analyzingPatients={analyzingPatients}
+          saveFailedPatientIds={saveFailedPatientIds}
           onGenerateBatch={handleGenerateBatch}
           onDeleteAllForBatch={handleDeleteAllForBatch}
           onUpdatePatient={handleUpdatePatient}

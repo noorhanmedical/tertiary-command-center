@@ -23,6 +23,8 @@ import {
 export type PlexusIQOperatingRowProps = {
   patient: PatientScreening;
   isRunning: boolean;
+  /** True while this patient's most recent edit failed to persist. */
+  saveFailed?: boolean;
   selected: boolean;
   isAdmin: boolean;
   onToggleSelect: (checked: boolean) => void;
@@ -33,6 +35,7 @@ export type PlexusIQOperatingRowProps = {
 export function PlexusIQOperatingRow({
   patient,
   isRunning,
+  saveFailed,
   selected,
   isAdmin,
   onToggleSelect,
@@ -40,7 +43,7 @@ export function PlexusIQOperatingRow({
   onDelete,
 }: PlexusIQOperatingRowProps) {
   const statusMeta = computePlexusIqStatus(patient, { isRunning });
-  const flags = computePlexusIqFlags(patient);
+  const flags = computePlexusIqFlags(patient, { saveFailed });
 
   const displayName = (patient.name || "").trim() || "Unnamed patient";
   const ageDisplay = typeof patient.age === "number" ? `${patient.age}yo` : null;

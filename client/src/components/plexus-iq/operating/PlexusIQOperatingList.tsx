@@ -39,6 +39,8 @@ export type PlexusIQOperatingListProps = {
   /** Batch IDs whose qualification job is actively running. */
   runningBatchIds: Set<number>;
   analyzingPatients: Set<number>;
+  /** Patient IDs whose most recent edit failed to persist. */
+  saveFailedPatientIds?: Set<number>;
   onGenerateBatch: (batchId: number) => void;
   onDeleteAllForBatch: (batchId: number) => void;
   onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
@@ -106,6 +108,7 @@ export function PlexusIQOperatingList({
   batchDetails,
   runningBatchIds,
   analyzingPatients,
+  saveFailedPatientIds,
   onGenerateBatch,
   onDeleteAllForBatch: _onDeleteAllForBatch,
   onUpdatePatient,
@@ -496,6 +499,7 @@ export function PlexusIQOperatingList({
                     key={p.id}
                     patient={p}
                     isRunning={analyzingPatients.has(p.id) || isBatchRunning}
+                    saveFailed={saveFailedPatientIds?.has(p.id)}
                     selected={selectedIds.has(p.id)}
                     isAdmin={!!isAdmin}
                     onToggleSelect={(checked) => toggleSelect(p.id, checked)}

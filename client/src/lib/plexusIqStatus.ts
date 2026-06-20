@@ -82,8 +82,11 @@ export function computePlexusIqStatus(
   const isSent = (patient.commitStatus ?? "Draft") !== "Draft";
   const approval = normalizeApproval(patient.adminApprovalStatus);
   const generated = patient.status === "completed";
+  // NOTE: this repo persists qualification/analysis failure as
+  // status === "error" (see packetQa.ts, batchAnalysisRunner.ts,
+  // plexusIqClinicalImport.ts). "failed" is NOT a screening status here.
   const failed =
-    patient.status === "failed" || isAnalysisFailureOnly(patient.reasoning);
+    patient.status === "error" || isAnalysisFailureOnly(patient.reasoning);
 
   let status: PlexusIqStatus;
   if (isSent) status = "sent_to_engagement";
@@ -111,7 +114,8 @@ export type PlexusIqFlagKind =
   | "prior_testing_unclear"
   | "cooldown_review"
   | "evidence_changed"
-  | "packet_blocker";
+  | "packet_blocker"
+  | "save_failed";
 
 export type PlexusIqFlag = {
   kind: PlexusIqFlagKind;
@@ -137,8 +141,22 @@ function hasCooldownEntries(value: unknown): boolean {
  * persisted fields only, so the same flags render consistently in the
  * list and in review.
  */
-export function computePlexusIqFlags(patient: PatientScreening): PlexusIqFlag[] {
+export function computePlexusIqFlags(
+  patient: PatientScreening,
+  // Runtime-only signals that can't be derived from persisted fields.
+  // `saveFailed` is true while the patient's most recent edit (e.g. an
+  // evidence attach/detach in Admin Review) failed to persist.
+  extras: { saveFailed?: boolean } = {},
+): PlexusIqFlag[] {
   const flags: PlexusIqFlag[] = [];
+
+  if (extras.saveFailed) {
+    flags.push({
+      kind: "save_failed",
+      label: "Save failed",
+      detail: "The last change didn't save. Retry before approving or generating.",
+    });
+  }
 
   const missingDemo: string[] = [];
   if (isBlank(patient.dob)) missingDemo.push("DOB");
