@@ -13,7 +13,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Popover,
   PopoverContent,
@@ -28,10 +27,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Lightbulb,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
   Plus,
   RefreshCw,
   Sparkles,
@@ -893,10 +888,8 @@ export function AdminReviewDialog({
   // SupportingButton only after the admin clicks accept.
   const [acceptedSuggestions, setAcceptedSuggestions] = useState<SupportingButton[]>([]);
 
-  // Layout state — left/right panels default open, collapsible via
-  // header toggle buttons. Source tab is the default left tab.
-  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  // Drives the Engagement reference query (enabled only when "engagement").
+  // Set when the Engagement reference collapsible is opened.
   const [leftTab, setLeftTab] = useState<
     "source" | "history" | "icd" | "engagement"
   >("source");
@@ -2516,11 +2509,6 @@ export function AdminReviewDialog({
     (b) => b.kind === "icd_disease" && b.requiresIcd,
   ).length;
 
-  // Grid template flexes to whichever panels are open. Collapsed
-  // panels collapse to a 40px rail with the toggle button.
-  const leftCol = leftPanelOpen ? "340px" : "44px";
-  const rightCol = rightPanelOpen ? "340px" : "44px";
-
   const shellChildren = (
     <>
         {/* Smoke header — black at ~70% opacity per Team Portal spec. */}
@@ -2661,28 +2649,6 @@ export function AdminReviewDialog({
                   </button>
                 );
               })()}
-              <button
-                type="button"
-                onClick={() => setLeftPanelOpen((v) => !v)}
-                aria-label={leftPanelOpen ? "Collapse left panel" : "Expand left panel"}
-                title={leftPanelOpen ? "Collapse left panel" : "Expand left panel"}
-                data-testid="admin-review-left-panel-toggle"
-                data-panel-state={leftPanelOpen ? "admin-review-left-panel-open" : "admin-review-left-panel-collapsed"}
-                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/80 hover:text-white hover:bg-white/10"
-              >
-                {leftPanelOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
-              </button>
-              <button
-                type="button"
-                onClick={() => setRightPanelOpen((v) => !v)}
-                aria-label={rightPanelOpen ? "Collapse right panel" : "Expand right panel"}
-                title={rightPanelOpen ? "Collapse right panel" : "Expand right panel"}
-                data-testid="admin-review-right-panel-toggle"
-                data-panel-state={rightPanelOpen ? "admin-review-right-panel-open" : "admin-review-right-panel-collapsed"}
-                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/80 hover:text-white hover:bg-white/10"
-              >
-                {rightPanelOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
-              </button>
               {variant === "inline" && (
                 <button
                   type="button"
@@ -2698,442 +2664,17 @@ export function AdminReviewDialog({
             </div>
           </div>
         </DialogHeader>
-
+        {/* ─── Two-panel body: LEFT ancillaries playground · RIGHT action column ─── */}
         <div
-          className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_var(--left)] xl:grid-rows-[minmax(0,1fr)_auto] gap-0 h-[calc(94vh-7.5rem)]"
-          style={{
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            ['--left' as any]: leftCol,
-            ['--right' as any]: rightCol,
-          }}
-          data-testid="admin-review-three-column-layout"
-          data-left-state={leftPanelOpen ? "admin-review-left-panel-open" : "admin-review-left-panel-collapsed"}
-          data-right-state={rightPanelOpen ? "admin-review-right-panel-open" : "admin-review-right-panel-collapsed"}
+          className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4"
+          style={{ background: "#EEF1F7" }}
+          data-testid="admin-review-two-panel-body"
         >
-            {/* ─── RIGHT panel — Source / History / ICD / Engagement tabs ─── */}
-            <aside
-              className="bg-slate-800 text-white border-l border-slate-900/40 flex flex-col min-h-0 xl:col-start-2 xl:row-start-1"
-              data-testid="admin-review-left-column"
-              data-panel-style="admin-review-tabs-panel"
-            >
-              {!leftPanelOpen ? (
-                <div
-                  className="flex-1 flex items-start justify-center pt-3"
-                  data-testid="admin-review-left-panel-collapsed"
-                >
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-white/60 rotate-90 origin-top mt-8 whitespace-nowrap">
-                    Source
-                  </span>
-                </div>
-              ) : (
-                <div
-                  className="flex-1 min-h-0 flex flex-col"
-                  data-testid="admin-review-left-panel-open"
-                >
-                  <ScrollArea
-                    className="flex-1 min-h-0 px-4 py-4"
-                    data-testid="admin-review-left-panel-scroll"
-                  >
-                    <Tabs
-                      value={leftTab}
-                      onValueChange={(v) => setLeftTab(v as typeof leftTab)}
-                      className="w-full"
-                      data-testid="admin-review-left-tabs"
-                    >
-                      <TabsList className="bg-slate-900/60 text-white grid grid-cols-4 w-full">
-                        <TabsTrigger
-                          value="source"
-                          data-testid="admin-review-left-tab-source"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-slate-900"
-                        >
-                          Source
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="history"
-                          data-testid="admin-review-left-tab-history"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-slate-900"
-                        >
-                          History
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="icd"
-                          data-testid="admin-review-left-tab-icd"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-slate-900"
-                        >
-                          ICD
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="engagement"
-                          data-testid="admin-review-left-tab-engagement"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-slate-900"
-                        >
-                          Engagement
-                        </TabsTrigger>
-                      </TabsList>
-
-                      <TabsContent
-                        value="source"
-                        className="mt-3 space-y-3"
-                        data-testid="admin-review-source-tab-content"
-                      >
-                        <section className="space-y-2" data-testid="admin-review-clinical-source">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Clinical Source
-                          </div>
-                          <RawSourceCard
-                            label="Hx"
-                            value={patient.history}
-                            emptyText="No history entered"
-                            testId="admin-review-source-hx"
-                          />
-                          <RawSourceCard
-                            label="Dx"
-                            value={patient.diagnoses}
-                            emptyText="No diagnoses entered"
-                            testId="admin-review-source-dx"
-                          />
-                          <RawSourceCard
-                            label="Rx"
-                            value={patient.medications}
-                            emptyText="No medications entered"
-                            testId="admin-review-source-rx"
-                          />
-                          <RawSourceCard
-                            label="Previous Tests"
-                            value={
-                              typeof (patient as { previousTests?: unknown }).previousTests === "string"
-                                ? ((patient as { previousTests?: string }).previousTests ?? "")
-                                : ""
-                            }
-                            emptyText="No prior testing on file"
-                            testId="admin-review-source-prior"
-                          />
-                        </section>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="icd"
-                        className="mt-3 space-y-3"
-                        data-testid="admin-review-icd-tab-content"
-                      >
-                        <section
-                          className="space-y-1.5 rounded-2xl border border-white/15 bg-black/15 p-3"
-                          data-testid="admin-review-icd-search-left"
-                        >
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-white/70">
-                  Search ICD-10
-                </div>
-                <div className="text-[11px] text-white/60">
-                  Search ICD-10 codes beyond the current chart, then assign selected codes to ancillaries.
-                </div>
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
-                  <Input
-                    type="search"
-                    placeholder="Search any ICD-10 diagnosis..."
-                    value={icdSearchQuery}
-                    onChange={(e) => setIcdSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && icdSearchQuery.trim().length >= 2) {
-                        icdSearchMutation.mutate({ query: icdSearchQuery.trim() });
-                      }
-                    }}
-                    className="h-8 text-xs"
-                    data-testid="admin-review-icd-ai-search"
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={
-                      icdSearchMutation.isPending || icdSearchQuery.trim().length < 2
-                    }
-                    onClick={() =>
-                      icdSearchMutation.mutate({ query: icdSearchQuery.trim() })
-                    }
-                    data-testid="admin-review-icd-ai-search-button"
-                    className="h-8 px-2"
-                  >
-                    {icdSearchMutation.isPending ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <Search className="w-3 h-3" />
-                    )}
-                  </Button>
-                </div>
-
-                {icdSearchMutation.isPending && (
-                  <div
-                    className="text-[11px] text-slate-400 inline-flex items-center gap-1"
-                    data-testid="admin-review-icd-ai-search-loading"
-                  >
-                    <Loader2 className="w-3 h-3 animate-spin" /> Searching ICD codes
-                  </div>
-                )}
-                {icdSearchMutation.isError && (
-                  <div
-                    className="text-[11px] text-rose-700 inline-flex items-center gap-1"
-                    data-testid="admin-review-icd-ai-search-error"
-                  >
-                    <AlertTriangle className="w-3 h-3" /> OpenAI universal ICD search failed
-                  </div>
-                )}
-                {icdSearchMutation.isSuccess && icdSearchMutation.data?.results?.length === 0 && (
-                  <div
-                    className="text-[11px] text-slate-400 italic"
-                    data-testid="admin-review-icd-ai-search-empty"
-                  >
-                    No matching ICD codes.
-                  </div>
-                )}
-                {icdSearchMutation.isSuccess && (icdSearchMutation.data?.results ?? []).length > 0 && (
-                  <div className="flex flex-col gap-1 max-h-48 overflow-auto rounded-md border border-slate-200 bg-white">
-                    {(icdSearchMutation.data?.results ?? []).map((r) => (
-                      <button
-                        key={r.code}
-                        type="button"
-                        onClick={() => adoptIcdSearchResult(r)}
-                        data-testid="admin-review-icd-ai-search-result"
-                        className="text-left text-xs px-2 py-1.5 hover:bg-slate-100 inline-flex items-start gap-2"
-                      >
-                        <span className="font-mono text-slate-700 shrink-0">{r.code}</span>
-                        <div className="min-w-0">
-                          <div className="text-slate-800 truncate">{r.label}</div>
-                          {r.rationale && (
-                            <div className="text-[10px] text-slate-500 truncate">
-                              {r.rationale}
-                            </div>
-                          )}
-                        </div>
-                        <span
-                          className={`ml-auto inline-flex items-center rounded-full border px-1.5 text-[9px] uppercase tracking-wider ${CONFIDENCE_TONE[r.confidence]}`}
-                        >
-                          {r.confidence}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                        </section>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="history"
-                        className="mt-3"
-                        data-testid="admin-review-history-tab-content"
-                      >
-                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Patient History (chart)
-                          </div>
-                          <div className="text-xs text-white/80 whitespace-pre-wrap min-h-[3rem]">
-                            {patient.history || (
-                              <span className="italic text-white/50">No history entered</span>
-                            )}
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="engagement"
-                        className="mt-3"
-                        data-testid="admin-review-engagement-tab-content"
-                      >
-                        {/* Engagement Center source of truth: client-side
-                            grouping of /api/engagement/assignment-board
-                            (no dedicated grouped endpoint exists). Each
-                            scheduler group supports Select All + Plexus
-                            PDF + Clinician PDF scoped to selected rows.
-                            SOURCE MARKER: Engagement Center source of truth
-                            SOURCE MARKER: Scheduler call lists grouped by scheduler
-                            SOURCE MARKER: Plexus PDF by scheduler assignment
-                            SOURCE MARKER: Clinician PDF by scheduler assignment */}
-                        <div
-                          className="space-y-3"
-                          data-testid="admin-review-scheduler-call-lists"
-                        >
-                          {engagementBoardQuery.isLoading && (
-                            <div className="text-[11px] text-white/60 italic">
-                              Loading Engagement assignments…
-                            </div>
-                          )}
-                          {engagementBoardQuery.isError && (
-                            <div className="text-[11px] text-rose-200">
-                              Could not load Engagement Center: {String(engagementBoardQuery.error)}
-                            </div>
-                          )}
-                          {!engagementBoardQuery.isLoading &&
-                            !engagementBoardQuery.isError &&
-                            schedulerGroups.length === 0 && (
-                              <div className="text-[11px] text-white/60 italic">
-                                No Engagement assignment found for this facility yet.
-                              </div>
-                            )}
-                          {schedulerGroups.map((group) => {
-                            const selected = selectedByScheduler[group.schedulerKey] ?? new Set<number>();
-                            const eligibleIds = group.rows
-                              .map((r) => r.patientScreeningId)
-                              .filter((id): id is number => id != null);
-                            const allSelected =
-                              eligibleIds.length > 0 && eligibleIds.every((id) => selected.has(id));
-                            const selectedCount = selected.size;
-                            return (
-                              <section
-                                key={group.schedulerKey}
-                                className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-2"
-                                data-testid="admin-review-scheduler-call-list"
-                                data-scheduler-name={group.schedulerName}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="text-[11px] font-semibold text-white">
-                                    {group.schedulerName}
-                                    <span className="ml-1.5 text-white/60 font-normal">
-                                      ({group.rows.length})
-                                    </span>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setAllSelectedForScheduler(group)}
-                                    data-testid="admin-review-select-all-scheduler-patients"
-                                    className="text-[10px] uppercase tracking-wider text-white/80 hover:text-white"
-                                  >
-                                    {allSelected ? "Clear" : "Select All"}
-                                  </button>
-                                </div>
-                                <div
-                                  className="text-[10px] text-white/60"
-                                  data-testid="admin-review-scheduler-selected-count"
-                                >
-                                  {selectedCount} selected
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    disabled={selectedCount === 0}
-                                    onClick={() =>
-                                      generateSchedulerScopedPdf(
-                                        group,
-                                        Array.from(selected),
-                                        "plexus",
-                                      )
-                                    }
-                                    data-testid="admin-review-scheduler-plexus-pdf"
-                                    data-print-preview-testid="admin-review-plexus-print-preview"
-                                    className="rounded-md border border-white/30 bg-white/15 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 text-[11px] font-semibold transition-colors"
-                                  >
-                                    Plexus PDF
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={selectedCount === 0}
-                                    onClick={() =>
-                                      generateSchedulerScopedPdf(
-                                        group,
-                                        Array.from(selected),
-                                        "clinician",
-                                      )
-                                    }
-                                    data-testid="admin-review-scheduler-clinician-pdf"
-                                    data-print-preview-testid="admin-review-clinician-print-preview"
-                                    className="rounded-md border border-white/30 bg-white/15 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 text-[11px] font-semibold transition-colors"
-                                  >
-                                    Clinician PDF
-                                  </button>
-                                </div>
-                                {/* Hidden surface-state markers for QA / e2e. */}
-                                <span
-                                  className="sr-only"
-                                  data-testid="admin-review-print-preview-popup-blocked"
-                                  aria-hidden="true"
-                                >
-                                  Popup blocked. Allow popups to print this packet.
-                                </span>
-                                <span
-                                  className="sr-only"
-                                  data-testid="admin-review-print-preview-error"
-                                  aria-hidden="true"
-                                >
-                                  Admin Review print preview error surface.
-                                </span>
-                                <ul className="space-y-1">
-                                  {group.rows.map((r) => {
-                                    const isCurrent =
-                                      r.patientScreeningId === patient.id;
-                                    const isChecked = r.patientScreeningId != null
-                                      ? selected.has(r.patientScreeningId)
-                                      : false;
-                                    return (
-                                      <li
-                                        key={r.executionCaseId}
-                                        className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-[11px] ${
-                                          isCurrent
-                                            ? "border-white/40 bg-white/15"
-                                            : "border-white/10 bg-black/10"
-                                        }`}
-                                        data-testid="admin-review-scheduler-call-list-patient"
-                                        data-patient-id={r.patientScreeningId ?? ""}
-                                        data-is-current={isCurrent ? "true" : "false"}
-                                        {...(isCurrent
-                                          ? { "data-current-marker": "admin-review-current-patient-in-call-list" }
-                                          : {})}
-                                      >
-                                        <input
-                                          type="checkbox"
-                                          checked={isChecked}
-                                          disabled={r.patientScreeningId == null}
-                                          onChange={() => {
-                                            if (r.patientScreeningId != null) {
-                                              toggleSelectedForScheduler(
-                                                group.schedulerKey,
-                                                r.patientScreeningId,
-                                              );
-                                            }
-                                          }}
-                                          data-testid="admin-review-select-scheduler-patient"
-                                          className="mt-0.5"
-                                        />
-                                        <div className="min-w-0 flex-1">
-                                          <div className="font-medium text-white truncate">
-                                            {r.patientName}
-                                            {isCurrent && (
-                                              <span
-                                                className="ml-1 text-[9px] uppercase tracking-wider text-white/70"
-                                                data-testid="admin-review-current-patient-in-call-list"
-                                              >
-                                                · current
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="text-white/60 truncate">
-                                            {[r.facility, r.scheduleDate, r.engagementStatus]
-                                              .filter(Boolean)
-                                              .join(" · ")}
-                                          </div>
-                                          {r.selectedServiceList?.length ? (
-                                            <div className="text-white/50 truncate">
-                                              {r.selectedServiceList.join(", ")}
-                                            </div>
-                                          ) : null}
-                                        </div>
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              </section>
-                            );
-                          })}
-                        </div>
-                      </TabsContent>
-                    </Tabs>
-                  </ScrollArea>
-                </div>
-              )}
-            </aside>
-
-            {/* ─── LEFT panel — Ancillaries (light workspace) ─── */}
-            <main
-              className="bg-white min-h-0 flex flex-col border-r border-slate-200 xl:col-start-1 xl:row-start-1"
-              data-testid="admin-review-middle-column"
-              data-panel-style="admin-review-ancillary-playground-white-panel"
-            >
+          {/* ─── LEFT panel — Ancillaries playground ─── */}
+          <main
+            className="flex min-h-0 flex-[1.35] flex-col overflow-hidden rounded-2xl border border-[#E6E8EF] bg-white"
+            data-testid="admin-review-ancillary-panel"
+          >
               <div className="px-5 pt-4 pb-2 border-b border-slate-100 flex items-center gap-2">
                 <span
                   className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 text-white px-3 py-1 text-[11px] font-semibold uppercase tracking-wider shadow-sm"
@@ -3594,32 +3135,68 @@ export function AdminReviewDialog({
               </div>
                 </div>
               </ScrollArea>
-            </main>
+          </main>
 
-            {/* ─── FOOTER — decision + actions toolbar (full width) ─── */}
-            <aside
-              className="bg-slate-800 text-white border-t border-slate-900/40 flex flex-col min-h-0 xl:col-span-2 xl:col-start-1 xl:row-start-2 max-h-[42vh]"
-              data-testid="admin-review-right-column"
-              data-panel-style="admin-review-decision-footer"
-            >
-              {!rightPanelOpen ? (
-                <div
-                  className="flex-1 flex items-start justify-center pt-3"
-                  data-testid="admin-review-right-panel-collapsed"
-                >
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-white/60 rotate-90 origin-top mt-8 whitespace-nowrap">
-                    Actions
-                  </span>
+          {/* ─── RIGHT panel — decision + actions + reference ─── */}
+          <aside
+            className="flex min-h-0 w-[420px] flex-none flex-col overflow-hidden rounded-2xl border border-[#E6E8EF] bg-white"
+            data-testid="admin-review-action-panel"
+          >
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="space-y-5 p-5">
+                <div data-testid="admin-review-decision-group">
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Decision</div>
+                <div className="flex flex-col gap-2">
+                  <Button
+                    type="button"
+                    disabled={approvalMutation.isPending}
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "approved" });
+                      recordAdminReviewUpdate("approval_approved", "Approved review");
+                    }}
+                    data-testid="admin-review-approve-button"
+                    data-bar-testid={`admin-review-button-approve-${patient.id}`}
+                    className="bg-emerald-500 text-slate-800 hover:bg-emerald-600 w-full"
+                  >
+                    {approvalMutation.isPending ? (
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-3 h-3 mr-1" />
+                    )}
+                    {isUnder16 ? "Admin Override Approve" : "Approve"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={approvalMutation.isPending}
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "needs_info" });
+                      recordAdminReviewUpdate("approval_pended", "Pended review");
+                    }}
+                    data-testid="admin-review-pend-button"
+                    data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
+                    className="w-full bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+                  >
+                    Pend
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={approvalMutation.isPending}
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "rejected" });
+                      recordAdminReviewUpdate("approval_rejected", "Rejected review");
+                    }}
+                    data-testid={`admin-review-button-reject-${patient.id}`}
+                    className="w-full text-rose-700 border-rose-200 bg-rose-50 hover:bg-rose-100"
+                  >
+                    Reject
+                  </Button>
                 </div>
-              ) : (
-              <ScrollArea
-                className="flex-1 min-h-0 px-4 py-4"
-                data-testid="admin-review-right-panel-scroll"
-              >
-              <div
-                className="flex flex-row flex-wrap items-start gap-4 [&>section]:min-w-[220px] [&>section]:flex-1"
-                data-testid="admin-review-right-panel-open"
-              >
+                </div>
+
+                <div data-testid="admin-review-documents-group">
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Documents</div>
               <section
                 className="space-y-2"
                 data-testid="admin-review-right-actions-panel"
@@ -3639,7 +3216,7 @@ export function AdminReviewDialog({
                   }}
                   data-testid="admin-review-pdf-preview-button-plexus"
                   data-pdf-action="admin-review-pdf-action-plexus"
-                  className="rounded-xl border border-white/20 bg-black/15 hover:bg-black/25 text-white px-3 py-2 text-xs font-semibold transition-colors"
+                  className="rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 px-3 py-2 text-xs font-semibold transition-colors"
                 >
                   Plexus PDF
                 </button>
@@ -3650,7 +3227,7 @@ export function AdminReviewDialog({
                   }}
                   data-testid="admin-review-pdf-preview-button-clinician"
                   data-pdf-action="admin-review-pdf-action-clinician"
-                  className="rounded-xl border border-white/20 bg-black/15 hover:bg-black/25 text-white px-3 py-2 text-xs font-semibold transition-colors"
+                  className="rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 px-3 py-2 text-xs font-semibold transition-colors"
                 >
                   Clinician PDF
                 </button>
@@ -3664,9 +3241,12 @@ export function AdminReviewDialog({
                 />
               </div>
               </section>
+                </div>
 
+                <div data-testid="admin-review-evidence-group">
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Evidence</div>
               <section
-                className="space-y-2 rounded-2xl border border-white/15 bg-black/15 p-3"
+                className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3"
                 data-testid="admin-review-right-panel-buttons"
               >
                 <div
@@ -3832,9 +3412,11 @@ export function AdminReviewDialog({
                   </Popover>
                 </div>
               </section>
+                </div>
 
+                <div data-testid="admin-review-blocking-group">
               <section className="space-y-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                   Blocking Rules
                 </div>
                 {isUnder16 && (
@@ -3853,13 +3435,13 @@ export function AdminReviewDialog({
                   </div>
                 )}
                 {!isUnder16 && totalMissingIcds === 0 && (
-                  <div className="text-[11px] text-white/50 italic">No blocking rules.</div>
+                  <div className="text-[11px] text-slate-400 italic">No blocking rules.</div>
                 )}
               </section>
+                </div>
 
-              {/* Admin note: circular icon button opens an inline
-                  popover with the note textarea — keeps the panel
-                  compact when the admin doesn't need a note. */}
+                <div data-testid="admin-review-admin-note-group">
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Admin note</div>
               <section className="flex items-center gap-2">
                 <Popover>
                   <PopoverTrigger asChild>
@@ -3868,10 +3450,10 @@ export function AdminReviewDialog({
                       aria-label="Add admin note"
                       title={adminNote ? "Admin note recorded" : "Add admin note"}
                       data-testid="admin-review-admin-note-icon-button"
-                      className={`inline-flex items-center justify-center h-9 w-9 rounded-full border border-white/30 transition-colors ${
+                      className={`inline-flex items-center justify-center h-9 w-9 rounded-full border border-slate-300 transition-colors ${
                         adminNote
                           ? "bg-white text-[#3d4a6b]"
-                          : "bg-black/15 text-white hover:bg-black/25"
+                          : "bg-slate-50 text-slate-800 hover:bg-slate-100"
                       }`}
                     >
                       <StickyNote className="w-4 h-4" />
@@ -3905,62 +3487,14 @@ export function AdminReviewDialog({
                     />
                   </PopoverContent>
                 </Popover>
-                <div className="text-[11px] text-white/70">
+                <div className="text-[11px] text-slate-600">
                   {adminNote.trim() ? "Admin note recorded for this session" : "No admin note yet"}
                 </div>
               </section>
+                </div>
 
-              <section className="space-y-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
-                  Decision
-                </div>
-                <div className="flex flex-col gap-2">
-                  <Button
-                    type="button"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "approved" });
-                      recordAdminReviewUpdate("approval_approved", "Approved review");
-                    }}
-                    data-testid="admin-review-approve-button"
-                    data-bar-testid={`admin-review-button-approve-${patient.id}`}
-                    className="bg-emerald-500 text-white hover:bg-emerald-600 w-full"
-                  >
-                    {approvalMutation.isPending ? (
-                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
-                    )}
-                    {isUnder16 ? "Admin Override Approve" : "Approve"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "needs_info" });
-                      recordAdminReviewUpdate("approval_pended", "Pended review");
-                    }}
-                    data-testid="admin-review-pend-button"
-                    data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
-                    className="w-full bg-white/10 text-white border-white/20 hover:bg-white/20"
-                  >
-                    Pend
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "rejected" });
-                      recordAdminReviewUpdate("approval_rejected", "Rejected review");
-                    }}
-                    data-testid={`admin-review-button-reject-${patient.id}`}
-                    className="w-full text-rose-200 border-rose-300/40 bg-rose-900/40 hover:bg-rose-900/60"
-                  >
-                    Reject
-                  </Button>
-                </div>
+                <div data-testid="admin-review-scheduler-group">
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Scheduler</div>
                 {/* Scheduler routing chip. The settings source is the
                     canonical outreach_schedulers table (admin-edited
                     via Settings → Scheduler Team). When that table
@@ -3973,7 +3507,7 @@ export function AdminReviewDialog({
                     SOURCE MARKER: Engagement Center uses assigned scheduler from scheduler settings
                     SOURCE MARKER: Scheduler settings fallback is Unassigned Engagement Queue */}
                 <div
-                  className="inline-flex items-center gap-1.5 rounded-full bg-white/10 text-white/70 px-2 py-0.5 text-[10px]"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 text-[10px]"
                   data-testid="admin-review-scheduler-routing-chip"
                   data-scheduler-state={
                     engagementAssignmentQuery.data?.scheduler
@@ -3998,7 +3532,7 @@ export function AdminReviewDialog({
                         : "Scheduler routes on approval"}
                 </div>
                 <div
-                  className="text-[10px] text-white/60"
+                  className="text-[10px] text-slate-500"
                   data-testid="admin-review-scheduler-settings-source"
                   data-source-state={
                     engagementAssignmentQuery.data?.scheduler
@@ -4016,16 +3550,375 @@ export function AdminReviewDialog({
                     </span>
                   )}
                 </div>
-              </section>
-              </div>
-              </ScrollArea>
-              )}
-            </aside>
-          </div>
+                </div>
 
-          {/* ─── Bottom box — Updates Made In Patient ──────────── */}
+                <div className="space-y-2" data-testid="admin-review-reference-group">
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Reference</div>
+              <details className="group rounded-lg border border-slate-200 bg-white">
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-[13px] font-medium text-slate-700">
+                  <ChevronRight className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-90" />
+                  <span className="flex-1">Source data</span>
+                  <span className="text-[11px] font-normal text-slate-400">Hx · Dx · Rx</span>
+                </summary>
+                <div className="border-t border-slate-200 px-3 py-3" data-testid="admin-review-source-tab-content">
+                        <section className="space-y-2" data-testid="admin-review-clinical-source">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                            Clinical Source
+                          </div>
+                          <RawSourceCard
+                            label="Hx"
+                            value={patient.history}
+                            emptyText="No history entered"
+                            testId="admin-review-source-hx"
+                          />
+                          <RawSourceCard
+                            label="Dx"
+                            value={patient.diagnoses}
+                            emptyText="No diagnoses entered"
+                            testId="admin-review-source-dx"
+                          />
+                          <RawSourceCard
+                            label="Rx"
+                            value={patient.medications}
+                            emptyText="No medications entered"
+                            testId="admin-review-source-rx"
+                          />
+                          <RawSourceCard
+                            label="Previous Tests"
+                            value={
+                              typeof (patient as { previousTests?: unknown }).previousTests === "string"
+                                ? ((patient as { previousTests?: string }).previousTests ?? "")
+                                : ""
+                            }
+                            emptyText="No prior testing on file"
+                            testId="admin-review-source-prior"
+                          />
+                        </section>
+                </div>
+              </details>
+              <details className="group rounded-lg border border-slate-200 bg-white">
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-[13px] font-medium text-slate-700">
+                  <ChevronRight className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-90" />
+                  <span className="flex-1">Prior test history</span>
+                  <span className="text-[11px] font-normal text-slate-400"></span>
+                </summary>
+                <div className="border-t border-slate-200 px-3 py-3" data-testid="admin-review-history-tab-content">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-1">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                            Patient History (chart)
+                          </div>
+                          <div className="text-xs text-slate-600 whitespace-pre-wrap min-h-[3rem]">
+                            {patient.history || (
+                              <span className="italic text-slate-400">No history entered</span>
+                            )}
+                          </div>
+                        </div>
+                </div>
+              </details>
+              <details className="group rounded-lg border border-slate-200 bg-white">
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-[13px] font-medium text-slate-700">
+                  <ChevronRight className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-90" />
+                  <span className="flex-1">ICD search</span>
+                  <span className="text-[11px] font-normal text-slate-400"></span>
+                </summary>
+                <div className="border-t border-slate-200 px-3 py-3" data-testid="admin-review-icd-tab-content">
+                        <section
+                          className="space-y-1.5 rounded-2xl border border-slate-200 bg-slate-50 p-3"
+                          data-testid="admin-review-icd-search-left"
+                        >
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                  Search ICD-10
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Search ICD-10 codes beyond the current chart, then assign selected codes to ancillaries.
+                </div>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+                  <Input
+                    type="search"
+                    placeholder="Search any ICD-10 diagnosis..."
+                    value={icdSearchQuery}
+                    onChange={(e) => setIcdSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && icdSearchQuery.trim().length >= 2) {
+                        icdSearchMutation.mutate({ query: icdSearchQuery.trim() });
+                      }
+                    }}
+                    className="h-8 text-xs"
+                    data-testid="admin-review-icd-ai-search"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={
+                      icdSearchMutation.isPending || icdSearchQuery.trim().length < 2
+                    }
+                    onClick={() =>
+                      icdSearchMutation.mutate({ query: icdSearchQuery.trim() })
+                    }
+                    data-testid="admin-review-icd-ai-search-button"
+                    className="h-8 px-2"
+                  >
+                    {icdSearchMutation.isPending ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Search className="w-3 h-3" />
+                    )}
+                  </Button>
+                </div>
+
+                {icdSearchMutation.isPending && (
+                  <div
+                    className="text-[11px] text-slate-400 inline-flex items-center gap-1"
+                    data-testid="admin-review-icd-ai-search-loading"
+                  >
+                    <Loader2 className="w-3 h-3 animate-spin" /> Searching ICD codes
+                  </div>
+                )}
+                {icdSearchMutation.isError && (
+                  <div
+                    className="text-[11px] text-rose-700 inline-flex items-center gap-1"
+                    data-testid="admin-review-icd-ai-search-error"
+                  >
+                    <AlertTriangle className="w-3 h-3" /> OpenAI universal ICD search failed
+                  </div>
+                )}
+                {icdSearchMutation.isSuccess && icdSearchMutation.data?.results?.length === 0 && (
+                  <div
+                    className="text-[11px] text-slate-400 italic"
+                    data-testid="admin-review-icd-ai-search-empty"
+                  >
+                    No matching ICD codes.
+                  </div>
+                )}
+                {icdSearchMutation.isSuccess && (icdSearchMutation.data?.results ?? []).length > 0 && (
+                  <div className="flex flex-col gap-1 max-h-48 overflow-auto rounded-md border border-slate-200 bg-white">
+                    {(icdSearchMutation.data?.results ?? []).map((r) => (
+                      <button
+                        key={r.code}
+                        type="button"
+                        onClick={() => adoptIcdSearchResult(r)}
+                        data-testid="admin-review-icd-ai-search-result"
+                        className="text-left text-xs px-2 py-1.5 hover:bg-slate-100 inline-flex items-start gap-2"
+                      >
+                        <span className="font-mono text-slate-700 shrink-0">{r.code}</span>
+                        <div className="min-w-0">
+                          <div className="text-slate-800 truncate">{r.label}</div>
+                          {r.rationale && (
+                            <div className="text-[10px] text-slate-500 truncate">
+                              {r.rationale}
+                            </div>
+                          )}
+                        </div>
+                        <span
+                          className={`ml-auto inline-flex items-center rounded-full border px-1.5 text-[9px] uppercase tracking-wider ${CONFIDENCE_TONE[r.confidence]}`}
+                        >
+                          {r.confidence}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                        </section>
+                </div>
+              </details>
+              <details className="group rounded-lg border border-slate-200 bg-white" onToggle={(e) => { const el = e.currentTarget as HTMLDetailsElement; setLeftTab(el.open ? "engagement" : "source"); }}>
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-[13px] font-medium text-slate-700">
+                  <ChevronRight className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-90" />
+                  <span className="flex-1">Engagement</span>
+                  <span className="text-[11px] font-normal text-slate-400">call lists</span>
+                </summary>
+                <div className="border-t border-slate-200 px-3 py-3" data-testid="admin-review-engagement-tab-content">
+                        {/* Engagement Center source of truth: client-side
+                            grouping of /api/engagement/assignment-board
+                            (no dedicated grouped endpoint exists). Each
+                            scheduler group supports Select All + Plexus
+                            PDF + Clinician PDF scoped to selected rows.
+                            SOURCE MARKER: Engagement Center source of truth
+                            SOURCE MARKER: Scheduler call lists grouped by scheduler
+                            SOURCE MARKER: Plexus PDF by scheduler assignment
+                            SOURCE MARKER: Clinician PDF by scheduler assignment */}
+                        <div
+                          className="space-y-3"
+                          data-testid="admin-review-scheduler-call-lists"
+                        >
+                          {engagementBoardQuery.isLoading && (
+                            <div className="text-[11px] text-slate-500 italic">
+                              Loading Engagement assignments…
+                            </div>
+                          )}
+                          {engagementBoardQuery.isError && (
+                            <div className="text-[11px] text-rose-700">
+                              Could not load Engagement Center: {String(engagementBoardQuery.error)}
+                            </div>
+                          )}
+                          {!engagementBoardQuery.isLoading &&
+                            !engagementBoardQuery.isError &&
+                            schedulerGroups.length === 0 && (
+                              <div className="text-[11px] text-slate-500 italic">
+                                No Engagement assignment found for this facility yet.
+                              </div>
+                            )}
+                          {schedulerGroups.map((group) => {
+                            const selected = selectedByScheduler[group.schedulerKey] ?? new Set<number>();
+                            const eligibleIds = group.rows
+                              .map((r) => r.patientScreeningId)
+                              .filter((id): id is number => id != null);
+                            const allSelected =
+                              eligibleIds.length > 0 && eligibleIds.every((id) => selected.has(id));
+                            const selectedCount = selected.size;
+                            return (
+                              <section
+                                key={group.schedulerKey}
+                                className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-2"
+                                data-testid="admin-review-scheduler-call-list"
+                                data-scheduler-name={group.schedulerName}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="text-[11px] font-semibold text-slate-800">
+                                    {group.schedulerName}
+                                    <span className="ml-1.5 text-slate-500 font-normal">
+                                      ({group.rows.length})
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setAllSelectedForScheduler(group)}
+                                    data-testid="admin-review-select-all-scheduler-patients"
+                                    className="text-[10px] uppercase tracking-wider text-slate-600 hover:text-slate-900"
+                                  >
+                                    {allSelected ? "Clear" : "Select All"}
+                                  </button>
+                                </div>
+                                <div
+                                  className="text-[10px] text-slate-500"
+                                  data-testid="admin-review-scheduler-selected-count"
+                                >
+                                  {selectedCount} selected
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={selectedCount === 0}
+                                    onClick={() =>
+                                      generateSchedulerScopedPdf(
+                                        group,
+                                        Array.from(selected),
+                                        "plexus",
+                                      )
+                                    }
+                                    data-testid="admin-review-scheduler-plexus-pdf"
+                                    data-print-preview-testid="admin-review-plexus-print-preview"
+                                    className="rounded-md border border-slate-300 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-800 px-2 py-1 text-[11px] font-semibold transition-colors"
+                                  >
+                                    Plexus PDF
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={selectedCount === 0}
+                                    onClick={() =>
+                                      generateSchedulerScopedPdf(
+                                        group,
+                                        Array.from(selected),
+                                        "clinician",
+                                      )
+                                    }
+                                    data-testid="admin-review-scheduler-clinician-pdf"
+                                    data-print-preview-testid="admin-review-clinician-print-preview"
+                                    className="rounded-md border border-slate-300 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-800 px-2 py-1 text-[11px] font-semibold transition-colors"
+                                  >
+                                    Clinician PDF
+                                  </button>
+                                </div>
+                                {/* Hidden surface-state markers for QA / e2e. */}
+                                <span
+                                  className="sr-only"
+                                  data-testid="admin-review-print-preview-popup-blocked"
+                                  aria-hidden="true"
+                                >
+                                  Popup blocked. Allow popups to print this packet.
+                                </span>
+                                <span
+                                  className="sr-only"
+                                  data-testid="admin-review-print-preview-error"
+                                  aria-hidden="true"
+                                >
+                                  Admin Review print preview error surface.
+                                </span>
+                                <ul className="space-y-1">
+                                  {group.rows.map((r) => {
+                                    const isCurrent =
+                                      r.patientScreeningId === patient.id;
+                                    const isChecked = r.patientScreeningId != null
+                                      ? selected.has(r.patientScreeningId)
+                                      : false;
+                                    return (
+                                      <li
+                                        key={r.executionCaseId}
+                                        className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-[11px] ${
+                                          isCurrent
+                                            ? "border-slate-300 bg-slate-100"
+                                            : "border-slate-200 bg-slate-50/70"
+                                        }`}
+                                        data-testid="admin-review-scheduler-call-list-patient"
+                                        data-patient-id={r.patientScreeningId ?? ""}
+                                        data-is-current={isCurrent ? "true" : "false"}
+                                        {...(isCurrent
+                                          ? { "data-current-marker": "admin-review-current-patient-in-call-list" }
+                                          : {})}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          disabled={r.patientScreeningId == null}
+                                          onChange={() => {
+                                            if (r.patientScreeningId != null) {
+                                              toggleSelectedForScheduler(
+                                                group.schedulerKey,
+                                                r.patientScreeningId,
+                                              );
+                                            }
+                                          }}
+                                          data-testid="admin-review-select-scheduler-patient"
+                                          className="mt-0.5"
+                                        />
+                                        <div className="min-w-0 flex-1">
+                                          <div className="font-medium text-slate-800 truncate">
+                                            {r.patientName}
+                                            {isCurrent && (
+                                              <span
+                                                className="ml-1 text-[9px] uppercase tracking-wider text-slate-600"
+                                                data-testid="admin-review-current-patient-in-call-list"
+                                              >
+                                                · current
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="text-slate-500 truncate">
+                                            {[r.facility, r.scheduleDate, r.engagementStatus]
+                                              .filter(Boolean)
+                                              .join(" · ")}
+                                          </div>
+                                          {r.selectedServiceList?.length ? (
+                                            <div className="text-slate-400 truncate">
+                                              {r.selectedServiceList.join(", ")}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              </section>
+                            );
+                          })}
+                        </div>
+                </div>
+              </details>
+                </div>
+
+                <div data-testid="admin-review-updates-group">
           <div
-            className="border-t border-slate-200 bg-slate-50 px-5 py-3"
+            className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3"
             data-testid="admin-review-updates-made-box"
             data-record-helper="admin-review-record-update"
           >
@@ -4061,6 +3954,11 @@ export function AdminReviewDialog({
               </ScrollArea>
             )}
           </div>
+                </div>
+              </div>
+            </ScrollArea>
+          </aside>
+        </div>
     </>
   );
 
