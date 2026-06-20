@@ -52,6 +52,8 @@ import OutreachQualificationPage from "@/pages/outreach-qualification";
 import PlexusIQPage from "@/pages/plexus-iq";
 // Temporary design-prototype route — mock data only, not production.
 import PlexusIqPrototypePage from "@/pages/plexus-iq-prototype";
+// Temporary design-prototype route — mock data only, not production.
+import AdminReviewPrototypePage from "@/pages/admin-review-prototype";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
@@ -272,8 +274,13 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
 }
 
 function AppShell() {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const { toast } = useToast();
+
+  // Temporary full-screen design-prototype route — mock data only, no auth.
+  if (location === "/admin-review-prototype") {
+    return <AdminReviewPrototypePage />;
+  }
 
   const { data: user, isLoading, refetch } = useQuery<AuthUser>({
     queryKey: ["/api/auth/me"],
