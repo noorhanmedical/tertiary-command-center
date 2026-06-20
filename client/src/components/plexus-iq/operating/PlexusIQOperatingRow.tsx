@@ -19,6 +19,12 @@ import {
 
 const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound"];
 
+// Shared grid column template for the operating list. The header row
+// (PlexusIQOperatingList) and every data row must use this exact template so
+// columns stay aligned at all viewport widths.
+export const OPERATING_GRID_COLS =
+  "grid-cols-[auto_minmax(140px,1.25fr)_minmax(150px,1fr)_minmax(130px,1fr)_minmax(140px,1fr)_auto_auto_auto_auto]";
+
 // One patient row in the Plexus IQ clean operating list.
 //
 // Columns ONLY:
@@ -79,7 +85,7 @@ export function PlexusIQOperatingRow({
 
   return (
     <div
-      className="grid grid-cols-[auto_minmax(140px,1.25fr)_minmax(150px,1fr)_minmax(130px,1fr)_minmax(140px,1fr)_auto_auto_auto_auto] gap-3 items-center px-3 py-2 border border-slate-800 rounded-xl bg-slate-900 hover:bg-slate-800/60 transition-colors"
+      className={`grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-800 rounded-xl bg-slate-900 hover:bg-slate-800/60 transition-colors`}
       data-testid={`plexus-iq-operating-row-${patient.id}`}
       data-row-type="plexus-iq-operating-row"
     >

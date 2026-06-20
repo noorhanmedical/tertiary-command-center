@@ -28,7 +28,10 @@ import {
   PlexusIQListBar,
   type PlexusIQListQualState,
 } from "./PlexusIQListBar";
-import { PlexusIQOperatingRow } from "./PlexusIQOperatingRow";
+import {
+  PlexusIQOperatingRow,
+  OPERATING_GRID_COLS,
+} from "./PlexusIQOperatingRow";
 
 type BatchWithPatients = ScreeningBatch & { patients?: PatientScreening[] };
 
@@ -537,7 +540,23 @@ export function PlexusIQOperatingList({
                     : "No patients in this import."}
                 </div>
               ) : (
-                sortedPatients.map((p) => (
+                <>
+                  <div
+                    className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-transparent bg-slate-50/30 backdrop-blur-sm text-[10px] font-semibold uppercase tracking-wider text-slate-500`}
+                    data-testid="plexus-iq-operating-header"
+                  >
+                    {/* Checkbox column (no label) */}
+                    <div aria-hidden />
+                    <div className="truncate">Name</div>
+                    <div className="truncate">DOB</div>
+                    <div className="truncate">Insurance</div>
+                    <div className="justify-self-start">Status</div>
+                    <div className="text-right">Flags</div>
+                    <div className="text-right">Ancillary</div>
+                    <div className="text-right">Review</div>
+                    <div className="text-right">Delete</div>
+                  </div>
+                  {sortedPatients.map((p) => (
                   <PlexusIQOperatingRow
                     key={p.id}
                     patient={p}
@@ -549,7 +568,8 @@ export function PlexusIQOperatingList({
                     onOpenReview={() => setReviewPatientId(p.id)}
                     onDelete={() => onDeletePatient(p.id)}
                   />
-                ))
+                  ))}
+                </>
               )}
             </div>
           </div>
