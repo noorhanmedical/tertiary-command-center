@@ -66,13 +66,20 @@ export function PlexusIQOperatingRow({
   const ageDisplay = typeof patient.age === "number" ? `${patient.age}yo` : null;
   const isUnder16 = typeof patient.age === "number" && patient.age < 16;
 
+  const genderRaw = (patient.gender || "").trim();
+  const genderDisplay = genderRaw
+    ? genderRaw.length === 1
+      ? genderRaw.toUpperCase()
+      : genderRaw.charAt(0).toUpperCase()
+    : "—";
+
   const openReview = () => {
     if (isAdmin) onOpenReview();
   };
 
   return (
     <div
-      className="grid grid-cols-[auto_minmax(140px,1.6fr)_minmax(96px,0.9fr)_minmax(120px,1.1fr)_minmax(150px,0.9fr)_auto_auto_auto_auto] gap-3 items-center px-3 py-2 border border-slate-800 rounded-xl bg-slate-900 hover:bg-slate-800/60 transition-colors"
+      className="grid grid-cols-[auto_minmax(140px,1.25fr)_minmax(150px,1fr)_minmax(130px,1fr)_minmax(140px,1fr)_auto_auto_auto_auto] gap-3 items-center px-3 py-2 border border-slate-800 rounded-xl bg-slate-900 hover:bg-slate-800/60 transition-colors"
       data-testid={`plexus-iq-operating-row-${patient.id}`}
       data-row-type="plexus-iq-operating-row"
     >
@@ -111,6 +118,7 @@ export function PlexusIQOperatingRow({
           <span className="italic text-slate-500">—</span>
         )}
         {ageDisplay && <span className="ml-1 text-slate-400">· {ageDisplay}</span>}
+        <span className="ml-1 text-slate-400" title="Gender">· {genderDisplay}</span>
       </div>
 
       {/* Insurance */}
