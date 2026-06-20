@@ -48,13 +48,16 @@ function DockButton({
 
   const iconWrap = (
     <span
-      className={`relative inline-flex items-center justify-center transition-all duration-200 rounded-2xl ${
+      className={`relative inline-flex items-center justify-center transition-all duration-200 ease-out rounded-2xl ${
         active
           ? "bg-indigo-50 dark:bg-indigo-500/15"
           : "bg-transparent group-hover/dock-item:bg-slate-100 dark:group-hover/dock-item:bg-muted/40"
-      } ${expanded ? "h-10 w-10" : "h-9 w-9"}`}
+      } ${expanded ? "h-10 w-10" : "h-7 w-7"}`}
     >
-      <Icon className="w-5 h-5" strokeWidth={1.75} />
+      <Icon
+        className={`transition-all duration-200 ease-out ${expanded ? "w-5 h-5" : "w-4 h-4"}`}
+        strokeWidth={1.75}
+      />
     </span>
   );
 
@@ -162,8 +165,10 @@ export function GlobalFloatingDock() {
         </button>
 
         <div
-          className={`rounded-full border border-slate-200/70 dark:border-border bg-white/90 dark:bg-card/85 backdrop-blur-xl shadow-lg transition-all duration-200 ease-out ${
-            expanded ? "px-3 py-2" : "px-2 py-1.5"
+          className={`rounded-full border border-slate-200/70 dark:border-border bg-white/90 dark:bg-card/85 backdrop-blur-xl shadow-lg transition-all duration-200 ease-out origin-bottom ${
+            expanded
+              ? "px-3 py-2 opacity-100 scale-100"
+              : "px-2 py-1 opacity-40 scale-90"
           }`}
         >
           <div
