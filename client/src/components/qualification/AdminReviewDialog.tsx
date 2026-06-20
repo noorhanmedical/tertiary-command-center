@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
@@ -33,6 +33,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Plus,
+  RefreshCw,
   Sparkles,
   StickyNote,
   Trash2,
@@ -548,29 +549,50 @@ function chipKeyForAssignment(b: SupportingButton): string {
   return buttonKey(b);
 }
 
-// Patch 2 (admin-review persistence fix):
+// Admin Review persistence — corrective patch (b4b1569 follow-up).
 //
 // Build the next `reasoning` blob with `adminReview:<ancillary>` and
 // `adminReview:test:<testName>` keys updated to reflect the operator's
-// current `assignments` state. Used by the persistence useEffect so an
-// attach/detach is durable across dialog close/reopen — not just
-// across the next regenerate.
+// current `assignments` state.
+//
+// IMPORTANT: writer (this) and reader (`seedAssignmentsFromReasoning`)
+// must stay symmetrical. If this key shape changes,
+// close/reopen assignment persistence will break.
 //
 // Merge rules (preserve everything else):
 //   - Other `adminReview:<a>` keys not touched here are passed through.
 //   - Each touched key spreads its existing block then overwrites
-//     `assignedEvidence` only, so any other admin metadata (ancillaryId,
-//     ancillaryNote, regeneratedAt, regeneratedMode) survives.
+//     `assignedEvidence` only, so any other admin metadata
+//     (ancillaryId, ancillaryNote, regeneratedAt, regeneratedMode)
+//     survives.
 //   - Existing `reasoning[testName]` canonical entries are untouched.
 //   - `adminReview:updates` audit log is untouched.
-//   - Per-ultrasound-child evidence lives under
-//     `reasoning["adminReview:test:<testName>"]`, mirroring the shape
-//     that `seedAssignmentsFromReasoning` reads back.
+//
+// `staleAncillaries` (optional): a set of ancillary ids whose
+// `assignedEvidence` was just changed. The merge sets `stale: true`
+// + `staleReason` + `staleAt` on those blocks so the UI and packet QA
+// can block until regenerate runs. Other blocks' stale flags are left
+// alone.
+//
+// `clearedAncillaries` (optional): a set whose stale flags should be
+// cleared (used by the regenerate success handler).
+type AssignedEvidenceMergeOptions = {
+  staleAncillaries?: Set<string>;
+  staleReason?: string;
+  clearedAncillaries?: Set<string>;
+};
+
 function buildAssignedEvidenceReasoning(
   prevReasoning: Record<string, unknown>,
   assignments: AdminReviewAssignmentState,
+  options: AssignedEvidenceMergeOptions = {},
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...prevReasoning };
+  const staleSet = options.staleAncillaries ?? new Set<string>();
+  const clearedSet = options.clearedAncillaries ?? new Set<string>();
+  const staleReason = options.staleReason ?? "Evidence assignment changed";
+  const nowIso = new Date().toISOString();
+
   for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
     const key = `adminReview:${id}`;
     const existing =
@@ -579,11 +601,22 @@ function buildAssignedEvidenceReasoning(
         : {};
     const newAssigned =
       id === "ultrasound" ? assignments.ultrasound.parent : assignments[id];
-    next[key] = {
+    const merged: Record<string, unknown> = {
       ...existing,
       ancillaryId: id,
       assignedEvidence: newAssigned,
     };
+    if (staleSet.has(id)) {
+      merged.stale = true;
+      merged.staleReason = staleReason;
+      merged.staleAt = nowIso;
+    }
+    if (clearedSet.has(id)) {
+      merged.stale = false;
+      merged.staleReason = null;
+      merged.staleAt = null;
+    }
+    next[key] = merged;
   }
   // Ultrasound child tests live under their own key.
   for (const [testName, assigned] of Object.entries(
@@ -594,73 +627,81 @@ function buildAssignedEvidenceReasoning(
       next[key] && typeof next[key] === "object" && !Array.isArray(next[key])
         ? (next[key] as Record<string, unknown>)
         : {};
-    next[key] = {
+    const childKey = `test:${testName}`;
+    const merged: Record<string, unknown> = {
       ...existing,
       testName,
       assignedEvidence: assigned,
     };
+    if (staleSet.has(childKey)) {
+      merged.stale = true;
+      merged.staleReason = staleReason;
+      merged.staleAt = nowIso;
+    }
+    if (clearedSet.has(childKey)) {
+      merged.stale = false;
+      merged.staleReason = null;
+      merged.staleAt = null;
+    }
+    next[key] = merged;
   }
   return next;
 }
 
-function supportingButtonsEqualByKey(
-  a: SupportingButton[],
-  b: SupportingButton[],
-): boolean {
-  if (a.length !== b.length) return false;
-  const aKeys = new Set(a.map(chipKeyForAssignment));
-  for (const btn of b) {
-    if (!aKeys.has(chipKeyForAssignment(btn))) return false;
-  }
-  return true;
+/**
+ * Return the set of "target ids" that the writer is responsible for.
+ * Parents: `brainwave` / `vitalwave` / `ultrasound`.
+ * Ultrasound children: `test:<testName>`.
+ *
+ * Used by the corrective patch to mark exactly the touched targets as
+ * stale on attach/detach.
+ */
+function targetIdsForAssignmentTarget(
+  target: AssignmentTarget,
+): string[] {
+  if (target.type === "all") return ["brainwave", "vitalwave", "ultrasound"];
+  if (target.type === "ancillary") return [target.ancillaryId];
+  if (target.type === "ultrasound-parent") return ["ultrasound"];
+  if (target.type === "ultrasound-test") return [`test:${target.testName}`];
+  return [];
 }
 
 /**
- * Compare a previously-persisted reasoning blob against the current
- * `assignments` state. Returns true when no `assignedEvidence` field
- * differs — i.e., calling `buildAssignedEvidenceReasoning` would be a
- * no-op. The persistence useEffect uses this to skip the initial-mount
- * commit (when assignments are freshly seeded from reasoning and
- * therefore already match).
+ * Read the stale target ids from a reasoning blob. Returns the same
+ * id shape (`brainwave|vitalwave|ultrasound|test:<n>`) the writer uses.
  */
-function sameAssignedEvidenceState(
-  prevReasoning: Record<string, unknown>,
-  assignments: AdminReviewAssignmentState,
-): boolean {
+function readStaleTargetIds(reasoning: Record<string, unknown>): string[] {
+  const out: string[] = [];
   for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
-    const key = `adminReview:${id}`;
-    const block = prevReasoning[key];
-    const existingAssigned: SupportingButton[] =
+    const block = reasoning[`adminReview:${id}`];
+    if (
       block &&
       typeof block === "object" &&
-      Array.isArray((block as Record<string, unknown>).assignedEvidence)
-        ? ((block as Record<string, unknown>).assignedEvidence as SupportingButton[])
-        : [];
-    const newAssigned =
-      id === "ultrasound" ? assignments.ultrasound.parent : assignments[id];
-    if (!supportingButtonsEqualByKey(existingAssigned, newAssigned)) return false;
+      (block as Record<string, unknown>).stale === true
+    ) {
+      out.push(id);
+    }
   }
-  const newTestKeys = new Set(Object.keys(assignments.ultrasound.byTestName));
-  for (const k of Object.keys(prevReasoning)) {
-    if (!k.startsWith("adminReview:test:")) continue;
-    const testName = k.slice("adminReview:test:".length);
-    const block = prevReasoning[k];
-    const existingAssigned: SupportingButton[] =
+  for (const key of Object.keys(reasoning)) {
+    if (!key.startsWith("adminReview:test:")) continue;
+    const block = reasoning[key];
+    if (
       block &&
       typeof block === "object" &&
-      Array.isArray((block as Record<string, unknown>).assignedEvidence)
-        ? ((block as Record<string, unknown>).assignedEvidence as SupportingButton[])
-        : [];
-    const newAssigned = assignments.ultrasound.byTestName[testName] ?? [];
-    if (!supportingButtonsEqualByKey(existingAssigned, newAssigned)) return false;
-    newTestKeys.delete(testName);
+      (block as Record<string, unknown>).stale === true
+    ) {
+      out.push(`test:${key.slice("adminReview:test:".length)}`);
+    }
   }
-  // Test keys present in state but never persisted before — only a
-  // diff if they carry any chips (an empty new list is a no-op).
-  for (const testName of newTestKeys) {
-    if ((assignments.ultrasound.byTestName[testName] ?? []).length > 0) return false;
-  }
-  return true;
+  return out;
+}
+
+function ancillaryLabelForTargetId(id: string): string {
+  if (id === "brainwave") return "BrainWave";
+  if (id === "vitalwave") return "VitalWave";
+  if (id === "ultrasound") return "Ultrasound";
+  if (id.startsWith("test:")) return `Ultrasound · ${id.slice("test:".length)}`;
+  return id;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -1107,9 +1148,33 @@ export function AdminReviewDialog({
     return [];
   });
 
+  // Admin Review persistence — corrective patch refs.
+  //
+  // `assignmentsRef` mirrors `assignments` so handlers read the latest
+  // staged state synchronously without waiting for React to flush.
+  //
+  // `lastWrittenReasoningRef` is the authoritative local truth for
+  // "what reasoning blob have we sent to the parent so far". We rebase
+  // every attach/detach merge against this ref — NOT against
+  // `patient.reasoning` — so a still-in-flight PATCH response cannot
+  // overwrite a chained click's value.
+  //
+  // Both refs are RE-SEEDED inside the seed useEffect below whenever
+  // the dialog opens or the patient swaps.
+  const assignmentsRef = useRef<AdminReviewAssignmentState>(assignments);
+  const lastWrittenReasoningRef = useRef<Record<string, unknown>>(
+    reasoningAsObject(patient.reasoning),
+  );
+
   useEffect(() => {
     if (!open) return;
-    setAssignments(seedAssignmentsFromReasoning(reasoningAsObject(patient.reasoning)));
+    const freshAssignments = seedAssignmentsFromReasoning(
+      reasoningAsObject(patient.reasoning),
+    );
+    setAssignments(freshAssignments);
+    // Corrective patch: also seed the synchronous ref so the very
+    // first attach/detach after open uses the seeded snapshot as base.
+    assignmentsRef.current = freshAssignments;
     setAdminNote("");
     setAncillaryNotes({});
     setIcdSearchQuery("");
@@ -1138,41 +1203,137 @@ export function AdminReviewDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, patient.id]);
 
-  // Patch 2 (admin-review persistence fix):
+  // Admin Review persistence — corrective patch.
   //
-  // Persist `assignments` to patient.reasoning whenever the operator
-  // attaches or detaches evidence — not just on regenerate. Storage
-  // shape is the same one the regenerate routes use + the same one
-  // `seedAssignmentsFromReasoning` reads back, so close-and-reopen
-  // surfaces the latest staged state.
+  // The previous patch (b4b1569) used a passive useEffect to persist
+  // assignments on every `assignments` change. Replit smoke-test showed
+  // that approach was insufficient: rapid attach clicks raced with
+  // React Query cache propagation, the closure-stale `patient.reasoning`
+  // used as merge base lost concurrent updates, and the
+  // `sameAssignedEvidenceState` skip masked legitimate diffs in some
+  // ordering paths.
   //
-  // Skip the initial commit after open/patient-swap (when assignments
-  // are freshly seeded from reasoning) by comparing the merged
-  // candidate against the current reasoning — if no assignedEvidence
-  // field actually differs, we do not call onUpdate. This avoids both
-  // (a) an extra PATCH on first open, and (b) any infinite-update loop
-  // when reasoning is replayed during the same editing session.
+  // Corrective approach (this patch):
+  //   1. `assignmentsRef` mirrors `assignments` so handlers can read
+  //      the latest staged state synchronously without waiting for
+  //      React to flush a render.
+  //   2. `lastWrittenReasoningRef` is the authoritative local truth
+  //      for "what reasoning blob have we sent to the parent so far".
+  //      We rebase every attach/detach merge against this ref — NOT
+  //      against `patient.reasoning` — so a still-in-flight PATCH
+  //      response cannot overwrite a chained click's value.
+  //   3. Attach and detach handlers compute the next state
+  //      synchronously, update both refs, push to React state, and
+  //      call `onUpdate("reasoning", ...)` in the same tick. No
+  //      deferred effect.
+  //   4. Regenerate-success handlers MERGE the server-returned
+  //      `reasoning` with the live `lastWrittenReasoningRef.current`'s
+  //      `adminReview:<other>.assignedEvidence` blocks before pushing
+  //      out, so a server response that pre-dates a concurrent attach
+  //      cannot wipe other targets' staged evidence.
   //
-  // The persisted shape carries `assignedEvidence` only; per-test
-  // canonical reasoning (clinician_understanding / patient_talking_points /
-  // qualifying_factors) is still updated exclusively by the regenerate
-  // routes server-side. So an attach without a follow-up regenerate
-  // is durable but stale — exactly the operator-model intent: staged
-  // but not yet flushed to the AI reasoning layer.
+  // The refs themselves are declared higher up in the file (right
+  // after `updatesLog` so they're in scope for the seed useEffect).
+  // The seed useEffect re-seeds BOTH `assignmentsRef` and
+  // `lastWrittenReasoningRef` on open / patient-swap.
+
+  // Keep assignmentsRef in lockstep with React state — guards against
+  // any code path that bypasses the handlers below.
+  useEffect(() => {
+    assignmentsRef.current = assignments;
+  }, [assignments]);
+
+  // Re-seed the lastWrittenReasoningRef whenever the dialog opens or
+  // the patient swaps. The seed useEffect above resets `assignments`
+  // to match; we mirror the same reset here so subsequent attach/
+  // detach merges start from the real saved state.
   useEffect(() => {
     if (!open) return;
-    const prevReasoning = reasoningAsObject(patient.reasoning);
-    if (sameAssignedEvidenceState(prevReasoning, assignments)) return;
-    const nextReasoning = buildAssignedEvidenceReasoning(prevReasoning, assignments);
-    onUpdate("reasoning", nextReasoning);
-    // Note: `patient.reasoning` is intentionally NOT in the dep list
-    // for the same reason as Patch 1 above — we read it via closure on
-    // every `assignments` change and avoid re-running this effect when
-    // the parent finishes propagating the PATCH response (which would
-    // otherwise re-fire on the same payload and is already a no-op via
-    // `sameAssignedEvidenceState`, but cleaner to skip the cycle).
+    lastWrittenReasoningRef.current = reasoningAsObject(patient.reasoning);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignments, open]);
+  }, [open, patient.id]);
+
+  /**
+   * Persist a freshly-computed `assignments` snapshot through the
+   * existing `onUpdate("reasoning", ...)` path. The merge base is
+   * `lastWrittenReasoningRef.current` — NOT `patient.reasoning` from
+   * props — so rapid sequential clicks chain correctly even before
+   * React Query's cache catches up.
+   *
+   * `staleAncillaries` is the set of target ids whose `assignedEvidence`
+   * the operator just changed. They're flagged stale until the next
+   * regenerate runs.
+   */
+  function persistAssignmentsToReasoning(
+    nextAssignments: AdminReviewAssignmentState,
+    staleAncillaries: Set<string>,
+    staleReason: string,
+  ): void {
+    const base = lastWrittenReasoningRef.current;
+    const nextReasoning = buildAssignedEvidenceReasoning(
+      base,
+      nextAssignments,
+      { staleAncillaries, staleReason },
+    );
+    lastWrittenReasoningRef.current = nextReasoning;
+    onUpdate("reasoning", nextReasoning);
+  }
+
+  /**
+   * After a regenerate success, the server returns `data.patient.reasoning`.
+   * That response is reliable for the *regenerated* ancillary, but for
+   * OTHER ancillaries it reflects whatever was last persisted before
+   * the regenerate kicked off — which may NOT include attach/detach
+   * changes the operator made while the regenerate was in flight.
+   *
+   * Re-overlay the live `lastWrittenReasoningRef`'s
+   * `adminReview:<other>.assignedEvidence` blocks on top of the
+   * server's response, then clear the just-regenerated ancillary's
+   * stale flag. The result becomes the new authoritative local truth.
+   */
+  function mergeRegenerateResponseReasoning(
+    serverReasoning: Record<string, unknown>,
+    regeneratedTargetIds: Set<string>,
+  ): Record<string, unknown> {
+    const live = lastWrittenReasoningRef.current;
+    const merged: Record<string, unknown> = { ...serverReasoning };
+    // Carry forward every adminReview:* block that was newer locally
+    // (i.e., any block whose `assignedEvidence` array differs). The
+    // regenerated targets' blocks come from the server.
+    for (const key of new Set([...Object.keys(live), ...Object.keys(serverReasoning)])) {
+      if (!key.startsWith("adminReview:")) continue;
+      if (key === "adminReview:updates") {
+        // Audit log: prefer server if present, else local.
+        if (serverReasoning[key] !== undefined) merged[key] = serverReasoning[key];
+        else if (live[key] !== undefined) merged[key] = live[key];
+        continue;
+      }
+      const targetId = key === "adminReview:ultrasound" ? "ultrasound"
+        : key === "adminReview:brainwave" ? "brainwave"
+        : key === "adminReview:vitalwave" ? "vitalwave"
+        : key.startsWith("adminReview:test:") ? `test:${key.slice("adminReview:test:".length)}`
+        : null;
+      if (targetId == null) continue;
+      if (regeneratedTargetIds.has(targetId)) {
+        // Trust server for the regenerated block.
+        if (serverReasoning[key] !== undefined) merged[key] = serverReasoning[key];
+      } else {
+        // Carry forward local block (preserves operator's staged
+        // assignedEvidence + stale flag for non-regenerated targets).
+        if (live[key] !== undefined) merged[key] = live[key];
+      }
+    }
+    // Clear stale for the regenerated targets — overlay onto whichever
+    // block now wins.
+    const cleared = buildAssignedEvidenceReasoning(
+      merged,
+      assignmentsRef.current,
+      {
+        clearedAncillaries: regeneratedTargetIds,
+      },
+    );
+    return cleared;
+  }
 
   // recordAdminReviewUpdate — append to the session log and persist
   // to patient.reasoning["adminReview:updates"] so the audit trail
@@ -1662,35 +1823,43 @@ export function AdminReviewDialog({
   // every diagnosis from patient.diagnoses is a valid SupportingButton.
   // ICD Search is an optional add-on, not a prerequisite.
   function assignToTarget(target: AssignmentTarget, btn: SupportingButton) {
-    setAssignments((prev) => {
-      const next: AdminReviewAssignmentState = {
-        brainwave: [...prev.brainwave],
-        vitalwave: [...prev.vitalwave],
-        ultrasound: {
-          parent: [...prev.ultrasound.parent],
-          byTestName: { ...prev.ultrasound.byTestName },
-        },
-      };
-      const k = chipKeyForAssignment(btn);
-      const pushTo = (arr: SupportingButton[]) => {
-        if (!arr.some((c) => chipKeyForAssignment(c) === k)) arr.push(btn);
-      };
-      if (target.type === "all") {
-        pushTo(next.brainwave);
-        pushTo(next.vitalwave);
-        pushTo(next.ultrasound.parent);
-      } else if (target.type === "ancillary") {
-        pushTo(next[target.ancillaryId]);
-      } else if (target.type === "ultrasound-parent") {
-        pushTo(next.ultrasound.parent);
-      } else if (target.type === "ultrasound-test") {
-        const list = next.ultrasound.byTestName[target.testName] ?? [];
-        const arr = [...list];
-        pushTo(arr);
-        next.ultrasound.byTestName[target.testName] = arr;
-      }
-      return next;
-    });
+    // Corrective patch: compute the next snapshot ONCE using the
+    // synchronously-tracked ref (not React state) so rapid sequential
+    // clicks chain correctly even before React commits.
+    const prev = assignmentsRef.current;
+    const next: AdminReviewAssignmentState = {
+      brainwave: [...prev.brainwave],
+      vitalwave: [...prev.vitalwave],
+      ultrasound: {
+        parent: [...prev.ultrasound.parent],
+        byTestName: { ...prev.ultrasound.byTestName },
+      },
+    };
+    const k = chipKeyForAssignment(btn);
+    const pushTo = (arr: SupportingButton[]) => {
+      // Dedupe ONLY inside the target being changed.
+      if (!arr.some((c) => chipKeyForAssignment(c) === k)) arr.push(btn);
+    };
+    if (target.type === "all") {
+      pushTo(next.brainwave);
+      pushTo(next.vitalwave);
+      pushTo(next.ultrasound.parent);
+    } else if (target.type === "ancillary") {
+      pushTo(next[target.ancillaryId]);
+    } else if (target.type === "ultrasound-parent") {
+      pushTo(next.ultrasound.parent);
+    } else if (target.type === "ultrasound-test") {
+      const list = next.ultrasound.byTestName[target.testName] ?? [];
+      const arr = [...list];
+      pushTo(arr);
+      next.ultrasound.byTestName[target.testName] = arr;
+    }
+    // Sync ref + React state, then persist.
+    assignmentsRef.current = next;
+    setAssignments(next);
+    const stale = new Set(targetIdsForAssignmentTarget(target));
+    persistAssignmentsToReasoning(next, stale, "Evidence attached");
+
     const type: AdminReviewUpdateType =
       btn.kind === "icd_disease"
         ? "diagnosis_added"
@@ -1707,41 +1876,53 @@ export function AdminReviewDialog({
   }
 
   function unassign(from: AssignmentTarget, btn: SupportingButton) {
-    setAssignments((prev) => {
-      const k = chipKeyForAssignment(btn);
-      const next: AdminReviewAssignmentState = {
-        brainwave: prev.brainwave.filter((c) => chipKeyForAssignment(c) !== k),
-        vitalwave: prev.vitalwave.filter((c) => chipKeyForAssignment(c) !== k),
-        ultrasound: {
-          parent: prev.ultrasound.parent.filter((c) => chipKeyForAssignment(c) !== k),
-          byTestName: { ...prev.ultrasound.byTestName },
+    // Corrective patch: same synchronous compute-and-persist pattern
+    // as `assignToTarget`. Detach scopes to the exact target the
+    // operator clicked; other targets keep the same evidence.
+    const prev: AdminReviewAssignmentState = assignmentsRef.current;
+    const k = chipKeyForAssignment(btn);
+    const filterOut = (arr: SupportingButton[]): SupportingButton[] =>
+      arr.filter((c: SupportingButton) => chipKeyForAssignment(c) !== k);
+    const next: AdminReviewAssignmentState = {
+      brainwave: [...prev.brainwave],
+      vitalwave: [...prev.vitalwave],
+      ultrasound: {
+        parent: [...prev.ultrasound.parent],
+        byTestName: { ...prev.ultrasound.byTestName },
+      },
+    };
+    if (from.type === "all") {
+      next.brainwave = filterOut(prev.brainwave);
+      next.vitalwave = filterOut(prev.vitalwave);
+      next.ultrasound = {
+        parent: filterOut(prev.ultrasound.parent),
+        byTestName: { ...prev.ultrasound.byTestName },
+      };
+    } else if (from.type === "ancillary") {
+      if (from.ancillaryId === "brainwave") {
+        next.brainwave = filterOut(prev.brainwave);
+      } else if (from.ancillaryId === "vitalwave") {
+        next.vitalwave = filterOut(prev.vitalwave);
+      }
+    } else if (from.type === "ultrasound-parent") {
+      next.ultrasound = {
+        parent: filterOut(prev.ultrasound.parent),
+        byTestName: { ...prev.ultrasound.byTestName },
+      };
+    } else if (from.type === "ultrasound-test") {
+      const list = prev.ultrasound.byTestName[from.testName] ?? [];
+      next.ultrasound = {
+        parent: [...prev.ultrasound.parent],
+        byTestName: {
+          ...prev.ultrasound.byTestName,
+          [from.testName]: filterOut(list),
         },
       };
-      if (from.type === "ancillary") {
-        next.brainwave = from.ancillaryId === "brainwave" ? prev.brainwave.filter((c) => chipKeyForAssignment(c) !== k) : prev.brainwave;
-        next.vitalwave = from.ancillaryId === "vitalwave" ? prev.vitalwave.filter((c) => chipKeyForAssignment(c) !== k) : prev.vitalwave;
-        next.ultrasound = prev.ultrasound;
-      } else if (from.type === "ultrasound-parent") {
-        next.brainwave = prev.brainwave;
-        next.vitalwave = prev.vitalwave;
-        next.ultrasound = {
-          parent: prev.ultrasound.parent.filter((c) => chipKeyForAssignment(c) !== k),
-          byTestName: prev.ultrasound.byTestName,
-        };
-      } else if (from.type === "ultrasound-test") {
-        const list = prev.ultrasound.byTestName[from.testName] ?? [];
-        next.brainwave = prev.brainwave;
-        next.vitalwave = prev.vitalwave;
-        next.ultrasound = {
-          parent: prev.ultrasound.parent,
-          byTestName: {
-            ...prev.ultrasound.byTestName,
-            [from.testName]: list.filter((c) => chipKeyForAssignment(c) !== k),
-          },
-        };
-      }
-      return next;
-    });
+    }
+    assignmentsRef.current = next;
+    setAssignments(next);
+    const stale = new Set(targetIdsForAssignmentTarget(from));
+    persistAssignmentsToReasoning(next, stale, "Evidence detached");
   }
 
   // Record a removed qualifying factor + unassign the button from the
@@ -2103,7 +2284,21 @@ export function AdminReviewDialog({
         description: "Canonical reasoning updated.",
       });
       if (data.patient) {
-        onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
+        // Corrective patch: re-overlay other targets' staged
+        // assignedEvidence on top of the server response so a
+        // concurrent attach/detach that the regenerate request did NOT
+        // know about cannot be lost. Also clears the just-regenerated
+        // ancillary's stale flag.
+        const serverReasoning = (data.patient.reasoning ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const merged = mergeRegenerateResponseReasoning(
+          serverReasoning,
+          new Set([vars.ancillary]),
+        );
+        lastWrittenReasoningRef.current = merged;
+        onUpdate("reasoning", merged);
       }
       recordAdminReviewUpdate(
         "regenerate",
@@ -2171,7 +2366,18 @@ export function AdminReviewDialog({
         description: "Canonical reasoning updated for this test.",
       });
       if (data.patient) {
-        onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
+        // Corrective patch: merge server response with live staged
+        // assignedEvidence; clear stale for the just-regenerated test.
+        const serverReasoning = (data.patient.reasoning ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const merged = mergeRegenerateResponseReasoning(
+          serverReasoning,
+          new Set([`test:${vars.testName}`]),
+        );
+        lastWrittenReasoningRef.current = merged;
+        onUpdate("reasoning", merged);
       }
       recordAdminReviewUpdate("regenerate", `Regenerated ${vars.testName}`);
       setRegenErrors((prev) => ({ ...prev, [`test:${vars.testName}`]: null }));
@@ -2190,6 +2396,47 @@ export function AdminReviewDialog({
       setRegenInFlight((prev) => ({ ...prev, [`test:${vars.testName}`]: false }));
     },
   });
+
+  // Admin Review persistence — corrective patch: Regenerate Changed
+  //
+  // Sequentially regenerates every target whose `adminReview:<id>` block
+  // currently carries `stale: true`. Sequential (not parallel) so each
+  // call sees the previous call's server-side update; merges via
+  // `mergeRegenerateResponseReasoning` preserve other targets' staged
+  // evidence at every step. A per-target failure does NOT abort the
+  // queue — the target keeps its stale flag and its row-level error
+  // surfaces via `setRegenErrors` (existing UI).
+  const [regenChangedInFlight, setRegenChangedInFlight] = useState(false);
+  const regenerateChangedTargets = useCallback(async (): Promise<void> => {
+    const staleIds = readStaleTargetIds(lastWrittenReasoningRef.current);
+    if (staleIds.length === 0) return;
+    setRegenChangedInFlight(true);
+    try {
+      for (const targetId of staleIds) {
+        try {
+          if (
+            targetId === "brainwave" ||
+            targetId === "vitalwave" ||
+            targetId === "ultrasound"
+          ) {
+            await regenerateAncillaryMutation.mutateAsync({ ancillary: targetId });
+          } else if (targetId.startsWith("test:")) {
+            const testName = targetId.slice("test:".length);
+            await regenerateTestMutation.mutateAsync({
+              testName,
+              ancillaryId: "ultrasound",
+            });
+          }
+        } catch {
+          // Per-target failure already surfaces via the mutation's
+          // onError handler — keep going so the operator sees per-row
+          // errors but successful targets clear their stale flag.
+        }
+      }
+    } finally {
+      setRegenChangedInFlight(false);
+    }
+  }, [regenerateAncillaryMutation, regenerateTestMutation]);
 
   const approvalMutation = useMutation<
     { ok: boolean; patient: PatientScreening },
@@ -2360,6 +2607,40 @@ export function AdminReviewDialog({
                   </button>
                 </div>
               )}
+              {/* Admin Review persistence — corrective patch:
+                  Regenerate Changed button. Visible whenever any
+                  `adminReview:<id>` block carries `stale: true`.
+                  Reads from `lastWrittenReasoningRef.current` so the
+                  count reflects the synchronous local truth (not
+                  patient.reasoning which lags by a roundtrip). */}
+              {(() => {
+                const staleIds = readStaleTargetIds(
+                  lastWrittenReasoningRef.current,
+                );
+                if (staleIds.length === 0) return null;
+                const label = staleIds
+                  .map(ancillaryLabelForTargetId)
+                  .join(", ");
+                return (
+                  <button
+                    type="button"
+                    onClick={() => void regenerateChangedTargets()}
+                    disabled={regenChangedInFlight}
+                    aria-label="Regenerate Changed"
+                    title={`Regenerate: ${label}`}
+                    data-testid="admin-review-regenerate-changed"
+                    data-stale-count={staleIds.length}
+                    className="inline-flex items-center gap-1 h-7 px-2 rounded-md bg-amber-500/90 hover:bg-amber-500 text-white text-[11px] font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {regenChangedInFlight ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-3 h-3" />
+                    )}
+                    Regenerate Changed ({staleIds.length})
+                  </button>
+                );
+              })()}
               <button
                 type="button"
                 onClick={() => setLeftPanelOpen((v) => !v)}
