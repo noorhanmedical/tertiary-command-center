@@ -39,6 +39,8 @@ import {
 import {
   importPlexusIqClinicalRows,
   startPlexusIqQualificationJob,
+  fetchPlexusIqQualificationJobStatus,
+  type QualificationJobStatus,
 } from "@/lib/plexusIqClinicalImportApi";
 import type { PlexusIqClinicalImportRow } from "@/lib/plexusIqClinicalImportParser";
 import {
@@ -71,6 +73,7 @@ function mergeQualificationJobs(
 import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
 import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
 import { PlexusIQWorkspace } from "@/components/plexus-iq/PlexusIQWorkspace";
+import { PlexusIQOperatingList } from "@/components/plexus-iq/operating/PlexusIQOperatingList";
 
 // Plexus IQ page — patient workspace center + calendar drawer.
 //
@@ -375,6 +378,40 @@ export default function PlexusIQPage() {
       // localStorage unavailable (incognito quota, SSR, etc.); ignore.
     }
   }, [activeQualificationJobs]);
+
+  // Poll each active job's status (shares the cache/poll with the
+  // status strip — React Query dedups by queryKey). Auto-stops per job
+  // once terminal. Drives runningBatchIds so a batch leaves the
+  // "running" state the moment its job completes/fails/cancels rather
+  // than lingering until the user dismisses the strip.
+  const jobStatusQueries = useQueries({
+    queries: activeQualificationJobs.map((j) => ({
+      queryKey: ["plexus-iq-qualification-job", j.jobId] as const,
+      queryFn: () => fetchPlexusIqQualificationJobStatus(j.jobId),
+      refetchInterval: (q: { state: { data?: QualificationJobStatus } }) => {
+        const s = q.state.data?.status;
+        return s === "completed" || s === "failed" || s === "cancelled"
+          ? false
+          : 2500;
+      },
+    })),
+  });
+  const jobStatuses = jobStatusQueries.map((q) => q.data?.status);
+
+  // Batch IDs with a qualification run actively in flight — non-terminal
+  // jobs (survives refresh via localStorage) plus the in-session analyze
+  // action.
+  const runningBatchIds = useMemo(() => {
+    const ids = new Set<number>();
+    activeQualificationJobs.forEach((j, i) => {
+      const s = jobStatuses[i];
+      const terminal = s === "completed" || s === "failed" || s === "cancelled";
+      if (!terminal && typeof j.batchId === "number") ids.add(j.batchId);
+    });
+    if (analyzingBatchId != null) ids.add(analyzingBatchId);
+    return ids;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeQualificationJobs, jobStatuses.join("|"), analyzingBatchId]);
 
   const handleClinicalImport = useCallback(
     async (
@@ -797,15 +834,14 @@ export default function PlexusIQPage() {
             />
           </div>
         )}
-        <PlexusIQWorkspace
+        <PlexusIQOperatingList
           summary={summary}
+          batches={batches}
           batchDetails={batchDetails}
-          analyzingBatchId={analyzingBatchId}
+          runningBatchIds={runningBatchIds}
           analyzingPatients={analyzingPatients}
           onGenerateBatch={handleGenerateBatch}
-          onOpenFinalSchedule={handleOpenFinalSchedule}
           onDeleteAllForBatch={handleDeleteAllForBatch}
-          onDeleteAllForFacility={handleDeleteAllForFacility}
           onUpdatePatient={handleUpdatePatient}
           onDeletePatient={handleDeletePatient}
           onAnalyzeOnePatient={handleAnalyzePatient}

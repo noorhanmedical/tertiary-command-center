@@ -1,0 +1,2 @@
+- [Plexus IQ running state](plexus-iq-running-state.md) — a batch's "qualification running" UI must derive from non-terminal job poll status, not mere presence in the activeQualificationJobs strip (it persists until dismissed).
+- [AdminReviewDialog inline variant](admin-review-inline-variant.md) — same review surface renders as Dialog or embedded panel via a `variant` prop; pattern + Radix-context gotchas.
