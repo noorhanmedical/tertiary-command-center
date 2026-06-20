@@ -236,6 +236,28 @@ export default function PlexusIQPage() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [openDate, setOpenDate] = useState<string | null>(null);
 
+  // ───── Operating-list selection bridge ───────────────────────────────
+  // The operating list reports its active facility/date selection up so
+  // Add-Patient / Bulk-Import can default their destination to the list
+  // the user is currently viewing. `focusBatch` is the reverse channel:
+  // after an import we ask the operating list to select the batch the
+  // patients landed in.
+  const [operatingSelection, setOperatingSelection] = useState<{
+    facility: string | null;
+    scheduleDate: string | null;
+    batchId: number | null;
+  }>({ facility: null, scheduleDate: null, batchId: null });
+  const [focusBatch, setFocusBatch] = useState<{ id: number; facility: string } | null>(
+    null,
+  );
+  const handleFocusConsumed = useCallback(() => setFocusBatch(null), []);
+
+  // Destination defaults handed to the Add-Patient / Bulk-Import modals.
+  // An unscheduled (null date) selection falls back to today inside the
+  // modals; we only forward a concrete ISO date.
+  const addDefaultFacility = operatingSelection.facility ?? undefined;
+  const addDefaultScheduleDate = operatingSelection.scheduleDate ?? undefined;
+
   const batchesForOpenDate = useMemo(
     () => (openDate ? batches.filter((b) => b.scheduleDate === openDate) : []),
     [batches, openDate],
@@ -319,6 +341,8 @@ export default function PlexusIQPage() {
           description: `${input.facility} on ${input.scheduleDate}`,
         });
         refreshAll();
+        // Focus the operating list on the batch the patient landed in.
+        setFocusBatch({ id: targetBatchId, facility: input.facility });
         return true;
       } catch (err) {
         toast({
@@ -451,6 +475,19 @@ export default function PlexusIQPage() {
           }`,
         });
 
+        // Focus the operating list on the batch the patients landed in.
+        // Prefer the group matching the import defaults; otherwise the
+        // first group in the map.
+        const targetGroup =
+          result.batchPatientMap.find(
+            (g) =>
+              g.facility === defaults.facility &&
+              g.scheduleDate === defaults.scheduleDate,
+          ) ?? result.batchPatientMap[0];
+        if (targetGroup) {
+          setFocusBatch({ id: targetGroup.batchId, facility: targetGroup.facility });
+        }
+
         // Kick off qualification jobs for every created batch. We poll
         // all of them concurrently in the banner; failed/incomplete
         // patients can be retried per-job from there.
@@ -516,10 +553,13 @@ export default function PlexusIQPage() {
       let processed = 0;
       const total = rows.length;
 
+      let firstBatch: { id: number; facility: string } | null = null;
+
       try {
         for (const [, groupRows] of groups) {
           const first = groupRows[0];
           const targetBatchId = await resolveBatchId(first.facility, first.scheduleDate);
+          if (!firstBatch) firstBatch = { id: targetBatchId, facility: first.facility };
 
           for (const r of groupRows) {
             await addPatientMut.mutateAsync({
@@ -550,6 +590,8 @@ export default function PlexusIQPage() {
           description: `Imported ${total} patient${total === 1 ? "" : "s"} into ${groups.size} batch${groups.size === 1 ? "" : "es"} across ${uniqueFacilities} facilit${uniqueFacilities === 1 ? "y" : "ies"}.`,
         });
         refreshAll();
+        // Focus the operating list on the first batch the patients landed in.
+        if (firstBatch) setFocusBatch(firstBatch);
         setBulkOpen(false);
       } catch (err) {
         toast({
@@ -867,6 +909,9 @@ export default function PlexusIQPage() {
           onUpdatePatient={handleUpdatePatient}
           onDeletePatient={handleDeletePatient}
           onAnalyzeOnePatient={handleAnalyzePatient}
+          onSelectionChange={setOperatingSelection}
+          focusBatch={focusBatch}
+          onFocusConsumed={handleFocusConsumed}
         />
       </main>
 
@@ -911,6 +956,8 @@ export default function PlexusIQPage() {
         onSubmit={handleAddPatient}
         pending={addPatientMut.isPending || createBatchMut.isPending}
         defaultPatientType={defaultPatientType}
+        defaultFacility={addDefaultFacility}
+        defaultScheduleDate={addDefaultScheduleDate}
       />
 
       <PlexusIQBulkImportModal
@@ -920,6 +967,8 @@ export default function PlexusIQPage() {
         onClinicalImport={handleClinicalImport}
         pending={bulkPending}
         progress={bulkProgress}
+        defaultFacility={addDefaultFacility}
+        defaultScheduleDate={addDefaultScheduleDate}
       />
 
       <PlexusIQDayModal

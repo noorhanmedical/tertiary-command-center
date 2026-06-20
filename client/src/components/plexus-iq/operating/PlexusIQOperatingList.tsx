@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AuthUser } from "@/App";
 import type { PatientScreening, ScreeningBatch } from "@shared/schema";
@@ -46,6 +46,23 @@ export type PlexusIQOperatingListProps = {
   onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
   onDeletePatient: (id: number) => void;
   onAnalyzeOnePatient: (id: number) => void;
+  /**
+   * Fires whenever the operating list's active selection changes so the
+   * page can default Add-Patient / Bulk-Import to the facility + date the
+   * user is currently viewing.
+   */
+  onSelectionChange?: (sel: {
+    facility: string | null;
+    scheduleDate: string | null;
+    batchId: number | null;
+  }) => void;
+  /**
+   * Imperative request to focus a specific batch (e.g. the one freshly
+   * imported patients landed in). When set, the list switches its facility
+   * + batch selection to it, then calls `onFocusConsumed`.
+   */
+  focusBatch?: { id: number; facility: string } | null;
+  onFocusConsumed?: () => void;
 };
 
 const UNSCHEDULED_KEY = "unscheduled";
@@ -114,6 +131,9 @@ export function PlexusIQOperatingList({
   onUpdatePatient,
   onDeletePatient,
   onAnalyzeOnePatient,
+  onSelectionChange,
+  focusBatch,
+  onFocusConsumed,
 }: PlexusIQOperatingListProps) {
   const { toast } = useToast();
   const { data: currentUser } = useQuery<AuthUser>({
@@ -217,6 +237,17 @@ export function PlexusIQOperatingList({
     () => batches.find((b) => b.id === selectedBatchId) ?? null,
     [batches, selectedBatchId],
   );
+  const selectedScheduleDate = selectedBatch?.scheduleDate ?? null;
+
+  // Report the active selection up so the page can default Add-Patient /
+  // Bulk-Import to the facility + date currently in view.
+  useEffect(() => {
+    onSelectionChange?.({
+      facility: selectedFacility,
+      scheduleDate: selectedScheduleDate,
+      batchId: selectedBatchId,
+    });
+  }, [onSelectionChange, selectedFacility, selectedScheduleDate, selectedBatchId]);
 
   const [expandedOverride, setExpandedOverride] = useState<Set<string> | null>(null);
   const expandedDates = useMemo(() => {
@@ -294,6 +325,18 @@ export function PlexusIQOperatingList({
 
   // ── Review panel ────────────────────────────────────────────────────
   const [reviewPatientId, setReviewPatientId] = useState<number | null>(null);
+
+  // Apply an imperative focus request (e.g. after an import) by switching
+  // the facility + batch selection to the requested batch, then clearing
+  // the request via onFocusConsumed.
+  useEffect(() => {
+    if (!focusBatch) return;
+    setFacilityOverride(focusBatch.facility);
+    setBatchOverride(focusBatch.id);
+    setExpandedOverride(null);
+    setReviewPatientId(null);
+    onFocusConsumed?.();
+  }, [focusBatch, onFocusConsumed]);
 
   // ── Qualification state for the list bar ────────────────────────────
   const qualState: PlexusIQListQualState = useMemo(() => {
