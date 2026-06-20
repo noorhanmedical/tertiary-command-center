@@ -66,13 +66,12 @@ export function PlexusIQDatePanel({
         )}
         {groups.map((group) => {
           const expanded = expandedDates.has(group.key);
-          const total = group.batches.reduce((n, b) => n + b.patientCount, 0);
           return (
             <div key={group.key}>
               <button
                 type="button"
                 onClick={() => onToggleDate(group.key)}
-                className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-slate-800 transition-colors text-left"
+                className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors text-left"
                 data-testid={`button-date-group-${group.key}`}
               >
                 {expanded ? (
@@ -80,10 +79,9 @@ export function PlexusIQDatePanel({
                 ) : (
                   <ChevronRight className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                 )}
-                <span className="text-sm font-medium text-slate-200 truncate flex-1">
+                <span className="text-sm font-medium text-slate-100 truncate flex-1">
                   {group.label}
                 </span>
-                <span className="text-[10px] text-slate-400 tabular-nums">{total}</span>
               </button>
               {expanded && (
                 <div className="ml-3 pl-2 border-l border-slate-800 space-y-0.5 mt-0.5">
