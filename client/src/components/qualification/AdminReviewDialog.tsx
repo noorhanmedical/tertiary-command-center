@@ -131,6 +131,117 @@ export type AdminReviewUpdateEntry = {
   metadata?: Record<string, unknown>;
 };
 
+// ────────────────────────────────────────────────────────────────────
+// Updates grouping — the bottom "Updates" box groups change entries by
+// ancillary (BrainWave / VitalWave / Ultrasound) instead of a flat
+// chronological list. Only per-ancillary clinical changes appear here;
+// session-meta entries (approvals, notes, regenerate, pdf, icd search)
+// are intentionally excluded.
+// ────────────────────────────────────────────────────────────────────
+const UPDATE_CHANGE_TYPES: ReadonlySet<AdminReviewUpdateType> = new Set([
+  "diagnosis_added",
+  "medication_added",
+  "symptom_added",
+  "qualifying_factor_removed",
+  "ancillary_removed",
+  "ultrasound_child_removed",
+]);
+
+function ancillaryOfUpdateEntry(
+  entry: AdminReviewUpdateEntry,
+): AdminReviewAncillaryId | null {
+  const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+  const direct = meta.ancillary;
+  if (direct === "brainwave" || direct === "vitalwave" || direct === "ultrasound") {
+    return direct;
+  }
+  const t = (meta.target ?? meta.from) as
+    | { type?: string; ancillaryId?: string }
+    | undefined;
+  if (t && typeof t === "object") {
+    if (
+      t.type === "ancillary" &&
+      (t.ancillaryId === "brainwave" || t.ancillaryId === "vitalwave")
+    ) {
+      return t.ancillaryId;
+    }
+    if (t.type === "ultrasound-parent" || t.type === "ultrasound-test") {
+      return "ultrasound";
+    }
+  }
+  if (entry.type === "ultrasound_child_removed") return "ultrasound";
+  return null;
+}
+
+// Short, clean change wording, e.g. "Removed PTSD" / "Added diabetes
+// mellitus". Strips the verbose "qualifying factor:" / "diagnosis:"
+// prefixes the audit log stores.
+function shortUpdateText(entry: AdminReviewUpdateEntry): string {
+  const label = entry.label ?? "";
+  const afterColon = label.includes(":")
+    ? label.slice(label.indexOf(":") + 1).trim()
+    : label.trim();
+  switch (entry.type) {
+    case "diagnosis_added":
+    case "medication_added":
+    case "symptom_added":
+      return `Added ${afterColon}`;
+    case "qualifying_factor_removed":
+    case "ultrasound_child_removed":
+      return `Removed ${afterColon}`;
+    case "ancillary_removed":
+      return "Removed ancillary";
+    default:
+      return label;
+  }
+}
+
+const UPDATE_GROUP_ORDER: AdminReviewAncillaryId[] = [
+  "brainwave",
+  "vitalwave",
+  "ultrasound",
+];
+
+const UPDATE_GROUP_ACCENT: Record<AdminReviewAncillaryId, string> = {
+  brainwave: "text-violet-700",
+  vitalwave: "text-rose-700",
+  ultrasound: "text-emerald-700",
+};
+
+const UPDATE_GROUP_DOT: Record<AdminReviewAncillaryId, string> = {
+  brainwave: "bg-violet-500",
+  vitalwave: "bg-rose-500",
+  ultrasound: "bg-emerald-500",
+};
+
+function groupUpdatesByAncillary(
+  updates: AdminReviewUpdateEntry[],
+): { ancillary: AdminReviewAncillaryId; entries: AdminReviewUpdateEntry[] }[] {
+  const byAncillary: Record<AdminReviewAncillaryId, AdminReviewUpdateEntry[]> = {
+    brainwave: [],
+    vitalwave: [],
+    ultrasound: [],
+  };
+  for (const entry of updates) {
+    if (!UPDATE_CHANGE_TYPES.has(entry.type)) continue;
+    const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+    const tgt = (meta.target ?? meta.from) as { type?: string } | undefined;
+    if (tgt && typeof tgt === "object" && tgt.type === "all") {
+      byAncillary.brainwave.push(entry);
+      byAncillary.vitalwave.push(entry);
+      byAncillary.ultrasound.push(entry);
+      continue;
+    }
+    const ancillary = ancillaryOfUpdateEntry(entry);
+    if (!ancillary) continue;
+    byAncillary[ancillary].push(entry);
+  }
+  return UPDATE_GROUP_ORDER.filter((a) => byAncillary[a].length > 0).map((a) => ({
+    ancillary: a,
+    entries: byAncillary[a],
+  }));
+}
+
 const CONFIDENCE_TONE: Record<string, string> = {
   high: "bg-emerald-50 text-emerald-800 border-emerald-200",
   medium: "bg-amber-50 text-amber-800 border-amber-200",
@@ -807,7 +918,6 @@ export function AdminReviewDialog({
   const [sourceEditDx, setSourceEditDx] = useState("");
   const [sourceEditRx, setSourceEditRx] = useState("");
   const [sourceDataSaved, setSourceDataSaved] = useState(false);
-  const [sourceRegenInFlight, setSourceRegenInFlight] = useState(false);
 
   // Local mirrors of Hx/Dx/Rx that update immediately when source data
   // is saved, so evidence buttons re-parse without waiting for the parent
@@ -968,7 +1078,6 @@ export function AdminReviewDialog({
     });
     setSourceEditMode(false);
     setSourceDataSaved(false);
-    setSourceRegenInFlight(false);
     const stored = reasoningAsObject(patient.reasoning)["adminReview:updates"];
     setUpdatesLog(Array.isArray(stored) ? (stored as AdminReviewUpdateEntry[]) : []);
     // Patch 1 (admin-review persistence fix):
@@ -1136,8 +1245,13 @@ export function AdminReviewDialog({
     };
     setUpdatesLog((prev) => {
       const next = [entry, ...prev].slice(0, 200);
-      const reasoning = reasoningAsObject(patient.reasoning);
-      const nextReasoning = { ...reasoning, "adminReview:updates": next };
+      // Merge into the authoritative local reasoning ref — NOT
+      // patient.reasoning from props — so an audit-log write never
+      // clobbers freshly-written assignedEvidence / stale flags from a
+      // just-prior attach/detach/source-edit on the same tick.
+      const base = lastWrittenReasoningRef.current;
+      const nextReasoning = { ...base, "adminReview:updates": next };
+      lastWrittenReasoningRef.current = nextReasoning;
       onUpdate("reasoning", nextReasoning);
       return next;
     });
@@ -1898,7 +2012,7 @@ export function AdminReviewDialog({
       recordAdminReviewUpdate(
         "ancillary_removed",
         `Removed ancillary: ${categoryLabels[vars.ancillary]}`,
-        { removed: data.removedTests ?? [] },
+        { removed: data.removedTests ?? [], ancillary: vars.ancillary },
       );
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
     },
@@ -2053,9 +2167,12 @@ export function AdminReviewDialog({
           assignedEvidence: evidenceForCall,
           ancillaryNote: ancillaryNotes[ancillary] ?? "",
           adminNote,
-          diagnoses: patient.diagnoses ?? "",
-          medications: patient.medications ?? "",
-          history: patient.history ?? "",
+          // Use the local mirrors (updated synchronously on source save) so a
+          // Regenerate fired right after editing never sends stale Hx/Dx/Rx,
+          // even before the parent re-propagates the patient prop.
+          diagnoses: localDx,
+          medications: localRx,
+          history: localHx,
           icdCodes: activeIcdCodes(),
           removedFactors: removedForCall,
           priorQualifyingFactorsByTest,
@@ -2135,9 +2252,12 @@ export function AdminReviewDialog({
           assignedEvidence: evidenceForCall,
           ancillaryNote: ancillaryNotes[`test:${testName}`] ?? "",
           adminNote,
-          diagnoses: patient.diagnoses ?? "",
-          medications: patient.medications ?? "",
-          history: patient.history ?? "",
+          // Use the local mirrors (updated synchronously on source save) so a
+          // Regenerate fired right after editing never sends stale Hx/Dx/Rx,
+          // even before the parent re-propagates the patient prop.
+          diagnoses: localDx,
+          medications: localRx,
+          history: localHx,
           icdCodes: activeIcdCodes(),
           removedFactors: removedForCall,
           priorQualifyingFactorsByTest,
@@ -2223,6 +2343,41 @@ export function AdminReviewDialog({
     }
   }, [regenerateAncillaryMutation, regenerateTestMutation]);
 
+  // The single Regenerate action surfaced in the Updates panel. Source-data
+  // edits invalidate every ancillary (we don't track which Hx/Dx/Rx line maps
+  // to which test), so they trigger a full re-analysis; evidence attach/detach
+  // changes regenerate only their stale targets. Both clear their own "needs
+  // regeneration" state on success so Approve/PDF unblock.
+  const regeneratePending = useCallback(async (): Promise<void> => {
+    if (sourceDataSaved) {
+      setRegenChangedInFlight(true);
+      const failures: string[] = [];
+      for (const ancillary of ANCILLARIES) {
+        try {
+          await regenerateAncillaryMutation.mutateAsync({ ancillary });
+        } catch {
+          failures.push(ancillary);
+        }
+      }
+      setRegenChangedInFlight(false);
+      if (failures.length === 0) {
+        setSourceDataSaved(false);
+        toast({ title: "Re-analysis complete", description: "All ancillaries regenerated with updated source data." });
+      } else {
+        // Spec: a failed regeneration must keep blocking. Leave
+        // sourceDataSaved=true so Approve + PDF stay locked until every
+        // ancillary regenerates cleanly.
+        toast({
+          title: failures.length < ANCILLARIES.length ? "Re-analysis incomplete" : "Re-analysis failed",
+          description: `${failures.join(", ")} could not be regenerated. Approval stays blocked until all ancillaries regenerate — try again.`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    await regenerateChangedTargets();
+  }, [sourceDataSaved, regenerateAncillaryMutation, regenerateChangedTargets, toast]);
+
   const approvalMutation = useMutation<
     { ok: boolean; patient: PatientScreening },
     Error,
@@ -2294,6 +2449,16 @@ export function AdminReviewDialog({
     (b) => b.kind === "icd_disease" && b.requiresIcd,
   ).length;
 
+  // Ancillaries whose assigned evidence changed since the last
+  // regenerate. Computed once per render so the Updates Regenerate
+  // button, the Approve gate, the Blocking Rules message, and the
+  // Documents gate all read the same synchronous truth.
+  const staleTargetIds = readStaleTargetIds(lastWrittenReasoningRef.current);
+  // Source-data edits invalidate every ancillary; evidence attach/detach
+  // marks specific stale targets. Either blocks Approve + PDF until the
+  // single Updates-panel Regenerate clears it.
+  const needsRegeneration = staleTargetIds.length > 0 || sourceDataSaved;
+
   const shellChildren = (
     <>
         {/* Smoke header — black at ~70% opacity per Team Portal spec. */}
@@ -2343,77 +2508,50 @@ export function AdminReviewDialog({
                   advance on approve is handled in approvalMutation's
                   onSuccess.
                   SOURCE MARKER: Admin Review sibling navigation */}
-              {siblings && siblings.length > 1 && (
+              {siblings && siblings.length >= 1 && (
                 <div
-                  className="inline-flex items-center gap-1 rounded-md bg-white/10 px-1 py-0.5"
+                  className="inline-flex flex-col items-center gap-1"
                   data-testid="admin-review-sibling-nav"
                   data-active-index={activeIndex}
                   data-total={totalSiblings}
                   data-approve-pending={approvalMutation.isPending ? "true" : "false"}
                 >
                   {/* SOURCE MARKER: Admin Review navigation disabled during approve */}
-                  <button
-                    type="button"
-                    onClick={() => goToSibling(-1)}
-                    disabled={!hasPrev || approvalMutation.isPending}
-                    aria-label="Previous patient"
-                    title="Previous patient"
-                    data-testid="admin-review-sibling-prev"
-                    className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                  <div className="inline-flex items-center gap-1 rounded-md bg-white/10 px-1 py-0.5">
+                    <button
+                      type="button"
+                      onClick={() => goToSibling(-1)}
+                      disabled={!hasPrev || approvalMutation.isPending}
+                      aria-label="Previous patient"
+                      title="Previous patient"
+                      data-testid="admin-review-sibling-prev"
+                      className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => goToSibling(1)}
+                      disabled={!hasNext || approvalMutation.isPending}
+                      aria-label="Next patient"
+                      title={hasNext ? "Next patient" : "No more patients"}
+                      data-testid="admin-review-sibling-next"
+                      className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <span
+                    className="text-[10px] font-medium text-white/70 whitespace-nowrap leading-none"
+                    data-testid="admin-review-sibling-count"
                   >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => goToSibling(1)}
-                    disabled={!hasNext || approvalMutation.isPending}
-                    aria-label="Next patient"
-                    title={
-                      hasNext
-                        ? `Next patient (${remainingAfter} more${dateLabel ? ` in ${dateLabel}` : ""})`
-                        : "No more patients"
-                    }
-                    data-testid="admin-review-sibling-next"
-                    className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                    {activeIndex + 1} of {totalSiblings}{" "}
+                    {totalSiblings === 1 ? "patient" : "patients"} for Admin Review
+                  </span>
                 </div>
               )}
-              {/* Admin Review persistence — corrective patch:
-                  Regenerate Changed button. Visible whenever any
-                  `adminReview:<id>` block carries `stale: true`.
-                  Reads from `lastWrittenReasoningRef.current` so the
-                  count reflects the synchronous local truth (not
-                  patient.reasoning which lags by a roundtrip). */}
-              {(() => {
-                const staleIds = readStaleTargetIds(
-                  lastWrittenReasoningRef.current,
-                );
-                if (staleIds.length === 0) return null;
-                const label = staleIds
-                  .map(ancillaryLabelForTargetId)
-                  .join(", ");
-                return (
-                  <button
-                    type="button"
-                    onClick={() => void regenerateChangedTargets()}
-                    disabled={regenChangedInFlight}
-                    aria-label="Regenerate Changed"
-                    title={`Regenerate: ${label}`}
-                    data-testid="admin-review-regenerate-changed"
-                    data-stale-count={staleIds.length}
-                    className="inline-flex items-center gap-1 h-7 px-2 rounded-md bg-amber-500/90 hover:bg-amber-500 text-white text-[11px] font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {regenChangedInFlight ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <RefreshCw className="w-3 h-3" />
-                    )}
-                    Regenerate Changed ({staleIds.length})
-                  </button>
-                );
-              })()}
+              {/* Regenerate moved into the Updates section (bottom of the
+                  right panel) per the Admin Review cleanup spec. */}
               <button
                 type="button"
                 onClick={() => onOpenChange(false)}
@@ -2930,10 +3068,14 @@ export function AdminReviewDialog({
                               type="button"
                               onClick={() => {
                                 if (!sourceEditMode) {
-                                  setSourceEditHx(patient.history ?? "");
-                                  setSourceEditDx(patient.diagnoses ?? "");
-                                  setSourceEditRx(patient.medications ?? "");
-                                  setSourceDataSaved(false);
+                                  // Seed from the freshest local mirrors (latest
+                                  // saved values), and DO NOT clear sourceDataSaved
+                                  // here — re-entering edit must not bypass the
+                                  // regeneration gate. It clears only on a fully
+                                  // successful regenerate.
+                                  setSourceEditHx(localHx);
+                                  setSourceEditDx(localDx);
+                                  setSourceEditRx(localRx);
                                 }
                                 setSourceEditMode((m) => !m);
                               }}
@@ -3048,87 +3190,16 @@ export function AdminReviewDialog({
 
                           {sourceDataSaved && !sourceEditMode && (
                             <div
-                              className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-2"
+                              className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
                               data-testid="admin-review-source-regenerate-section"
                             >
-                              <div className="text-[11px] text-amber-800 font-medium">
-                                Source data updated. Re-analyze to apply the new Hx/Dx/Rx to all ancillaries.
+                              <div className="text-[11px] text-slate-600 font-medium inline-flex items-start gap-1.5">
+                                <RefreshCw className="w-3 h-3 mt-px shrink-0 text-slate-500" />
+                                Source data updated — press Regenerate in the Updates panel to re-analyze all ancillaries.
                               </div>
-                              <button
-                                type="button"
-                                disabled={sourceRegenInFlight}
-                                onClick={async () => {
-                                  setSourceRegenInFlight(true);
-                                  const failures: string[] = [];
-                                  for (const ancillary of ANCILLARIES) {
-                                    try {
-                                      await regenerateAncillaryMutation.mutateAsync({ ancillary });
-                                    } catch {
-                                      failures.push(ancillary);
-                                    }
-                                  }
-                                  setSourceRegenInFlight(false);
-                                  if (failures.length === 0) {
-                                    setSourceDataSaved(false);
-                                    toast({ title: "Re-analysis complete", description: "All ancillaries regenerated with updated source data." });
-                                  } else if (failures.length < ANCILLARIES.length) {
-                                    setSourceDataSaved(false);
-                                    toast({ title: "Partial re-analysis", description: `${failures.join(", ")} could not be regenerated. Others succeeded.`, variant: "destructive" });
-                                  } else {
-                                    toast({ title: "Re-analysis failed", description: "All ancillaries failed to regenerate. Check your connection and try again.", variant: "destructive" });
-                                  }
-                                }}
-                                data-testid="admin-review-source-regenerate-button"
-                                className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-300 bg-amber-100 text-amber-900 hover:bg-amber-200 px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-50"
-                              >
-                                {sourceRegenInFlight ? (
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                ) : (
-                                  <RefreshCw className="w-3.5 h-3.5" />
-                                )}
-                                {sourceRegenInFlight ? "Re-analyzing…" : "Regenerate All Ancillaries"}
-                              </button>
                             </div>
                           )}
                         </section>
-                </div>
-                          </PopoverContent>
-                        </Popover>
-                        {/* Prior test history */}
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <button
-                              type="button"
-                              data-testid="admin-review-reference-history-trigger"
-                              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300 px-3 py-2 text-xs font-semibold shadow-sm transition-colors"
-                            >
-                              <FileText className="w-3.5 h-3.5" />
-                              Prior tests
-                            </button>
-                          </PopoverTrigger>
-                          <PopoverContent
-                            align="end"
-                            className="w-[420px] max-w-[92vw] max-h-[72vh] overflow-auto p-3"
-                            data-testid="admin-review-history-popover"
-                          >
-                <div className="px-0 py-0" data-testid="admin-review-history-tab-content">
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-1">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                            Completed Prior Testing
-                          </div>
-                          <div className="text-xs text-slate-600 whitespace-pre-wrap min-h-[3rem]">
-                            {typeof (patient as { previousTests?: unknown }).previousTests === "string" && (patient as { previousTests?: string }).previousTests
-                              ? (patient as { previousTests?: string }).previousTests
-                              : (
-                                <span className="italic text-slate-400">No prior testing on file</span>
-                              )}
-                          </div>
-                          {typeof (patient as { mostRecentTestDate?: unknown }).mostRecentTestDate === "string" && (patient as { mostRecentTestDate?: string }).mostRecentTestDate && (
-                            <div className="text-[10px] text-slate-500 mt-1">
-                              Most recent date: {(patient as { mostRecentTestDate?: string }).mostRecentTestDate}
-                            </div>
-                          )}
-                        </div>
                 </div>
                           </PopoverContent>
                         </Popover>
@@ -3253,12 +3324,9 @@ export function AdminReviewDialog({
                       </div>
                     </div>
 
-                {/* Evidence — top of the action column */}
+                {/* Reference content continues — Diagnosis / Medications / Symptoms / Prior Testing
+                    (single "Reference" header is provided by admin-review-reference-buttons-group above). */}
                 <div data-testid="admin-review-evidence-group">
-                  <div className="mb-2 flex items-center gap-2">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Evidence</span>
-                    <span className="h-px flex-1 bg-slate-200" />
-                  </div>
                   <section
                     className="space-y-2"
                     data-testid="admin-review-right-panel-buttons"
@@ -3358,7 +3426,7 @@ export function AdminReviewDialog({
                       data-testid="admin-review-right-popover-symptoms"
                     >
                       <AvailableButtonsRow
-                        title="Symptoms / History"
+                        title="Symptoms"
                         testId="admin-review-available-buttons-hx"
                         emptyText="No symptoms recorded"
                         items={availableButtons.filter(
@@ -3368,9 +3436,9 @@ export function AdminReviewDialog({
                           <SupportingChipButton
                             key={buttonKey(b)}
                             btn={b}
-                            testId={b.kind === "prior_test" ? "admin-review-prior-button" : "admin-review-hx-button"}
-                            tone={b.kind === "prior_test" ? "teal" : "amber"}
-                            prefix={b.kind === "prior_test" ? "Prior" : "Hx"}
+                            testId="admin-review-hx-button"
+                            tone="amber"
+                            prefix="Hx"
                             ultrasoundTests={ultrasoundTests}
                             isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                             onAssign={(target) => assignToTarget(target, b)}
@@ -3379,11 +3447,88 @@ export function AdminReviewDialog({
                       />
                     </PopoverContent>
                   </Popover>
+                  {/* Prior Testing — actual completed prior tests ONLY.
+                      Never patient history (Dx/Hx). Sourced from
+                      prior_test evidence chips + the patient's own
+                      previousTests free text. */}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="rounded-xl border border-slate-200 bg-white text-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors"
+                        data-testid="admin-review-right-button-prior-testing"
+                      >
+                        Prior Testing
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      className="w-[340px] p-3 space-y-3 max-h-[60vh] overflow-y-auto"
+                      data-testid="admin-review-right-popover-prior-testing"
+                    >
+                      {(() => {
+                        const priorButtons = availableButtons.filter(
+                          (b) => b.kind === "prior_test",
+                        );
+                        const priorText =
+                          typeof (patient as { previousTests?: unknown }).previousTests === "string"
+                            ? ((patient as { previousTests?: string }).previousTests ?? "").trim()
+                            : "";
+                        const noPrior = Boolean(
+                          (patient as { noPreviousTests?: unknown }).noPreviousTests,
+                        );
+                        if (noPrior || (priorButtons.length === 0 && !priorText)) {
+                          return (
+                            <div
+                              className="text-[11px] text-slate-400 italic"
+                              data-testid="admin-review-prior-testing-empty"
+                            >
+                              No prior testing found.
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="space-y-3">
+                            {priorText && (
+                              <div data-testid="admin-review-prior-testing-source">
+                                <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                                  Recorded prior tests
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-700 whitespace-pre-wrap leading-snug">
+                                  {priorText}
+                                </div>
+                              </div>
+                            )}
+                            {priorButtons.length > 0 && (
+                              <AvailableButtonsRow
+                                title="Attach prior testing"
+                                testId="admin-review-available-buttons-prior"
+                                emptyText="No prior testing found."
+                                items={priorButtons}
+                                renderItem={(b) => (
+                                  <SupportingChipButton
+                                    key={buttonKey(b)}
+                                    btn={b}
+                                    testId="admin-review-prior-button"
+                                    tone="teal"
+                                    prefix="Prior"
+                                    ultrasoundTests={ultrasoundTests}
+                                    isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
+                                    onAssign={(target) => assignToTarget(target, b)}
+                                  />
+                                )}
+                              />
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </PopoverContent>
+                  </Popover>
                     </div>
                   </section>
                 </div>
 
-                    {/* Activity — always-visible live audit box */}
+                    {/* Updates — grouped by ancillary; Regenerate lives here */}
                     <div data-testid="admin-review-updates-group">
           <div
             className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3"
@@ -3394,33 +3539,84 @@ export function AdminReviewDialog({
               <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
                 Updates
               </div>
-              <span className="text-[10px] text-slate-400 tabular-nums">
-                {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
-              </span>
+              {needsRegeneration ? (
+                <button
+                  type="button"
+                  onClick={() => void regeneratePending()}
+                  disabled={regenChangedInFlight}
+                  aria-label="Regenerate"
+                  title={sourceDataSaved
+                    ? "Regenerate all ancillaries with updated source data"
+                    : `Regenerate: ${staleTargetIds
+                        .map(ancillaryLabelForTargetId)
+                        .join(", ")}`}
+                  data-testid="admin-review-regenerate-changed"
+                  data-stale-count={staleTargetIds.length}
+                  className="inline-flex items-center gap-1 h-6 px-2.5 rounded-md bg-slate-800 hover:bg-slate-900 text-white text-[10px] font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {regenChangedInFlight ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-3 h-3" />
+                  )}
+                  Regenerate
+                </button>
+              ) : (
+                <span className="text-[10px] text-slate-400 tabular-nums">
+                  {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
+                </span>
+              )}
             </div>
-            {updatesLog.length === 0 ? (
-              <div className="text-[11px] text-slate-400 italic">
-                Audit log will populate as you make changes in this review.
-              </div>
-            ) : (
-              <ScrollArea className="max-h-[260px]">
-                <ul className="space-y-1 pr-2">
-                  {updatesLog.map((entry) => (
-                    <li
-                      key={entry.id}
-                      className="flex items-start gap-2 text-[11px] text-slate-700 leading-snug"
-                      data-testid="admin-review-updates-made-item"
-                      data-update-type={entry.type}
-                    >
-                      <span className="font-mono text-[10px] text-slate-400 shrink-0 tabular-nums">
-                        {entry.at.slice(11, 16)}
-                      </span>
-                      <span className="min-w-0">{entry.label}</span>
-                    </li>
-                  ))}
-                </ul>
-              </ScrollArea>
-            )}
+            {(() => {
+              const groups = groupUpdatesByAncillary(updatesLog);
+              if (groups.length === 0) {
+                return (
+                  <div className="text-[11px] text-slate-400 italic">
+                    {sourceDataSaved
+                      ? "Source data edited — regenerate to apply across all ancillaries."
+                      : "Changes you make will appear here, grouped by ancillary."}
+                  </div>
+                );
+              }
+              return (
+                <ScrollArea className="max-h-[260px]">
+                  <div className="space-y-3 pr-2">
+                    {groups.map((group) => (
+                      <div
+                        key={group.ancillary}
+                        data-testid={`admin-review-updates-group-${group.ancillary}`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span
+                            className={`h-1.5 w-1.5 rounded-full ${UPDATE_GROUP_DOT[group.ancillary]}`}
+                          />
+                          <span
+                            className={`text-[10px] font-bold uppercase tracking-wider ${UPDATE_GROUP_ACCENT[group.ancillary]}`}
+                          >
+                            {categoryLabels[group.ancillary]}
+                          </span>
+                        </div>
+                        <ul className="space-y-1 pl-3">
+                          {group.entries.map((entry) => (
+                            <li
+                              key={entry.id}
+                              className="flex items-start gap-2 text-[11px] text-slate-700 leading-snug"
+                              data-testid="admin-review-updates-made-item"
+                              data-update-type={entry.type}
+                            >
+                              <span className="font-mono text-[10px] text-slate-400 shrink-0 tabular-nums">
+                                {entry.at.slice(11, 16)}
+                              </span>
+                              <span className="min-w-0">{shortUpdateText(entry)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              );
+            })()}
           </div>
                         </div>
                 {/* Blocking rules */}
@@ -3444,7 +3640,16 @@ export function AdminReviewDialog({
                     Diagnosis missing ICD
                   </div>
                 )}
-                {!isUnder16 && totalMissingIcds === 0 && (
+                {needsRegeneration && (
+                  <div
+                    className="rounded-md border border-slate-300 bg-slate-100 text-slate-800 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full"
+                    data-testid="admin-review-regeneration-required-rule"
+                  >
+                    <RefreshCw className="w-3 h-3 shrink-0" />
+                    Regeneration required · sources edited
+                  </div>
+                )}
+                {!isUnder16 && totalMissingIcds === 0 && !needsRegeneration && (
                   <div className="text-[11px] text-slate-400 italic">No blocking rules.</div>
                 )}
               </section>
@@ -3461,7 +3666,13 @@ export function AdminReviewDialog({
                         <button
                           type="button"
                           data-testid="admin-review-documents-trigger"
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 px-3 py-2 text-xs font-semibold transition-colors"
+                          disabled={needsRegeneration}
+                          title={
+                            needsRegeneration
+                              ? "Regenerate changed ancillaries before generating documents"
+                              : undefined
+                          }
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-50"
                         >
                           <FileText className="w-3.5 h-3.5" />
                           Documents
@@ -3631,21 +3842,30 @@ export function AdminReviewDialog({
                 <div className="flex flex-col gap-2">
                   <Button
                     type="button"
-                    disabled={approvalMutation.isPending}
+                    disabled={approvalMutation.isPending || needsRegeneration}
                     onClick={() => {
                       approvalMutation.mutate({ status: "approved" });
                       recordAdminReviewUpdate("approval_approved", "Approved review");
                     }}
                     data-testid="admin-review-approve-button"
                     data-bar-testid={`admin-review-button-approve-${patient.id}`}
-                    className="bg-emerald-500 text-slate-800 hover:bg-emerald-600 w-full"
+                    title={
+                      needsRegeneration
+                        ? "Regenerate changed ancillaries before approving"
+                        : undefined
+                    }
+                    className="bg-emerald-500 text-slate-800 hover:bg-emerald-600 w-full disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {approvalMutation.isPending ? (
                       <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                     ) : (
                       <CheckCircle2 className="w-3 h-3 mr-1" />
                     )}
-                    {isUnder16 ? "Admin Override Approve" : "Approve"}
+                    {needsRegeneration
+                      ? "Regenerate to Approve"
+                      : isUnder16
+                        ? "Admin Override Approve"
+                        : "Approve"}
                   </Button>
                   <Button
                     type="button"
