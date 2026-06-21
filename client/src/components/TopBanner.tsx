@@ -1,4 +1,4 @@
-import { Home, LogOut, Shield } from "lucide-react";
+import { Home, LogOut } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import type { AuthUser } from "@/App";
 
@@ -11,18 +11,44 @@ const ROLE_LABELS: Record<string, string> = {
 
 export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () => void }) {
   const role = user?.role ?? "";
-  const roleLabel = ROLE_LABELS[role] ?? role;
   const isAdmin = role === "admin";
+  const roleLabel = isAdmin ? "" : (ROLE_LABELS[role] ?? role);
   const [location] = useLocation();
-  // Suppress the Home link when we're already on home (or the root redirect)
-  // so the header doesn't show a dead-end self-link.
   const onHome = location === "/home" || location === "/";
 
   return (
     <header
-      className="shrink-0 h-16 bg-finance-dark text-white border-b border-finance-dark-3 relative"
+      className="shrink-0 h-16 text-white border-b border-white/10 relative overflow-hidden"
+      style={{ background: "#05060f" }}
       data-testid="top-banner"
     >
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          content: '""',
+          width: "100%",
+          height: "100%",
+          backgroundImage:
+            "radial-gradient(1px 1px at 10% 30%, rgba(255,255,255,0.5) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 25% 70%, rgba(255,255,255,0.4) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 40% 20%, rgba(255,255,255,0.55) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 55% 80%, rgba(255,255,255,0.35) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 65% 45%, rgba(255,255,255,0.5) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 72% 15%, rgba(255,255,255,0.4) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 80% 60%, rgba(255,255,255,0.45) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 88% 35%, rgba(255,255,255,0.3) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 93% 75%, rgba(255,255,255,0.5) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 5% 55%, rgba(255,255,255,0.35) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 18% 85%, rgba(255,255,255,0.4) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 33% 50%, rgba(255,255,255,0.3) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 48% 10%, rgba(255,255,255,0.45) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 59% 90%, rgba(255,255,255,0.35) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 76% 25%, rgba(255,255,255,0.5) 0%, transparent 100%), " +
+            "radial-gradient(1.5px 1.5px at 3% 40%, rgba(255,255,255,0.6) 0%, transparent 100%), " +
+            "radial-gradient(1.5px 1.5px at 50% 65%, rgba(255,255,255,0.55) 0%, transparent 100%), " +
+            "radial-gradient(1.5px 1.5px at 85% 50%, rgba(255,255,255,0.6) 0%, transparent 100%)",
+        }}
+      />
       <div className="relative h-full px-6 flex items-center justify-between">
         <div className="flex flex-col leading-tight">
           <span className="text-[15px] font-semibold tracking-tight text-white" data-testid="text-banner-title">
@@ -45,22 +71,13 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
           )}
           {user && (
             <>
-              {isAdmin && (
-                <span
-                  className="hidden sm:inline-flex items-center gap-1 px-3 py-1 rounded-full bg-finance-periwinkle/25 border border-finance-periwinkle/40 text-[11px] font-medium text-white"
-                  data-testid="badge-admin"
-                >
-                  <Shield className="w-3 h-3" />
-                  Admin
-                </span>
-              )}
               <span
                 className="hidden md:inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] text-slate-300"
                 data-testid="badge-banner-user"
                 title={`Signed in as ${user.username}${roleLabel ? ` (${roleLabel})` : ""}`}
               >
                 <span className="font-medium text-white">{user.username}</span>
-                {roleLabel && !isAdmin && <span className="text-slate-400">· {roleLabel}</span>}
+                {roleLabel && <span className="text-slate-400">· {roleLabel}</span>}
               </span>
               {onLogout && (
                 <button

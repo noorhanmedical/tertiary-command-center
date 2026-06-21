@@ -9,7 +9,6 @@ import {
   Receipt,
   Users2,
   Database,
-  Shield,
   ChevronLeft,
   ChevronRight,
   CheckSquare,
@@ -122,7 +121,6 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
   };
 
   const visibleNavItems = NAV_ITEMS.filter((item) => item.roles.includes(userRole));
-  const canSeeAdmin = userRole === "admin";
 
   return (
     <nav
@@ -199,30 +197,6 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
       </div>
 
       <div className="border-t border-finance-dark-3 px-2 py-2 space-y-0.5">
-        {canSeeAdmin && (
-          <>
-            {!collapsed && (
-              <div className="px-2 pt-1 pb-1">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Settings</span>
-              </div>
-            )}
-            <Link href="/admin">
-              <div
-                className={`flex items-center gap-3 px-2 py-2 rounded-lg cursor-pointer transition-colors group ${
-                  isActive("/admin") || isActive("/admin-ops") || isActive("/settings")
-                    ? "bg-white text-finance-text shadow-sm"
-                    : "text-slate-300 hover:bg-finance-dark-3 hover:text-white"
-                } ${collapsed ? "justify-center" : ""}`}
-                data-testid="nav-item-admin"
-                title={collapsed ? "Admin" : undefined}
-              >
-                <Shield className="w-4 h-4 shrink-0" strokeWidth={1.75} />
-                {!collapsed && <span className="text-[14px] font-medium truncate">Admin</span>}
-              </div>
-            </Link>
-          </>
-        )}
-
       </div>
     </nav>
   );
