@@ -26,7 +26,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Pencil, Plus, Trash2, ChevronUp, ChevronDown, Check } from "lucide-react";
+import { Pencil, Plus, Trash2, ChevronDown, Check, GripVertical } from "lucide-react";
 
 type ClockCity = {
   label: string;
@@ -164,6 +164,8 @@ function WorldClocksEditor({
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<ClockCity[]>(cities);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
   const zones = useMemo(() => getSupportedTimeZones(), []);
 
   useEffect(() => {
@@ -198,12 +200,14 @@ function WorldClocksEditor({
     setDraft((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const moveCity = (index: number, dir: -1 | 1) => {
+  const reorder = (from: number, to: number) => {
     setDraft((prev) => {
+      if (from === to || from < 0 || to < 0 || from >= prev.length || to >= prev.length) {
+        return prev;
+      }
       const next = [...prev];
-      const target = index + dir;
-      if (target < 0 || target >= next.length) return prev;
-      [next[index], next[target]] = [next[target], next[index]];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
       return next;
     });
   };
@@ -248,31 +252,44 @@ function WorldClocksEditor({
           {draft.map((city, index) => (
             <div
               key={index}
-              className="flex items-start gap-2 rounded-lg border border-border p-2"
+              onDragOver={(e) => {
+                if (dragIndex === null) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                if (overIndex !== index) setOverIndex(index);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragIndex !== null) reorder(dragIndex, index);
+                setDragIndex(null);
+                setOverIndex(null);
+              }}
+              className={`flex items-start gap-2 rounded-lg border p-2 transition-colors ${
+                dragIndex === index
+                  ? "border-primary/60 opacity-50"
+                  : overIndex === index
+                    ? "border-primary bg-primary/5"
+                    : "border-border"
+              }`}
               data-testid={`row-edit-city-${index}`}
             >
-              <div className="flex flex-col gap-1 pt-1">
-                <button
-                  type="button"
-                  onClick={() => moveCity(index, -1)}
-                  disabled={index === 0}
-                  className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                  data-testid={`button-move-up-${index}`}
-                  aria-label="Move up"
-                >
-                  <ChevronUp className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => moveCity(index, 1)}
-                  disabled={index === draft.length - 1}
-                  className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                  data-testid={`button-move-down-${index}`}
-                  aria-label="Move down"
-                >
-                  <ChevronDown className="h-4 w-4" />
-                </button>
-              </div>
+              <button
+                type="button"
+                draggable
+                onDragStart={(e) => {
+                  setDragIndex(index);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onDragEnd={() => {
+                  setDragIndex(null);
+                  setOverIndex(null);
+                }}
+                className="mt-1 cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
+                data-testid={`button-drag-city-${index}`}
+                aria-label="Drag to reorder"
+              >
+                <GripVertical className="h-4 w-4" />
+              </button>
               <div className="flex-1 space-y-2">
                 <Input
                   value={city.label}
