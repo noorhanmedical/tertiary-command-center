@@ -49,6 +49,71 @@ export async function updateGlobalScheduleEvent(
   return result;
 }
 
+// Mirror a completed procedure onto the global schedule timeline as a
+// `procedure_complete` event so calendar surfaces (Home, Plexus IQ, portal
+// mini-calendars) can badge the day with a ✓. Deduped by the originating
+// procedure-event id (stored in metadata) so re-completing / editing the
+// same procedure updates the existing row instead of stacking duplicates.
+export type UpsertProcedureCompleteEventInput = {
+  procedureEventId: number;
+  completedAt: Date;
+  serviceType: string;
+  executionCaseId?: number | null;
+  patientScreeningId?: number | null;
+  patientName?: string | null;
+  patientDob?: string | null;
+  facilityId?: string | null;
+};
+
+export async function upsertProcedureCompleteEvent(
+  input: UpsertProcedureCompleteEventInput,
+): Promise<GlobalScheduleEvent> {
+  const startsAt =
+    input.completedAt instanceof Date && !isNaN(input.completedAt.getTime())
+      ? input.completedAt
+      : new Date();
+
+  const [existing] = await db
+    .select()
+    .from(globalScheduleEvents)
+    .where(
+      and(
+        eq(globalScheduleEvents.eventType, "procedure_complete"),
+        sql`${globalScheduleEvents.metadata}->>'procedureEventId' = ${String(input.procedureEventId)}`,
+      ),
+    )
+    .limit(1);
+
+  const values = {
+    executionCaseId: input.executionCaseId ?? undefined,
+    patientScreeningId: input.patientScreeningId ?? undefined,
+    patientName: input.patientName ?? undefined,
+    patientDob: input.patientDob ?? undefined,
+    facilityId: input.facilityId ?? undefined,
+    eventType: "procedure_complete" as const,
+    serviceType: input.serviceType,
+    source: "system_generated" as const,
+    status: "completed" as const,
+    startsAt,
+    metadata: { procedureEventId: input.procedureEventId },
+  };
+
+  if (existing) {
+    const [updated] = await db
+      .update(globalScheduleEvents)
+      .set({ ...values, updatedAt: new Date() })
+      .where(eq(globalScheduleEvents.id, existing.id))
+      .returning();
+    return updated;
+  }
+
+  const [created] = await db
+    .insert(globalScheduleEvents)
+    .values(values)
+    .returning();
+  return created;
+}
+
 export async function getGlobalScheduleEventById(id: number): Promise<GlobalScheduleEvent | undefined> {
   const [result] = await db
     .select()

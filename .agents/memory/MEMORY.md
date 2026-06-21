@@ -2,3 +2,4 @@
 - [Mockup sandbox + canvas iframes](mockup-sandbox-canvas.md) — recover the `/__mockup/` preview artifact (toml localPort↔workflow PORT), iframe update payload quirks, and `focusCanvasShapes` fallback when `presentArtifact` says "Available artifacts: []".
 - [Admin Review source-edit regen gate](admin-review-regeneration-gate.md) — clear the Approve/PDF block only on a fully successful regenerate; never from edit-toggle/cancel; regenerate payloads must use local Hx/Dx/Rx mirrors.
 - [Canonical calendar embedding](canonical-calendar-embed.md) — embed `CanonicalMonthCalendar` directly for chrome-free surfaces (Universal/Command add filter/profile/add chrome); per-cell popover via optional `renderDayPopoverContent`.
+- [procedure_complete mirror](procedure-complete-mirror.md) — calendar ✓ badge reads `global_schedule_events` eventType=procedure_complete; completion must mirror `procedure_events` into that table or the badge stays dead.
