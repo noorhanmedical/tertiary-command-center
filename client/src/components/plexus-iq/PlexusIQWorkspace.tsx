@@ -870,16 +870,27 @@ export function PlexusIQWorkspace({
     return dated[0] ?? null;
   }, [clinicDetailRollup]);
 
-  // Report the currently-open facility (and its first dated schedule)
-  // up so the page can default Add-Patient / Bulk-Import to the facility
-  // the user is viewing. On the clinic-tile overview the facility is null.
+  // Report the currently-open facility (and its first dated schedule) up so
+  // the page can default Add-Patient / Bulk-Import to the facility the user is
+  // viewing. On the clinic-tile overview the facility is null. When the user
+  // has drilled into a facility interior, the embedded operating list owns the
+  // selection (it reports the precise date/batch in view), so this effect skips
+  // to avoid dueling updates that would reset the batch to null.
+  const operatingListOwnsSelection =
+    viewMode === "clinics" && !!selectedClinicFacility;
   useEffect(() => {
+    if (operatingListOwnsSelection) return;
     onSelectionChange?.({
       facility: selectedClinicFacility,
       scheduleDate: selectedClinicFacility ? clinicDetailScheduleDate : null,
       batchId: null,
     });
-  }, [onSelectionChange, selectedClinicFacility, clinicDetailScheduleDate]);
+  }, [
+    onSelectionChange,
+    operatingListOwnsSelection,
+    selectedClinicFacility,
+    clinicDetailScheduleDate,
+  ]);
 
   // Apply an imperative focus request (e.g. after an add/import) by
   // drilling into the requested facility's interior and switching to the
@@ -966,6 +977,7 @@ export function PlexusIQWorkspace({
             onUpdatePatient={onUpdatePatient}
             onDeletePatient={onDeletePatient}
             onAnalyzeOnePatient={onAnalyzeOnePatient}
+            onSelectionChange={onSelectionChange}
           />
         </>
       );
