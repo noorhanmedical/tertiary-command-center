@@ -424,9 +424,7 @@ export function PlexusIQOperatingList({
     );
   }
 
-  const listTitle = selectedBatch
-    ? `${selectedFacility} · ${dateLabelFor(selectedBatch.scheduleDate)}`
-    : (selectedFacility ?? "");
+  const listTitle = "Patient List";
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-4">
@@ -529,7 +527,7 @@ export function PlexusIQOperatingList({
             ) : (
               <>
                 <div
-                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-200 rounded-xl bg-slate-50 text-[10px] font-semibold uppercase tracking-wider text-slate-500`}
+                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-300/50 rounded-xl bg-slate-300/40 backdrop-blur-md shadow-sm text-[10px] font-semibold uppercase tracking-wider text-slate-600`}
                   data-testid="plexus-iq-operating-header"
                 >
                   {/* Checkbox column (no label) */}
@@ -541,7 +539,6 @@ export function PlexusIQOperatingList({
                   <div className="text-right">Flags</div>
                   <div className="text-right">Ancillary</div>
                   <div className="text-right">Review</div>
-                  <div className="text-right">Delete</div>
                 </div>
                 {sortedPatients.map((p) => (
                 <PlexusIQOperatingRow
@@ -553,7 +550,6 @@ export function PlexusIQOperatingList({
                   isAdmin={!!isAdmin}
                   onToggleSelect={(checked) => toggleSelect(p.id, checked)}
                   onOpenReview={() => setReviewPatientId(p.id)}
-                  onDelete={() => onDeletePatient(p.id)}
                 />
                 ))}
               </>

@@ -5,7 +5,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Loader2, ShieldCheck, Trash2, AlertTriangle } from "lucide-react";
+import { Loader2, ShieldCheck, AlertTriangle } from "lucide-react";
 import {
   computePlexusIqStatus,
   computePlexusIqFlags,
@@ -23,13 +23,13 @@ const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultraso
 // (PlexusIQOperatingList) and every data row must use this exact template so
 // columns stay aligned at all viewport widths.
 export const OPERATING_GRID_COLS =
-  "grid-cols-[auto_minmax(140px,1.25fr)_minmax(150px,1fr)_minmax(130px,1fr)_minmax(140px,1fr)_auto_auto_auto_auto]";
+  "grid-cols-[auto_minmax(140px,1.25fr)_minmax(150px,1fr)_minmax(130px,1fr)_minmax(140px,1fr)_auto_auto_auto]";
 
 // One patient row in the Plexus IQ clean operating list.
 //
 // Columns ONLY:
 //   Checkbox · Patient Name · DOB · Insurance · Plexus IQ Status · Flags ·
-//   Ancillary Icons · Review · Delete
+//   Ancillary Icons · Review
 //
 // No phone or facility. Missing info / cooldown / stale evidence / packet
 // blockers render as the ⚠ Flags popover — never as a status.
@@ -43,7 +43,6 @@ export type PlexusIQOperatingRowProps = {
   isAdmin: boolean;
   onToggleSelect: (checked: boolean) => void;
   onOpenReview: () => void;
-  onDelete: () => void;
 };
 
 export function PlexusIQOperatingRow({
@@ -54,7 +53,6 @@ export function PlexusIQOperatingRow({
   isAdmin,
   onToggleSelect,
   onOpenReview,
-  onDelete,
 }: PlexusIQOperatingRowProps) {
   const statusMeta = computePlexusIqStatus(patient, { isRunning });
   const flags = computePlexusIqFlags(patient, { saveFailed });
@@ -228,22 +226,6 @@ export function PlexusIQOperatingRow({
         )}
       </div>
 
-      {/* Delete */}
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (confirm("Remove this patient?")) onDelete();
-          }}
-          aria-label="Remove patient"
-          title="Remove patient"
-          className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors"
-          data-testid={`button-operating-row-delete-${patient.id}`}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      </div>
     </div>
   );
 }
