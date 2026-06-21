@@ -348,13 +348,6 @@ function CalendarView({
                 type="button"
                 disabled={!hasBatches}
                 onClick={() => {
-                  const nodes = batchDateMap.get(iso);
-                  if (nodes && nodes.length > 0) {
-                    const newest = nodes.reduce((a, b) =>
-                      b.createdAtMs > a.createdAtMs ? b : a,
-                    );
-                    onSelectBatch(newest.batchId);
-                  }
                   setExpandedDay((cur) => (cur === iso ? null : iso));
                 }}
                 className={`relative flex flex-col items-center justify-center rounded py-0.5 my-0.5 text-[11px] font-medium transition-colors
