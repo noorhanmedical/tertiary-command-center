@@ -858,12 +858,6 @@ export function AdminReviewDialog({
   // SupportingButton only after the admin clicks accept.
   const [acceptedSuggestions, setAcceptedSuggestions] = useState<SupportingButton[]>([]);
 
-  // Drives the Engagement reference query (enabled only when "engagement").
-  // Set when the Engagement reference collapsible is opened.
-  const [leftTab, setLeftTab] = useState<
-    "source" | "history" | "icd" | "engagement"
-  >("source");
-
   // Engagement assignment for THIS patient — drives the scheduler
   // routing chip on the right panel and the highlight in the
   // Engagement tab call list.
@@ -892,222 +886,12 @@ export function AdminReviewDialog({
     staleTime: 30_000,
   });
 
-  // Scheduler-grouped call list — backed by /api/engagement/assignment-board,
-  // grouped CLIENT-SIDE by assignedName since the backend returns a flat
-  // list (no scheduler-grouped endpoint exists today). Patients filtered
-  // to the current patient's facility so the call list shows the
-  // scheduler context the admin is actually reviewing.
-  //
-  // SOURCE MARKER: Engagement Center source of truth
-  // SOURCE MARKER: Scheduler call lists grouped by scheduler
-  type EngagementBoardRow = {
-    patientScreeningId: number | null;
-    executionCaseId: number;
-    patientName: string;
-    patientDob: string | null;
-    phoneNumber: string | null;
-    facility: string | null;
-    scheduleDate: string | null;
-    patientType: string | null;
-    engagementBucket: string | null;
-    engagementStatus: string | null;
-    commitStatus: string | null;
-    assignedTeamMemberId: number | null;
-    assignedRole: string | null;
-    assignedName: string | null;
-    assignedFacility: string | null;
-    nextActionAt: string | null;
-    lastActivityAt: string | null;
-    lastActivitySummary: string | null;
-    missingInfo: string[];
-    selectedServiceList: string[];
-  };
-  const engagementBoardQuery = useQuery<{ rows: EngagementBoardRow[] }>({
-    queryKey: [
-      "/api/engagement/assignment-board",
-      patient.facility ?? "_all_",
-    ],
-    queryFn: async () => {
-      const url = patient.facility
-        ? `/api/engagement/assignment-board?facility=${encodeURIComponent(patient.facility)}`
-        : `/api/engagement/assignment-board`;
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error(`assignment-board ${res.status}`);
-      return res.json();
-    },
-    enabled: open && leftTab === "engagement",
-    staleTime: 30_000,
-  });
-
-  type SchedulerGroup = {
-    schedulerKey: string;
-    schedulerName: string;
-    rows: EngagementBoardRow[];
-  };
-
-  const schedulerGroups: SchedulerGroup[] = useMemo(() => {
-    const rows = engagementBoardQuery.data?.rows ?? [];
-    const map = new Map<string, SchedulerGroup>();
-    for (const r of rows) {
-      const key = r.assignedTeamMemberId != null
-        ? `id:${r.assignedTeamMemberId}`
-        : "__unassigned__";
-      const name = r.assignedName?.trim() || "Unassigned / Engagement Queue";
-      const existing = map.get(key);
-      if (existing) existing.rows.push(r);
-      else map.set(key, { schedulerKey: key, schedulerName: name, rows: [r] });
-    }
-    const ordered = Array.from(map.values());
-    ordered.sort((a, b) => {
-      if (a.schedulerKey === "__unassigned__") return 1;
-      if (b.schedulerKey === "__unassigned__") return -1;
-      return a.schedulerName.localeCompare(b.schedulerName);
-    });
-    return ordered;
-  }, [engagementBoardQuery.data]);
-
-  // Per-scheduler selected patient IDs (patient_screenings.id) for the
-  // scheduler-scoped Plexus / Clinician PDF buttons.
-  // SOURCE MARKER: Scheduler PDF packets are scoped to assigned scheduler
-  const [selectedByScheduler, setSelectedByScheduler] = useState<
-    Record<string, Set<number>>
-  >({});
   // Packet QA Gate — opened on per-scheduler PDF preview when audit
   // finds blockers. proceed() carries the printable subset forward.
   const [packetQa, setPacketQa] = useState<{
     report: PacketQaReport;
     proceed: () => void;
   } | null>(null);
-
-  function toggleSelectedForScheduler(schedulerKey: string, patientId: number) {
-    setSelectedByScheduler((prev) => {
-      const next = new Set(prev[schedulerKey] ?? []);
-      if (next.has(patientId)) next.delete(patientId);
-      else next.add(patientId);
-      return { ...prev, [schedulerKey]: next };
-    });
-  }
-
-  function setAllSelectedForScheduler(group: SchedulerGroup) {
-    setSelectedByScheduler((prev) => {
-      const existing = prev[group.schedulerKey] ?? new Set<number>();
-      const allIds = group.rows
-        .map((r) => r.patientScreeningId)
-        .filter((id): id is number => id != null);
-      // If everyone is already selected, clear. Otherwise select all.
-      const allSelected = allIds.length > 0 && allIds.every((id) => existing.has(id));
-      const next = new Set<number>(allSelected ? [] : allIds);
-      return { ...prev, [group.schedulerKey]: next };
-    });
-  }
-
-  // Scheduler-scoped PDF packet generation. Pulls full patient
-  // records for the selected ids, validates the facility/date
-  // packet, then opens the canonical print-preview popup. The
-  // operator hits "Print / Save as PDF" inside the popup to produce
-  // the file — html2pdf / html2canvas are not used here so the
-  // dialog stays responsive even on large selections.
-  // SOURCE MARKER: Scheduler PDF packets are scoped to assigned scheduler
-  // SOURCE MARKER: Admin Review packets use print preview
-  // SOURCE MARKER: Admin Review packet print preview avoids html2canvas
-  // SOURCE MARKER: Admin Review packet print preview opens printable popup
-  async function generateSchedulerScopedPdf(
-    group: SchedulerGroup,
-    patientIds: number[],
-    mode: "plexus" | "clinician",
-  ) {
-    if (patientIds.length === 0) {
-      // SOURCE MARKER: Admin Review print preview errors are surfaced
-      toast({
-        title: "Select patients first.",
-        description: `Pick at least one patient under ${group.schedulerName} to generate a packet.`,
-        variant: "destructive",
-      });
-      return;
-    }
-    try {
-      const fetched = await Promise.all(
-        patientIds.map(async (id) => {
-          const res = await fetch(`/api/patients/${id}`, { credentials: "include" });
-          if (!res.ok) return null;
-          return (await res.json()) as PatientScreening;
-        }),
-      );
-      const fullPatients = fetched.filter((p): p is PatientScreening => p != null);
-      if (fullPatients.length === 0) {
-        toast({
-          title: "PDF packet blocked",
-          description: "Could not load any of the selected patients.",
-          variant: "destructive",
-        });
-        return;
-      }
-      const validation = validateSameFacilityDatePacket(
-        fullPatients as PdfPacketSourcePatient[],
-        patient.facility ?? null,
-        scheduleDate ?? null,
-      );
-      if (!validation.ok) {
-        toast({
-          title: "PDF packet blocked",
-          description: validation.reason,
-          variant: "destructive",
-        });
-        return;
-      }
-      const batchName = `${validation.patients[0]?.facility ?? group.schedulerName} · ${
-        validation.isOutreachPacket ? "Outreach" : validation.scheduleDate
-      }`;
-      // Packet QA Gate — audit before opening preview.
-      const openWithSubset = (subset: PatientScreening[]) => {
-        const result = openPatientPacketPrintPreview({
-          mode,
-          batchName,
-          patients: subset,
-          scheduleDate: validation.scheduleDate,
-          createdAt: null,
-        });
-        if (!result.ok && result.reason === "popup-blocked") {
-          // SOURCE MARKER: Admin Review print preview popup blocked is surfaced
-          toast({
-            title: "Popup blocked. Allow popups to print this packet.",
-            description:
-              "Your browser blocked the print preview window. Re-enable popups for this site and try again.",
-            variant: "destructive",
-          });
-          return;
-        }
-        recordAdminReviewUpdate(
-          "pdf_previewed",
-          `Generated ${mode === "plexus" ? "Plexus" : "Clinician"} PDF for ${group.schedulerName} (${subset.length})`,
-          { scheduler: group.schedulerName, kind: mode },
-        );
-      };
-
-      const qaReport = auditPacketPatients(validation.patients, mode);
-      if (qaReport.blockedCount > 0) {
-        const printable = validation.patients.filter(
-          (p) => !qaReport.blockedPatients.some((b) => b.patientId === p.id),
-        );
-        setPacketQa({
-          report: qaReport,
-          proceed: () => {
-            setPacketQa(null);
-            openWithSubset(printable);
-          },
-        });
-        return;
-      }
-
-      openWithSubset(validation.patients);
-    } catch (err) {
-      toast({
-        title: "Could not open print preview",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "destructive",
-      });
-    }
-  }
 
   // Audit log. Seeded from patient.reasoning["adminReview:updates"]
   // so prior persisted entries survive a dialog reopen. New entries
@@ -2548,13 +2332,6 @@ export function AdminReviewDialog({
                   >
                     <ChevronLeft className="w-3.5 h-3.5" />
                   </button>
-                  <span
-                    className="text-[11px] font-medium text-white/85 tabular-nums px-1"
-                    data-testid="admin-review-sibling-counter"
-                  >
-                    {activeIndex + 1} of {totalSiblings}
-                    {dateLabel ? ` · ${dateLabel}` : ""}
-                  </span>
                   <button
                     type="button"
                     onClick={() => goToSibling(1)}
@@ -2630,20 +2407,6 @@ export function AdminReviewDialog({
             className="flex min-h-0 flex-[1.35] flex-col overflow-hidden rounded-2xl border border-[#E6E8EF] bg-white"
             data-testid="admin-review-ancillary-panel"
           >
-              <div className="px-5 pt-4 pb-2 border-b border-slate-100 flex items-center gap-2">
-                <span
-                  className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 text-white px-3 py-1 text-[11px] font-semibold uppercase tracking-wider shadow-sm"
-                  data-testid="admin-review-ancillary-playground-pill"
-                >
-                  <Sparkles className="w-3 h-3" />
-                  Ancillary Playground
-                </span>
-                {evidenceQuery.isFetching && (
-                  <span className="text-[10px] text-slate-400 inline-flex items-center gap-1">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Refreshing rule engine
-                  </span>
-                )}
-              </div>
               <ScrollArea className="flex-1 min-h-0 px-5 py-4">
                 <div
                   className="space-y-4"
@@ -3149,16 +2912,6 @@ export function AdminReviewDialog({
                             emptyText="No medications entered"
                             testId="admin-review-source-rx"
                           />
-                          <RawSourceCard
-                            label="Previous Tests"
-                            value={
-                              typeof (patient as { previousTests?: unknown }).previousTests === "string"
-                                ? ((patient as { previousTests?: string }).previousTests ?? "")
-                                : ""
-                            }
-                            emptyText="No prior testing on file"
-                            testId="admin-review-source-prior"
-                          />
                         </section>
                 </div>
                           </PopoverContent>
@@ -3183,13 +2936,20 @@ export function AdminReviewDialog({
                 <div className="px-0 py-0" data-testid="admin-review-history-tab-content">
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-1">
                           <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                            Patient History (chart)
+                            Completed Prior Testing
                           </div>
                           <div className="text-xs text-slate-600 whitespace-pre-wrap min-h-[3rem]">
-                            {patient.history || (
-                              <span className="italic text-slate-400">No history entered</span>
-                            )}
+                            {typeof (patient as { previousTests?: unknown }).previousTests === "string" && (patient as { previousTests?: string }).previousTests
+                              ? (patient as { previousTests?: string }).previousTests
+                              : (
+                                <span className="italic text-slate-400">No prior testing on file</span>
+                              )}
                           </div>
+                          {typeof (patient as { mostRecentTestDate?: unknown }).mostRecentTestDate === "string" && (patient as { mostRecentTestDate?: string }).mostRecentTestDate && (
+                            <div className="text-[10px] text-slate-500 mt-1">
+                              Most recent date: {(patient as { mostRecentTestDate?: string }).mostRecentTestDate}
+                            </div>
+                          )}
                         </div>
                 </div>
                           </PopoverContent>
@@ -3312,211 +3072,6 @@ export function AdminReviewDialog({
                 </div>
                           </PopoverContent>
                         </Popover>
-                        {/* Engagement */}
-                        <Popover onOpenChange={(open) => setLeftTab(open ? "engagement" : "source")}>
-                          <PopoverTrigger asChild>
-                            <button
-                              type="button"
-                              data-testid="admin-review-reference-engagement-trigger"
-                              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300 px-3 py-2 text-xs font-semibold shadow-sm transition-colors"
-                            >
-                              <ShieldCheck className="w-3.5 h-3.5" />
-                              Engagement
-                            </button>
-                          </PopoverTrigger>
-                          <PopoverContent
-                            align="end"
-                            className="w-[520px] max-w-[92vw] max-h-[72vh] overflow-auto p-3"
-                            data-testid="admin-review-engagement-popover"
-                          >
-                <div className="px-0 py-0" data-testid="admin-review-engagement-tab-content">
-                        {/* Engagement Center source of truth: client-side
-                            grouping of /api/engagement/assignment-board
-                            (no dedicated grouped endpoint exists). Each
-                            scheduler group supports Select All + Plexus
-                            PDF + Clinician PDF scoped to selected rows.
-                            SOURCE MARKER: Engagement Center source of truth
-                            SOURCE MARKER: Scheduler call lists grouped by scheduler
-                            SOURCE MARKER: Plexus PDF by scheduler assignment
-                            SOURCE MARKER: Clinician PDF by scheduler assignment */}
-                        <div
-                          className="space-y-3"
-                          data-testid="admin-review-scheduler-call-lists"
-                        >
-                          {engagementBoardQuery.isLoading && (
-                            <div className="text-[11px] text-slate-500 italic">
-                              Loading Engagement assignments…
-                            </div>
-                          )}
-                          {engagementBoardQuery.isError && (
-                            <div className="text-[11px] text-rose-700">
-                              Could not load Engagement Center: {String(engagementBoardQuery.error)}
-                            </div>
-                          )}
-                          {!engagementBoardQuery.isLoading &&
-                            !engagementBoardQuery.isError &&
-                            schedulerGroups.length === 0 && (
-                              <div className="text-[11px] text-slate-500 italic">
-                                No Engagement assignment found for this facility yet.
-                              </div>
-                            )}
-                          {schedulerGroups.map((group) => {
-                            const selected = selectedByScheduler[group.schedulerKey] ?? new Set<number>();
-                            const eligibleIds = group.rows
-                              .map((r) => r.patientScreeningId)
-                              .filter((id): id is number => id != null);
-                            const allSelected =
-                              eligibleIds.length > 0 && eligibleIds.every((id) => selected.has(id));
-                            const selectedCount = selected.size;
-                            return (
-                              <section
-                                key={group.schedulerKey}
-                                className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-2"
-                                data-testid="admin-review-scheduler-call-list"
-                                data-scheduler-name={group.schedulerName}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="text-[11px] font-semibold text-slate-800">
-                                    {group.schedulerName}
-                                    <span className="ml-1.5 text-slate-500 font-normal">
-                                      ({group.rows.length})
-                                    </span>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setAllSelectedForScheduler(group)}
-                                    data-testid="admin-review-select-all-scheduler-patients"
-                                    className="text-[10px] uppercase tracking-wider text-slate-600 hover:text-slate-900"
-                                  >
-                                    {allSelected ? "Clear" : "Select All"}
-                                  </button>
-                                </div>
-                                <div
-                                  className="text-[10px] text-slate-500"
-                                  data-testid="admin-review-scheduler-selected-count"
-                                >
-                                  {selectedCount} selected
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    disabled={selectedCount === 0}
-                                    onClick={() =>
-                                      generateSchedulerScopedPdf(
-                                        group,
-                                        Array.from(selected),
-                                        "plexus",
-                                      )
-                                    }
-                                    data-testid="admin-review-scheduler-plexus-pdf"
-                                    data-print-preview-testid="admin-review-plexus-print-preview"
-                                    className="rounded-md border border-slate-300 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-800 px-2 py-1 text-[11px] font-semibold transition-colors"
-                                  >
-                                    Plexus PDF
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={selectedCount === 0}
-                                    onClick={() =>
-                                      generateSchedulerScopedPdf(
-                                        group,
-                                        Array.from(selected),
-                                        "clinician",
-                                      )
-                                    }
-                                    data-testid="admin-review-scheduler-clinician-pdf"
-                                    data-print-preview-testid="admin-review-clinician-print-preview"
-                                    className="rounded-md border border-slate-300 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-800 px-2 py-1 text-[11px] font-semibold transition-colors"
-                                  >
-                                    Clinician PDF
-                                  </button>
-                                </div>
-                                {/* Hidden surface-state markers for QA / e2e. */}
-                                <span
-                                  className="sr-only"
-                                  data-testid="admin-review-print-preview-popup-blocked"
-                                  aria-hidden="true"
-                                >
-                                  Popup blocked. Allow popups to print this packet.
-                                </span>
-                                <span
-                                  className="sr-only"
-                                  data-testid="admin-review-print-preview-error"
-                                  aria-hidden="true"
-                                >
-                                  Admin Review print preview error surface.
-                                </span>
-                                <ul className="space-y-1">
-                                  {group.rows.map((r) => {
-                                    const isCurrent =
-                                      r.patientScreeningId === patient.id;
-                                    const isChecked = r.patientScreeningId != null
-                                      ? selected.has(r.patientScreeningId)
-                                      : false;
-                                    return (
-                                      <li
-                                        key={r.executionCaseId}
-                                        className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-[11px] ${
-                                          isCurrent
-                                            ? "border-slate-300 bg-slate-100"
-                                            : "border-slate-200 bg-slate-50/70"
-                                        }`}
-                                        data-testid="admin-review-scheduler-call-list-patient"
-                                        data-patient-id={r.patientScreeningId ?? ""}
-                                        data-is-current={isCurrent ? "true" : "false"}
-                                        {...(isCurrent
-                                          ? { "data-current-marker": "admin-review-current-patient-in-call-list" }
-                                          : {})}
-                                      >
-                                        <input
-                                          type="checkbox"
-                                          checked={isChecked}
-                                          disabled={r.patientScreeningId == null}
-                                          onChange={() => {
-                                            if (r.patientScreeningId != null) {
-                                              toggleSelectedForScheduler(
-                                                group.schedulerKey,
-                                                r.patientScreeningId,
-                                              );
-                                            }
-                                          }}
-                                          data-testid="admin-review-select-scheduler-patient"
-                                          className="mt-0.5"
-                                        />
-                                        <div className="min-w-0 flex-1">
-                                          <div className="font-medium text-slate-800 truncate">
-                                            {r.patientName}
-                                            {isCurrent && (
-                                              <span
-                                                className="ml-1 text-[9px] uppercase tracking-wider text-slate-600"
-                                                data-testid="admin-review-current-patient-in-call-list"
-                                              >
-                                                · current
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="text-slate-500 truncate">
-                                            {[r.facility, r.scheduleDate, r.engagementStatus]
-                                              .filter(Boolean)
-                                              .join(" · ")}
-                                          </div>
-                                          {r.selectedServiceList?.length ? (
-                                            <div className="text-slate-400 truncate">
-                                              {r.selectedServiceList.join(", ")}
-                                            </div>
-                                          ) : null}
-                                        </div>
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              </section>
-                            );
-                          })}
-                        </div>
-                </div>
-                          </PopoverContent>
-                        </Popover>
                       </div>
                     </div>
 
@@ -3629,7 +3184,7 @@ export function AdminReviewDialog({
                         testId="admin-review-available-buttons-hx"
                         emptyText="No symptoms recorded"
                         items={availableButtons.filter(
-                          (b) => b.kind === "symptom" || b.kind === "history" || b.kind === "prior_test",
+                          (b) => b.kind === "symptom" || b.kind === "history",
                         )}
                         renderItem={(b) => (
                           <SupportingChipButton
@@ -3659,7 +3214,7 @@ export function AdminReviewDialog({
           >
             <div className="flex items-center justify-between gap-2 mb-2">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                Updates Made In Patient
+                Updates
               </div>
               <span className="text-[10px] text-slate-400 tabular-nums">
                 {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
@@ -3670,7 +3225,7 @@ export function AdminReviewDialog({
                 Audit log will populate as you make changes in this review.
               </div>
             ) : (
-              <ScrollArea className="max-h-[110px]">
+              <ScrollArea className="max-h-[260px]">
                 <ul className="space-y-1 pr-2">
                   {updatesLog.map((entry) => (
                     <li
