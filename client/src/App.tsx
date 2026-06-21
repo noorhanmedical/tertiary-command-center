@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
+import MissionControlPage from "@/pages/mission-control";
 import SchedulePage from "@/pages/SchedulePage";
 import SharedSchedule from "@/pages/shared-schedule";
 import PatientDatabasePage from "@/pages/patient-database";
@@ -107,6 +108,11 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/home">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
                     <Home />
+                  </SidebarProvider>
+                </Route>
+                <Route path="/mission-control">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <MissionControlPage />
                   </SidebarProvider>
                 </Route>
                 <Route path="/schedule" component={SchedulePage} />

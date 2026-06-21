@@ -12,6 +12,7 @@ import {
   FileText,
   FolderOpen,
   Phone,
+  Radar,
   Sparkles,
   Stethoscope,
   Upload,
@@ -418,7 +419,13 @@ export function HomeDashboard({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 auto-rows-fr">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 auto-rows-fr">
+                <SecondaryTile
+                  href="/mission-control"
+                  testId="tile-mission-control"
+                  label="Mission Control"
+                  icon={<Radar className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
                 <SecondaryTile
                   href="/team-member-portals"
                   testId="tile-team-member-portals"
