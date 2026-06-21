@@ -5,6 +5,7 @@ import {
   Sparkles,
   CalendarDays,
   Phone,
+  TrendingUp,
   type LucideIcon,
 } from "lucide-react";
 
@@ -62,6 +63,14 @@ export const DOCK_ITEMS: DockItem[] = [
     kind: "panel",
     panelId: "calendar",
     testId: "global-floating-dock-calendar",
+  },
+  {
+    id: "engagement",
+    label: "Engagement",
+    Icon: TrendingUp,
+    kind: "panel",
+    panelId: "engagement",
+    testId: "global-floating-dock-engagement",
   },
   {
     id: "communications",

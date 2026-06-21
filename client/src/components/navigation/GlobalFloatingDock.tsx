@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/sheet";
 import { DOCK_ITEMS, type DockItem } from "@/lib/navigation/navigationRegistry";
 import { PlexusIQCalendar, type CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
+import { EngagementPanel } from "@/components/navigation/EngagementPanel";
 
 function DockCalendarPanel({ onClose }: { onClose: () => void }) {
   const [, navigate] = useLocation();
@@ -238,6 +239,23 @@ export function GlobalFloatingDock() {
           </SheetHeader>
           <div className="flex-1 overflow-y-auto -mx-6 px-6">
             <DockCalendarPanel onClose={() => setOpenPanel(null)} />
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet
+        open={openPanel === "engagement"}
+        onOpenChange={(open) => setOpenPanel(open ? "engagement" : null)}
+      >
+        <SheetContent side="right" className="w-full sm:max-w-md flex flex-col overflow-hidden">
+          <SheetHeader className="shrink-0">
+            <SheetTitle>Engagement</SheetTitle>
+            <SheetDescription>
+              Billing and invoice summary — financial engagement at a glance.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="flex-1 overflow-y-auto -mx-6 px-6 pt-2">
+            <EngagementPanel onClose={() => setOpenPanel(null)} />
           </div>
         </SheetContent>
       </Sheet>
