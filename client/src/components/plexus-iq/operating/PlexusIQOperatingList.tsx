@@ -444,7 +444,7 @@ export function PlexusIQOperatingList({
               setReviewPatientId(null);
             }}
           >
-            <SelectTrigger className="h-8 w-[260px] text-sm" data-testid="select-operating-facility">
+            <SelectTrigger className="h-9 w-[260px] text-sm" data-testid="select-operating-facility">
               <SelectValue placeholder="Select facility" />
             </SelectTrigger>
             <SelectContent>
@@ -461,7 +461,7 @@ export function PlexusIQOperatingList({
             <Button
               size="sm"
               onClick={onAddPatient}
-              className="gap-1.5 rounded-xl"
+              className="h-9 gap-1.5 rounded-xl"
               data-testid="button-plexus-iq-add-patient"
             >
               <Plus className="w-4 h-4" />
@@ -527,7 +527,7 @@ export function PlexusIQOperatingList({
             ) : (
               <>
                 <div
-                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-300/50 rounded-xl bg-slate-300/40 backdrop-blur-md shadow-sm text-[10px] font-semibold uppercase tracking-wider text-slate-600`}
+                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-200 rounded-xl bg-white/90 backdrop-blur-md shadow-sm text-[10px] font-semibold uppercase tracking-wider text-slate-500`}
                   data-testid="plexus-iq-operating-header"
                 >
                   {/* Checkbox column (no label) */}

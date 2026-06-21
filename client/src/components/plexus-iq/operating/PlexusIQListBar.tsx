@@ -88,7 +88,7 @@ export function PlexusIQListBar({
 }: PlexusIQListBarProps) {
   return (
     <div
-      className="flex items-center justify-between gap-3 flex-wrap px-3 py-2.5 border-b border-indigo-900/40 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900"
+      className="flex min-h-[3.5rem] items-center justify-between gap-3 px-3 py-1.5 border-b border-indigo-900/40 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900"
       data-testid="plexus-iq-list-bar"
     >
       <div className="flex items-center gap-2 min-w-0">
@@ -106,7 +106,7 @@ export function PlexusIQListBar({
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 flex-wrap">
+      <div className="flex items-center justify-end gap-1.5 flex-wrap">
         <Button
           variant="ghost"
           size="sm"
