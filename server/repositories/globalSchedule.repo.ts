@@ -114,6 +114,25 @@ export async function upsertProcedureCompleteEvent(
   return created;
 }
 
+// Remove the mirrored `procedure_complete` schedule event(s) for a procedure
+// that is no longer complete (reopened, no-showed, cancelled, etc.), so the
+// calendar ✓ badge disappears. Deduped by the originating procedure-event id
+// stored in metadata. Returns the number of rows removed.
+export async function clearProcedureCompleteEvent(
+  procedureEventId: number,
+): Promise<number> {
+  const deleted = await db
+    .delete(globalScheduleEvents)
+    .where(
+      and(
+        eq(globalScheduleEvents.eventType, "procedure_complete"),
+        sql`${globalScheduleEvents.metadata}->>'procedureEventId' = ${String(procedureEventId)}`,
+      ),
+    )
+    .returning({ id: globalScheduleEvents.id });
+  return deleted.length;
+}
+
 export async function getGlobalScheduleEventById(id: number): Promise<GlobalScheduleEvent | undefined> {
   const [result] = await db
     .select()

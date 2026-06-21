@@ -8,7 +8,7 @@ import {
 import { upsertCaseDocumentReadinessForProcedureComplete } from "./documentReadiness.repo";
 import { createPendingProcedureNotes } from "./generatedNotes.repo";
 import { evaluateBillingReadinessForProcedure } from "./billingReadiness.repo";
-import { upsertProcedureCompleteEvent } from "./globalSchedule.repo";
+import { upsertProcedureCompleteEvent, clearProcedureCompleteEvent } from "./globalSchedule.repo";
 
 export type ListProcedureEventsFilters = {
   executionCaseId?: number;
@@ -38,6 +38,20 @@ export async function updateProcedureEvent(
     .set({ ...updates, updatedAt: new Date() })
     .where(eq(procedureEvents.id, id))
     .returning();
+
+  // If a procedure moves away from "complete" (reopened, no-show, cancelled,
+  // back to not_started/in_progress, etc.), remove its mirrored
+  // `procedure_complete` schedule event so the calendar ✓ badge disappears.
+  if (
+    result &&
+    updates.procedureStatus !== undefined &&
+    updates.procedureStatus !== "complete"
+  ) {
+    void clearProcedureCompleteEvent(id).catch((err) => {
+      console.error("[procedureEvents.repo] clearProcedureCompleteEvent failed:", err);
+    });
+  }
+
   return result;
 }
 
