@@ -18,6 +18,7 @@ import {
   Upload,
   Users,
   Users2,
+  Waves,
   CheckSquare,
 } from "lucide-react";
 
@@ -245,40 +246,6 @@ export function HomeDashboard({
         <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-10 pb-16">
           <div className="max-w-5xl mx-auto">
             <div className="space-y-6">
-              <Link href="/plexus-iq">
-                <Card
-                  className="glass-tile-interactive group cursor-pointer relative overflow-hidden border-0 bg-[radial-gradient(ellipse_at_top_left,_#1e1b4b_0%,_#000000_55%,_#0b0716_100%)] text-white shadow-2xl"
-                  data-testid="tile-plexus-iq"
-                >
-                  <div
-                    className="pointer-events-none absolute inset-0 opacity-70"
-                    style={{
-                      backgroundImage:
-                        "radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,0.9) 50%, transparent 51%), radial-gradient(1px 1px at 60% 70%, rgba(255,255,255,0.7) 50%, transparent 51%), radial-gradient(1.5px 1.5px at 80% 20%, rgba(255,255,255,0.95) 50%, transparent 51%), radial-gradient(1px 1px at 40% 80%, rgba(255,255,255,0.6) 50%, transparent 51%), radial-gradient(1px 1px at 10% 60%, rgba(255,255,255,0.8) 50%, transparent 51%), radial-gradient(1.2px 1.2px at 90% 50%, rgba(255,255,255,0.85) 50%, transparent 51%)",
-                      backgroundRepeat: "no-repeat",
-                    }}
-                    aria-hidden="true"
-                  />
-                  <div className="relative flex items-center gap-5 px-8 py-9 lg:px-10 lg:py-12">
-                    <div className="shrink-0 w-16 h-16 rounded-2xl bg-white/10 ring-1 ring-white/20 flex items-center justify-center">
-                      <Sparkles className="w-8 h-8 text-white" strokeWidth={1.75} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/50">
-                        Plexus Ancillary
-                      </div>
-                      <div className="text-[30px] lg:text-[36px] font-semibold text-white tracking-tight mt-1 leading-none">
-                        Plexus IQ
-                      </div>
-                      <p className="text-[14px] text-white/70 mt-2 leading-snug max-w-2xl">
-                        Build, qualify, and review Visit and Outreach schedules across dates and facilities.
-                      </p>
-                    </div>
-                    <ChevronRight className="hidden sm:block w-6 h-6 text-white/40 shrink-0 transition-transform group-hover:translate-x-1" strokeWidth={1.75} />
-                  </div>
-                </Card>
-              </Link>
-
               <div data-testid="tile-plexus-dashboard-row">
                 <button
                   type="button"
@@ -419,12 +386,52 @@ export function HomeDashboard({
                 </div>
               </div>
 
+              <Link href="/plexus-iq">
+                <Card
+                  className="glass-tile-interactive group cursor-pointer relative overflow-hidden border-0 bg-[radial-gradient(ellipse_at_top_left,_#1e1b4b_0%,_#000000_55%,_#0b0716_100%)] text-white shadow-2xl"
+                  data-testid="tile-plexus-iq"
+                >
+                  <div
+                    className="pointer-events-none absolute inset-0 opacity-70"
+                    style={{
+                      backgroundImage:
+                        "radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,0.9) 50%, transparent 51%), radial-gradient(1px 1px at 60% 70%, rgba(255,255,255,0.7) 50%, transparent 51%), radial-gradient(1.5px 1.5px at 80% 20%, rgba(255,255,255,0.95) 50%, transparent 51%), radial-gradient(1px 1px at 40% 80%, rgba(255,255,255,0.6) 50%, transparent 51%), radial-gradient(1px 1px at 10% 60%, rgba(255,255,255,0.8) 50%, transparent 51%), radial-gradient(1.2px 1.2px at 90% 50%, rgba(255,255,255,0.85) 50%, transparent 51%)",
+                      backgroundRepeat: "no-repeat",
+                    }}
+                    aria-hidden="true"
+                  />
+                  <div className="relative flex items-center gap-5 px-8 py-9 lg:px-10 lg:py-12">
+                    <div className="shrink-0 w-16 h-16 rounded-2xl bg-white/10 ring-1 ring-white/20 flex items-center justify-center">
+                      <Sparkles className="w-8 h-8 text-white" strokeWidth={1.75} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/50">
+                        Plexus Ancillary
+                      </div>
+                      <div className="text-[30px] lg:text-[36px] font-semibold text-white tracking-tight mt-1 leading-none">
+                        Plexus IQ
+                      </div>
+                      <p className="text-[14px] text-white/70 mt-2 leading-snug max-w-2xl">
+                        Build, qualify, and review Visit and Outreach schedules across dates and facilities.
+                      </p>
+                    </div>
+                    <ChevronRight className="hidden sm:block w-6 h-6 text-white/40 shrink-0 transition-transform group-hover:translate-x-1" strokeWidth={1.75} />
+                  </div>
+                </Card>
+              </Link>
+
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 auto-rows-fr">
                 <SecondaryTile
                   href="/mission-control"
                   testId="tile-mission-control"
                   label="Mission Control"
                   icon={<Radar className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/ultrasound-central"
+                  testId="tile-ultrasound-central"
+                  label="Ultrasound Central"
+                  icon={<Waves className="w-9 h-9 text-emerald-600" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/team-member-portals"
@@ -444,9 +451,6 @@ export function HomeDashboard({
                   label="Team Ops"
                   icon={<Stethoscope className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 auto-rows-fr">
                 <SecondaryTile
                   href="/patient-directory"
                   testId="tile-patient-directory"

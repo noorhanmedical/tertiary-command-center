@@ -68,8 +68,8 @@ export const DOCK_ITEMS: DockItem[] = [
     id: "engagement",
     label: "Engagement",
     Icon: TrendingUp,
-    kind: "panel",
-    panelId: "engagement",
+    kind: "link",
+    href: "/engagement-center",
     testId: "global-floating-dock-engagement",
   },
   {
