@@ -180,7 +180,7 @@ export function HomeLiveDashboard() {
   return (
     <div className="space-y-4" data-testid="live-dashboard">
       <div className="flex items-center gap-2">
-        <Activity className="w-4 h-4 text-indigo-600 dark:text-indigo-300" strokeWidth={2} />
+        <Activity className="w-4 h-4 text-slate-400 dark:text-slate-500" strokeWidth={2} />
         <h2 className="text-[14px] font-semibold text-slate-900 dark:text-foreground tracking-tight">
           Today at a Glance
         </h2>
@@ -190,7 +190,7 @@ export function HomeLiveDashboard() {
         <MetricStat
           label="Patients"
           value={todayStat?.patients ?? 0}
-          icon={<Users className="w-5 h-5 text-indigo-600 dark:text-indigo-300" strokeWidth={1.75} />}
+          icon={<Users className="w-5 h-5 text-slate-500 dark:text-slate-400" strokeWidth={1.75} />}
           testId="stat-total-patients"
           last7={last7}
           last30={last30}
@@ -199,7 +199,7 @@ export function HomeLiveDashboard() {
         <MetricStat
           label="Ancillaries"
           value={todayStat?.ancillaries ?? 0}
-          icon={<Activity className="w-5 h-5 text-violet-600 dark:text-violet-300" strokeWidth={1.75} />}
+          icon={<Activity className="w-5 h-5 text-violet-400/70 dark:text-violet-300/50" strokeWidth={1.75} />}
           testId="stat-total-ancillaries"
           last7={last7}
           last30={last30}
@@ -208,7 +208,7 @@ export function HomeLiveDashboard() {
         <MetricStat
           label="Active Schedules"
           value={todayStat?.activeSchedules ?? 0}
-          icon={<CalendarRange className="w-5 h-5 text-sky-600 dark:text-sky-300" strokeWidth={1.75} />}
+          icon={<CalendarRange className="w-5 h-5 text-sky-500/60 dark:text-sky-300/50" strokeWidth={1.75} />}
           testId="stat-active-schedules"
           last7={last7}
           last30={last30}
@@ -217,7 +217,7 @@ export function HomeLiveDashboard() {
         <MetricStat
           label="Calls Planned"
           value={todayStat?.callsPlanned ?? 0}
-          icon={<Phone className="w-5 h-5 text-amber-600 dark:text-amber-300" strokeWidth={1.75} />}
+          icon={<Phone className="w-5 h-5 text-amber-500/60 dark:text-amber-300/50" strokeWidth={1.75} />}
           testId="stat-calls-planned"
           last7={last7}
           last30={last30}
@@ -276,19 +276,19 @@ export function HomeLiveDashboard() {
         <AncillaryStat
           label="BrainWave"
           value={breakdown?.brainWave ?? 0}
-          icon={<Brain className="w-4 h-4 text-purple-600 dark:text-purple-300" strokeWidth={2} />}
+          icon={<Brain className="w-4 h-4 text-purple-400/70 dark:text-purple-300/50" strokeWidth={2} />}
           testId="ancillary-brainwave"
         />
         <AncillaryStat
           label="VitalWave"
           value={breakdown?.vitalWave ?? 0}
-          icon={<HeartPulse className="w-4 h-4 text-red-600 dark:text-red-300" strokeWidth={2} />}
+          icon={<HeartPulse className="w-4 h-4 text-rose-400/70 dark:text-rose-300/50" strokeWidth={2} />}
           testId="ancillary-vitalwave"
         />
         <AncillaryStat
           label="Ultrasound"
           value={breakdown?.ultrasound ?? 0}
-          icon={<Waves className="w-4 h-4 text-emerald-600 dark:text-emerald-300" strokeWidth={2} />}
+          icon={<Waves className="w-4 h-4 text-emerald-500/60 dark:text-emerald-300/50" strokeWidth={2} />}
           testId="ancillary-ultrasound"
         />
       </div>
