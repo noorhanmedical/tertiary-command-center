@@ -258,6 +258,15 @@ function CalendarView({
     return map;
   }, [groups]);
 
+  // The highlighted day follows the actively-selected batch so the calendar
+  // highlight stays aligned with the patient list shown on the right.
+  const selectedDateKey = useMemo(() => {
+    for (const [iso, nodes] of batchDateMap) {
+      if (nodes.some((n) => n.batchId === selectedBatchId)) return iso;
+    }
+    return null;
+  }, [batchDateMap, selectedBatchId]);
+
   function prevMonth() {
     if (calMonth === 0) { setCalYear(y => y - 1); setCalMonth(11); }
     else setCalMonth(m => m - 1);
@@ -332,13 +341,22 @@ function CalendarView({
             const iso = isoForDay(day);
             const hasBatches = batchDateMap.has(iso);
             const isToday = iso === todayIso;
-            const isSelected = expandedDay === iso;
+            const isSelected = iso === selectedDateKey;
             return (
               <button
                 key={di}
                 type="button"
                 disabled={!hasBatches}
-                onClick={() => setExpandedDay(isSelected ? null : iso)}
+                onClick={() => {
+                  const nodes = batchDateMap.get(iso);
+                  if (nodes && nodes.length > 0) {
+                    const newest = nodes.reduce((a, b) =>
+                      b.createdAtMs > a.createdAtMs ? b : a,
+                    );
+                    onSelectBatch(newest.batchId);
+                  }
+                  setExpandedDay((cur) => (cur === iso ? null : iso));
+                }}
                 className={`relative flex flex-col items-center justify-center rounded py-0.5 my-0.5 text-[11px] font-medium transition-colors
                   ${!hasBatches ? "text-slate-300 cursor-default" : isSelected ? "text-white cursor-pointer" : "text-slate-700 hover:bg-sky-50 cursor-pointer"}
                   ${isSelected ? "bg-black shadow-sm" : ""}

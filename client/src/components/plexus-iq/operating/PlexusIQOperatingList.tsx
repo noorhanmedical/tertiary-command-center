@@ -258,26 +258,13 @@ export function PlexusIQOperatingList({
     });
   }, [onSelectionChange, selectedFacility, selectedScheduleDate, selectedBatchId]);
 
-  const [expandedOverride, setExpandedOverride] = useState<Set<string> | null>(null);
+  // Single-active highlight: the expanded/highlighted date always follows the
+  // selected batch, so the date-rail highlight and the patient list below it
+  // can never drift apart. Selecting a different date moves the highlight.
   const expandedDates = useMemo(() => {
-    if (expandedOverride) return expandedOverride;
-    // Default: expand the date group containing the selected batch.
     const key = selectedBatch?.scheduleDate ?? UNSCHEDULED_KEY;
     return new Set<string>([key]);
-  }, [expandedOverride, selectedBatch]);
-
-  const toggleDate = useCallback(
-    (key: string) => {
-      setExpandedOverride((prev) => {
-        const base = prev ?? expandedDates;
-        // Single-active: re-clicking the open date collapses it; clicking any
-        // other date moves the highlight to it (replacing the previous one).
-        if (base.has(key)) return new Set<string>();
-        return new Set<string>([key]);
-      });
-    },
-    [expandedDates],
-  );
+  }, [selectedBatch]);
 
   // ── Patients of the selected batch ──────────────────────────────────
   const patients = useMemo(
@@ -342,10 +329,23 @@ export function PlexusIQOperatingList({
     if (!focusBatch) return;
     setFacilityOverride(focusBatch.facility);
     setBatchOverride(focusBatch.id);
-    setExpandedOverride(null);
     setReviewPatientId(null);
     onFocusConsumed?.();
   }, [focusBatch, onFocusConsumed]);
+
+  // Clicking a date in the rail selects that date's newest batch so the
+  // patient list (driven by selectedBatchId) always follows the highlight.
+  const selectDate = useCallback(
+    (key: string) => {
+      const group = dateGroups.find((g) => g.key === key);
+      const newest = group?.batches[0];
+      if (newest) {
+        setBatchOverride(newest.batchId);
+        setReviewPatientId(null);
+      }
+    },
+    [dateGroups],
+  );
 
   // ── PDF actions ─────────────────────────────────────────────────────
   const pdfTargets = useCallback(() => {
@@ -427,7 +427,6 @@ export function PlexusIQOperatingList({
             onValueChange={(v) => {
               setFacilityOverride(v);
               setBatchOverride(null);
-              setExpandedOverride(null);
               setReviewPatientId(null);
             }}
           >
@@ -476,7 +475,7 @@ export function PlexusIQOperatingList({
           groups={dateGroups}
           selectedBatchId={selectedBatchId}
           expandedDates={expandedDates}
-          onToggleDate={toggleDate}
+          onToggleDate={selectDate}
           onSelectBatch={(id) => {
             setBatchOverride(id);
             setReviewPatientId(null);
