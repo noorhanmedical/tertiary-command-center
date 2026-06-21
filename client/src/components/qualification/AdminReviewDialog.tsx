@@ -34,6 +34,9 @@ import {
   Trash2,
   X,
   Search,
+  FileText,
+  BookOpen,
+  Activity,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -2634,6 +2637,16 @@ export function AdminReviewDialog({
                   </button>
                 );
               })()}
+              <button
+                type="button"
+                onClick={() => onOpenChange(false)}
+                aria-label="Close admin review"
+                title="Close"
+                data-testid="admin-review-close-button"
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/85 hover:text-white hover:bg-white/15 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </DialogHeader>
@@ -3110,122 +3123,28 @@ export function AdminReviewDialog({
               </ScrollArea>
           </main>
 
-          {/* ─── RIGHT panel — decision + actions + reference ─── */}
+          {/* ─── RIGHT panel — slim action rail. Evidence sits at the top,
+              the decision is pinned at the bottom, and heavier surfaces
+              (documents, note, scheduler, reference, activity) collapse into
+              popovers so the column stays narrow. ─── */}
           <aside
-            className="flex min-h-0 w-[420px] flex-none flex-col overflow-hidden rounded-2xl border border-[#E6E8EF] bg-white"
+            className="flex min-h-0 w-[300px] flex-none flex-col overflow-hidden rounded-2xl border border-[#E6E8EF] bg-white"
             data-testid="admin-review-action-panel"
           >
             <ScrollArea className="min-h-0 flex-1">
-              <div className="space-y-5 p-5">
-                <div data-testid="admin-review-decision-group">
-              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Decision</div>
-                <div className="flex flex-col gap-2">
-                  <Button
-                    type="button"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "approved" });
-                      recordAdminReviewUpdate("approval_approved", "Approved review");
-                    }}
-                    data-testid="admin-review-approve-button"
-                    data-bar-testid={`admin-review-button-approve-${patient.id}`}
-                    className="bg-emerald-500 text-slate-800 hover:bg-emerald-600 w-full"
-                  >
-                    {approvalMutation.isPending ? (
-                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
-                    )}
-                    {isUnder16 ? "Admin Override Approve" : "Approve"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "needs_info" });
-                      recordAdminReviewUpdate("approval_pended", "Pended review");
-                    }}
-                    data-testid="admin-review-pend-button"
-                    data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
-                    className="w-full bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
-                  >
-                    Pend
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "rejected" });
-                      recordAdminReviewUpdate("approval_rejected", "Rejected review");
-                    }}
-                    data-testid={`admin-review-button-reject-${patient.id}`}
-                    className="w-full text-rose-700 border-rose-200 bg-rose-50 hover:bg-rose-100"
-                  >
-                    Reject
-                  </Button>
-                </div>
-                </div>
+              <div className="space-y-4 p-4">
 
-                <div data-testid="admin-review-documents-group">
-              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Documents</div>
-              <section
-                className="space-y-2"
-                data-testid="admin-review-right-actions-panel"
-              >
-              {/* Top-right PDF action buttons. Labels match the PDF
-                  generator naming: "Plexus PDF" (the canonical Plexus
-                  packet) and "Clinician PDF" (the clinician-facing
-                  packet). The reasoning content area below carries
-                  Clinician Understanding / Patient Talking Points
-                  labels — those belong inside the reasoning cards,
-                  not on PDF action buttons. */}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    recordAdminReviewUpdate("pdf_previewed", "Previewed Plexus PDF", { kind: "plexus" });
-                  }}
-                  data-testid="admin-review-pdf-preview-button-plexus"
-                  data-pdf-action="admin-review-pdf-action-plexus"
-                  className="rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 px-3 py-2 text-xs font-semibold transition-colors"
-                >
-                  Plexus PDF
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    recordAdminReviewUpdate("pdf_previewed", "Previewed Clinician PDF", { kind: "clinician" });
-                  }}
-                  data-testid="admin-review-pdf-preview-button-clinician"
-                  data-pdf-action="admin-review-pdf-action-clinician"
-                  className="rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 px-3 py-2 text-xs font-semibold transition-colors"
-                >
-                  Clinician PDF
-                </button>
-              </div>
-              <div data-testid="admin-review-pdf-actions-inline" className="bg-white rounded-xl p-2">
-                <PatientPdfActions
-                  patient={patient}
-                  facility={facility ?? patient.facility ?? null}
-                  scheduleDate={scheduleDate ?? null}
-                  compact
-                />
-              </div>
-              </section>
-                </div>
-
+                {/* Evidence — top of the action column */}
                 <div data-testid="admin-review-evidence-group">
-              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Evidence</div>
-              <section
-                className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3"
-                data-testid="admin-review-right-panel-buttons"
-              >
-                <div
-                  className="grid grid-cols-2 gap-2"
-                  data-testid="admin-review-right-panel-button-row"
-                >
+                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Evidence</div>
+                  <section
+                    className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3"
+                    data-testid="admin-review-right-panel-buttons"
+                  >
+                    <div
+                      className="grid grid-cols-2 gap-2"
+                      data-testid="admin-review-right-panel-button-row"
+                    >
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
@@ -3266,7 +3185,6 @@ export function AdminReviewDialog({
                       />
                     </PopoverContent>
                   </Popover>
-
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
@@ -3302,7 +3220,6 @@ export function AdminReviewDialog({
                       />
                     </PopoverContent>
                   </Popover>
-
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
@@ -3340,53 +3257,11 @@ export function AdminReviewDialog({
                       />
                     </PopoverContent>
                   </Popover>
-
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        className="rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-900 px-3 py-2 text-xs font-semibold hover:bg-emerald-100 transition-colors col-span-2"
-                        data-testid="admin-review-right-button-suggestions"
-                      >
-                        <span className="inline-flex items-center gap-1.5">
-                          <Lightbulb className="w-3 h-3" />
-                          Suggestions
-                          {visibleSuggestions.length > 0 && (
-                            <span className="inline-flex items-center justify-center rounded-full bg-emerald-200 text-emerald-900 text-[10px] px-1.5">
-                              {visibleSuggestions.length}
-                            </span>
-                          )}
-                        </span>
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      align="end"
-                      className="w-[340px] p-3 space-y-2"
-                      data-testid="admin-review-right-popover-suggestions"
-                    >
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                        Diagnosis Suggestions
-                      </div>
-                      <div className="text-[10px] text-slate-500">
-                        Medication-derived. Click to accept — suggestions are
-                        inactive until accepted.
-                      </div>
-                      {visibleSuggestions.length === 0 ? (
-                        <div className="text-[11px] text-slate-400 italic">
-                          No suggestions for this patient.
-                        </div>
-                      ) : (
-                        <DiagnosisSuggestionsSection
-                          suggestions={visibleSuggestions}
-                          onAccept={acceptDiagnosisSuggestion}
-                        />
-                      )}
-                    </PopoverContent>
-                  </Popover>
-                </div>
-              </section>
+                    </div>
+                  </section>
                 </div>
 
+                {/* Blocking rules */}
                 <div data-testid="admin-review-blocking-group">
               <section className="space-y-2">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
@@ -3413,30 +3288,64 @@ export function AdminReviewDialog({
               </section>
                 </div>
 
-                <div data-testid="admin-review-admin-note-group">
-              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Admin note</div>
-              <section className="flex items-center gap-2">
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      aria-label="Add admin note"
-                      title={adminNote ? "Admin note recorded" : "Add admin note"}
-                      data-testid="admin-review-admin-note-icon-button"
-                      className={`inline-flex items-center justify-center h-9 w-9 rounded-full border border-slate-300 transition-colors ${
-                        adminNote
-                          ? "bg-white text-[#3d4a6b]"
-                          : "bg-slate-50 text-slate-800 hover:bg-slate-100"
-                      }`}
-                    >
-                      <StickyNote className="w-4 h-4" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="end"
-                    className="w-[300px] p-3 space-y-2"
-                    data-testid="admin-review-admin-note-popover"
-                  >
+                {/* Actions — heavier surfaces collapsed into popovers */}
+                <div data-testid="admin-review-actions-group">
+                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Actions</div>
+                  <div className="grid grid-cols-2 gap-2">
+
+                    {/* Documents — single Plexus / Clinician PDF set */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          data-testid="admin-review-documents-trigger"
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 px-3 py-2 text-xs font-semibold transition-colors"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          Documents
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="end"
+                        className="w-[300px] p-3"
+                        data-testid="admin-review-documents-popover"
+                      >
+                        <div data-testid="admin-review-documents-group">
+                          <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Documents</div>
+                          <section className="space-y-2" data-testid="admin-review-right-actions-panel">
+              <div data-testid="admin-review-pdf-actions-inline" className="bg-white rounded-xl p-2">
+                <PatientPdfActions
+                  patient={patient}
+                  facility={facility ?? patient.facility ?? null}
+                  scheduleDate={scheduleDate ?? null}
+                  compact
+                />
+              </div>
+                          </section>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+
+                    {/* Admin note */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label="Add admin note"
+                          title={adminNote ? "Admin note recorded" : "Add admin note"}
+                          data-testid="admin-review-admin-note-icon-button"
+                          className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${adminNote ? "border-[#3d4a6b]/30 bg-[#3d4a6b]/10 text-[#3d4a6b]" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"}`}
+                        >
+                          <StickyNote className="w-3.5 h-3.5" />
+                          Note
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="end"
+                        className="w-[300px] p-3 space-y-2"
+                        data-testid="admin-review-admin-note-popover"
+                      >
+                        <div data-testid="admin-review-admin-note-group">
                     <Label
                       htmlFor={`admin-review-admin-note-${patient.id}`}
                       className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
@@ -3458,16 +3367,32 @@ export function AdminReviewDialog({
                       placeholder="Optional context attached to this approval action"
                       data-testid={`admin-review-admin-note-${patient.id}`}
                     />
-                  </PopoverContent>
-                </Popover>
-                <div className="text-[11px] text-slate-600">
-                  {adminNote.trim() ? "Admin note recorded for this session" : "No admin note yet"}
-                </div>
-              </section>
-                </div>
+                          <div className="text-[11px] text-slate-500">
+                            {adminNote.trim() ? "Admin note recorded for this session" : "No admin note yet"}
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
 
-                <div data-testid="admin-review-scheduler-group">
-              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Scheduler</div>
+                    {/* Scheduler routing */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          data-testid="admin-review-scheduler-trigger"
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 px-3 py-2 text-xs font-semibold transition-colors"
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          Scheduler
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="end"
+                        className="w-[320px] p-3 space-y-2"
+                        data-testid="admin-review-scheduler-popover"
+                      >
+                        <div data-testid="admin-review-scheduler-group">
+                          <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Scheduler</div>
                 {/* Scheduler routing chip. The settings source is the
                     canonical outreach_schedulers table (admin-edited
                     via Settings → Scheduler Team). When that table
@@ -3523,10 +3448,29 @@ export function AdminReviewDialog({
                     </span>
                   )}
                 </div>
-                </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
 
-                <div className="space-y-2" data-testid="admin-review-reference-group">
-              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Reference</div>
+                    {/* Reference material */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          data-testid="admin-review-reference-trigger"
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 px-3 py-2 text-xs font-semibold transition-colors"
+                        >
+                          <BookOpen className="w-3.5 h-3.5" />
+                          Reference
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="end"
+                        className="w-[520px] max-w-[92vw] max-h-[72vh] overflow-auto p-3"
+                        data-testid="admin-review-reference-popover"
+                      >
+                        <div className="space-y-2" data-testid="admin-review-reference-group">
+                          <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Reference</div>
               <details className="group rounded-lg border border-slate-200 bg-white">
                 <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-[13px] font-medium text-slate-700">
                   <ChevronRight className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-90" />
@@ -3887,9 +3831,28 @@ export function AdminReviewDialog({
                         </div>
                 </div>
               </details>
-                </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
 
-                <div data-testid="admin-review-updates-group">
+                    {/* Activity log */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          data-testid="admin-review-activity-trigger"
+                          className="col-span-2 inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 px-3 py-2 text-xs font-semibold transition-colors"
+                        >
+                          <Activity className="w-3.5 h-3.5" />
+                          Activity
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="end"
+                        className="w-[340px] p-3"
+                        data-testid="admin-review-activity-popover"
+                      >
+                        <div data-testid="admin-review-updates-group">
           <div
             className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3"
             data-testid="admin-review-updates-made-box"
@@ -3927,9 +3890,70 @@ export function AdminReviewDialog({
               </ScrollArea>
             )}
           </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+
+                  </div>
                 </div>
+
               </div>
             </ScrollArea>
+
+            {/* Decision — pinned at the bottom of the action column */}
+            <div
+              className="border-t border-slate-200 bg-white p-4"
+              data-testid="admin-review-decision-group"
+            >
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Decision</div>
+                <div className="flex flex-col gap-2">
+                  <Button
+                    type="button"
+                    disabled={approvalMutation.isPending}
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "approved" });
+                      recordAdminReviewUpdate("approval_approved", "Approved review");
+                    }}
+                    data-testid="admin-review-approve-button"
+                    data-bar-testid={`admin-review-button-approve-${patient.id}`}
+                    className="bg-emerald-500 text-slate-800 hover:bg-emerald-600 w-full"
+                  >
+                    {approvalMutation.isPending ? (
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-3 h-3 mr-1" />
+                    )}
+                    {isUnder16 ? "Admin Override Approve" : "Approve"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={approvalMutation.isPending}
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "needs_info" });
+                      recordAdminReviewUpdate("approval_pended", "Pended review");
+                    }}
+                    data-testid="admin-review-pend-button"
+                    data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
+                    className="w-full bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+                  >
+                    Pend
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={approvalMutation.isPending}
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "rejected" });
+                      recordAdminReviewUpdate("approval_rejected", "Rejected review");
+                    }}
+                    data-testid={`admin-review-button-reject-${patient.id}`}
+                    className="w-full text-rose-700 border-rose-200 bg-rose-50 hover:bg-rose-100"
+                  >
+                    Reject
+                  </Button>
+                </div>
+            </div>
           </aside>
         </div>
     </>
@@ -3939,7 +3963,9 @@ export function AdminReviewDialog({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
-          className="w-[calc(100vw-2rem)] max-w-[1440px] max-h-[94vh] overflow-hidden p-0 gap-0 rounded-2xl"
+          className="flex flex-col w-[calc(100vw-3rem)] max-w-[1040px] h-[min(86vh,760px)] overflow-hidden p-0 gap-0 rounded-2xl border border-slate-200 shadow-2xl"
+          overlayClassName="bg-slate-900/30 backdrop-blur-[2px]"
+          hideClose
           data-testid={`dialog-admin-review-${patient.id}`}
         >
           {shellChildren}
