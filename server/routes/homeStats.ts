@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { canonicalDay } from "../services/scheduleDashboardService";
 import { buildOutreachDashboard } from "../services/outreachService";
+import type { BillingRecord } from "@shared/schema";
 
 type ClinicHomeStat = {
   clinicKey: string;
@@ -11,10 +12,71 @@ type ClinicHomeStat = {
   vitalWaveCount: number;
   ultrasoundCount: number;
   ancillaryCount: number;
+  brainWaveValue: number;
+  vitalWaveValue: number;
+  ultrasoundValue: number;
+  estimatedValue: number;
 };
+
+type AncillaryBucket = "brain" | "vital" | "ultrasound";
 
 function clinicKeyFor(label: string): string {
   return label.toLowerCase().replace(/\s+/g, "-");
+}
+
+function bucketForTest(testName: string): AncillaryBucket {
+  const normalized = String(testName).toLowerCase();
+  if (normalized.includes("brain")) return "brain";
+  if (normalized.includes("vital")) return "vital";
+  return "ultrasound";
+}
+
+/**
+ * Pick the most meaningful dollar figure off a billing record for an
+ * estimated-reimbursement average. Prefers the contractually allowed amount,
+ * then total charges, then whatever was actually paid. Returns null when the
+ * record carries no usable monetary value.
+ */
+function reimbursementOf(record: BillingRecord): number | null {
+  const toNum = (v: unknown): number => {
+    const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const allowed = toNum(record.allowedAmount);
+  if (allowed > 0) return allowed;
+  const charges = toNum(record.totalCharges);
+  if (charges > 0) return charges;
+  const paid =
+    toNum(record.paidAmount) +
+    toNum(record.insurancePaidAmount) +
+    toNum(record.secondaryPaidAmount);
+  if (paid > 0) return paid;
+  return null;
+}
+
+/**
+ * Build an estimated average reimbursement per ancillary bucket from existing
+ * billing records. We reuse real billing data rather than hardcoding amounts;
+ * any bucket without billing history simply has no estimate (0).
+ */
+function buildAvgReimbursementByBucket(
+  records: BillingRecord[],
+): Record<AncillaryBucket, number> {
+  const sums: Record<AncillaryBucket, number> = { brain: 0, vital: 0, ultrasound: 0 };
+  const counts: Record<AncillaryBucket, number> = { brain: 0, vital: 0, ultrasound: 0 };
+  for (const record of records) {
+    if (record.isTest) continue;
+    const amount = reimbursementOf(record);
+    if (amount == null) continue;
+    const bucket = bucketForTest(record.service || "");
+    sums[bucket] += amount;
+    counts[bucket] += 1;
+  }
+  return {
+    brain: counts.brain > 0 ? sums.brain / counts.brain : 0,
+    vital: counts.vital > 0 ? sums.vital / counts.vital : 0,
+    ultrasound: counts.ultrasound > 0 ? sums.ultrasound / counts.ultrasound : 0,
+  };
 }
 
 /**
@@ -35,6 +97,25 @@ export function registerHomeStatsRoutes(app: Express) {
       const batches = await storage.getAllScreeningBatches();
       const todaysBatches = batches.filter((b) => canonicalDay(b.scheduleDate) === today);
 
+      // Estimated reimbursement per ancillary bucket, derived from real
+      // billing history (not hardcoded). Used to attach a dollar value to
+      // today's scheduled-ancillary counts.
+      let avgReimbursement: Record<AncillaryBucket, number> = {
+        brain: 0,
+        vital: 0,
+        ultrasound: 0,
+      };
+      try {
+        const billingRecords = await storage.getAllBillingRecords();
+        avgReimbursement = buildAvgReimbursementByBucket(billingRecords);
+      } catch {
+        // Estimates are best-effort; counts still render without them.
+      }
+      const estimatesAvailable =
+        avgReimbursement.brain > 0 ||
+        avgReimbursement.vital > 0 ||
+        avgReimbursement.ultrasound > 0;
+
       const clinicMap = new Map<string, ClinicHomeStat>();
       let totalPatients = 0;
       let totalAncillaries = 0;
@@ -54,6 +135,10 @@ export function registerHomeStatsRoutes(app: Express) {
             vitalWaveCount: 0,
             ultrasoundCount: 0,
             ancillaryCount: 0,
+            brainWaveValue: 0,
+            vitalWaveValue: 0,
+            ultrasoundValue: 0,
+            estimatedValue: 0,
           };
           clinicMap.set(label, entry);
         }
@@ -69,11 +154,11 @@ export function registerHomeStatsRoutes(app: Express) {
           totalAncillaries += tests.length;
 
           for (const test of tests) {
-            const normalized = String(test).toLowerCase();
-            if (normalized.includes("brain")) {
+            const bucket = bucketForTest(String(test));
+            if (bucket === "brain") {
               entry.brainWaveCount += 1;
               brainWaveTotal += 1;
-            } else if (normalized.includes("vital")) {
+            } else if (bucket === "vital") {
               entry.vitalWaveCount += 1;
               vitalWaveTotal += 1;
             } else {
@@ -82,6 +167,12 @@ export function registerHomeStatsRoutes(app: Express) {
             }
           }
         }
+
+        entry.brainWaveValue = entry.brainWaveCount * avgReimbursement.brain;
+        entry.vitalWaveValue = entry.vitalWaveCount * avgReimbursement.vital;
+        entry.ultrasoundValue = entry.ultrasoundCount * avgReimbursement.ultrasound;
+        entry.estimatedValue =
+          entry.brainWaveValue + entry.vitalWaveValue + entry.ultrasoundValue;
       }
 
       const clinics = Array.from(clinicMap.values()).sort((a, b) =>
@@ -106,6 +197,10 @@ export function registerHomeStatsRoutes(app: Express) {
         callsPlannedToday = 0;
       }
 
+      const brainWaveValueTotal = brainWaveTotal * avgReimbursement.brain;
+      const vitalWaveValueTotal = vitalWaveTotal * avgReimbursement.vital;
+      const ultrasoundValueTotal = ultrasoundTotal * avgReimbursement.ultrasound;
+
       res.json({
         today,
         clinics,
@@ -116,6 +211,19 @@ export function registerHomeStatsRoutes(app: Express) {
           brainWaveCount: brainWaveTotal,
           vitalWaveCount: vitalWaveTotal,
           ultrasoundCount: ultrasoundTotal,
+          brainWaveValue: brainWaveValueTotal,
+          vitalWaveValue: vitalWaveValueTotal,
+          ultrasoundValue: ultrasoundValueTotal,
+          estimatedValue:
+            brainWaveValueTotal + vitalWaveValueTotal + ultrasoundValueTotal,
+        },
+        estimatesAvailable,
+        // Per-bucket availability so the UI annotates only buckets that have
+        // real reimbursement history ($0 with no data would be misleading).
+        valueAvailable: {
+          brainWave: avgReimbursement.brain > 0,
+          vitalWave: avgReimbursement.vital > 0,
+          ultrasound: avgReimbursement.ultrasound > 0,
         },
         callsPlannedToday,
       });

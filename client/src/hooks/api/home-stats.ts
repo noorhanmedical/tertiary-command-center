@@ -9,6 +9,10 @@ export type HomeStatsClinic = {
   vitalWaveCount: number;
   ultrasoundCount: number;
   ancillaryCount: number;
+  brainWaveValue: number;
+  vitalWaveValue: number;
+  ultrasoundValue: number;
+  estimatedValue: number;
 };
 
 export type HomeStatsResponse = {
@@ -21,6 +25,16 @@ export type HomeStatsResponse = {
     brainWaveCount: number;
     vitalWaveCount: number;
     ultrasoundCount: number;
+    brainWaveValue: number;
+    vitalWaveValue: number;
+    ultrasoundValue: number;
+    estimatedValue: number;
+  };
+  estimatesAvailable: boolean;
+  valueAvailable: {
+    brainWave: boolean;
+    vitalWave: boolean;
+    ultrasound: boolean;
   };
   callsPlannedToday: number;
 };
