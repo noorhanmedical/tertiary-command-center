@@ -212,6 +212,7 @@ export interface IStorage {
   listOutreachCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]>;
   listOutreachCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]>;
   listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]>;
+  listOutreachCallsInRange(start: Date, end: Date): Promise<OutreachCall[]>;
   latestOutreachCallForPatient(patientScreeningId: number): Promise<OutreachCall | undefined>;
 
   createSchedulerAssignment(record: InsertSchedulerAssignment): Promise<SchedulerAssignment>;
@@ -430,6 +431,7 @@ export class DatabaseStorage implements IStorage {
   listOutreachCallsForPatient(patientScreeningId: number) { return outreachRepository.listCallsForPatient(patientScreeningId); }
   listOutreachCallsForPatients(patientScreeningIds: number[]) { return outreachRepository.listCallsForPatients(patientScreeningIds); }
   listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string) { return outreachRepository.listCallsForSchedulerToday(schedulerUserId, todayIso); }
+  listOutreachCallsInRange(start: Date, end: Date) { return outreachRepository.listCallsInRange(start, end); }
   latestOutreachCallForPatient(patientScreeningId: number) { return outreachRepository.latestCallForPatient(patientScreeningId); }
 
   // Scheduler assignments

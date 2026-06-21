@@ -2,27 +2,23 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { canonicalDay } from "../services/scheduleDashboardService";
 import { buildOutreachDashboard } from "../services/outreachService";
-import type { BillingRecord } from "@shared/schema";
-
-type ClinicHomeStat = {
-  clinicKey: string;
-  clinicLabel: string;
-  patientCount: number;
-  brainWaveCount: number;
-  vitalWaveCount: number;
-  ultrasoundCount: number;
-  ancillaryCount: number;
-  brainWaveValue: number;
-  vitalWaveValue: number;
-  ultrasoundValue: number;
-  estimatedValue: number;
-};
+import type { PatientScreening } from "@shared/schema";
 
 type AncillaryBucket = "brain" | "vital" | "ultrasound";
 
-function clinicKeyFor(label: string): string {
-  return label.toLowerCase().replace(/\s+/g, "-");
-}
+/** Aggregated counts for a single trailing time window. */
+type WindowStat = {
+  patients: number;
+  ancillaries: number;
+  activeSchedules: number;
+  callsPlanned: number;
+};
+
+/** A single team member's logged-call count within a window. */
+type MemberCallStat = {
+  name: string;
+  count: number;
+};
 
 function bucketForTest(testName: string): AncillaryBucket {
   const normalized = String(testName).toLowerCase();
@@ -31,58 +27,27 @@ function bucketForTest(testName: string): AncillaryBucket {
   return "ultrasound";
 }
 
-/**
- * Pick the most meaningful dollar figure off a billing record for an
- * estimated-reimbursement average. Prefers the contractually allowed amount,
- * then total charges, then whatever was actually paid. Returns null when the
- * record carries no usable monetary value.
- */
-function reimbursementOf(record: BillingRecord): number | null {
-  const toNum = (v: unknown): number => {
-    const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
-    return Number.isFinite(n) ? n : 0;
-  };
-  const allowed = toNum(record.allowedAmount);
-  if (allowed > 0) return allowed;
-  const charges = toNum(record.totalCharges);
-  if (charges > 0) return charges;
-  const paid =
-    toNum(record.paidAmount) +
-    toNum(record.insurancePaidAmount) +
-    toNum(record.secondaryPaidAmount);
-  if (paid > 0) return paid;
-  return null;
+/** Subtract whole days from a YYYY-MM-DD key, returning a new YYYY-MM-DD key. */
+function dayKeyMinus(dayKey: string, days: number): string {
+  const d = new Date(`${dayKey}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
 }
 
 /**
- * Build an estimated average reimbursement per ancillary bucket from existing
- * billing records. We reuse real billing data rather than hardcoding amounts;
- * any bucket without billing history simply has no estimate (0).
- */
-function buildAvgReimbursementByBucket(
-  records: BillingRecord[],
-): Record<AncillaryBucket, number> {
-  const sums: Record<AncillaryBucket, number> = { brain: 0, vital: 0, ultrasound: 0 };
-  const counts: Record<AncillaryBucket, number> = { brain: 0, vital: 0, ultrasound: 0 };
-  for (const record of records) {
-    if (record.isTest) continue;
-    const amount = reimbursementOf(record);
-    if (amount == null) continue;
-    const bucket = bucketForTest(record.service || "");
-    sums[bucket] += amount;
-    counts[bucket] += 1;
-  }
-  return {
-    brain: counts.brain > 0 ? sums.brain / counts.brain : 0,
-    vital: counts.vital > 0 ? sums.vital / counts.vital : 0,
-    ultrasound: counts.ultrasound > 0 ? sums.ultrasound / counts.ultrasound : 0,
-  };
-}
-
-/**
- * Lightweight home-page stats endpoint. Aggregates today's scheduled
- * ancillary activity across all clinics plus the number of outgoing calls
- * planned for today (the outreach daily call-list size).
+ * Home-page "Today at a Glance" stats. Returns the four headline metrics
+ * (patients, ancillaries, active schedules, calls planned) for today plus
+ * trailing 7-day and 30-day windows (so each metric can be clicked to reveal
+ * its recent history), today's ancillary breakdown, and a per-team-member
+ * breakdown of logged outreach calls over the 7- and 30-day windows.
+ *
+ * Calls-planned note: the "today" value is forward-looking (patients on the
+ * outreach call list scheduled for today), while the 7-/30-day window values
+ * and the per-member breakdown reflect calls actually LOGGED (outreach_calls)
+ * over those windows. Planned calls cannot be reconstructed for past days
+ * (the call list is built from a forward 90-day classifier), so the client
+ * labels the historical numbers as "calls logged" to keep the distinction
+ * explicit rather than mixing two definitions under one label.
  *
  * BrainWave / VitalWave are matched by name; every other qualifying test is
  * treated as an ultrasound (the remaining AI-qualified tests are all
@@ -93,100 +58,88 @@ export function registerHomeStatsRoutes(app: Express) {
   app.get("/api/home-stats", async (_req, res) => {
     try {
       const today = canonicalDay(new Date().toISOString());
+      const start7Key = dayKeyMinus(today, 6); // inclusive 7-day window
+      const start30Key = dayKeyMinus(today, 29); // inclusive 30-day window
 
-      const batches = await storage.getAllScreeningBatches();
-      const todaysBatches = batches.filter((b) => canonicalDay(b.scheduleDate) === today);
+      const [batches, allPatients] = await Promise.all([
+        storage.getAllScreeningBatches(),
+        storage.getAllPatientScreenings(),
+      ]);
 
-      // Estimated reimbursement per ancillary bucket, derived from real
-      // billing history (not hardcoded). Used to attach a dollar value to
-      // today's scheduled-ancillary counts.
-      let avgReimbursement: Record<AncillaryBucket, number> = {
-        brain: 0,
-        vital: 0,
-        ultrasound: 0,
-      };
-      try {
-        const billingRecords = await storage.getAllBillingRecords();
-        avgReimbursement = buildAvgReimbursementByBucket(billingRecords);
-      } catch {
-        // Estimates are best-effort; counts still render without them.
+      // Index active patients by batch so we can aggregate any window without
+      // an N+1 query. Mirrors getPatientScreeningsByBatch (both filter active
+      // rows only), so today's count is unchanged.
+      const patientsByBatch = new Map<number, PatientScreening[]>();
+      for (const p of allPatients) {
+        const arr = patientsByBatch.get(p.batchId);
+        if (arr) arr.push(p);
+        else patientsByBatch.set(p.batchId, [p]);
       }
-      const estimatesAvailable =
-        avgReimbursement.brain > 0 ||
-        avgReimbursement.vital > 0 ||
-        avgReimbursement.ultrasound > 0;
 
-      const clinicMap = new Map<string, ClinicHomeStat>();
-      let totalPatients = 0;
-      let totalAncillaries = 0;
-      let brainWaveTotal = 0;
-      let vitalWaveTotal = 0;
-      let ultrasoundTotal = 0;
+      const blank = (): WindowStat => ({
+        patients: 0,
+        ancillaries: 0,
+        activeSchedules: 0,
+        callsPlanned: 0,
+      });
+      const todayStat = blank();
+      const last7 = blank();
+      const last30 = blank();
 
-      for (const batch of todaysBatches) {
-        const label = (batch.facility || "").trim() || "Unassigned Facility";
-        let entry = clinicMap.get(label);
-        if (!entry) {
-          entry = {
-            clinicKey: clinicKeyFor(label),
-            clinicLabel: label,
-            patientCount: 0,
-            brainWaveCount: 0,
-            vitalWaveCount: 0,
-            ultrasoundCount: 0,
-            ancillaryCount: 0,
-            brainWaveValue: 0,
-            vitalWaveValue: 0,
-            ultrasoundValue: 0,
-            estimatedValue: 0,
-          };
-          clinicMap.set(label, entry);
-        }
+      // Today's ancillary breakdown (flat icon row).
+      let brainWaveCount = 0;
+      let vitalWaveCount = 0;
+      let ultrasoundCount = 0;
 
-        const patients = await storage.getPatientScreeningsByBatch(batch.id);
+      for (const batch of batches) {
+        const day = canonicalDay(batch.scheduleDate);
+        if (!day) continue;
+        const inToday = day === today;
+        const in7 = day >= start7Key && day <= today;
+        const in30 = day >= start30Key && day <= today;
+        if (!in30) continue; // outside every window we care about
+
+        const patients = patientsByBatch.get(batch.id) ?? [];
+        let batchAncillaries = 0;
         for (const patient of patients) {
           const tests = Array.isArray(patient.qualifyingTests)
             ? patient.qualifyingTests.filter(Boolean)
             : [];
-          entry.patientCount += 1;
-          totalPatients += 1;
-          entry.ancillaryCount += tests.length;
-          totalAncillaries += tests.length;
-
-          for (const test of tests) {
-            const bucket = bucketForTest(String(test));
-            if (bucket === "brain") {
-              entry.brainWaveCount += 1;
-              brainWaveTotal += 1;
-            } else if (bucket === "vital") {
-              entry.vitalWaveCount += 1;
-              vitalWaveTotal += 1;
-            } else {
-              entry.ultrasoundCount += 1;
-              ultrasoundTotal += 1;
+          batchAncillaries += tests.length;
+          if (inToday) {
+            for (const test of tests) {
+              const bucket = bucketForTest(String(test));
+              if (bucket === "brain") brainWaveCount += 1;
+              else if (bucket === "vital") vitalWaveCount += 1;
+              else ultrasoundCount += 1;
             }
           }
         }
 
-        entry.brainWaveValue = entry.brainWaveCount * avgReimbursement.brain;
-        entry.vitalWaveValue = entry.vitalWaveCount * avgReimbursement.vital;
-        entry.ultrasoundValue = entry.ultrasoundCount * avgReimbursement.ultrasound;
-        entry.estimatedValue =
-          entry.brainWaveValue + entry.vitalWaveValue + entry.ultrasoundValue;
+        if (in30) {
+          last30.patients += patients.length;
+          last30.ancillaries += batchAncillaries;
+          last30.activeSchedules += 1;
+        }
+        if (in7) {
+          last7.patients += patients.length;
+          last7.ancillaries += batchAncillaries;
+          last7.activeSchedules += 1;
+        }
+        if (inToday) {
+          todayStat.patients += patients.length;
+          todayStat.ancillaries += batchAncillaries;
+          todayStat.activeSchedules += 1;
+        }
       }
-
-      const clinics = Array.from(clinicMap.values()).sort((a, b) =>
-        a.clinicLabel.localeCompare(b.clinicLabel),
-      );
 
       // Outgoing calls planned today = the outreach daily call-list entries
       // whose schedule date is today. buildOutreachDashboard aggregates the
       // call list across a 90-day visit window, so card-level totals are NOT
       // today-only — we must filter each call-list entry by its scheduleDate.
-      let callsPlannedToday = 0;
       try {
         const outreach = await buildOutreachDashboard(storage, today);
-        callsPlannedToday = outreach.schedulerCards.reduce(
+        todayStat.callsPlanned = outreach.schedulerCards.reduce(
           (sum, card) =>
             sum +
             card.callList.filter((item) => canonicalDay(item.scheduleDate) === today)
@@ -194,38 +147,78 @@ export function registerHomeStatsRoutes(app: Express) {
           0,
         );
       } catch {
-        callsPlannedToday = 0;
+        todayStat.callsPlanned = 0;
       }
 
-      const brainWaveValueTotal = brainWaveTotal * avgReimbursement.brain;
-      const vitalWaveValueTotal = vitalWaveTotal * avgReimbursement.vital;
-      const ultrasoundValueTotal = ultrasoundTotal * avgReimbursement.ultrasound;
+      // Logged outreach calls over the trailing windows, plus a per-team-member
+      // breakdown. These reflect actual calls made (outreach_calls), keyed by
+      // the scheduler who logged them.
+      let callsByMember7: MemberCallStat[] = [];
+      let callsByMember30: MemberCallStat[] = [];
+      try {
+        const start = new Date(`${start30Key}T00:00:00.000Z`);
+        const end = new Date(`${today}T23:59:59.999Z`);
+        const start7 = new Date(`${start7Key}T00:00:00.000Z`);
+        const [calls, users, schedulers] = await Promise.all([
+          storage.listOutreachCallsInRange(start, end),
+          storage.getAllUsers(),
+          storage.getOutreachSchedulers(),
+        ]);
+        // Prefer the friendly scheduler display name tied to the user; fall
+        // back to the account username. Keyed by user id so tallies never
+        // collide on duplicate display names.
+        const nameById = new Map<string, string>();
+        for (const u of users) {
+          if (u.username && u.username.trim()) nameById.set(u.id, u.username.trim());
+        }
+        for (const sc of schedulers) {
+          if (sc.userId && sc.name && sc.name.trim()) {
+            nameById.set(sc.userId, sc.name.trim());
+          }
+        }
+        // Tally by stable id (userId, or a sentinel for unassigned calls) so
+        // two members who happen to share a display name stay separate.
+        const UNASSIGNED = "__unassigned__";
+        const tally30 = new Map<string, number>();
+        const tally7 = new Map<string, number>();
+        for (const call of calls) {
+          const key = call.schedulerUserId ?? UNASSIGNED;
+          tally30.set(key, (tally30.get(key) ?? 0) + 1);
+          if (call.startedAt >= start7) {
+            tally7.set(key, (tally7.get(key) ?? 0) + 1);
+          }
+        }
+        const labelFor = (key: string): string =>
+          key === UNASSIGNED ? "Unassigned" : nameById.get(key) ?? "Unknown";
+        const toSorted = (m: Map<string, number>): MemberCallStat[] =>
+          Array.from(m.entries())
+            .map(([key, count]) => ({ name: labelFor(key), count }))
+            .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+        callsByMember7 = toSorted(tally7);
+        callsByMember30 = toSorted(tally30);
+        last7.callsPlanned = calls.filter((c) => c.startedAt >= start7).length;
+        last30.callsPlanned = calls.length;
+      } catch {
+        callsByMember7 = [];
+        callsByMember30 = [];
+      }
 
       res.json({
         today,
-        clinics,
-        totals: {
-          totalPatients,
-          totalAncillaries,
-          activeSchedules: todaysBatches.length,
-          brainWaveCount: brainWaveTotal,
-          vitalWaveCount: vitalWaveTotal,
-          ultrasoundCount: ultrasoundTotal,
-          brainWaveValue: brainWaveValueTotal,
-          vitalWaveValue: vitalWaveValueTotal,
-          ultrasoundValue: ultrasoundValueTotal,
-          estimatedValue:
-            brainWaveValueTotal + vitalWaveValueTotal + ultrasoundValueTotal,
+        windows: {
+          today: todayStat,
+          last7,
+          last30,
         },
-        estimatesAvailable,
-        // Per-bucket availability so the UI annotates only buckets that have
-        // real reimbursement history ($0 with no data would be misleading).
-        valueAvailable: {
-          brainWave: avgReimbursement.brain > 0,
-          vitalWave: avgReimbursement.vital > 0,
-          ultrasound: avgReimbursement.ultrasound > 0,
+        ancillaryBreakdown: {
+          brainWave: brainWaveCount,
+          vitalWave: vitalWaveCount,
+          ultrasound: ultrasoundCount,
         },
-        callsPlannedToday,
+        callsByMember: {
+          last7: callsByMember7,
+          last30: callsByMember30,
+        },
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to load home stats" });

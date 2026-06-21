@@ -1,42 +1,34 @@
 import { useQuery } from "@tanstack/react-query";
 import { qk } from "./keys";
 
-export type HomeStatsClinic = {
-  clinicKey: string;
-  clinicLabel: string;
-  patientCount: number;
-  brainWaveCount: number;
-  vitalWaveCount: number;
-  ultrasoundCount: number;
-  ancillaryCount: number;
-  brainWaveValue: number;
-  vitalWaveValue: number;
-  ultrasoundValue: number;
-  estimatedValue: number;
+export type HomeWindowStat = {
+  patients: number;
+  ancillaries: number;
+  activeSchedules: number;
+  callsPlanned: number;
+};
+
+export type HomeMemberCallStat = {
+  name: string;
+  count: number;
 };
 
 export type HomeStatsResponse = {
   today: string;
-  clinics: HomeStatsClinic[];
-  totals: {
-    totalPatients: number;
-    totalAncillaries: number;
-    activeSchedules: number;
-    brainWaveCount: number;
-    vitalWaveCount: number;
-    ultrasoundCount: number;
-    brainWaveValue: number;
-    vitalWaveValue: number;
-    ultrasoundValue: number;
-    estimatedValue: number;
+  windows: {
+    today: HomeWindowStat;
+    last7: HomeWindowStat;
+    last30: HomeWindowStat;
   };
-  estimatesAvailable: boolean;
-  valueAvailable: {
-    brainWave: boolean;
-    vitalWave: boolean;
-    ultrasound: boolean;
+  ancillaryBreakdown: {
+    brainWave: number;
+    vitalWave: number;
+    ultrasound: number;
   };
-  callsPlannedToday: number;
+  callsByMember: {
+    last7: HomeMemberCallStat[];
+    last30: HomeMemberCallStat[];
+  };
 };
 
 export function useHomeStats(opts: { enabled?: boolean } = {}) {
