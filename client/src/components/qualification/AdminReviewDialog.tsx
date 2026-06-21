@@ -809,6 +809,21 @@ export function AdminReviewDialog({
   const [sourceDataSaved, setSourceDataSaved] = useState(false);
   const [sourceRegenInFlight, setSourceRegenInFlight] = useState(false);
 
+  // Local mirrors of Hx/Dx/Rx that update immediately when source data
+  // is saved, so evidence buttons re-parse without waiting for the parent
+  // to propagate the updated patient prop back down.
+  const [localHx, setLocalHx] = useState(() => patient.history ?? "");
+  const [localDx, setLocalDx] = useState(() => patient.diagnoses ?? "");
+  const [localRx, setLocalRx] = useState(() => patient.medications ?? "");
+
+  // Sync local mirrors when the active patient changes (sibling navigation).
+  useEffect(() => {
+    setLocalHx(patient.history ?? "");
+    setLocalDx(patient.diagnoses ?? "");
+    setLocalRx(patient.medications ?? "");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient.id]);
+
   const icdSearchMutation = useMutation<
     { ok: boolean; results: IcdSearchResult[]; error?: string; detail?: string },
     Error,
@@ -1131,17 +1146,19 @@ export function AdminReviewDialog({
   const apiEvidence: AdminEvidenceChip[] = evidenceQuery.data?.evidence ?? [];
 
   // Build assignable button lists from raw source + rule engine + AI ICD additions.
+  // Use localDx/localRx/localHx so saves from the Source Data popover are
+  // reflected immediately without waiting for the parent to re-propagate.
   const dxButtons = useMemo(
-    () => parseDiagnosisButtonsFromDx(patient.diagnoses),
-    [patient.diagnoses],
+    () => parseDiagnosisButtonsFromDx(localDx),
+    [localDx],
   );
   const rxButtons = useMemo(
-    () => parseMedicationButtonsFromRx(patient.medications),
-    [patient.medications],
+    () => parseMedicationButtonsFromRx(localRx),
+    [localRx],
   );
   const hxButtons = useMemo(
-    () => parseSymptomButtonsFromHx(patient.history),
-    [patient.history],
+    () => parseSymptomButtonsFromHx(localHx),
+    [localHx],
   );
   const mergedDx = useMemo(
     () => mergeRuleEngineEvidence(dxButtons, apiEvidence),
@@ -2973,6 +2990,11 @@ export function AdminReviewDialog({
                                   onUpdate("history", sourceEditHx);
                                   onUpdate("diagnoses", sourceEditDx);
                                   onUpdate("medications", sourceEditRx);
+                                  // Update local mirrors immediately so evidence buttons
+                                  // re-parse without waiting for the parent re-render.
+                                  setLocalHx(sourceEditHx);
+                                  setLocalDx(sourceEditDx);
+                                  setLocalRx(sourceEditRx);
                                   setSourceEditMode(false);
                                   setSourceDataSaved(true);
                                   recordAdminReviewUpdate(
