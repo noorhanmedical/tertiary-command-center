@@ -85,7 +85,7 @@ export function PlexusIQOperatingRow({
 
   return (
     <div
-      className={`grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-800 rounded-xl bg-slate-900 hover:bg-slate-800/60 transition-colors`}
+      className={`grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-200 rounded-xl bg-white hover:bg-slate-50/60 transition-colors`}
       data-testid={`plexus-iq-operating-row-${patient.id}`}
       data-row-type="plexus-iq-operating-row"
     >
@@ -106,7 +106,7 @@ export function PlexusIQOperatingRow({
         className="text-left min-w-0"
         data-testid={`text-operating-row-name-${patient.id}`}
       >
-        <div className="text-sm font-semibold text-slate-100 truncate">
+        <div className="text-sm font-semibold text-slate-900 truncate">
           {displayName}
         </div>
         {isUnder16 && (
@@ -117,19 +117,19 @@ export function PlexusIQOperatingRow({
       </button>
 
       {/* DOB / age */}
-      <div className="text-xs text-slate-300 truncate">
+      <div className="text-xs text-slate-600 truncate">
         {patient.dob ? (
           <span title="DOB">{patient.dob}</span>
         ) : (
-          <span className="italic text-slate-500">—</span>
+          <span className="italic text-slate-400">—</span>
         )}
-        {ageDisplay && <span className="ml-1 text-slate-400">· {ageDisplay}</span>}
-        <span className="ml-1 text-slate-400" title="Gender">· {genderDisplay}</span>
+        {ageDisplay && <span className="ml-1 text-slate-500">· {ageDisplay}</span>}
+        <span className="ml-1 text-slate-500" title="Gender">· {genderDisplay}</span>
       </div>
 
       {/* Insurance */}
-      <div className="text-xs text-slate-300 truncate" title={patient.insurance ?? ""}>
-        {patient.insurance || <span className="italic text-slate-500">—</span>}
+      <div className="text-xs text-slate-600 truncate" title={patient.insurance ?? ""}>
+        {patient.insurance || <span className="italic text-slate-400">—</span>}
       </div>
 
       {/* Plexus IQ Status */}
@@ -200,7 +200,7 @@ export function PlexusIQOperatingRow({
             >
               <Icon className={`h-4 w-4 ${style.icon}`} strokeWidth={2} fill="none" />
               {count > 1 && (
-                <span className="absolute -top-1 -right-2 inline-flex items-center justify-center min-w-[12px] h-3 px-1 rounded-full bg-slate-100 text-slate-900 text-[8px] font-semibold leading-none">
+                <span className="absolute -top-1 -right-2 inline-flex items-center justify-center min-w-[12px] h-3 px-1 rounded-full bg-slate-900 text-white text-[8px] font-semibold leading-none">
                   {count}
                 </span>
               )}
@@ -220,7 +220,7 @@ export function PlexusIQOperatingRow({
             }}
             aria-label="Admin Review"
             title="Admin Review"
-            className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-700 bg-slate-800 text-slate-300 hover:bg-indigo-950 hover:text-indigo-300 hover:border-indigo-800 transition-colors"
+            className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
             data-testid={`button-operating-row-review-${patient.id}`}
           >
             <ShieldCheck className="h-3.5 w-3.5" />
@@ -238,7 +238,7 @@ export function PlexusIQOperatingRow({
           }}
           aria-label="Remove patient"
           title="Remove patient"
-          className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-700 bg-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950 hover:border-rose-800 transition-colors"
+          className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors"
           data-testid={`button-operating-row-delete-${patient.id}`}
         >
           <Trash2 className="h-3.5 w-3.5" />

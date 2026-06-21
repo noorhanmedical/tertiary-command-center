@@ -448,7 +448,7 @@ export function PlexusIQOperatingList({
         </Select>
       </div>
 
-      <div className="grid grid-cols-[240px_minmax(0,1fr)] rounded-2xl border border-slate-800 overflow-hidden bg-slate-950 h-[calc(100vh-220px)] min-h-[480px]">
+      <div className="grid grid-cols-[240px_minmax(0,1fr)] rounded-2xl border border-slate-200 overflow-hidden bg-white h-[calc(100vh-220px)] min-h-[480px]">
         {/* Left: Date panel */}
         <PlexusIQDatePanel
           groups={dateGroups}
@@ -482,9 +482,9 @@ export function PlexusIQOperatingList({
             onClinicianPdf={() => runPdf("clinician")}
             onPlexusPdf={() => runPdf("plexus")}
           />
-          <div className="flex-1 min-h-0 overflow-auto p-3 space-y-1.5 bg-slate-950">
+          <div className="flex-1 min-h-0 overflow-auto p-3 space-y-1.5 bg-slate-50/30">
             {sortedPatients.length === 0 ? (
-              <div className="py-16 text-center text-xs text-slate-500">
+              <div className="py-16 text-center text-xs text-slate-400">
                 {selectedBatchId == null
                   ? "Select an import on the left."
                   : "No patients in this import."}
@@ -492,7 +492,7 @@ export function PlexusIQOperatingList({
             ) : (
               <>
                 <div
-                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-transparent bg-slate-50/30 backdrop-blur-sm text-[10px] font-semibold uppercase tracking-wider text-slate-500`}
+                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-600 rounded-xl bg-slate-700 text-[10px] font-semibold uppercase tracking-wider text-slate-200`}
                   data-testid="plexus-iq-operating-header"
                 >
                   {/* Checkbox column (no label) */}

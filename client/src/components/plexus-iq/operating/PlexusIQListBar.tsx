@@ -88,7 +88,7 @@ export function PlexusIQListBar({
 }: PlexusIQListBarProps) {
   return (
     <div
-      className="flex items-center justify-between gap-3 flex-wrap px-3 py-2.5 border-b border-slate-800 bg-slate-900"
+      className="flex items-center justify-between gap-3 flex-wrap px-3 py-2.5 border-b border-slate-600 bg-slate-700"
       data-testid="plexus-iq-list-bar"
     >
       <div className="flex items-center gap-2 min-w-0">
@@ -130,7 +130,7 @@ export function PlexusIQListBar({
           Delete{selectedCount > 0 ? ` (${selectedCount})` : ""}
         </Button>
 
-        <span className="mx-0.5 h-5 w-px bg-slate-700" />
+        <span className="mx-0.5 h-5 w-px bg-slate-500" />
 
         <Button
           size="sm"
@@ -150,7 +150,7 @@ export function PlexusIQListBar({
           <Button
             variant="outline"
             size="sm"
-            className="h-7 gap-1 px-2.5 text-xs rounded-lg border-slate-700 bg-transparent text-slate-200 hover:bg-slate-800 hover:text-white disabled:text-slate-500"
+            className="h-7 gap-1 px-2.5 text-xs rounded-lg border-slate-500 bg-transparent text-slate-200 hover:bg-slate-800 hover:text-white disabled:text-slate-500"
             disabled={!canAct || isGenerating}
             onClick={onRetryFailed}
             data-testid="button-list-bar-retry-failed"
@@ -160,12 +160,12 @@ export function PlexusIQListBar({
           </Button>
         )}
 
-        <span className="mx-0.5 h-5 w-px bg-slate-700" />
+        <span className="mx-0.5 h-5 w-px bg-slate-500" />
 
         <Button
           variant="outline"
           size="sm"
-          className="h-7 gap-1 px-2.5 text-xs rounded-lg border-slate-700 bg-transparent text-slate-200 hover:bg-slate-800 hover:text-white disabled:text-slate-500"
+          className="h-7 gap-1 px-2.5 text-xs rounded-lg border-slate-500 bg-transparent text-slate-200 hover:bg-slate-800 hover:text-white disabled:text-slate-500"
           disabled={patientCount === 0}
           onClick={onClinicianPdf}
           data-testid="button-list-bar-clinician-pdf"
@@ -176,7 +176,7 @@ export function PlexusIQListBar({
         <Button
           variant="outline"
           size="sm"
-          className="h-7 gap-1 px-2.5 text-xs rounded-lg border-slate-700 bg-transparent text-slate-200 hover:bg-slate-800 hover:text-white disabled:text-slate-500"
+          className="h-7 gap-1 px-2.5 text-xs rounded-lg border-slate-500 bg-transparent text-slate-200 hover:bg-slate-800 hover:text-white disabled:text-slate-500"
           disabled={patientCount === 0}
           onClick={onPlexusPdf}
           data-testid="button-list-bar-plexus-pdf"

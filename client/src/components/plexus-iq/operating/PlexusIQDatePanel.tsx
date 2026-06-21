@@ -30,7 +30,7 @@ const TONE_DOT: Record<PlexusIQBatchNode["statusTone"], string> = {
   ready: "bg-emerald-500",
   running: "bg-sky-500",
   errors: "bg-rose-500",
-  pending: "bg-slate-500",
+  pending: "bg-slate-300",
 };
 
 export type PlexusIQDatePanelProps = {
@@ -50,17 +50,17 @@ export function PlexusIQDatePanel({
 }: PlexusIQDatePanelProps) {
   return (
     <div
-      className="flex flex-col h-full min-h-0 border-r border-slate-800 bg-slate-900"
+      className="flex flex-col h-full min-h-0 border-r border-slate-200 bg-white"
       data-testid="plexus-iq-date-panel"
     >
-      <div className="px-3 py-2.5 border-b border-slate-800 bg-slate-900">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
+      <div className="px-3 py-2.5 border-b border-slate-600 bg-slate-700">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-200">
           Date
         </div>
       </div>
       <div className="flex-1 min-h-0 overflow-auto p-2 space-y-1">
         {groups.length === 0 && (
-          <div className="px-2 py-6 text-center text-xs text-slate-500">
+          <div className="px-2 py-6 text-center text-xs text-slate-400">
             No imports for this facility yet.
           </div>
         )}
@@ -71,7 +71,7 @@ export function PlexusIQDatePanel({
               <button
                 type="button"
                 onClick={() => onToggleDate(group.key)}
-                className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors text-left"
+                className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors text-left"
                 data-testid={`button-date-group-${group.key}`}
               >
                 {expanded ? (
@@ -84,7 +84,7 @@ export function PlexusIQDatePanel({
                 </span>
               </button>
               {expanded && (
-                <div className="ml-3 pl-2 border-l border-slate-800 space-y-0.5 mt-0.5">
+                <div className="ml-3 pl-2 border-l border-slate-100 space-y-0.5 mt-0.5">
                   {group.batches.map((b) => {
                     const active = b.batchId === selectedBatchId;
                     return (
@@ -94,8 +94,8 @@ export function PlexusIQDatePanel({
                         onClick={() => onSelectBatch(b.batchId)}
                         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
                           active
-                            ? "bg-slate-800 ring-1 ring-slate-600"
-                            : "hover:bg-slate-800/60"
+                            ? "bg-slate-900 ring-1 ring-slate-700"
+                            : "hover:bg-slate-50"
                         }`}
                         data-testid={`button-batch-node-${b.batchId}`}
                         aria-current={active ? "true" : undefined}
@@ -105,7 +105,7 @@ export function PlexusIQDatePanel({
                         />
                         <span
                           className={`text-xs font-medium truncate flex-1 ${
-                            active ? "text-slate-100" : "text-slate-300"
+                            active ? "text-slate-100" : "text-slate-700"
                           }`}
                         >
                           {b.timeLabel}
