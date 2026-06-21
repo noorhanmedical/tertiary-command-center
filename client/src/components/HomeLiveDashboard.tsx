@@ -21,6 +21,7 @@ function MetricStat({
   last30,
   windowKey,
   bodyOverride,
+  upcomingNode,
 }: {
   label: string;
   icon: React.ReactNode;
@@ -30,6 +31,7 @@ function MetricStat({
   last30?: HomeWindowStat;
   windowKey: WindowKey;
   bodyOverride?: React.ReactNode;
+  upcomingNode?: React.ReactNode;
 }) {
   const headline = last7?.[windowKey] ?? 0;
   return (
@@ -43,8 +45,11 @@ function MetricStat({
           data-testid={testId}
         >
           <span className="shrink-0">{icon}</span>
-          <span className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-white tabular-nums leading-none tracking-tight">
-            {headline}
+          <span className="flex items-baseline gap-1.5">
+            <span className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-white tabular-nums leading-none tracking-tight">
+              {headline}
+            </span>
+            {upcomingNode}
           </span>
         </button>
       </PopoverTrigger>
@@ -158,6 +163,38 @@ function AncillaryStat({
   );
 }
 
+function PracticePulseHeading() {
+  return (
+    <div className="mb-5 flex items-center justify-center gap-2" data-testid="practice-pulse-heading">
+      <Activity className="w-4 h-4 text-indigo-500 dark:text-indigo-300" strokeWidth={2.25} />
+      <span className="text-sm md:text-base font-semibold uppercase tracking-[0.18em] text-slate-700 dark:text-slate-200">
+        Practice Pulse
+      </span>
+    </div>
+  );
+}
+
+function UpcomingBadge({
+  children,
+  testId,
+  label,
+}: {
+  children: React.ReactNode;
+  testId: string;
+  label: string;
+}) {
+  return (
+    <span
+      className="text-base md:text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums leading-none"
+      title={label}
+      aria-label={label}
+      data-testid={testId}
+    >
+      {children}
+    </span>
+  );
+}
+
 const TILE_CLASS =
   "rounded-2xl border border-indigo-100/80 dark:border-indigo-400/10 bg-gradient-to-br from-indigo-50 via-white to-sky-50 dark:from-indigo-950/30 dark:via-background dark:to-slate-900/40 ring-1 ring-inset ring-white/40 dark:ring-white/5 shadow-[0_8px_30px_-12px_rgba(79,70,229,0.25)] px-6 py-7 md:px-10 md:py-9";
 
@@ -167,6 +204,7 @@ export function HomeLiveDashboard() {
   if (isLoading) {
     return (
       <div className={TILE_CLASS} data-testid="live-dashboard-loading">
+        <PracticePulseHeading />
         <div className="flex flex-wrap items-center justify-center gap-8 md:gap-12">
           {Array.from({ length: 7 }).map((_, i) => (
             <div
@@ -182,11 +220,18 @@ export function HomeLiveDashboard() {
   const todayStat = data?.windows.today;
   const last7 = data?.windows.last7;
   const last30 = data?.windows.last30;
+  const upcoming = data?.upcoming;
   const breakdown = data?.ancillaryBreakdown;
   const callsByMember = data?.callsByMember;
 
+  const upcomingAncillary = upcoming?.ancillaryPatients ?? 0;
+  const upcomingSchedules = upcoming?.activeSchedules ?? 0;
+  const callsDistributed = upcoming?.callsDistributed ?? 0;
+  const callsDone = upcoming?.callsDone ?? 0;
+
   return (
     <div className={TILE_CLASS} data-testid="live-dashboard">
+      <PracticePulseHeading />
       <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-6 md:gap-x-4">
         <MetricStat
           label="Patients"
@@ -205,6 +250,14 @@ export function HomeLiveDashboard() {
           last7={last7}
           last30={last30}
           windowKey="ancillaries"
+          upcomingNode={
+            <UpcomingBadge
+              testId="stat-total-ancillaries-upcoming"
+              label={`${upcomingAncillary} patients scheduled for ancillaries in the next 7 days`}
+            >
+              {upcomingAncillary}
+            </UpcomingBadge>
+          }
         />
         <MetricStat
           label="Active Schedules"
@@ -214,6 +267,14 @@ export function HomeLiveDashboard() {
           last7={last7}
           last30={last30}
           windowKey="activeSchedules"
+          upcomingNode={
+            <UpcomingBadge
+              testId="stat-active-schedules-upcoming"
+              label={`${upcomingSchedules} schedules in the next 7 days`}
+            >
+              {upcomingSchedules}
+            </UpcomingBadge>
+          }
         />
         <MetricStat
           label="Calls Planned"
@@ -223,6 +284,14 @@ export function HomeLiveDashboard() {
           last7={last7}
           last30={last30}
           windowKey="callsPlanned"
+          upcomingNode={
+            <UpcomingBadge
+              testId="stat-calls-planned-upcoming"
+              label={`Next 7 days: ${callsDone} of ${callsDistributed} distributed calls done`}
+            >
+              {callsDone}/{callsDistributed} done
+            </UpcomingBadge>
+          }
           bodyOverride={
             <div className="space-y-3">
               <div className="flex items-center justify-between text-[12px]">

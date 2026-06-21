@@ -60,6 +60,10 @@ export function registerHomeStatsRoutes(app: Express) {
       const today = canonicalDay(new Date().toISOString());
       const start7Key = dayKeyMinus(today, 6); // inclusive 7-day window
       const start30Key = dayKeyMinus(today, 29); // inclusive 30-day window
+      // Forward-looking window: the next 7 days, strictly after today so it
+      // never overlaps the trailing windows. Reads as "what's coming."
+      const upcomingStartKey = dayKeyMinus(today, -1); // today + 1
+      const upcomingEndKey = dayKeyMinus(today, -7); // today + 7
 
       const [batches, allPatients] = await Promise.all([
         storage.getAllScreeningBatches(),
@@ -92,13 +96,30 @@ export function registerHomeStatsRoutes(app: Express) {
       let vitalWaveCount = 0;
       let ultrasoundCount = 0;
 
+      // Forward-looking next-7-day counters (additive to the historical tile).
+      let upcomingAncillaryPatients = 0;
+      let upcomingActiveSchedules = 0;
+
       for (const batch of batches) {
         const day = canonicalDay(batch.scheduleDate);
         if (!day) continue;
         const inToday = day === today;
         const in7 = day >= start7Key && day <= today;
         const in30 = day >= start30Key && day <= today;
-        if (!in30) continue; // outside every window we care about
+        const inUpcoming = day >= upcomingStartKey && day <= upcomingEndKey;
+
+        if (inUpcoming) {
+          const upcomingPatients = patientsByBatch.get(batch.id) ?? [];
+          upcomingActiveSchedules += 1;
+          for (const patient of upcomingPatients) {
+            const tests = Array.isArray(patient.qualifyingTests)
+              ? patient.qualifyingTests.filter(Boolean)
+              : [];
+            if (tests.length > 0) upcomingAncillaryPatients += 1;
+          }
+        }
+
+        if (!in30) continue; // outside every trailing window we care about
 
         const patients = patientsByBatch.get(batch.id) ?? [];
         let batchAncillaries = 0;
@@ -138,6 +159,11 @@ export function registerHomeStatsRoutes(app: Express) {
       // whose schedule date is today. buildOutreachDashboard aggregates the
       // call list across a 90-day visit window, so card-level totals are NOT
       // today-only — we must filter each call-list entry by its scheduleDate.
+      // Forward outreach call list for the next-7-day window: "distributed" =
+      // upcoming call-list entries in the window; "done" = those already
+      // touched (appointment status moved off "pending").
+      let upcomingCallsDistributed = 0;
+      let upcomingCallsDone = 0;
       try {
         const outreach = await buildOutreachDashboard(storage, today);
         todayStat.callsPlanned = outreach.schedulerCards.reduce(
@@ -147,8 +173,21 @@ export function registerHomeStatsRoutes(app: Express) {
               .length,
           0,
         );
+        for (const card of outreach.schedulerCards) {
+          for (const item of card.callList) {
+            const d = canonicalDay(item.scheduleDate);
+            if (d >= upcomingStartKey && d <= upcomingEndKey) {
+              upcomingCallsDistributed += 1;
+              if ((item.appointmentStatus || "").toLowerCase() !== "pending") {
+                upcomingCallsDone += 1;
+              }
+            }
+          }
+        }
       } catch {
         todayStat.callsPlanned = 0;
+        upcomingCallsDistributed = 0;
+        upcomingCallsDone = 0;
       }
 
       // Logged outreach calls over the trailing windows, plus a per-team-member
@@ -210,6 +249,12 @@ export function registerHomeStatsRoutes(app: Express) {
           today: todayStat,
           last7,
           last30,
+        },
+        upcoming: {
+          ancillaryPatients: upcomingAncillaryPatients,
+          activeSchedules: upcomingActiveSchedules,
+          callsDistributed: upcomingCallsDistributed,
+          callsDone: upcomingCallsDone,
         },
         ancillaryBreakdown: {
           brainWave: brainWaveCount,

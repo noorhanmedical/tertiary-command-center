@@ -13,6 +13,13 @@ export type HomeMemberCallStat = {
   count: number;
 };
 
+export type HomeUpcomingStat = {
+  ancillaryPatients: number;
+  activeSchedules: number;
+  callsDistributed: number;
+  callsDone: number;
+};
+
 export type HomeStatsResponse = {
   today: string;
   windows: {
@@ -20,6 +27,7 @@ export type HomeStatsResponse = {
     last7: HomeWindowStat;
     last30: HomeWindowStat;
   };
+  upcoming: HomeUpcomingStat;
   ancillaryBreakdown: {
     brainWave: number;
     vitalWave: number;
