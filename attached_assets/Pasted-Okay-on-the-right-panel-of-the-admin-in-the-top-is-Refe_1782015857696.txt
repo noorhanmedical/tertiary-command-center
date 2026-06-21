@@ -1,0 +1,30 @@
+Okay, on the right panel of the admin, in the top is Reference. I want the source data when I click on it (Hx, Dx, Rx). There is an edit button so I can edit it. If I make any changes, I have to press Generate to redo everything so that way there's consistency. There should be a Regenerate button or something like that so that way the rest of the dependents are updated.  
+  
+When it comes to prior tests, I want that in Source Data because there are already previous tests. Actually, take previous tests from Source Data. I will take out previous tests and keep pre-prior tests as their own thing separately. Right now, when I click on it for Bowen and Daniel, it shows patient history for some reason. No, that's not prior tests. Prior tests are actual answers that were completed before.  
+  
+ICD search is good, I think that's good enough if I wanted to add anything. Engagement: I would take that off, delete that, so it's very clean, three buttons.  
+  
+For Reference for Evidence, I wouldn't call it Evidence like this. This is patient history, so it comes straight from the source data anyway. It should just say:
+
+*   Diagnosis
+*   Medications
+*   Symptoms
+
+I like the way it is. If you have any suggestions on improvements to this, do let me know.
+
+*   Medications is good
+*   Symptoms
+
+Prior testing is not Symptoms. Symptoms are in there, Hx, Dx, and whatever is found right from there. Process is not Symptoms, and then updates made to the patient. Why making that is a major thing here. It's hugely major, so that should be the bottom, pretty much the bottom one-third minimum, like a straight-up box that gets updated. It should say, for example, I decreed PTSD from BrainWave. It should be in the updates and just call it Updates. You don't have to call it Updates Made in Patient. Now it has a time or something. I don't even know. Just fucking do the one thing: it's BrainWave, and so click. It should say BrainWave and removed PTSD. You don't have to remove same removed qualifying pack factor PTSD. If I move to remove something from ultrasound, it should show up under there. It should group them based on ancillary. If I removed PTSD for ancillary, then went to ultrasounds and removed Hypertension, but then came back to BrainWave and removed craniotomy, for example, whatever is there, it should group it under the actual ancillary instead of what I did first, second, third, and then, once that is there, I can also click regenerate. It will regenerate all of the applicable and appropriate ancillaries that were changed or added to.  
+  
+This is also deleting while adding. If I go in diagnosis and I add to VitalWave, whatever, it's showing up in Updates Made in Patient. In terms of decision that doesn't need a whole fucking box, dude, what the fuck is this? It could be on the bottom, like doc, of this. You could do a right-sided little doc all the way on the side to approve or deny whatever the hell. You are taking up so much fucking space. It says Regenerate, Regenerate Changed, or Regenerate Change. Whatever that button should be in the Updates Made, just right. Just make it regenerate, dude. What the fuck is this?  
+  
+In terms of the colors, can we please, for the love of the Lord, make this a little bit more premium looking? Let's keep the left panel white, with the BrainWave either way, the left or the right. Make the whole thing a different background color. It looks like an action tool. Maybe it's a light gray with something that can be done with it. Don't make these bright-ass fucking colors on it.  
+  
+For the BrainWave, let's make it look a little fucking nice. What the fuck are these ugly-ass pill-looking shit, right? VitalWave, why is the icon for it so small? What the fuck are you doing, dude? Organize it fucking better. What the fuck is this on the bar? Put the VitalWave. Make the icon look nice. Make this look nice. Make it a deeper red. Make the ultrasounds a deeper green. Make them look nicer. Stop making it look so fucking ugly, dude. It's just ridiculous, man.  
+  
+For ultrasounds, it says Prior Testing. Why the fuck does it say Prior Testing? There's no prior. It's reasonable to have the Prior Testing button, but there has to be actual prior testing. It's not a symptom; it's not any of that shit.  
+  
+Remove the Ancillary Playground on the top, and let's make this look really, really premium. I think that's it.  
+  
+When you can navigate from first, second, third, it says one of 11, Friday, June 19. Dude, get rid of the fucking date on there. It's just two arrows: I want to move right, I want to move left. That's it, you know what I mean. What the fuck is this, dude?
