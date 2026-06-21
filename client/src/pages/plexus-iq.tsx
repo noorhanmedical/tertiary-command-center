@@ -400,6 +400,18 @@ export default function PlexusIQPage() {
     }
   }, [activeQualificationJobs]);
 
+  // Batch IDs with an actively-running qualification job. Drives the
+  // "Running" state in the facility operating list. Combines the async
+  // qualification jobs with the in-flight single-batch generate.
+  const runningBatchIds = useMemo(() => {
+    const s = new Set<number>();
+    for (const j of activeQualificationJobs) {
+      if (j.batchId != null) s.add(j.batchId);
+    }
+    if (analyzingBatchId != null) s.add(analyzingBatchId);
+    return s;
+  }, [activeQualificationJobs, analyzingBatchId]);
+
   const handleClinicalImport = useCallback(
     async (
       rows: PlexusIqClinicalImportRow[],
@@ -862,7 +874,9 @@ export default function PlexusIQPage() {
         )}
         <PlexusIQWorkspace
           summary={summary}
+          batches={batches}
           batchDetails={batchDetails}
+          runningBatchIds={runningBatchIds}
           analyzingBatchId={analyzingBatchId}
           analyzingPatients={analyzingPatients}
           onGenerateBatch={handleGenerateBatch}
