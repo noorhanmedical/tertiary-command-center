@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sheet,
   SheetContent,
@@ -8,19 +9,42 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { DOCK_ITEMS, type DockItem } from "@/lib/navigation/navigationRegistry";
+import { PlexusIQCalendar, type CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 
-function CalendarPlaceholderPanel() {
+function DockCalendarPanel({ onClose }: { onClose: () => void }) {
+  const [, navigate] = useLocation();
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+
+  const { data: summary = [] } = useQuery<CalendarSummaryRow[]>({
+    queryKey: ["/api/screening-batches/calendar-summary"],
+    queryFn: async () => {
+      const res = await fetch("/api/screening-batches/calendar-summary", {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Calendar summary fetch failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: 15_000,
+  });
+
+  function handleSelectDate(isoDate: string) {
+    setSelectedDate(isoDate);
+  }
+
+  function handleAssignDate(_batchId: number, _batchLabel: string) {
+    onClose();
+    navigate("/plexus-iq");
+  }
+
   return (
-    <div
-      className="mt-6 rounded-2xl border border-dashed border-slate-200 dark:border-border bg-slate-50/60 dark:bg-muted/20 p-8 text-center"
-      data-testid="global-floating-dock-calendar-panel"
-    >
-      <p className="text-sm font-medium text-slate-700 dark:text-foreground">
-        Calendar panel coming soon.
-      </p>
-      <p className="mt-2 text-xs text-slate-500 dark:text-muted-foreground">
-        Use the Home dashboard for the live monthly clinic calendar today.
-      </p>
+    <div className="overflow-y-auto" data-testid="global-floating-dock-calendar-panel">
+      <PlexusIQCalendar
+        summary={summary}
+        onSelectDate={handleSelectDate}
+        onAssignDate={handleAssignDate}
+        selectedDate={selectedDate}
+        compact={false}
+      />
     </div>
   );
 }
@@ -205,14 +229,16 @@ export function GlobalFloatingDock() {
         open={openPanel === "calendar"}
         onOpenChange={(open) => setOpenPanel(open ? "calendar" : null)}
       >
-        <SheetContent side="right" className="w-full sm:max-w-md">
-          <SheetHeader>
+        <SheetContent side="right" className="w-full sm:max-w-3xl flex flex-col overflow-hidden">
+          <SheetHeader className="shrink-0">
             <SheetTitle>Calendar</SheetTitle>
             <SheetDescription>
-              Quick-glance calendar surface — full monthly view lives on Home.
+              Monthly schedule — ancillary categories and patient counts at a glance.
             </SheetDescription>
           </SheetHeader>
-          <CalendarPlaceholderPanel />
+          <div className="flex-1 overflow-y-auto -mx-6 px-6">
+            <DockCalendarPanel onClose={() => setOpenPanel(null)} />
+          </div>
         </SheetContent>
       </Sheet>
     </>
