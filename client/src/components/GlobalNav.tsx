@@ -16,6 +16,7 @@ import {
   Library,
   Stethoscope,
   HeartHandshake,
+  Shield,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { AuthUser } from "@/App";
@@ -51,6 +52,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },
   { href: "/technician-portal", label: "Technician Portal", Icon: Stethoscope,    roles: ["admin", "technician", "liaison"] },
   { href: "/liaison-technician-portal",    label: "Liaison Technician Portal",    Icon: HeartHandshake, roles: ["admin", "technician", "liaison"] },
+  { href: "/admin-ops",        label: "Admin",            Icon: Shield,       roles: ["admin"] },
 ];
 
 function TodayBadge({ count }: { count: number }) {
@@ -117,6 +119,9 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
   const isActive = (href: string) => {
     if (href === "/home") return location === "/home" || location === "/";
     if (href === "/schedule") return location === "/schedule";
+    if (href === "/admin-ops") {
+      return location === "/admin-ops" || location === "/admin" || location.startsWith("/admin/") || location.startsWith("/admin-ops/");
+    }
     return location === href || location.startsWith(href + "/");
   };
 
