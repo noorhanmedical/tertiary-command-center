@@ -543,9 +543,9 @@ export function PlexusIQOperatingList({
   );
 }
 
-// ── Inline review host ────────────────────────────────────────────────
+// ── Review host ───────────────────────────────────────────────────────
 // Reuses the proven add/remove-test flow from PatientListRow and renders
-// AdminReviewDialog in its inline variant. Keyed by patient id so each
+// AdminReviewDialog as an overlay popup. Keyed by patient id so each
 // patient gets a fresh review context.
 function PlexusIQReviewHost({
   patient,

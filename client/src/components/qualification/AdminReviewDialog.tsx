@@ -85,12 +85,6 @@ export type AdminReviewDialogProps = {
   // SOURCE MARKER: Admin Review sibling navigation
   siblings?: PatientScreening[];
   dateLabel?: string | null;
-  // Presentation mode. "dialog" (default) renders the full-screen modal.
-  // "inline" renders the same review surface as an embedded panel (no
-  // Dialog/overlay) for the Plexus IQ operating list, where the Date
-  // panel + name rail stay visible alongside the review. All internal
-  // behaviour (evidence, regeneration gating, sibling nav) is identical.
-  variant?: "dialog" | "inline";
 };
 
 const ANCILLARIES: AdminReviewAncillaryId[] = ["brainwave", "vitalwave", "ultrasound"];
@@ -729,7 +723,6 @@ export function AdminReviewDialog({
   onUpdate,
   siblings,
   dateLabel,
-  variant = "dialog",
 }: AdminReviewDialogProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -2518,20 +2511,12 @@ export function AdminReviewDialog({
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              {variant === "inline" ? (
-                <h2 className="text-base font-semibold tracking-tight text-white">
-                  Admin Review · {patient.name || "Unnamed patient"}
-                </h2>
-              ) : (
-                <>
-                  <DialogTitle className="text-base font-semibold tracking-tight text-white">
-                    Admin Review · {patient.name || "Unnamed patient"}
-                  </DialogTitle>
-                  <DialogDescription className="sr-only">
-                    Admin review for {patient.name || "patient"}
-                  </DialogDescription>
-                </>
-              )}
+              <DialogTitle className="text-base font-semibold tracking-tight text-white">
+                Admin Review · {patient.name || "Unnamed patient"}
+              </DialogTitle>
+              <DialogDescription className="sr-only">
+                Admin review for {patient.name || "patient"}
+              </DialogDescription>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
                 <span
                   className={`inline-flex items-center rounded-full px-2 py-0.5 ${STATUS_META[review.approval].pillClass}`}
@@ -2649,18 +2634,6 @@ export function AdminReviewDialog({
                   </button>
                 );
               })()}
-              {variant === "inline" && (
-                <button
-                  type="button"
-                  onClick={() => onOpenChange(false)}
-                  aria-label="Close review"
-                  title="Close review"
-                  data-testid="button-inline-admin-review-close"
-                  className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/80 hover:text-white hover:bg-white/10"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
             </div>
           </div>
         </DialogHeader>
@@ -3964,25 +3937,14 @@ export function AdminReviewDialog({
 
   return (
     <>
-      {variant === "inline" ? (
-        open ? (
-          <div
-            className="flex flex-col h-full max-h-full overflow-hidden bg-white"
-            data-testid={`inline-admin-review-${patient.id}`}
-          >
-            {shellChildren}
-          </div>
-        ) : null
-      ) : (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-          <DialogContent
-            className="w-[calc(100vw-2rem)] max-w-[1440px] max-h-[94vh] overflow-hidden p-0 gap-0 rounded-2xl"
-            data-testid={`dialog-admin-review-${patient.id}`}
-          >
-            {shellChildren}
-          </DialogContent>
-        </Dialog>
-      )}
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent
+          className="w-[calc(100vw-2rem)] max-w-[1440px] max-h-[94vh] overflow-hidden p-0 gap-0 rounded-2xl"
+          data-testid={`dialog-admin-review-${patient.id}`}
+        >
+          {shellChildren}
+        </DialogContent>
+      </Dialog>
       <PacketQaBlockingDialog
         open={packetQa !== null}
         report={packetQa?.report ?? null}
