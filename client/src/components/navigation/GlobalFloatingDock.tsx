@@ -39,10 +39,10 @@ function DockButton({
   const Icon = item.Icon;
 
   const stateClass = item.kind === "disabled"
-    ? "opacity-40 cursor-not-allowed text-slate-500"
+    ? "opacity-40 cursor-not-allowed text-white/40"
     : active
-      ? "text-indigo-700 dark:text-indigo-200"
-      : "text-slate-700 dark:text-foreground hover:text-indigo-700 dark:hover:text-indigo-200";
+      ? "text-white"
+      : "text-white/80 hover:text-white";
 
   const wrapperClass = `group/dock-item flex flex-col items-center gap-1 px-2 transition-all duration-200 ${stateClass}`;
 
@@ -50,8 +50,8 @@ function DockButton({
     <span
       className={`relative inline-flex items-center justify-center transition-all duration-200 ease-out rounded-2xl ${
         active
-          ? "bg-indigo-50 dark:bg-indigo-500/15"
-          : "bg-transparent group-hover/dock-item:bg-slate-100 dark:group-hover/dock-item:bg-muted/40"
+          ? "bg-white/15"
+          : "bg-transparent group-hover/dock-item:bg-white/10"
       } ${expanded ? "h-10 w-10" : "h-7 w-7"}`}
     >
       <Icon
@@ -157,7 +157,7 @@ export function GlobalFloatingDock() {
         <button
           type="button"
           onClick={() => setTapToggled((v) => !v)}
-          className="md:hidden absolute -top-3 left-1/2 -translate-x-1/2 inline-flex items-center justify-center h-6 w-12 rounded-full bg-indigo-600 text-white text-[10px] font-semibold shadow"
+          className="md:hidden absolute -top-3 left-1/2 -translate-x-1/2 inline-flex items-center justify-center h-6 w-12 rounded-full bg-slate-800/90 text-white/90 border border-slate-600/60 backdrop-blur-xl text-[10px] font-semibold shadow"
           aria-label="Toggle dock labels"
           data-testid="global-floating-dock-mobile-toggle"
         >
@@ -165,7 +165,7 @@ export function GlobalFloatingDock() {
         </button>
 
         <div
-          className={`rounded-full border border-slate-200/70 dark:border-border bg-white/90 dark:bg-card/85 backdrop-blur-xl shadow-lg transition-all duration-200 ease-out origin-bottom ${
+          className={`rounded-full border border-slate-600/50 bg-slate-800/85 backdrop-blur-xl shadow-lg transition-all duration-200 ease-out origin-bottom ${
             expanded
               ? "px-3 py-2 opacity-100 scale-100"
               : "px-2 py-1 opacity-40 scale-90"
