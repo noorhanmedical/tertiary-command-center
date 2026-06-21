@@ -27,6 +27,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Lightbulb,
+  Pencil,
   Plus,
   RefreshCw,
   Sparkles,
@@ -36,6 +37,7 @@ import {
   Search,
   FileText,
   BookOpen,
+  Check,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -798,6 +800,15 @@ export function AdminReviewDialog({
   const [icdSearchQuery, setIcdSearchQuery] = useState("");
   const [aiIcdButtons, setAiIcdButtons] = useState<SupportingButton[]>([]);
 
+  // Source Data popover edit mode — allows inline editing of Hx/Dx/Rx
+  // with a Save → Regenerate flow.
+  const [sourceEditMode, setSourceEditMode] = useState(false);
+  const [sourceEditHx, setSourceEditHx] = useState("");
+  const [sourceEditDx, setSourceEditDx] = useState("");
+  const [sourceEditRx, setSourceEditRx] = useState("");
+  const [sourceDataSaved, setSourceDataSaved] = useState(false);
+  const [sourceRegenInFlight, setSourceRegenInFlight] = useState(false);
+
   const icdSearchMutation = useMutation<
     { ok: boolean; results: IcdSearchResult[]; error?: string; detail?: string },
     Error,
@@ -940,6 +951,9 @@ export function AdminReviewDialog({
       vitalwave: [],
       ultrasound: { parent: [], byTestName: {} },
     });
+    setSourceEditMode(false);
+    setSourceDataSaved(false);
+    setSourceRegenInFlight(false);
     const stored = reasoningAsObject(patient.reasoning)["adminReview:updates"];
     setUpdatesLog(Array.isArray(stored) ? (stored as AdminReviewUpdateEntry[]) : []);
     // Patch 1 (admin-review persistence fix):
@@ -2399,7 +2413,7 @@ export function AdminReviewDialog({
         {/* ─── Two-panel body: LEFT ancillaries playground · RIGHT action column ─── */}
         <div
           className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4"
-          style={{ background: "#EEF1F7" }}
+          style={{ background: "#F4F5F7" }}
           data-testid="admin-review-two-panel-body"
         >
           {/* ─── LEFT panel — Ancillaries playground ─── */}
@@ -2443,8 +2457,8 @@ export function AdminReviewDialog({
                           ) : (
                             <ChevronRight className={`w-4 h-4 shrink-0 ${style.accent}`} />
                           )}
-                          <div className={`shrink-0 w-7 h-7 rounded-full bg-white inline-flex items-center justify-center ${style.icon}`}>
-                            <Icon className="w-4 h-4" strokeWidth={2} fill="none" />
+                          <div className={`shrink-0 w-8 h-8 rounded-full bg-white/90 shadow-sm inline-flex items-center justify-center ${style.icon}`}>
+                            <Icon className="w-5 h-5" strokeWidth={2} fill="none" />
                           </div>
                           <div className="min-w-0 flex items-center gap-2 flex-wrap">
                             <div className={`font-semibold text-sm ${style.accent} shrink-0`}>
@@ -2608,10 +2622,10 @@ export function AdminReviewDialog({
                       ) : (
                         <ChevronRight className={`w-4 h-4 shrink-0 ${categoryStyles.ultrasound.accent}`} />
                       )}
-                      <div className={`shrink-0 w-7 h-7 rounded-full bg-white inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
+                      <div className={`shrink-0 w-8 h-8 rounded-full bg-white/90 shadow-sm inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
                         {(() => {
                           const Icon = categoryIcons.ultrasound;
-                          return <Icon className="w-4 h-4" strokeWidth={2} fill="none" />;
+                          return <Icon className="w-5 h-5" strokeWidth={2} fill="none" />;
                         })()}
                       </div>
                       <div className="min-w-0 flex items-center gap-2 flex-wrap">
@@ -2891,27 +2905,169 @@ export function AdminReviewDialog({
                           >
                 <div className="px-0 py-0" data-testid="admin-review-source-tab-content">
                         <section className="space-y-2" data-testid="admin-review-clinical-source">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                            Clinical Source
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                              Clinical Source
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!sourceEditMode) {
+                                  setSourceEditHx(patient.history ?? "");
+                                  setSourceEditDx(patient.diagnoses ?? "");
+                                  setSourceEditRx(patient.medications ?? "");
+                                  setSourceDataSaved(false);
+                                }
+                                setSourceEditMode((m) => !m);
+                              }}
+                              data-testid="admin-review-source-edit-toggle"
+                              className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
+                                sourceEditMode
+                                  ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              <Pencil className="w-3 h-3" />
+                              {sourceEditMode ? "Cancel" : "Edit"}
+                            </button>
                           </div>
-                          <RawSourceCard
-                            label="Hx"
-                            value={patient.history}
-                            emptyText="No history entered"
-                            testId="admin-review-source-hx"
-                          />
-                          <RawSourceCard
-                            label="Dx"
-                            value={patient.diagnoses}
-                            emptyText="No diagnoses entered"
-                            testId="admin-review-source-dx"
-                          />
-                          <RawSourceCard
-                            label="Rx"
-                            value={patient.medications}
-                            emptyText="No medications entered"
-                            testId="admin-review-source-rx"
-                          />
+
+                          {sourceEditMode ? (
+                            <div className="space-y-2" data-testid="admin-review-source-edit-form">
+                              <div>
+                                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Hx</label>
+                                <Textarea
+                                  value={sourceEditHx}
+                                  onChange={(e) => setSourceEditHx(e.target.value)}
+                                  rows={3}
+                                  className="text-xs"
+                                  data-testid="admin-review-source-edit-hx"
+                                  placeholder="Patient history..."
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Dx</label>
+                                <Textarea
+                                  value={sourceEditDx}
+                                  onChange={(e) => setSourceEditDx(e.target.value)}
+                                  rows={3}
+                                  className="text-xs"
+                                  data-testid="admin-review-source-edit-dx"
+                                  placeholder="Diagnoses..."
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Rx</label>
+                                <Textarea
+                                  value={sourceEditRx}
+                                  onChange={(e) => setSourceEditRx(e.target.value)}
+                                  rows={3}
+                                  className="text-xs"
+                                  data-testid="admin-review-source-edit-rx"
+                                  placeholder="Medications..."
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onUpdate("history", sourceEditHx);
+                                  onUpdate("diagnoses", sourceEditDx);
+                                  onUpdate("medications", sourceEditRx);
+                                  setSourceEditMode(false);
+                                  setSourceDataSaved(true);
+                                  recordAdminReviewUpdate(
+                                    "admin_note_updated",
+                                    "Source clinical data (Hx/Dx/Rx) updated",
+                                  );
+                                  toast({ title: "Source data saved", description: "Hx, Dx, and Rx have been updated." });
+                                }}
+                                data-testid="admin-review-source-save-button"
+                                className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 px-3 py-2 text-xs font-semibold transition-colors"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                Save Changes
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <RawSourceCard
+                                label="Hx"
+                                value={patient.history}
+                                emptyText="No history entered"
+                                testId="admin-review-source-hx"
+                              />
+                              <RawSourceCard
+                                label="Dx"
+                                value={patient.diagnoses}
+                                emptyText="No diagnoses entered"
+                                testId="admin-review-source-dx"
+                              />
+                              <RawSourceCard
+                                label="Rx"
+                                value={patient.medications}
+                                emptyText="No medications entered"
+                                testId="admin-review-source-rx"
+                              />
+                              {(() => {
+                                const prevTests = typeof (patient as { previousTests?: unknown }).previousTests === "string"
+                                  ? ((patient as { previousTests?: string }).previousTests ?? "")
+                                  : "";
+                                return (
+                                  <RawSourceCard
+                                    label="Previous Tests"
+                                    value={prevTests}
+                                    emptyText="No prior testing on file"
+                                    testId="admin-review-source-prior"
+                                  />
+                                );
+                              })()}
+                            </>
+                          )}
+
+                          {sourceDataSaved && !sourceEditMode && (
+                            <div
+                              className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-2"
+                              data-testid="admin-review-source-regenerate-section"
+                            >
+                              <div className="text-[11px] text-amber-800 font-medium">
+                                Source data updated. Re-analyze to apply the new Hx/Dx/Rx to all ancillaries.
+                              </div>
+                              <button
+                                type="button"
+                                disabled={sourceRegenInFlight}
+                                onClick={async () => {
+                                  setSourceRegenInFlight(true);
+                                  const failures: string[] = [];
+                                  for (const ancillary of ANCILLARIES) {
+                                    try {
+                                      await regenerateAncillaryMutation.mutateAsync({ ancillary });
+                                    } catch {
+                                      failures.push(ancillary);
+                                    }
+                                  }
+                                  setSourceRegenInFlight(false);
+                                  if (failures.length === 0) {
+                                    setSourceDataSaved(false);
+                                    toast({ title: "Re-analysis complete", description: "All ancillaries regenerated with updated source data." });
+                                  } else if (failures.length < ANCILLARIES.length) {
+                                    setSourceDataSaved(false);
+                                    toast({ title: "Partial re-analysis", description: `${failures.join(", ")} could not be regenerated. Others succeeded.`, variant: "destructive" });
+                                  } else {
+                                    toast({ title: "Re-analysis failed", description: "All ancillaries failed to regenerate. Check your connection and try again.", variant: "destructive" });
+                                  }
+                                }}
+                                data-testid="admin-review-source-regenerate-button"
+                                className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-300 bg-amber-100 text-amber-900 hover:bg-amber-200 px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-50"
+                              >
+                                {sourceRegenInFlight ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                )}
+                                {sourceRegenInFlight ? "Re-analyzing…" : "Regenerate All Ancillaries"}
+                              </button>
+                            </div>
+                          )}
                         </section>
                 </div>
                           </PopoverContent>
