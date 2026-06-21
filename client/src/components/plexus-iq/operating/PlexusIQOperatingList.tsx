@@ -492,7 +492,7 @@ export function PlexusIQOperatingList({
             ) : (
               <>
                 <div
-                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-600 rounded-xl bg-slate-700 text-[10px] font-semibold uppercase tracking-wider text-slate-200`}
+                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-700 rounded-xl bg-slate-900 text-[10px] font-semibold uppercase tracking-wider text-slate-200`}
                   data-testid="plexus-iq-operating-header"
                 >
                   {/* Checkbox column (no label) */}

@@ -53,7 +53,7 @@ export function PlexusIQDatePanel({
       className="flex flex-col h-full min-h-0 border-r border-slate-200 bg-white"
       data-testid="plexus-iq-date-panel"
     >
-      <div className="px-3 py-2.5 border-b border-slate-600 bg-slate-700">
+      <div className="px-3 py-2.5 border-b border-slate-700 bg-slate-900">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-200">
           Date
         </div>
@@ -71,7 +71,7 @@ export function PlexusIQDatePanel({
               <button
                 type="button"
                 onClick={() => onToggleDate(group.key)}
-                className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors text-left"
+                className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 transition-colors text-left"
                 data-testid={`button-date-group-${group.key}`}
               >
                 {expanded ? (
