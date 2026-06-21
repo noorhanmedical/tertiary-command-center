@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
-import { SidebarTrigger } from "@/components/ui/sidebar";
-import { CalendarDays, Loader2, Plus } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import {
   useScreeningBatches,
   useCreateBatch,
@@ -833,43 +831,6 @@ export default function PlexusIQPage() {
 
   return (
     <div className="flex flex-col h-full w-full min-w-0">
-      <header className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
-        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-3 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight text-slate-900" data-testid="text-plexus-iq-title">
-                Plexus IQ
-              </h1>
-              <p className="text-[11px] text-slate-500">
-                Multi-day, multi-facility workspace
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              size="sm"
-              onClick={() => setAddHubOpen(true)}
-              className="gap-1.5 rounded-xl"
-              data-testid="button-plexus-iq-add-patient"
-            >
-              <Plus className="w-4 h-4" />
-              Add Patient(s)
-            </Button>
-            <button
-              type="button"
-              onClick={() => setCalendarOpen(true)}
-              aria-label="Open calendar"
-              title="Calendar"
-              className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-plexus-navy-800 text-white shadow-sm hover:bg-plexus-navy-700 transition-colors"
-              data-testid="button-plexus-iq-calendar"
-            >
-              <CalendarDays className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </header>
-
       <main
         ref={mainScrollRef}
         className="flex-1 min-h-0 overflow-auto bg-slate-50/40"
@@ -912,6 +873,8 @@ export default function PlexusIQPage() {
           onSelectionChange={setOperatingSelection}
           focusBatch={focusBatch}
           onFocusConsumed={handleFocusConsumed}
+          onAddPatient={() => setAddHubOpen(true)}
+          onOpenCalendar={() => setCalendarOpen(true)}
         />
       </main>
 

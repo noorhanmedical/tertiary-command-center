@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarDays, Plus } from "lucide-react";
 import type { AuthUser } from "@/App";
 import type { PatientScreening, ScreeningBatch } from "@shared/schema";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
   Select,
   SelectContent,
@@ -66,6 +69,10 @@ export type PlexusIQOperatingListProps = {
    */
   focusBatch?: { id: number; facility: string } | null;
   onFocusConsumed?: () => void;
+  /** Opens the Add Patient(s) hub. Relocated from the old page header. */
+  onAddPatient?: () => void;
+  /** Opens the calendar drawer. Relocated from the old page header. */
+  onOpenCalendar?: () => void;
 };
 
 const UNSCHEDULED_KEY = "unscheduled";
@@ -137,6 +144,8 @@ export function PlexusIQOperatingList({
   onSelectionChange,
   focusBatch,
   onFocusConsumed,
+  onAddPatient,
+  onOpenCalendar,
 }: PlexusIQOperatingListProps) {
   const { toast } = useToast();
   const { data: currentUser } = useQuery<AuthUser>({
@@ -421,31 +430,59 @@ export function PlexusIQOperatingList({
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-4">
-      {/* Facility context selector */}
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-          Facility
-        </span>
-        <Select
-          value={selectedFacility ?? undefined}
-          onValueChange={(v) => {
-            setFacilityOverride(v);
-            setBatchOverride(null);
-            setExpandedOverride(null);
-            setReviewPatientId(null);
-          }}
-        >
-          <SelectTrigger className="h-8 w-[260px] text-sm" data-testid="select-operating-facility">
-            <SelectValue placeholder="Select facility" />
-          </SelectTrigger>
-          <SelectContent>
-            {facilities.map((f) => (
-              <SelectItem key={f} value={f}>
-                {f}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {/* Facility context selector + relocated workspace actions */}
+      <div className="mb-3 flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            Facility
+          </span>
+          <Select
+            value={selectedFacility ?? undefined}
+            onValueChange={(v) => {
+              setFacilityOverride(v);
+              setBatchOverride(null);
+              setExpandedOverride(null);
+              setReviewPatientId(null);
+            }}
+          >
+            <SelectTrigger className="h-8 w-[260px] text-sm" data-testid="select-operating-facility">
+              <SelectValue placeholder="Select facility" />
+            </SelectTrigger>
+            <SelectContent>
+              {facilities.map((f) => (
+                <SelectItem key={f} value={f}>
+                  {f}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {onAddPatient && (
+            <Button
+              size="sm"
+              onClick={onAddPatient}
+              className="gap-1.5 rounded-xl"
+              data-testid="button-plexus-iq-add-patient"
+            >
+              <Plus className="w-4 h-4" />
+              Add Patient(s)
+            </Button>
+          )}
+          {onOpenCalendar && (
+            <button
+              type="button"
+              onClick={onOpenCalendar}
+              aria-label="Open calendar"
+              title="Calendar"
+              className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-plexus-navy-800 text-white shadow-sm hover:bg-plexus-navy-700 transition-colors"
+              data-testid="button-plexus-iq-calendar"
+            >
+              <CalendarDays className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-[240px_minmax(0,1fr)] rounded-2xl border border-slate-200 overflow-hidden bg-white h-[calc(100vh-220px)] min-h-[480px]">
@@ -492,7 +529,7 @@ export function PlexusIQOperatingList({
             ) : (
               <>
                 <div
-                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-700 rounded-xl bg-slate-900 text-[10px] font-semibold uppercase tracking-wider text-slate-200`}
+                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-200 rounded-xl bg-slate-50 text-[10px] font-semibold uppercase tracking-wider text-slate-500`}
                   data-testid="plexus-iq-operating-header"
                 >
                   {/* Checkbox column (no label) */}

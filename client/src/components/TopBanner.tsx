@@ -28,9 +28,6 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
           <span className="text-[15px] font-semibold tracking-tight text-white" data-testid="text-banner-title">
             Plexus Clinical
           </span>
-          <span className="text-[10px] text-slate-400 tracking-wider uppercase" data-testid="text-banner-subtitle">
-            Post Acute Care Portal
-          </span>
         </div>
 
         <div className="flex items-center gap-2">
