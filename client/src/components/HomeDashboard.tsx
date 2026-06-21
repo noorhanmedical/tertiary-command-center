@@ -6,6 +6,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { PageHeader } from "@/components/PageHeader";
 import {
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -134,6 +135,7 @@ export function HomeDashboard({
   onOpenSchedule,
 }: HomeDashboardProps) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [dashboardExpanded, setDashboardExpanded] = useState(false);
 
   const dashboardClinicTabs = dashboardData?.clinicTabs || [];
   const activeDashboardClinic =
@@ -251,150 +253,170 @@ export function HomeDashboard({
             />
 
             <div className="space-y-6">
-              <Card className="glass-tile" data-testid="tile-live-dashboard-row">
-                <div className="p-6 lg:p-8 space-y-6">
-                  <div className="flex items-start justify-between gap-4 flex-wrap">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 flex items-center justify-center shrink-0">
-                        <CalendarDays className="w-5 h-5 text-indigo-600 dark:text-indigo-300" strokeWidth={1.75} />
-                      </div>
-                      <div>
-                        <div className="text-[20px] font-semibold text-slate-900 dark:text-foreground tracking-tight">Live Dashboard</div>
-                        <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-0.5">
-                          {effectiveSelectedDate ? formatDayHeader(effectiveSelectedDate, today) : "Selected day"}
-                        </p>
-                      </div>
+              <Link href="/plexus-iq">
+                <Card
+                  className="glass-tile-interactive group cursor-pointer relative overflow-hidden border-0 bg-[radial-gradient(ellipse_at_top_left,_#1e1b4b_0%,_#000000_55%,_#0b0716_100%)] text-white shadow-2xl"
+                  data-testid="tile-plexus-iq"
+                >
+                  <div
+                    className="pointer-events-none absolute inset-0 opacity-70"
+                    style={{
+                      backgroundImage:
+                        "radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,0.9) 50%, transparent 51%), radial-gradient(1px 1px at 60% 70%, rgba(255,255,255,0.7) 50%, transparent 51%), radial-gradient(1.5px 1.5px at 80% 20%, rgba(255,255,255,0.95) 50%, transparent 51%), radial-gradient(1px 1px at 40% 80%, rgba(255,255,255,0.6) 50%, transparent 51%), radial-gradient(1px 1px at 10% 60%, rgba(255,255,255,0.8) 50%, transparent 51%), radial-gradient(1.2px 1.2px at 90% 50%, rgba(255,255,255,0.85) 50%, transparent 51%)",
+                      backgroundRepeat: "no-repeat",
+                    }}
+                    aria-hidden="true"
+                  />
+                  <div className="relative flex items-center gap-5 px-8 py-9 lg:px-10 lg:py-12">
+                    <div className="shrink-0 w-16 h-16 rounded-2xl bg-white/10 ring-1 ring-white/20 flex items-center justify-center">
+                      <Sparkles className="w-8 h-8 text-white" strokeWidth={1.75} />
                     </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/50">
+                        Plexus Ancillary
+                      </div>
+                      <div className="text-[30px] lg:text-[36px] font-semibold text-white tracking-tight mt-1 leading-none">
+                        Plexus IQ
+                      </div>
+                      <p className="text-[14px] text-white/70 mt-2 leading-snug max-w-2xl">
+                        Build, qualify, and review Visit and Outreach schedules across dates and facilities.
+                      </p>
+                    </div>
+                    <ChevronRight className="hidden sm:block w-6 h-6 text-white/40 shrink-0 transition-transform group-hover:translate-x-1" strokeWidth={1.75} />
+                  </div>
+                </Card>
+              </Link>
 
-                    <div className="flex flex-wrap gap-2">
-                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
-                        Clinic: {activeDashboardClinic?.clinicLabel || "—"}
-                      </span>
-                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
-                        Scheduler: {activeDashboardClinic?.scheduler?.name || "—"}
-                      </span>
-                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
-                        Patients: {selectedMonthCell?.patientCount ?? 0}
-                      </span>
-                    </div>
+              <div data-testid="tile-plexus-dashboard-row">
+                <button
+                  type="button"
+                  onClick={() => setDashboardExpanded((v) => !v)}
+                  aria-expanded={dashboardExpanded}
+                  data-testid="button-toggle-plexus-dashboard"
+                  className="w-full flex items-center gap-4 py-3 text-left"
+                >
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 flex items-center justify-center shrink-0">
+                    <CalendarDays className="w-5 h-5 text-indigo-600 dark:text-indigo-300" strokeWidth={1.75} />
+                  </div>
+                  <div className="shrink-0">
+                    <div className="text-[16px] font-semibold text-slate-900 dark:text-foreground tracking-tight leading-tight">Plexus Dashboard</div>
+                    <p className="text-[11px] text-slate-500 dark:text-muted-foreground leading-tight">
+                      {effectiveSelectedDate ? formatDayHeader(effectiveSelectedDate, today) : "Selected day"}
+                    </p>
                   </div>
 
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-500">BrainWave</div>
-                      <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicBrainWaveCount}</div>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-500">VitalWave</div>
-                      <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicVitalWaveCount}</div>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Ultrasound</div>
-                      <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicUltrasoundCount}</div>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Total Ancillaries</div>
-                      <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicAncillaryCount}</div>
-                    </div>
+                  <div className="flex-1 flex flex-wrap items-center justify-end gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
+                      <span className="text-slate-500">Patients</span>
+                      <span className="font-semibold text-slate-900">{selectedMonthCell?.patientCount ?? 0}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
+                      <span className="text-slate-500">BrainWave</span>
+                      <span className="font-semibold text-slate-900">{selectedClinicBrainWaveCount}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
+                      <span className="text-slate-500">VitalWave</span>
+                      <span className="font-semibold text-slate-900">{selectedClinicVitalWaveCount}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
+                      <span className="text-slate-500">Ultrasound</span>
+                      <span className="font-semibold text-slate-900">{selectedClinicUltrasoundCount}</span>
+                    </span>
                   </div>
 
-                  <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_1fr] gap-4">
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500 mb-3">By Site</div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {visibleLiveDashboardSites.map((site) => (
-                          <div key={site.clinicKey} className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="text-sm font-semibold text-slate-900">{site.clinicLabel}</div>
-                              <div className="text-[11px] text-slate-500">{site.patientCount} pts</div>
-                            </div>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
-                                BrainWave {site.brainWaveCount}
-                              </span>
-                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
-                                VitalWave {site.vitalWaveCount}
-                              </span>
-                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
-                                Ultrasound {site.ultrasoundCount}
-                              </span>
-                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
-                                Total {site.ancillaryCount}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
+                  <ChevronDown
+                    className={`w-5 h-5 text-slate-400 shrink-0 transition-transform ${dashboardExpanded ? "rotate-180" : ""}`}
+                    strokeWidth={2}
+                  />
+                </button>
+
+                {dashboardExpanded && (
+                  <div className="space-y-6 pt-2 pb-2" data-testid="panel-plexus-dashboard-detail">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">BrainWave</div>
+                        <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicBrainWaveCount}</div>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">VitalWave</div>
+                        <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicVitalWaveCount}</div>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Ultrasound</div>
+                        <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicUltrasoundCount}</div>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">Total Ancillaries</div>
+                        <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedClinicAncillaryCount}</div>
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500 mb-3">Next Patients</div>
-                      {nextPatientsPreview.length === 0 ? (
-                        <div className="text-sm text-slate-500">No patients on this day.</div>
-                      ) : (
-                        <div className="space-y-2">
-                          {nextPatientsPreview.map((patient) => (
-                            <button
-                              type="button"
-                              key={patient.id}
-                              onClick={() => onOpenSchedule(patient.batchId)}
-                              className="w-full text-left rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 hover-elevate active-elevate-2"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <div className="text-sm font-semibold text-slate-900">{patient.name || "(unnamed)"}</div>
-                                  <div className="text-xs text-slate-500 mt-0.5">{formatTime12(patient.time) || "—"}</div>
-                                </div>
-                                <div className="flex flex-wrap gap-1 justify-end">
-                                  {(patient.ancillaries ?? []).slice(0, 2).map((ancillary, idx) => (
-                                    <span
-                                      key={`${patient.id}-${ancillary}-${idx}`}
-                                      className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-700"
-                                    >
-                                      {ancillary}
-                                    </span>
-                                  ))}
-                                </div>
+                    <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_1fr] gap-4">
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500 mb-3">By Site</div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {visibleLiveDashboardSites.map((site) => (
+                            <div key={site.clinicKey} className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-sm font-semibold text-slate-900">{site.clinicLabel}</div>
+                                <div className="text-[11px] text-slate-500">{site.patientCount} pts</div>
                               </div>
-                            </button>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                                  BrainWave {site.brainWaveCount}
+                                </span>
+                                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                                  VitalWave {site.vitalWaveCount}
+                                </span>
+                                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                                  Ultrasound {site.ultrasoundCount}
+                                </span>
+                                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                                  Total {site.ancillaryCount}
+                                </span>
+                              </div>
+                            </div>
                           ))}
                         </div>
-                      )}
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="text-[12px] font-semibold uppercase tracking-wide text-slate-500 mb-3">Next Patients</div>
+                        {nextPatientsPreview.length === 0 ? (
+                          <div className="text-sm text-slate-500">No patients on this day.</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {nextPatientsPreview.map((patient) => (
+                              <button
+                                type="button"
+                                key={patient.id}
+                                onClick={() => onOpenSchedule(patient.batchId)}
+                                className="w-full text-left rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 hover-elevate active-elevate-2"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="text-sm font-semibold text-slate-900">{patient.name || "(unnamed)"}</div>
+                                    <div className="text-xs text-slate-500 mt-0.5">{formatTime12(patient.time) || "—"}</div>
+                                  </div>
+                                  <div className="flex flex-wrap gap-1 justify-end">
+                                    {(patient.ancillaries ?? []).slice(0, 2).map((ancillary, idx) => (
+                                      <span
+                                        key={`${patient.id}-${ancillary}-${idx}`}
+                                        className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-700"
+                                      >
+                                        {ancillary}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </Card>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Link href="/plexus-iq">
-                  <Card
-                    className="glass-tile-interactive group cursor-pointer md:col-span-3 relative overflow-hidden border-0 bg-[radial-gradient(ellipse_at_top_left,_#1e1b4b_0%,_#000000_55%,_#0b0716_100%)] text-white shadow-2xl"
-                    data-testid="tile-plexus-iq"
-                  >
-                    <div
-                      className="pointer-events-none absolute inset-0 opacity-70"
-                      style={{
-                        backgroundImage:
-                          "radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,0.9) 50%, transparent 51%), radial-gradient(1px 1px at 60% 70%, rgba(255,255,255,0.7) 50%, transparent 51%), radial-gradient(1.5px 1.5px at 80% 20%, rgba(255,255,255,0.95) 50%, transparent 51%), radial-gradient(1px 1px at 40% 80%, rgba(255,255,255,0.6) 50%, transparent 51%), radial-gradient(1px 1px at 10% 60%, rgba(255,255,255,0.8) 50%, transparent 51%), radial-gradient(1.2px 1.2px at 90% 50%, rgba(255,255,255,0.85) 50%, transparent 51%)",
-                        backgroundRepeat: "no-repeat",
-                      }}
-                      aria-hidden="true"
-                    />
-                    <div className="relative flex items-center gap-4 px-6 py-5">
-                      <div className="shrink-0 w-12 h-12 rounded-2xl bg-white/10 ring-1 ring-white/20 flex items-center justify-center">
-                        <Sparkles className="w-6 h-6 text-white" strokeWidth={1.75} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <span className="text-[18px] font-semibold text-white tracking-tight">
-                          Plexus IQ
-                        </span>
-                        <p className="text-[12px] text-white/70 mt-0.5 leading-snug">
-                          Build, qualify, and review Visit and Outreach schedules across dates and facilities.
-                        </p>
-                      </div>
-                    </div>
-                  </Card>
-                </Link>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 auto-rows-fr">
