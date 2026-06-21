@@ -79,7 +79,7 @@ function BatchRows({
   onSelectBatch: (id: number) => void;
 }) {
   return (
-    <div className="ml-3 pl-2 border-l border-slate-100 space-y-0.5 mt-0.5">
+    <div className="ml-3 pl-2 border-l border-sky-100 space-y-0.5 mt-0.5">
       {batches.map((b) => {
         const active = b.batchId === selectedBatchId;
         return (
@@ -88,7 +88,7 @@ function BatchRows({
             type="button"
             onClick={() => onSelectBatch(b.batchId)}
             className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
-              active ? "bg-slate-100 ring-1 ring-slate-300" : "hover:bg-slate-50"
+              active ? "bg-sky-50 ring-1 ring-sky-200" : "hover:bg-sky-50/60"
             }`}
             data-testid={`button-batch-node-${b.batchId}`}
             aria-current={active ? "true" : undefined}
@@ -96,14 +96,14 @@ function BatchRows({
             <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${TONE_DOT[b.statusTone]}`} />
             <span
               className={`text-xs font-medium truncate flex-1 ${
-                active ? "text-slate-500" : "text-slate-700"
+                active ? "text-sky-900" : "text-slate-700"
               }`}
             >
               {b.timeLabel}
             </span>
             <span
               className={`inline-flex items-center gap-1 text-[10px] ${
-                active ? "text-slate-500" : "text-slate-400"
+                active ? "text-sky-700" : "text-slate-400"
               }`}
             >
               {b.statusTone === "running" && (
@@ -200,16 +200,20 @@ function ListView({
               type="button"
               onClick={() => onToggleDate(group.key)}
               className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-left ${
-                expanded ? "bg-slate-100" : "hover:bg-slate-50"
+                expanded ? "bg-blue-900 shadow-sm" : "hover:bg-sky-50"
               }`}
               data-testid={`button-date-group-${group.key}`}
             >
               {expanded ? (
-                <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                <ChevronDown className="h-3.5 w-3.5 text-sky-200 shrink-0" />
               ) : (
-                <ChevronRight className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                <ChevronRight className="h-3.5 w-3.5 text-sky-500 shrink-0" />
               )}
-              <span className="text-sm font-medium text-slate-700 truncate flex-1">
+              <span
+                className={`text-sm font-medium truncate flex-1 ${
+                  expanded ? "text-white" : "text-slate-700"
+                }`}
+              >
                 {group.label}
               </span>
             </button>
@@ -336,15 +340,19 @@ function CalendarView({
                 disabled={!hasBatches}
                 onClick={() => setExpandedDay(isSelected ? null : iso)}
                 className={`relative flex flex-col items-center justify-center rounded py-0.5 my-0.5 text-[11px] font-medium transition-colors
-                  ${!hasBatches ? "text-slate-300 cursor-default" : "text-slate-700 hover:bg-slate-100 cursor-pointer"}
-                  ${isSelected ? "bg-slate-200" : ""}
-                  ${isToday && !isSelected ? "ring-1 ring-slate-400 rounded" : ""}
+                  ${!hasBatches ? "text-slate-300 cursor-default" : isSelected ? "text-white cursor-pointer" : "text-slate-700 hover:bg-sky-50 cursor-pointer"}
+                  ${isSelected ? "bg-blue-900 shadow-sm" : ""}
+                  ${isToday && !isSelected ? "ring-1 ring-sky-400 rounded" : ""}
                 `}
                 data-testid={`button-cal-day-${iso}`}
               >
                 {day}
                 {hasBatches && (
-                  <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full bg-sky-500" />
+                  <span
+                    className={`absolute bottom-0.5 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full ${
+                      isSelected ? "bg-white" : "bg-sky-500"
+                    }`}
+                  />
                 )}
               </button>
             );
@@ -421,16 +429,20 @@ function MostRecentView({
           type="button"
           onClick={() => onToggleDate(mostRecent.key)}
           className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-left ${
-            expandedDates.has(mostRecent.key) ? "bg-slate-100" : "hover:bg-slate-50"
+            expandedDates.has(mostRecent.key) ? "bg-blue-900 shadow-sm" : "hover:bg-sky-50"
           }`}
           data-testid={`button-date-group-${mostRecent.key}`}
         >
           {expandedDates.has(mostRecent.key) ? (
-            <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+            <ChevronDown className="h-3.5 w-3.5 text-sky-200 shrink-0" />
           ) : (
-            <ChevronRight className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+            <ChevronRight className="h-3.5 w-3.5 text-sky-500 shrink-0" />
           )}
-          <span className="text-sm font-medium text-slate-700 truncate flex-1">
+          <span
+            className={`text-sm font-medium truncate flex-1 ${
+              expandedDates.has(mostRecent.key) ? "text-white" : "text-slate-700"
+            }`}
+          >
             {mostRecent.label}
           </span>
         </button>
@@ -506,7 +518,7 @@ export function PlexusIQDatePanel(props: PlexusIQDatePanelProps) {
       </div>
 
       {/* View-mode toggle strip */}
-      <div className="flex items-center justify-center gap-1 px-2 py-1.5 border-b border-slate-100 bg-slate-50">
+      <div className="flex items-center justify-center gap-1 px-2 py-1.5 border-b border-sky-100 bg-white">
         {toggleButtons.map(({ mode, icon, label, testId }) => (
           <button
             key={mode}
@@ -515,8 +527,8 @@ export function PlexusIQDatePanel(props: PlexusIQDatePanelProps) {
             onClick={() => setViewMode(mode)}
             className={`flex items-center justify-center w-7 h-7 rounded-md transition-colors ${
               viewMode === mode
-                ? "bg-white shadow-sm ring-1 ring-slate-200 text-slate-800"
-                : "text-slate-400 hover:text-slate-600 hover:bg-white/70"
+                ? "bg-sky-200/60 ring-1 ring-sky-300/60 text-sky-900 shadow-sm"
+                : "text-sky-600 hover:text-sky-800 hover:bg-sky-50"
             }`}
             data-testid={testId}
             aria-pressed={viewMode === mode}
