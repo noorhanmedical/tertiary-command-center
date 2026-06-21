@@ -194,24 +194,25 @@ function ListView({
 
       {filteredGroups.map((group) => {
         const expanded = expandedDates.has(group.key);
+        const selected = group.batches.some((b) => b.batchId === selectedBatchId);
         return (
           <div key={group.key}>
             <button
               type="button"
               onClick={() => onToggleDate(group.key)}
               className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-left ${
-                expanded ? "bg-black shadow-sm" : "hover:bg-sky-50"
+                selected ? "bg-black shadow-sm" : "hover:bg-sky-50"
               }`}
               data-testid={`button-date-group-${group.key}`}
             >
               {expanded ? (
-                <ChevronDown className="h-3.5 w-3.5 text-sky-200 shrink-0" />
+                <ChevronDown className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-sky-200" : "text-sky-500"}`} />
               ) : (
-                <ChevronRight className="h-3.5 w-3.5 text-sky-500 shrink-0" />
+                <ChevronRight className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-sky-200" : "text-sky-500"}`} />
               )}
               <span
                 className={`text-sm font-medium truncate flex-1 ${
-                  expanded ? "text-white" : "text-slate-700"
+                  selected ? "text-white" : "text-slate-700"
                 }`}
               >
                 {group.label}
@@ -436,27 +437,33 @@ function MostRecentView({
         Showing most recent · <span className="font-medium text-slate-600">{mostRecent.label}</span>
       </div>
       <div>
+        {(() => {
+          const expanded = expandedDates.has(mostRecent.key);
+          const selected = mostRecent.batches.some((b) => b.batchId === selectedBatchId);
+          return (
         <button
           type="button"
           onClick={() => onToggleDate(mostRecent.key)}
           className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-left ${
-            expandedDates.has(mostRecent.key) ? "bg-black shadow-sm" : "hover:bg-sky-50"
+            selected ? "bg-black shadow-sm" : "hover:bg-sky-50"
           }`}
           data-testid={`button-date-group-${mostRecent.key}`}
         >
-          {expandedDates.has(mostRecent.key) ? (
-            <ChevronDown className="h-3.5 w-3.5 text-sky-200 shrink-0" />
+          {expanded ? (
+            <ChevronDown className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-sky-200" : "text-sky-500"}`} />
           ) : (
-            <ChevronRight className="h-3.5 w-3.5 text-sky-500 shrink-0" />
+            <ChevronRight className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-sky-200" : "text-sky-500"}`} />
           )}
           <span
             className={`text-sm font-medium truncate flex-1 ${
-              expandedDates.has(mostRecent.key) ? "text-white" : "text-slate-700"
+              selected ? "text-white" : "text-slate-700"
             }`}
           >
             {mostRecent.label}
           </span>
         </button>
+          );
+        })()}
         {expandedDates.has(mostRecent.key) && (
           <BatchRows
             batches={mostRecent.batches}
