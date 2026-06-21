@@ -25,36 +25,40 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
       <style>{`
         @keyframes shootingStar {
           0% {
-            transform: translate(0, 0) rotate(18deg);
+            transform: rotate(var(--angle, 20deg)) translateX(0);
             opacity: 0;
           }
-          3% {
-            opacity: 1;
+          0.4% {
+            opacity: var(--maxop, 0.38);
           }
-          18% {
-            opacity: 0.9;
+          1.5% {
+            opacity: var(--maxop, 0.38);
           }
-          28% {
-            transform: translate(420px, 130px) rotate(18deg);
+          2.3% {
+            transform: rotate(var(--angle, 20deg)) translateX(var(--dist, 480px));
             opacity: 0;
           }
           100% {
-            transform: translate(420px, 130px) rotate(18deg);
+            transform: rotate(var(--angle, 20deg)) translateX(var(--dist, 480px));
             opacity: 0;
           }
         }
         .top-banner-shooting-star {
           position: absolute;
-          height: 1.5px;
-          width: 70px;
-          background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.9) 60%, rgba(255,255,255,1) 100%);
+          height: 1px;
+          width: var(--len, 60px);
+          background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.25) 55%, rgba(255,255,255,0.7) 100%);
           border-radius: 9999px;
           opacity: 0;
           pointer-events: none;
+          transform-origin: left center;
           animation-name: shootingStar;
-          animation-timing-function: ease-out;
+          animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
           animation-iteration-count: infinite;
-          filter: drop-shadow(0 0 2px rgba(255,255,255,0.5));
+          filter: drop-shadow(0 0 1px rgba(255,255,255,0.35));
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .top-banner-shooting-star { animation: none; opacity: 0; }
         }
       `}</style>
       <div
@@ -95,11 +99,25 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
         }}
       />
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <span className="top-banner-shooting-star" style={{ top: "12%", left: "-10%", animationDuration: "6s", animationDelay: "0s" }} />
-        <span className="top-banner-shooting-star" style={{ top: "30%", left: "5%", animationDuration: "7s", animationDelay: "3s" }} />
-        <span className="top-banner-shooting-star" style={{ top: "8%", left: "30%", animationDuration: "5.5s", animationDelay: "7s" }} />
-        <span className="top-banner-shooting-star" style={{ top: "45%", left: "20%", animationDuration: "8s", animationDelay: "11s" }} />
-        <span className="top-banner-shooting-star" style={{ top: "20%", left: "45%", animationDuration: "6.5s", animationDelay: "17s" }} />
+        {/* One dim streak appears roughly every 15s: each star runs a 60s
+            cycle (visible for ~1.4s) staggered by 15s, each with its own
+            direction (--angle), travel distance (--dist) and trail length. */}
+        <span
+          className="top-banner-shooting-star"
+          style={{ top: "18%", left: "-6%", ["--angle" as any]: "22deg", ["--dist" as any]: "560px", ["--len" as any]: "64px", ["--maxop" as any]: "0.4", animationDuration: "60s", animationDelay: "0s" }}
+        />
+        <span
+          className="top-banner-shooting-star"
+          style={{ top: "8%", left: "40%", ["--angle" as any]: "34deg", ["--dist" as any]: "440px", ["--len" as any]: "52px", ["--maxop" as any]: "0.32", animationDuration: "60s", animationDelay: "15s" }}
+        />
+        <span
+          className="top-banner-shooting-star"
+          style={{ top: "60%", left: "10%", ["--angle" as any]: "-12deg", ["--dist" as any]: "600px", ["--len" as any]: "70px", ["--maxop" as any]: "0.36", animationDuration: "60s", animationDelay: "30s" }}
+        />
+        <span
+          className="top-banner-shooting-star"
+          style={{ top: "30%", left: "-4%", ["--angle" as any]: "9deg", ["--dist" as any]: "500px", ["--len" as any]: "58px", ["--maxop" as any]: "0.3", animationDuration: "60s", animationDelay: "45s" }}
+        />
       </div>
       <div className="relative h-full px-6 flex items-center justify-between">
         <div className="flex flex-col leading-tight">
