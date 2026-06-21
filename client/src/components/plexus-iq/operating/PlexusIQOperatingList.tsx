@@ -491,12 +491,14 @@ export function PlexusIQOperatingList({
             selectedCount={selectedHere.length}
             allSelected={allSelected}
             hasFailed={counts.failed > 0}
+            pendingCount={counts.pending}
             isGenerating={isBatchRunning}
             canAct={selectedBatchId != null}
             onSelectAll={selectAll}
             onClear={clearSelection}
             onDeleteSelected={deleteSelected}
             onRetryFailed={() => selectedBatchId != null && onGenerateBatch(selectedBatchId)}
+            onGenerate={() => selectedBatchId != null && onGenerateBatch(selectedBatchId)}
             onClinicianPdf={() => runPdf("clinician")}
             onPlexusPdf={() => runPdf("plexus")}
           />

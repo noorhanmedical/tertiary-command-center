@@ -5,6 +5,8 @@ import {
   RefreshCw,
   ClipboardList,
   Network,
+  Sparkles,
+  Loader2,
 } from "lucide-react";
 
 // Minimal night-sky List bar for the Plexus IQ operating list.
@@ -18,12 +20,15 @@ export type PlexusIQListBarProps = {
   selectedCount: number;
   allSelected: boolean;
   hasFailed: boolean;
+  /** Number of patients still pending analysis (un-qualified). */
+  pendingCount: number;
   isGenerating: boolean;
   canAct: boolean;
   onSelectAll: () => void;
   onClear: () => void;
   onDeleteSelected: () => void;
   onRetryFailed: () => void;
+  onGenerate: () => void;
   onClinicianPdf: () => void;
   onPlexusPdf: () => void;
 };
@@ -33,12 +38,14 @@ export function PlexusIQListBar({
   selectedCount,
   allSelected,
   hasFailed,
+  pendingCount,
   isGenerating,
   canAct,
   onSelectAll,
   onClear,
   onDeleteSelected,
   onRetryFailed,
+  onGenerate,
   onClinicianPdf,
   onPlexusPdf,
 }: PlexusIQListBarProps) {
@@ -59,6 +66,38 @@ export function PlexusIQListBar({
       </div>
 
       <div className="flex flex-1 items-center justify-end gap-2">
+        {/* Generate — only shown while the batch still has un-analyzed
+            patients. Hides itself once every patient is screened ("Ready"). */}
+        {(pendingCount > 0 || isGenerating) && (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 h-8 rounded-full bg-white px-3 text-xs font-semibold text-slate-900 shadow-sm transition-colors hover:bg-slate-200 disabled:bg-white/30 disabled:text-slate-500 disabled:cursor-not-allowed"
+            disabled={!canAct || isGenerating || pendingCount === 0}
+            onClick={onGenerate}
+            aria-label={
+              isGenerating ? "Analysis running" : `Generate ${pendingCount} pending`
+            }
+            title={
+              isGenerating
+                ? "Analysis running"
+                : `Generate ${pendingCount} pending patient${pendingCount === 1 ? "" : "s"}`
+            }
+            data-testid="button-list-bar-generate"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Analyzing…
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4" />
+                Generate ({pendingCount})
+              </>
+            )}
+          </button>
+        )}
+
         {/* Trash — appears LEFT of Select All when anything is selected */}
         {selectedCount > 0 && (
           <button
