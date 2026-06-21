@@ -448,9 +448,29 @@ function MostRecentView({
 
 // ─── Main panel ──────────────────────────────────────────────────────────────
 
+const DATE_PANEL_VIEW_MODE_KEY = "plexusIQ.datePanelViewMode";
+
+function readStoredViewMode(): ViewMode {
+  try {
+    const stored = localStorage.getItem(DATE_PANEL_VIEW_MODE_KEY);
+    if (stored === "list" || stored === "calendar" || stored === "recent") return stored;
+  } catch {
+    // ignore
+  }
+  return "list";
+}
+
 export function PlexusIQDatePanel(props: PlexusIQDatePanelProps) {
   const { groups, selectedBatchId, expandedDates, onToggleDate, onSelectBatch } = props;
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DATE_PANEL_VIEW_MODE_KEY, viewMode);
+    } catch {
+      // ignore
+    }
+  }, [viewMode]);
 
   const toggleButtons: { mode: ViewMode; icon: React.ReactNode; label: string; testId: string }[] = [
     {
