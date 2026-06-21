@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, Brain, HeartPulse, Scan } from "lucide-react";
+import { Activity, Brain, HeartPulse } from "lucide-react";
+import { UltrasoundProbeIcon } from "@/components/icons/UltrasoundProbeIcon";
 import {
   getAncillaryCategory as sharedGetAncillaryCategory,
   type AncillaryCategory as SharedAncillaryCategory,
@@ -17,7 +18,7 @@ export const categoryLabels: Record<AncillaryCategory, string> = {
 export const categoryIcons: Record<AncillaryCategory, LucideIcon> = {
   brainwave: Brain,
   vitalwave: HeartPulse,
-  ultrasound: Scan,
+  ultrasound: UltrasoundProbeIcon as unknown as LucideIcon,
   other: Activity,
 };
 

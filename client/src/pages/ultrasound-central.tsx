@@ -14,6 +14,7 @@ import { useMemo } from "react";
 import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Waves, Activity, MapPin, CalendarDays, ExternalLink, Sparkles } from "lucide-react";
+import { UltrasoundProbeIcon } from "@/components/icons/UltrasoundProbeIcon";
 import { useScheduleDashboard } from "@/hooks/api/dashboard";
 import { getAncillaryCategory } from "@shared/ancillaryCategory";
 
@@ -82,8 +83,8 @@ export default function UltrasoundCentralPage() {
   const activeSitesToday = siteSummaries.filter((s) => s.ultrasoundCount > 0).length;
 
   const metricCards = [
-    { label: "Ultrasound Today", value: todayTotal, Icon: Waves },
-    { label: "Ultrasound This Month", value: monthBreakdown.monthTotal, Icon: Activity },
+    { label: "Ultrasound Today", value: todayTotal, Icon: UltrasoundProbeIcon },
+    { label: "Ultrasound This Month", value: monthBreakdown.monthTotal, Icon: UltrasoundProbeIcon },
     { label: "Sites Active Today", value: activeSitesToday, Icon: MapPin },
   ];
 
