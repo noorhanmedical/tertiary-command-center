@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
+  ArrowRight,
+  Building2,
   CalendarDays,
-  ChevronLeft,
   ChevronRight,
   Clock,
   FileText,
@@ -22,6 +24,86 @@ import {
 } from "lucide-react";
 import { HomeLiveDashboard } from "./HomeLiveDashboard";
 import { HomeWorldClocks } from "./HomeWorldClocks";
+import { CanonicalMonthCalendar } from "@/calendar";
+import {
+  buildCommandCalendarCells,
+  defaultCommandCalendarEventWindow,
+  ANCILLARY_DOT_CLASS,
+} from "@/lib/calendar/commandCalendarViewModel";
+import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
+import type { GlobalScheduleEvent } from "@shared/schema/globalSchedule";
+
+const ANCILLARY_CATEGORY_KEYS = ["brainwave", "vitalwave", "ultrasound"] as const;
+
+function DayPopoverContent({
+  isoDate,
+  rows,
+  today,
+  onOpenSchedule,
+}: {
+  isoDate: string;
+  rows: CalendarSummaryRow[];
+  today: string;
+  onOpenSchedule: (batchId: number) => void;
+}) {
+  const totalPatients = rows.reduce((sum, r) => sum + r.patientCount, 0);
+  return (
+    <div data-testid={`home-calendar-day-popover-${isoDate}`}>
+      <div className="px-4 py-3 border-b border-slate-100 dark:border-border">
+        <div className="text-sm font-semibold text-slate-900 dark:text-foreground" data-testid="text-home-popover-date">
+          {formatDayHeader(isoDate, today)}
+        </div>
+        <div className="text-[11px] text-slate-500 dark:text-muted-foreground mt-0.5">
+          {totalPatients} {totalPatients === 1 ? "patient" : "patients"} ·{" "}
+          {rows.length} {rows.length === 1 ? "schedule" : "schedules"}
+        </div>
+      </div>
+      <ul className="max-h-72 overflow-auto divide-y divide-slate-100 dark:divide-border">
+        {rows.map((row) => (
+          <li key={row.id} className="px-4 py-2.5" data-testid={`home-popover-batch-${row.id}`}>
+            <div className="flex items-start gap-2">
+              <Building2 className="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div
+                  className="text-sm font-medium text-slate-900 dark:text-foreground truncate"
+                  title={row.facility ?? row.name}
+                >
+                  {row.facility ?? row.name}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-muted-foreground">
+                  {row.patientCount} {row.patientCount === 1 ? "patient" : "patients"}
+                </div>
+                {ANCILLARY_CATEGORY_KEYS.some((c) => (row.byCategory?.[c] ?? 0) > 0) && (
+                  <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1">
+                    {ANCILLARY_CATEGORY_KEYS.map((cat) =>
+                      (row.byCategory?.[cat] ?? 0) > 0 ? (
+                        <span
+                          key={cat}
+                          className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-600 dark:text-muted-foreground"
+                        >
+                          <span className={`inline-block h-1.5 w-1.5 rounded-full ${ANCILLARY_DOT_CLASS[cat].className}`} />
+                          {ANCILLARY_DOT_CLASS[cat].title} {row.byCategory[cat]}
+                        </span>
+                      ) : null,
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenSchedule(row.id)}
+              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-indigo-700 dark:text-indigo-300 hover:underline"
+              data-testid={`button-home-popover-view-schedule-${row.id}`}
+            >
+              View schedule <ArrowRight className="w-3 h-3" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 type DayPatient = { id: number; batchId: number; name: string; time: string | null; ancillaries: string[] };
 type ClinicMonthCell = { isoDate: string; patientCount: number; ancillaryCount: number; patients?: DayPatient[] };
@@ -66,18 +148,21 @@ function formatDayHeader(iso: string, today: string): string {
   return label;
 }
 
-function firstName(full: string): string {
-  const trimmed = full.trim();
-  if (!trimmed) return full;
-  if (trimmed.includes(",")) {
-    const after = trimmed.split(",")[1]?.trim();
-    if (after) {
-      const firstAfter = after.split(/\s+/)[0];
-      if (firstAfter) return firstAfter;
+function countAncillaryLike(breakdown: Record<string, number>, patterns: string[]) {
+  return Object.entries(breakdown).reduce((sum, [name, count]) => {
+    const normalized = name.toLowerCase();
+    return patterns.some((pattern) => normalized.includes(pattern)) ? sum + count : sum;
+  }, 0);
+}
+
+function buildBreakdownFromPatients(patients: DayPatient[]) {
+  const map: Record<string, number> = {};
+  for (const patient of patients) {
+    for (const ancillary of patient.ancillaries ?? []) {
+      map[ancillary] = (map[ancillary] || 0) + 1;
     }
   }
-  const first = trimmed.split(/\s+/)[0];
-  return first || full;
+  return map;
 }
 
 function SecondaryTile({
@@ -128,7 +213,6 @@ export function HomeDashboard({
 
   const today = dashboardData?.today ?? "";
   const effectiveSelectedDate = selectedDate ?? today;
-  const displayMonth = dashboardData?.weekStart?.slice(0, 7);
 
   useEffect(() => {
     if (!selectedDate && today) setSelectedDate(today);
@@ -149,17 +233,121 @@ export function HomeDashboard({
     return map;
   }, [selectedDayPatients]);
 
-  const clinicMonthTotals = useMemo<Record<string, number>>(() => {
-    const map: Record<string, number> = {};
-    for (const tab of dashboardClinicTabs) {
-      let total = 0;
-      for (const cell of tab.monthCells) {
-        if (cell.isoDate.slice(0, 7) === displayMonth) total += cell.patientCount;
-      }
-      map[tab.clinicKey] = total;
+  const selectedClinicBrainWaveCount = useMemo(
+    () => countAncillaryLike(selectedDayAncillaryBreakdown, ["brainwave", "brain wave", "brain"]),
+    [selectedDayAncillaryBreakdown]
+  );
+
+  const selectedClinicVitalWaveCount = useMemo(
+    () => countAncillaryLike(selectedDayAncillaryBreakdown, ["vitalwave", "vital wave", "vital"]),
+    [selectedDayAncillaryBreakdown]
+  );
+
+  const selectedClinicUltrasoundCount = useMemo(
+    () => countAncillaryLike(selectedDayAncillaryBreakdown, ["ultrasound", "ultra sound", "us"]),
+    [selectedDayAncillaryBreakdown]
+  );
+
+  const selectedClinicAncillaryCount = useMemo(
+    () => Object.values(selectedDayAncillaryBreakdown).reduce((sum, count) => sum + count, 0),
+    [selectedDayAncillaryBreakdown]
+  );
+
+  const clinicDaySummaries = useMemo(() => {
+    return dashboardClinicTabs.map((tab) => {
+      const cell = tab.monthCells.find((c) => c.isoDate === effectiveSelectedDate) || null;
+      const patients = cell?.patients ?? [];
+      const breakdown = buildBreakdownFromPatients(patients);
+      return {
+        clinicKey: tab.clinicKey,
+        clinicLabel: tab.clinicLabel,
+        patientCount: cell?.patientCount ?? 0,
+        ancillaryCount: Object.values(breakdown).reduce((sum, count) => sum + count, 0),
+        brainWaveCount: countAncillaryLike(breakdown, ["brainwave", "brain wave", "brain"]),
+        vitalWaveCount: countAncillaryLike(breakdown, ["vitalwave", "vital wave", "vital"]),
+        ultrasoundCount: countAncillaryLike(breakdown, ["ultrasound", "ultra sound", "us"]),
+      };
+    });
+  }, [dashboardClinicTabs, effectiveSelectedDate]);
+
+  const visibleLiveDashboardSites = useMemo(() => {
+    const rank = (label: string) => {
+      const normalized = label.toLowerCase();
+      if (normalized.includes("spring")) return 0;
+      if (normalized.includes("veteran")) return 1;
+      if (normalized.includes("taylor")) return 2;
+      return 3;
+    };
+
+    return clinicDaySummaries
+      .filter((site) => {
+        const normalized = site.clinicLabel.toLowerCase();
+        return normalized.includes("spring") || normalized.includes("veteran") || normalized.includes("taylor");
+      })
+      .sort((a, b) => rank(a.clinicLabel) - rank(b.clinicLabel) || a.clinicLabel.localeCompare(b.clinicLabel));
+  }, [clinicDaySummaries]);
+
+  const nextPatientsPreview = useMemo(() => selectedDayPatients.slice(0, 4), [selectedDayPatients]);
+
+  const { data: calendarSummary = [] } = useQuery<CalendarSummaryRow[]>({
+    queryKey: ["/api/screening-batches/calendar-summary"],
+    queryFn: async () => {
+      const res = await fetch("/api/screening-batches/calendar-summary", {
+        credentials: "include",
+      });
+      if (!res.ok)
+        throw new Error(`Calendar summary fetch failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: 15_000,
+  });
+
+  const completedEventRange = useMemo(
+    () => defaultCommandCalendarEventWindow(),
+    [],
+  );
+  const { data: completedEvents = [] } = useQuery<GlobalScheduleEvent[]>({
+    queryKey: [
+      "/api/global-schedule-events",
+      {
+        eventType: "procedure_complete",
+        startDate: completedEventRange.start,
+        endDate: completedEventRange.end,
+      },
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("eventType", "procedure_complete");
+      params.set("startDate", completedEventRange.start);
+      params.set("endDate", completedEventRange.end);
+      params.set("limit", "500");
+      const res = await fetch(
+        `/api/global-schedule-events?${params.toString()}`,
+        { credentials: "include" },
+      );
+      if (!res.ok)
+        throw new Error(`Calendar events fetch failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const calendarCells = useMemo(
+    () => buildCommandCalendarCells({ summary: calendarSummary, completedEvents }),
+    [calendarSummary, completedEvents],
+  );
+
+  const batchesByDate = useMemo(() => {
+    const map: Record<string, CalendarSummaryRow[]> = {};
+    for (const row of calendarSummary) {
+      if (!row.scheduleDate || row.patientCount === 0) continue;
+      (map[row.scheduleDate] ??= []).push(row);
+    }
+    for (const dateKey of Object.keys(map)) {
+      map[dateKey].sort((a, b) => (a.facility ?? "").localeCompare(b.facility ?? ""));
     }
     return map;
-  }, [dashboardClinicTabs, displayMonth]);
+  }, [calendarSummary]);
 
   return (
     <div className="flex flex-col h-full">
@@ -282,263 +470,31 @@ export function HomeDashboard({
                       </div>
                       <div>
                         <span className="text-[20px] font-semibold text-slate-900 dark:text-foreground tracking-tight">Calendar</span>
-                        <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-0.5">Monthly clinic calendar</p>
+                        <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-0.5">Click a day to view its schedules</p>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1 rounded-xl border border-slate-200/80 dark:border-border bg-white/60 dark:bg-card/40 backdrop-blur px-1 py-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const base = dashboardWeekOverride || dashboardData?.weekStart || new Date().toISOString().slice(0, 10);
-                            const [y, m] = base.split("-").map(Number);
-                            const prev = new Date(y, (m || 1) - 2, 1);
-                            setDashboardWeekOverride(`${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-01`);
-                          }}
-                          className="p-1.5 rounded-lg hover-elevate active-elevate-2 text-slate-600 dark:text-muted-foreground"
-                          data-testid="button-dashboard-prev-month"
-                          aria-label="Previous month"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <span className="text-sm font-semibold text-slate-800 dark:text-foreground w-32 text-center tabular-nums" data-testid="text-dashboard-month-label">
-                          {dashboardData?.weekStart
-                            ? new Date(dashboardData.weekStart + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" })
-                            : "—"}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const base = dashboardWeekOverride || dashboardData?.weekStart || new Date().toISOString().slice(0, 10);
-                            const [y, m] = base.split("-").map(Number);
-                            const next = new Date(y, (m || 1), 1);
-                            setDashboardWeekOverride(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-01`);
-                          }}
-                          className="p-1.5 rounded-lg hover-elevate active-elevate-2 text-slate-600 dark:text-muted-foreground"
-                          data-testid="button-dashboard-next-month"
-                          aria-label="Next month"
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      <Link href="/dashboard">
-                        <span className="text-xs text-indigo-700 dark:text-indigo-300 font-medium hover:underline cursor-pointer shrink-0 px-2" data-testid="link-view-full-schedule">Full Dashboard →</span>
-                      </Link>
-                    </div>
+                    <Link href="/dashboard">
+                      <span className="text-xs text-indigo-700 dark:text-indigo-300 font-medium hover:underline cursor-pointer shrink-0 px-2" data-testid="link-view-full-schedule">Full Dashboard →</span>
+                    </Link>
                   </div>
 
-                  {dashboardClinicTabs.length > 0 && (
-                    <div className="mb-5 -mx-1 overflow-x-auto" data-testid="dashboard-clinic-tabs">
-                      <div className="inline-flex items-center gap-1 rounded-2xl bg-slate-100/80 dark:bg-muted/40 p-1 min-w-full">
-                        {dashboardClinicTabs.map((tab) => {
-                          const isActive = activeDashboardClinic?.clinicKey === tab.clinicKey;
-                          const count = clinicMonthTotals[tab.clinicKey] ?? 0;
-                          return (
-                            <button
-                              key={tab.clinicKey}
-                              type="button"
-                              onClick={() => setDashboardClinicKey(tab.clinicKey)}
-                              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium whitespace-nowrap transition-all ${
-                                isActive
-                                  ? "bg-white dark:bg-card text-indigo-700 dark:text-indigo-300 shadow-sm ring-1 ring-indigo-200/70 dark:ring-indigo-500/20"
-                                  : "text-slate-600 dark:text-muted-foreground hover:text-slate-900 dark:hover:text-foreground"
-                              }`}
-                              data-testid={`button-dashboard-clinic-${tab.clinicKey}`}
-                              aria-pressed={isActive}
-                            >
-                              <span>{tab.clinicLabel}</span>
-                              {count > 0 && (
-                                <span
-                                  className={`inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 rounded-full text-[10px] font-semibold tabular-nums ${
-                                    isActive
-                                      ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200"
-                                      : "bg-slate-200/80 text-slate-600 dark:bg-muted dark:text-muted-foreground"
-                                  }`}
-                                  data-testid={`badge-clinic-count-${tab.clinicKey}`}
-                                >
-                                  {count}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {dashboardLoading ? (
-                    <div className="overflow-x-auto">
-                      <div className="min-w-[760px]">
-                        <div className="grid grid-cols-7 mb-2">
-                          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-                            <div key={d} className="text-center text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-muted-foreground py-2">{d}</div>
-                          ))}
-                        </div>
-                        <div className="grid grid-cols-7 gap-1.5">
-                          {[...Array(42)].map((_, i) => (
-                            <div key={i} className="h-32 bg-slate-100 dark:bg-muted/40 rounded-2xl animate-pulse" />
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  ) : !activeDashboardClinic ? (
-                    <div className="rounded-2xl border border-dashed border-slate-200 dark:border-border bg-slate-50/60 dark:bg-muted/20 py-16 text-center text-sm text-slate-400 dark:text-muted-foreground mb-4">
-                      No schedule data — create a schedule to get started
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto -mx-1 px-1">
-                      <div className="min-w-[760px]">
-                        <div className="grid grid-cols-7 mb-2">
-                          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-                            <div key={d} className="text-center text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-muted-foreground py-2">{d}</div>
-                          ))}
-                        </div>
-
-                        <div className="grid grid-cols-7 gap-1.5 mb-6">
-                          {activeDashboardClinic.monthCells.map((cell) => {
-                            const isToday = cell.isoDate === dashboardData?.today;
-                            const isSelected = cell.isoDate === effectiveSelectedDate;
-                            const cellMonth = cell.isoDate.slice(0, 7);
-                            const isCurrentMonth = cellMonth === displayMonth;
-                            const dayNum = parseInt(cell.isoDate.split("-")[2], 10);
-                            const previewPatients = (cell.patients ?? []).slice(0, 2);
-                            const moreCount = Math.max(0, (cell.patients?.length ?? cell.patientCount) - previewPatients.length);
-
-                            const baseStyle = isToday
-                              ? "bg-gradient-to-br from-indigo-50 to-violet-50 dark:from-indigo-500/15 dark:to-violet-500/15 border-2 border-indigo-400 dark:border-indigo-400/60 shadow-sm"
-                              : isSelected
-                                ? "bg-white dark:bg-card border-2 border-indigo-300 dark:border-indigo-500/40 shadow-sm"
-                                : isCurrentMonth
-                                  ? "bg-white dark:bg-card/60 border border-slate-200/70 dark:border-border hover:border-indigo-200 dark:hover:border-indigo-500/40 hover:bg-indigo-50/30 dark:hover:bg-indigo-500/5"
-                                  : "bg-slate-50/40 dark:bg-muted/20 border border-transparent hover:bg-slate-100/60 dark:hover:bg-muted/30";
-
-                            return (
-                              <button
-                                type="button"
-                                key={cell.isoDate}
-                                onClick={() => setSelectedDate(cell.isoDate)}
-                                className={`group text-left rounded-2xl p-2.5 min-h-[120px] flex flex-col transition-all cursor-pointer ${baseStyle}`}
-                                data-testid={`dashboard-month-cell-${cell.isoDate}`}
-                                aria-pressed={isSelected}
-                              >
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <span className={`inline-flex items-center justify-center min-w-[1.75rem] h-7 px-1.5 rounded-full text-sm font-semibold tabular-nums ${
-                                    isToday
-                                      ? "bg-violet-600 text-white shadow"
-                                      : isCurrentMonth
-                                        ? "text-slate-900 dark:text-foreground"
-                                        : "text-slate-300 dark:text-muted-foreground/50"
-                                  }`}>{dayNum}</span>
-                                  {cell.patientCount > 0 && (
-                                    <div className="flex items-center gap-1">
-                                      {cell.ancillaryCount > 0 && (
-                                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-200 tabular-nums">
-                                          {cell.ancillaryCount}<span className="font-normal opacity-70 ml-0.5">anc</span>
-                                        </span>
-                                      )}
-                                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200 tabular-nums">
-                                        {cell.patientCount}<span className="font-normal opacity-70 ml-0.5">pt</span>
-                                      </span>
-                                    </div>
-                                  )}
-                                </div>
-
-                                {previewPatients.length > 0 && (
-                                  <div className="flex flex-col gap-0.5 mt-0.5 overflow-hidden">
-                                    {previewPatients.map((p) => (
-                                      <span
-                                        key={p.id}
-                                        className={`text-[11px] leading-tight truncate ${
-                                          isCurrentMonth
-                                            ? "text-slate-700 dark:text-foreground/90"
-                                            : "text-slate-400 dark:text-muted-foreground/60"
-                                        }`}
-                                        data-testid={`text-cell-patient-${p.id}`}
-                                      >
-                                        {p.time && (
-                                          <span className="text-slate-400 dark:text-muted-foreground/70 mr-1 tabular-nums">
-                                            {formatTime12(p.time).replace(/ (AM|PM)$/i, "")}
-                                          </span>
-                                        )}
-                                        {firstName(p.name) || "(unnamed)"}
-                                      </span>
-                                    ))}
-                                    {moreCount > 0 && (
-                                      <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-300 mt-0.5">
-                                        +{moreCount} more
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="border-t border-slate-200/70 dark:border-border pt-5 mt-2" data-testid="panel-day-detail">
-                    <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                      <div className="flex items-baseline gap-3 flex-wrap">
-                        <h3 className="text-base font-semibold text-slate-900 dark:text-foreground tracking-tight" data-testid="text-day-detail-header">
-                          {effectiveSelectedDate ? formatDayHeader(effectiveSelectedDate, today) : "Selected Day"}
-                        </h3>
-                        {activeDashboardClinic && (
-                          <span className="text-xs text-slate-500 dark:text-muted-foreground">
-                            {activeDashboardClinic.clinicLabel}
-                            {activeDashboardClinic.scheduler && (
-                              <span className="ml-1.5 text-slate-400 dark:text-muted-foreground/70">· {activeDashboardClinic.scheduler.name}</span>
-                            )}
-                          </span>
-                        )}
-                      </div>
-
-                      {Object.keys(selectedDayAncillaryBreakdown).length > 0 && (
-                        <div className="flex flex-wrap gap-1.5" data-testid="day-ancillary-breakdown">
-                          {Object.entries(selectedDayAncillaryBreakdown).map(([test, n]) => (
-                            <span key={test} className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-200 ring-1 ring-violet-100 dark:ring-violet-500/20">
-                              {test} <span className="text-violet-500 dark:text-violet-300 ml-0.5">×{n}</span>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {selectedDayPatients.length === 0 ? (
-                      <div className="py-10 text-center text-sm text-slate-400 dark:text-muted-foreground rounded-xl border border-dashed border-slate-200/70 dark:border-border" data-testid="text-day-empty">
-                        No patients scheduled for this day.
-                      </div>
-                    ) : (
-                      <div className="grid sm:grid-cols-2 gap-2" data-testid="list-day-patients">
-                        {selectedDayPatients.map((p) => (
-                          <button
-                            type="button"
-                            key={p.id}
-                            onClick={() => onOpenSchedule(p.batchId)}
-                            className="text-left flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-white dark:bg-card border border-slate-200/70 dark:border-border hover-elevate active-elevate-2 cursor-pointer transition-colors"
-                            data-testid={`button-day-patient-${p.id}`}
-                          >
-                            <span className="text-xs font-semibold text-indigo-700 dark:text-indigo-300 w-16 shrink-0 tabular-nums">
-                              {formatTime12(p.time) || "—"}
-                            </span>
-                            <span className="text-sm font-medium text-slate-800 dark:text-foreground flex-1 truncate" data-testid={`text-day-patient-name-${p.id}`}>{p.name || "(unnamed)"}</span>
-                            {p.ancillaries.length > 0 && (
-                              <div className="flex flex-wrap gap-1 justify-end shrink-0 max-w-[55%]">
-                                {p.ancillaries.map((a, i) => (
-                                  <span key={`${p.id}-${a}-${i}`} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200">
-                                    {a}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <CanonicalMonthCalendar
+                    cells={calendarCells}
+                    onSelectDate={(date) => setSelectedDate(date)}
+                    renderDayPopoverContent={(date) => {
+                      const rows = batchesByDate[date];
+                      if (!rows || rows.length === 0) return null;
+                      return (
+                        <DayPopoverContent
+                          isoDate={date}
+                          rows={rows}
+                          today={today}
+                          onOpenSchedule={onOpenSchedule}
+                        />
+                      );
+                    }}
+                  />
                 </div>
               </Card>
             </div>
