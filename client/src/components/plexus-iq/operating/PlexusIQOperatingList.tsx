@@ -510,18 +510,18 @@ export function PlexusIQOperatingList({
             ) : (
               <>
                 <div
-                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-200 rounded-xl bg-white/90 backdrop-blur-md shadow-sm text-[10px] font-semibold uppercase tracking-wider text-slate-500`}
+                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-slate-300 rounded-xl bg-plexus-navy-800/30 backdrop-blur-md shadow-sm text-[10px] font-bold uppercase tracking-wider text-slate-900`}
                   data-testid="plexus-iq-operating-header"
                 >
                   {/* Checkbox column (no label) */}
                   <div aria-hidden />
-                  <div className="truncate">Name</div>
-                  <div className="truncate">DOB</div>
-                  <div className="truncate">Insurance</div>
-                  <div className="justify-self-start">Status</div>
-                  <div className="text-right">Flags</div>
-                  <div className="text-right">Ancillary</div>
-                  <div className="text-right">Review</div>
+                  <div className="truncate text-center">Name</div>
+                  <div className="truncate text-center">DOB</div>
+                  <div className="truncate text-center">Insurance</div>
+                  <div className="text-center">Status</div>
+                  <div className="text-center">Flags</div>
+                  <div className="text-center">Ancillary</div>
+                  <div className="text-center">Review</div>
                 </div>
                 {sortedPatients.map((p) => (
                 <PlexusIQOperatingRow

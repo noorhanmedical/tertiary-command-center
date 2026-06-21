@@ -53,8 +53,8 @@ export function PlexusIQDatePanel({
       className="flex flex-col h-full min-h-0 border-r border-slate-200 bg-white"
       data-testid="plexus-iq-date-panel"
     >
-      <div className="flex min-h-[3.5rem] items-center px-3 border-b border-white/10 bg-black">
-        <div className="text-sm font-semibold uppercase tracking-wider text-white">
+      <div className="flex min-h-[3.5rem] items-center justify-center px-3 border-b border-white/10 bg-black">
+        <div className="text-sm font-semibold uppercase tracking-wider text-white text-center">
           Date
         </div>
       </div>

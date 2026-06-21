@@ -88,7 +88,7 @@ export function PlexusIQOperatingRow({
       data-row-type="plexus-iq-operating-row"
     >
       {/* Checkbox */}
-      <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
         <Checkbox
           checked={selected}
           onCheckedChange={(v) => onToggleSelect(v === true)}
@@ -101,7 +101,7 @@ export function PlexusIQOperatingRow({
       <button
         type="button"
         onClick={openReview}
-        className="text-left min-w-0"
+        className="text-center min-w-0"
         data-testid={`text-operating-row-name-${patient.id}`}
       >
         <div className="text-sm font-semibold text-slate-900 truncate">
@@ -115,7 +115,7 @@ export function PlexusIQOperatingRow({
       </button>
 
       {/* DOB / age */}
-      <div className="text-xs text-slate-600 truncate">
+      <div className="text-xs text-slate-600 truncate text-center">
         {patient.dob ? (
           <span title="DOB">{patient.dob}</span>
         ) : (
@@ -126,13 +126,13 @@ export function PlexusIQOperatingRow({
       </div>
 
       {/* Insurance */}
-      <div className="text-xs text-slate-600 truncate" title={patient.insurance ?? ""}>
+      <div className="text-xs text-slate-600 truncate text-center" title={patient.insurance ?? ""}>
         {patient.insurance || <span className="italic text-slate-400">—</span>}
       </div>
 
       {/* Plexus IQ Status */}
       <span
-        className={`justify-self-start inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${statusMeta.pillClass}`}
+        className={`justify-self-center inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${statusMeta.pillClass}`}
         data-testid={`pill-operating-row-status-${patient.id}`}
       >
         {statusMeta.running && <Loader2 className="h-3 w-3 animate-spin" />}
@@ -140,7 +140,7 @@ export function PlexusIQOperatingRow({
       </span>
 
       {/* Flags */}
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-center">
         {flags.length > 0 ? (
           <Popover>
             <PopoverTrigger asChild>
@@ -183,7 +183,7 @@ export function PlexusIQOperatingRow({
       </div>
 
       {/* Qualifying ancillary icons */}
-      <div className="flex items-center gap-2 justify-end">
+      <div className="flex items-center gap-2 justify-center">
         {ANCILLARY_ORDER.map((cat) => {
           const count = ancillaryCounts[cat];
           if (count === 0) return null;
@@ -208,7 +208,7 @@ export function PlexusIQOperatingRow({
       </div>
 
       {/* Review */}
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-center">
         {isAdmin && (
           <button
             type="button"
