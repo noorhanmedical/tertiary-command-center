@@ -1,1 +1,2 @@
 - [Large JSX restructure technique](large-jsx-restructure.md) — move 1000+ line render regions via a Node line-slice script, not giant edits or long subagents; restore broken files with `git show HEAD:f > f`.
+- [Mockup sandbox + canvas iframes](mockup-sandbox-canvas.md) — recover the `/__mockup/` preview artifact (toml localPort↔workflow PORT), iframe update payload quirks, and `focusCanvasShapes` fallback when `presentArtifact` says "Available artifacts: []".
