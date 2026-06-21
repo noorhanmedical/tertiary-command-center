@@ -1,33 +1,19 @@
-import { Button } from "@/components/ui/button";
 import {
   CheckSquare,
   Square,
   Trash2,
-  Sparkles,
   RefreshCw,
   FileText,
-  Loader2,
 } from "lucide-react";
 
-// Compact List bar for the Plexus IQ operating list.
+// Minimal night-sky List bar for the Plexus IQ operating list.
 //
-// Shows list title, selected batch time, patient count, and the
-// qualification status (ready / running with progress / completed-
-// with-errors), plus a compact action set. Replaces the old full-
-// width qualification banner / giant job card.
-
-export type PlexusIQListQualState =
-  | { kind: "empty" }
-  | { kind: "ready" }
-  | { kind: "running"; done: number; total: number }
-  | { kind: "completed_with_errors"; errors: number }
-  | { kind: "pending"; pending: number };
+// A solid black header with the centered "Patient List" label and a
+// right-aligned cluster of circular white icon buttons (select all,
+// delete-when-selected, retry-when-failed, and the two PDF exports).
 
 export type PlexusIQListBarProps = {
-  title: string;
-  timeLabel: string | null;
   patientCount: number;
-  qualState: PlexusIQListQualState;
   selectedCount: number;
   allSelected: boolean;
   hasFailed: boolean;
@@ -36,43 +22,13 @@ export type PlexusIQListBarProps = {
   onSelectAll: () => void;
   onClear: () => void;
   onDeleteSelected: () => void;
-  onGenerate: () => void;
   onRetryFailed: () => void;
   onClinicianPdf: () => void;
   onPlexusPdf: () => void;
 };
 
-function QualBadge({ state }: { state: PlexusIQListQualState }) {
-  switch (state.kind) {
-    case "running":
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 border border-sky-200 px-2 py-0.5 text-[10px] font-semibold text-sky-800">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          Running {state.total > 0 ? `${state.done}/${state.total}` : ""}
-        </span>
-      );
-    case "completed_with_errors":
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 border border-rose-200 px-2 py-0.5 text-[10px] font-semibold text-rose-800">
-          {state.errors} with errors
-        </span>
-      );
-    case "pending":
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
-          {state.pending} pending
-        </span>
-      );
-    default:
-      return null;
-  }
-}
-
 export function PlexusIQListBar({
-  title,
-  timeLabel,
   patientCount,
-  qualState,
   selectedCount,
   allSelected,
   hasFailed,
@@ -81,109 +37,88 @@ export function PlexusIQListBar({
   onSelectAll,
   onClear,
   onDeleteSelected,
-  onGenerate,
   onRetryFailed,
   onClinicianPdf,
   onPlexusPdf,
 }: PlexusIQListBarProps) {
+  const iconBtn =
+    "inline-flex items-center justify-center h-8 w-8 rounded-full bg-white text-slate-900 shadow-sm transition-colors hover:bg-slate-200 disabled:bg-white/30 disabled:text-slate-500 disabled:cursor-not-allowed";
+
   return (
     <div
-      className="flex min-h-[3.5rem] items-center justify-between gap-3 px-3 py-1.5 border-b border-indigo-900/40 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900"
+      className="flex min-h-[3.5rem] items-center px-3 border-b border-white/10 bg-black"
       data-testid="plexus-iq-list-bar"
     >
-      <div className="flex items-center gap-2 min-w-0">
-        <div className="min-w-0">
-          <div className="text-sm font-semibold text-white truncate" data-testid="text-list-bar-title">
-            {title}
-          </div>
-          <div className="flex items-center gap-2 text-[11px] text-slate-300">
-            {timeLabel && <span>{timeLabel}</span>}
-            <span className="tabular-nums">
-              {patientCount} patient{patientCount === 1 ? "" : "s"}
-            </span>
-            <QualBadge state={qualState} />
-          </div>
-        </div>
+      <div className="flex-1" />
+      <div
+        className="shrink-0 text-sm font-semibold tracking-wide text-white"
+        data-testid="text-list-bar-title"
+      >
+        Patient List
       </div>
 
-      <div className="flex items-center justify-end gap-1.5 flex-wrap">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1 px-2 text-xs text-slate-200 hover:text-white hover:bg-white/10 disabled:text-slate-500"
+      <div className="flex flex-1 items-center justify-end gap-2">
+        <button
+          type="button"
+          className={iconBtn}
           disabled={!canAct || patientCount === 0}
           onClick={allSelected ? onClear : onSelectAll}
+          aria-label={allSelected ? "Clear selection" : "Select all"}
+          title={allSelected ? "Clear selection" : "Select all"}
           data-testid="button-list-bar-select-all"
         >
-          {allSelected ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
-          {allSelected ? "Clear" : "Select All"}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1 px-2 text-xs text-rose-300 hover:text-rose-200 hover:bg-rose-500/15 disabled:text-slate-500"
-          disabled={selectedCount === 0}
-          onClick={onDeleteSelected}
-          data-testid="button-list-bar-delete-selected"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          Delete{selectedCount > 0 ? ` (${selectedCount})` : ""}
-        </Button>
+          {allSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+        </button>
 
-        <span className="mx-0.5 h-5 w-px bg-white/15" />
-
-        <Button
-          size="sm"
-          className="h-7 gap-1 px-2.5 text-xs rounded-lg"
-          disabled={!canAct || patientCount === 0 || isGenerating}
-          onClick={onGenerate}
-          data-testid="button-list-bar-generate"
-        >
-          {isGenerating ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Sparkles className="h-3.5 w-3.5" />
-          )}
-          Generate
-        </Button>
-        {hasFailed && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1 px-2.5 text-xs rounded-lg border-white/25 bg-white/5 text-slate-200 hover:bg-white/15 hover:text-white disabled:text-slate-500"
-            disabled={!canAct || isGenerating}
-            onClick={onRetryFailed}
-            data-testid="button-list-bar-retry-failed"
+        {selectedCount > 0 && (
+          <button
+            type="button"
+            className={`${iconBtn} text-rose-600 hover:text-rose-700`}
+            onClick={onDeleteSelected}
+            aria-label={`Delete ${selectedCount} selected`}
+            title={`Delete ${selectedCount} selected`}
+            data-testid="button-list-bar-delete-selected"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Retry Failed
-          </Button>
+            <Trash2 className="h-4 w-4" />
+          </button>
         )}
 
-        <span className="mx-0.5 h-5 w-px bg-white/15" />
+        {hasFailed && (
+          <button
+            type="button"
+            className={iconBtn}
+            disabled={!canAct || isGenerating}
+            onClick={onRetryFailed}
+            aria-label="Retry failed"
+            title="Retry failed"
+            data-testid="button-list-bar-retry-failed"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        )}
 
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 gap-1 px-2.5 text-xs rounded-lg border-white/25 bg-white/5 text-slate-200 hover:bg-white/15 hover:text-white disabled:text-slate-500"
+        <button
+          type="button"
+          className={iconBtn}
           disabled={patientCount === 0}
           onClick={onClinicianPdf}
+          aria-label="Clinician PDF"
+          title="Clinician PDF"
           data-testid="button-list-bar-clinician-pdf"
         >
-          <FileText className="h-3.5 w-3.5" />
-          Clinician PDF
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 gap-1 px-2.5 text-xs rounded-lg border-white/25 bg-white/5 text-slate-200 hover:bg-white/15 hover:text-white disabled:text-slate-500"
+          <FileText className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          className={iconBtn}
           disabled={patientCount === 0}
           onClick={onPlexusPdf}
+          aria-label="Plexus PDF"
+          title="Plexus PDF"
           data-testid="button-list-bar-plexus-pdf"
         >
-          <FileText className="h-3.5 w-3.5" />
-          Plexus PDF
-        </Button>
+          <FileText className="h-4 w-4" />
+        </button>
       </div>
     </div>
   );

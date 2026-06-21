@@ -53,15 +53,10 @@ export function PlexusIQDatePanel({
       className="flex flex-col h-full min-h-0 border-r border-slate-200 bg-white"
       data-testid="plexus-iq-date-panel"
     >
-      <div className="flex min-h-[3.5rem] items-center justify-between gap-2 px-3 border-b border-indigo-900/40 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900">
-        <div className="text-sm font-semibold uppercase tracking-wider text-indigo-200">
+      <div className="flex min-h-[3.5rem] items-center px-3 border-b border-white/10 bg-black">
+        <div className="text-sm font-semibold uppercase tracking-wider text-white">
           Date
         </div>
-        {groups.length > 0 && (
-          <span className="text-[11px] font-medium tabular-nums text-indigo-300/80">
-            {groups.length} {groups.length === 1 ? "day" : "days"}
-          </span>
-        )}
       </div>
       <div className="flex-1 min-h-0 overflow-auto p-2 space-y-1">
         {groups.length === 0 && (

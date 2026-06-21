@@ -27,10 +27,7 @@ import {
   type PlexusIQDateGroup,
   type PlexusIQBatchNode,
 } from "./PlexusIQDatePanel";
-import {
-  PlexusIQListBar,
-  type PlexusIQListQualState,
-} from "./PlexusIQListBar";
+import { PlexusIQListBar } from "./PlexusIQListBar";
 import {
   PlexusIQOperatingRow,
   OPERATING_GRID_COLS,
@@ -350,15 +347,6 @@ export function PlexusIQOperatingList({
     onFocusConsumed?.();
   }, [focusBatch, onFocusConsumed]);
 
-  // ── Qualification state for the list bar ────────────────────────────
-  const qualState: PlexusIQListQualState = useMemo(() => {
-    if (patients.length === 0) return { kind: "empty" };
-    if (isBatchRunning) return { kind: "running", done: counts.completed, total: counts.total };
-    if (counts.failed > 0) return { kind: "completed_with_errors", errors: counts.failed };
-    if (counts.pending > 0) return { kind: "pending", pending: counts.pending };
-    return { kind: "ready" };
-  }, [patients.length, isBatchRunning, counts]);
-
   // ── PDF actions ─────────────────────────────────────────────────────
   const pdfTargets = useCallback(() => {
     const base = selectedHere.length > 0 ? selectedHere : sortedPatients;
@@ -424,7 +412,6 @@ export function PlexusIQOperatingList({
     );
   }
 
-  const listTitle = "Patient List";
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-4">
@@ -500,10 +487,7 @@ export function PlexusIQOperatingList({
             overlay popup on top of it via PlexusIQReviewHost below). */}
         <div className="flex flex-col min-h-0">
           <PlexusIQListBar
-            title={listTitle}
-            timeLabel={selectedBatch ? timeLabelFor(selectedBatch.createdAt) : null}
             patientCount={patients.length}
-            qualState={qualState}
             selectedCount={selectedHere.length}
             allSelected={allSelected}
             hasFailed={counts.failed > 0}
@@ -512,7 +496,6 @@ export function PlexusIQOperatingList({
             onSelectAll={selectAll}
             onClear={clearSelection}
             onDeleteSelected={deleteSelected}
-            onGenerate={() => selectedBatchId != null && onGenerateBatch(selectedBatchId)}
             onRetryFailed={() => selectedBatchId != null && onGenerateBatch(selectedBatchId)}
             onClinicianPdf={() => runPdf("clinician")}
             onPlexusPdf={() => runPdf("plexus")}
