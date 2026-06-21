@@ -23,7 +23,7 @@ const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultraso
 // (PlexusIQOperatingList) and every data row must use this exact template so
 // columns stay aligned at all viewport widths.
 export const OPERATING_GRID_COLS =
-  "grid-cols-[auto_minmax(140px,1.25fr)_minmax(150px,1fr)_minmax(130px,1fr)_minmax(140px,1fr)_auto_auto_auto]";
+  "grid-cols-[32px_minmax(160px,1.5fr)_minmax(140px,1fr)_minmax(140px,1fr)_minmax(150px,1fr)_52px_72px_44px]";
 
 // One patient row in the Plexus IQ clean operating list.
 //
