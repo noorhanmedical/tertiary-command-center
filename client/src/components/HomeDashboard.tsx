@@ -4,12 +4,20 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuCheckboxItem,
+} from "@/components/ui/dropdown-menu";
+import {
   ArrowRight,
   Building2,
-  CalendarDays,
   ChevronRight,
   Clock,
   FileText,
+  Filter,
   FolderOpen,
   Phone,
   Radar,
@@ -21,6 +29,10 @@ import {
   Waves,
   CheckSquare,
 } from "lucide-react";
+import {
+  CALENDAR_FILTERS,
+  type CalendarFilterId,
+} from "@/calendar/calendarFilters";
 import { HomeLiveDashboard } from "./HomeLiveDashboard";
 import { HomeWorldClocks } from "./HomeWorldClocks";
 import { CanonicalMonthCalendar } from "@/calendar";
@@ -33,6 +45,18 @@ import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar
 import type { GlobalScheduleEvent } from "@shared/schema/globalSchedule";
 
 const ANCILLARY_CATEGORY_KEYS = ["brainwave", "vitalwave", "ultrasound"] as const;
+
+// Filter options exposed in the home calendar header dropdown. Drawn from the
+// canonical filter definitions in calendarFilters.ts.
+const HOME_CALENDAR_FILTER_IDS: CalendarFilterId[] = [
+  "clinicVisits",
+  "qualifiedVisitPatients",
+  "ancillaryScheduled",
+  "dailyCallList",
+  "completedCalls",
+  "procedureCompleted",
+  "teamAvailability",
+];
 
 function DayPopoverContent({
   isoDate,
@@ -204,6 +228,13 @@ export function HomeDashboard({
   onOpenSchedule,
 }: HomeDashboardProps) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [activeCalendarFilters, setActiveCalendarFilters] = useState<CalendarFilterId[]>([]);
+
+  function toggleCalendarFilter(id: CalendarFilterId) {
+    setActiveCalendarFilters((prev) =>
+      prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id],
+    );
+  }
 
   const dashboardClinicTabs = dashboardData?.clinicTabs || [];
   const activeDashboardClinic =
@@ -332,8 +363,13 @@ export function HomeDashboard({
   });
 
   const calendarCells = useMemo(
-    () => buildCommandCalendarCells({ summary: calendarSummary, completedEvents }),
-    [calendarSummary, completedEvents],
+    () =>
+      buildCommandCalendarCells({
+        summary: calendarSummary,
+        completedEvents,
+        activeFilters: activeCalendarFilters,
+      }),
+    [calendarSummary, completedEvents, activeCalendarFilters],
   );
 
   const batchesByDate = useMemo(() => {
@@ -454,24 +490,72 @@ export function HomeDashboard({
                 />
               </div>
 
-              <Card className="glass-tile" data-testid="tile-calendar-bottom">
-                <div className="p-6 lg:p-8">
-                  <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/15 to-violet-500/15 flex items-center justify-center shrink-0">
-                        <CalendarDays className="w-5 h-5 text-indigo-600 dark:text-indigo-300" strokeWidth={1.75} />
-                      </div>
-                      <div>
-                        <span className="text-[20px] font-semibold text-slate-900 dark:text-foreground tracking-tight">Calendar</span>
-                        <p className="text-[12px] text-slate-500 dark:text-muted-foreground mt-0.5">Click a day to view its schedules</p>
-                      </div>
-                    </div>
-
-                    <Link href="/dashboard">
-                      <span className="text-xs text-indigo-700 dark:text-indigo-300 font-medium hover:underline cursor-pointer shrink-0 px-2" data-testid="link-view-full-schedule">Full Dashboard →</span>
-                    </Link>
+              <Card className="glass-tile overflow-hidden" data-testid="tile-calendar-bottom">
+                <div className="relative flex items-center justify-center bg-black px-6 py-4">
+                  <span
+                    className="text-[18px] font-semibold tracking-tight text-white"
+                    data-testid="text-calendar-header"
+                  >
+                    Calendar
+                  </span>
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 gap-1.5 px-2.5 text-white hover:bg-white/15 hover:text-white"
+                          data-testid="button-calendar-filter"
+                        >
+                          <Filter className="h-4 w-4" strokeWidth={1.75} />
+                          <span className="text-[12px] font-medium">
+                            Filter
+                            {activeCalendarFilters.length > 0
+                              ? ` (${activeCalendarFilters.length})`
+                              : ""}
+                          </span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        className="w-60"
+                        data-testid="menu-calendar-filter"
+                      >
+                        <DropdownMenuLabel>Show on calendar</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        {HOME_CALENDAR_FILTER_IDS.map((id) => {
+                          const def = CALENDAR_FILTERS[id];
+                          if (!def) return null;
+                          return (
+                            <DropdownMenuCheckboxItem
+                              key={id}
+                              checked={activeCalendarFilters.includes(id)}
+                              onCheckedChange={() => toggleCalendarFilter(id)}
+                              onSelect={(e) => e.preventDefault()}
+                              data-testid={`filter-option-${id}`}
+                            >
+                              {def.label}
+                            </DropdownMenuCheckboxItem>
+                          );
+                        })}
+                        {activeCalendarFilters.length > 0 && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <button
+                              type="button"
+                              onClick={() => setActiveCalendarFilters([])}
+                              className="w-full px-2 py-1.5 text-left text-[12px] font-medium text-slate-600 hover:bg-slate-100 rounded-sm dark:text-muted-foreground dark:hover:bg-muted"
+                              data-testid="button-clear-calendar-filters"
+                            >
+                              Clear filters
+                            </button>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
-
+                </div>
+                <div className="p-6 lg:p-8">
                   <CanonicalMonthCalendar
                     cells={calendarCells}
                     onSelectDate={(date) => setSelectedDate(date)}
