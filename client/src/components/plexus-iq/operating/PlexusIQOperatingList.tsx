@@ -461,120 +461,84 @@ export function PlexusIQOperatingList({
           }}
         />
 
-        {/* Right: either the list, or the inline review split */}
-        {reviewPatient ? (
-          <div className="grid grid-cols-[200px_minmax(0,1fr)] min-h-0">
-            {/* Name rail */}
-            <div className="flex flex-col min-h-0 border-r border-slate-800 bg-slate-900">
-              <div className="px-3 py-2.5 border-b border-slate-800 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                Patients
+        {/* Right: the patient list (stays mounted; Admin Review opens as an
+            overlay popup on top of it via PlexusIQReviewHost below). */}
+        <div className="flex flex-col min-h-0">
+          <PlexusIQListBar
+            title={listTitle}
+            timeLabel={selectedBatch ? timeLabelFor(selectedBatch.createdAt) : null}
+            patientCount={patients.length}
+            qualState={qualState}
+            selectedCount={selectedHere.length}
+            allSelected={allSelected}
+            hasFailed={counts.failed > 0}
+            isGenerating={isBatchRunning}
+            canAct={selectedBatchId != null}
+            onSelectAll={selectAll}
+            onClear={clearSelection}
+            onDeleteSelected={deleteSelected}
+            onGenerate={() => selectedBatchId != null && onGenerateBatch(selectedBatchId)}
+            onRetryFailed={() => selectedBatchId != null && onGenerateBatch(selectedBatchId)}
+            onClinicianPdf={() => runPdf("clinician")}
+            onPlexusPdf={() => runPdf("plexus")}
+          />
+          <div className="flex-1 min-h-0 overflow-auto p-3 space-y-1.5 bg-slate-950">
+            {sortedPatients.length === 0 ? (
+              <div className="py-16 text-center text-xs text-slate-500">
+                {selectedBatchId == null
+                  ? "Select an import on the left."
+                  : "No patients in this import."}
               </div>
-              <div className="flex-1 min-h-0 overflow-auto p-1.5 space-y-0.5">
-                {sortedPatients.map((p) => {
-                  const meta = computePlexusIqStatus(p, {
-                    isRunning: analyzingPatients.has(p.id) || isBatchRunning,
-                  });
-                  const active = p.id === reviewPatientId;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => setReviewPatientId(p.id)}
-                      className={`w-full text-left px-2 py-1.5 rounded-lg transition-colors ${
-                        active ? "bg-indigo-950 ring-1 ring-indigo-700" : "hover:bg-slate-800"
-                      }`}
-                      data-testid={`button-review-rail-${p.id}`}
-                    >
-                      <div
-                        className={`text-xs font-medium truncate ${
-                          active ? "text-indigo-200" : "text-slate-300"
-                        }`}
-                      >
-                        {(p.name || "Unnamed").trim()}
-                      </div>
-                      <div className="text-[10px] text-slate-500 truncate">{meta.label}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Review panel (inline) */}
-            <div className="min-h-0 overflow-hidden">
-              <PlexusIQReviewHost
-                key={reviewPatient.id}
-                patient={reviewPatient}
-                siblings={sortedPatients}
-                scheduleDate={selectedBatch?.scheduleDate ?? null}
-                dateLabel={selectedBatch ? dateLabelFor(selectedBatch.scheduleDate) : null}
-                onUpdatePatient={onUpdatePatient}
-                onClose={() => setReviewPatientId(null)}
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col min-h-0">
-            <PlexusIQListBar
-              title={listTitle}
-              timeLabel={selectedBatch ? timeLabelFor(selectedBatch.createdAt) : null}
-              patientCount={patients.length}
-              qualState={qualState}
-              selectedCount={selectedHere.length}
-              allSelected={allSelected}
-              hasFailed={counts.failed > 0}
-              isGenerating={isBatchRunning}
-              canAct={selectedBatchId != null}
-              onSelectAll={selectAll}
-              onClear={clearSelection}
-              onDeleteSelected={deleteSelected}
-              onGenerate={() => selectedBatchId != null && onGenerateBatch(selectedBatchId)}
-              onRetryFailed={() => selectedBatchId != null && onGenerateBatch(selectedBatchId)}
-              onClinicianPdf={() => runPdf("clinician")}
-              onPlexusPdf={() => runPdf("plexus")}
-            />
-            <div className="flex-1 min-h-0 overflow-auto p-3 space-y-1.5 bg-slate-950">
-              {sortedPatients.length === 0 ? (
-                <div className="py-16 text-center text-xs text-slate-500">
-                  {selectedBatchId == null
-                    ? "Select an import on the left."
-                    : "No patients in this import."}
+            ) : (
+              <>
+                <div
+                  className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-transparent bg-slate-50/30 backdrop-blur-sm text-[10px] font-semibold uppercase tracking-wider text-slate-500`}
+                  data-testid="plexus-iq-operating-header"
+                >
+                  {/* Checkbox column (no label) */}
+                  <div aria-hidden />
+                  <div className="truncate">Name</div>
+                  <div className="truncate">DOB</div>
+                  <div className="truncate">Insurance</div>
+                  <div className="justify-self-start">Status</div>
+                  <div className="text-right">Flags</div>
+                  <div className="text-right">Ancillary</div>
+                  <div className="text-right">Review</div>
+                  <div className="text-right">Delete</div>
                 </div>
-              ) : (
-                <>
-                  <div
-                    className={`sticky top-0 z-10 grid ${OPERATING_GRID_COLS} gap-3 items-center px-3 py-2 border border-transparent bg-slate-50/30 backdrop-blur-sm text-[10px] font-semibold uppercase tracking-wider text-slate-500`}
-                    data-testid="plexus-iq-operating-header"
-                  >
-                    {/* Checkbox column (no label) */}
-                    <div aria-hidden />
-                    <div className="truncate">Name</div>
-                    <div className="truncate">DOB</div>
-                    <div className="truncate">Insurance</div>
-                    <div className="justify-self-start">Status</div>
-                    <div className="text-right">Flags</div>
-                    <div className="text-right">Ancillary</div>
-                    <div className="text-right">Review</div>
-                    <div className="text-right">Delete</div>
-                  </div>
-                  {sortedPatients.map((p) => (
-                  <PlexusIQOperatingRow
-                    key={p.id}
-                    patient={p}
-                    isRunning={analyzingPatients.has(p.id) || isBatchRunning}
-                    saveFailed={saveFailedPatientIds?.has(p.id)}
-                    selected={selectedIds.has(p.id)}
-                    isAdmin={!!isAdmin}
-                    onToggleSelect={(checked) => toggleSelect(p.id, checked)}
-                    onOpenReview={() => setReviewPatientId(p.id)}
-                    onDelete={() => onDeletePatient(p.id)}
-                  />
-                  ))}
-                </>
-              )}
-            </div>
+                {sortedPatients.map((p) => (
+                <PlexusIQOperatingRow
+                  key={p.id}
+                  patient={p}
+                  isRunning={analyzingPatients.has(p.id) || isBatchRunning}
+                  saveFailed={saveFailedPatientIds?.has(p.id)}
+                  selected={selectedIds.has(p.id)}
+                  isAdmin={!!isAdmin}
+                  onToggleSelect={(checked) => toggleSelect(p.id, checked)}
+                  onOpenReview={() => setReviewPatientId(p.id)}
+                  onDelete={() => onDeletePatient(p.id)}
+                />
+                ))}
+              </>
+            )}
           </div>
-        )}
+        </div>
       </div>
+
+      {/* Admin Review overlay popup — floats on top of the list (which stays
+          rendered underneath). Keyed by patient id so each gets a fresh
+          review context; siblings power in-overlay patient navigation. */}
+      {reviewPatient && (
+        <PlexusIQReviewHost
+          key={reviewPatient.id}
+          patient={reviewPatient}
+          siblings={sortedPatients}
+          scheduleDate={selectedBatch?.scheduleDate ?? null}
+          dateLabel={selectedBatch ? dateLabelFor(selectedBatch.scheduleDate) : null}
+          onUpdatePatient={onUpdatePatient}
+          onClose={() => setReviewPatientId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -655,7 +619,6 @@ function PlexusIQReviewHost({
 
   return (
     <AdminReviewDialog
-      variant="inline"
       open
       onOpenChange={(o) => {
         if (!o) onClose();
