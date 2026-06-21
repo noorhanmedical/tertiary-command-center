@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, ChevronLeft, Plus } from "lucide-react";
 import type { AuthUser } from "@/App";
@@ -265,13 +265,46 @@ export function PlexusIQOperatingList({
     });
   }, [onSelectionChange, selectedFacility, selectedScheduleDate, selectedBatchId]);
 
-  // Single-active highlight: the expanded/highlighted date always follows the
-  // selected batch, so the date-rail highlight and the patient list below it
-  // can never drift apart. Selecting a different date moves the highlight.
-  const expandedDates = useMemo(() => {
-    const key = selectedBatch?.scheduleDate ?? UNSCHEDULED_KEY;
-    return new Set<string>([key]);
-  }, [selectedBatch]);
+  // Expanded date groups are real, user-controlled state — toggling a date
+  // header only opens/closes that group and never moves the selected batch.
+  const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
+
+  const toggleDate = useCallback((key: string) => {
+    setExpandedDates((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Keep selection and expansion sensibly synced. We open the selected batch's
+  // date group only on meaningful transitions — initial load, facility switch,
+  // or a focus-after-import request — and never on a plain batch-row click. This
+  // is keyed on the *transition*, not the date string, so focusing/switching to
+  // a batch that shares the previously-selected date still re-opens its group
+  // even if the user had collapsed it. Plain selection within a facility leaves
+  // the user's collapse state alone, so a collapsed group never springs back.
+  const prevFacilityRef = useRef<string | null>(null);
+  const didInitialExpandRef = useRef(false);
+  const forceExpandRef = useRef(false);
+  useEffect(() => {
+    if (!selectedBatch) return;
+    const facilityChanged = prevFacilityRef.current !== selectedFacility;
+    const firstTime = !didInitialExpandRef.current;
+    const focusForced = forceExpandRef.current;
+    prevFacilityRef.current = selectedFacility;
+    didInitialExpandRef.current = true;
+    forceExpandRef.current = false;
+    if (!facilityChanged && !firstTime && !focusForced) return;
+    const key = selectedBatch.scheduleDate ?? UNSCHEDULED_KEY;
+    setExpandedDates((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+  }, [selectedBatch, selectedFacility]);
 
   // ── Patients of the selected batch ──────────────────────────────────
   const patients = useMemo(
@@ -337,22 +370,11 @@ export function PlexusIQOperatingList({
     setFacilityOverride(focusBatch.facility);
     setBatchOverride(focusBatch.id);
     setReviewPatientId(null);
+    // Ensure the focused batch's date group is opened once the new selection
+    // settles, even if it shares the previously-selected date and was collapsed.
+    forceExpandRef.current = true;
     onFocusConsumed?.();
   }, [focusBatch, onFocusConsumed]);
-
-  // Clicking a date in the rail selects that date's newest batch so the
-  // patient list (driven by selectedBatchId) always follows the highlight.
-  const selectDate = useCallback(
-    (key: string) => {
-      const group = dateGroups.find((g) => g.key === key);
-      const newest = group?.batches[0];
-      if (newest) {
-        setBatchOverride(newest.batchId);
-        setReviewPatientId(null);
-      }
-    },
-    [dateGroups],
-  );
 
   // ── PDF actions ─────────────────────────────────────────────────────
   const pdfTargets = useCallback(() => {
@@ -494,7 +516,7 @@ export function PlexusIQOperatingList({
           groups={dateGroups}
           selectedBatchId={selectedBatchId}
           expandedDates={expandedDates}
-          onToggleDate={selectDate}
+          onToggleDate={toggleDate}
           onSelectBatch={(id) => {
             setBatchOverride(id);
             setReviewPatientId(null);
