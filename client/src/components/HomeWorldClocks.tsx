@@ -391,26 +391,26 @@ export function HomeWorldClocks() {
           return (
             <div
               key={key}
-              className="flex flex-col items-center gap-1.5 rounded-2xl border border-slate-200/70 dark:border-border bg-white/70 dark:bg-card/50 backdrop-blur px-4 py-3 min-w-[110px]"
+              className="flex flex-col items-center gap-1.5 rounded-2xl border border-black bg-black backdrop-blur px-4 py-3 min-w-[110px]"
               data-testid={`clock-${idBase}`}
             >
-              <div className="text-[12px] font-semibold text-slate-700 dark:text-foreground tracking-tight">
+              <div className="text-[12px] font-semibold text-white tracking-tight">
                 {clock.label}
               </div>
               <div className="flex flex-col items-center leading-tight">
                 <span
-                  className="text-[20px] font-semibold text-slate-900 dark:text-foreground tabular-nums"
+                  className="text-[20px] font-semibold text-blue-400 tabular-nums"
                   data-testid={`text-clock-time-${idBase}`}
                 >
                   {time.digital}
                 </span>
                 {time.abbr && (
-                  <span className="text-[10px] font-medium text-slate-400 dark:text-muted-foreground uppercase tracking-wide">
+                  <span className="text-[10px] font-medium text-white uppercase tracking-wide">
                     {time.abbr}
                   </span>
                 )}
                 <span
-                  className="text-[11px] font-medium text-slate-400 dark:text-muted-foreground"
+                  className="text-[11px] font-medium text-white"
                   data-testid={`text-clock-date-${idBase}`}
                 >
                   {time.date}
