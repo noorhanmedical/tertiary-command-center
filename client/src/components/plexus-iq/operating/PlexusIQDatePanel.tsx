@@ -200,7 +200,7 @@ function ListView({
               type="button"
               onClick={() => onToggleDate(group.key)}
               className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-left ${
-                expanded ? "bg-blue-900 shadow-sm" : "hover:bg-sky-50"
+                expanded ? "bg-black shadow-sm" : "hover:bg-sky-50"
               }`}
               data-testid={`button-date-group-${group.key}`}
             >
@@ -341,7 +341,7 @@ function CalendarView({
                 onClick={() => setExpandedDay(isSelected ? null : iso)}
                 className={`relative flex flex-col items-center justify-center rounded py-0.5 my-0.5 text-[11px] font-medium transition-colors
                   ${!hasBatches ? "text-slate-300 cursor-default" : isSelected ? "text-white cursor-pointer" : "text-slate-700 hover:bg-sky-50 cursor-pointer"}
-                  ${isSelected ? "bg-blue-900 shadow-sm" : ""}
+                  ${isSelected ? "bg-black shadow-sm" : ""}
                   ${isToday && !isSelected ? "ring-1 ring-sky-400 rounded" : ""}
                 `}
                 data-testid={`button-cal-day-${iso}`}
@@ -429,7 +429,7 @@ function MostRecentView({
           type="button"
           onClick={() => onToggleDate(mostRecent.key)}
           className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-left ${
-            expandedDates.has(mostRecent.key) ? "bg-blue-900 shadow-sm" : "hover:bg-sky-50"
+            expandedDates.has(mostRecent.key) ? "bg-black shadow-sm" : "hover:bg-sky-50"
           }`}
           data-testid={`button-date-group-${mostRecent.key}`}
         >

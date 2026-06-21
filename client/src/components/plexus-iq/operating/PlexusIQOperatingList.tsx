@@ -270,10 +270,10 @@ export function PlexusIQOperatingList({
     (key: string) => {
       setExpandedOverride((prev) => {
         const base = prev ?? expandedDates;
-        const next = new Set(base);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        return next;
+        // Single-active: re-clicking the open date collapses it; clicking any
+        // other date moves the highlight to it (replacing the previous one).
+        if (base.has(key)) return new Set<string>();
+        return new Set<string>([key]);
       });
     },
     [expandedDates],
