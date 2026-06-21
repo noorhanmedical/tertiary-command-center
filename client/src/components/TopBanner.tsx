@@ -120,10 +120,13 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
         />
       </div>
       <div className="relative h-full px-6 flex items-center justify-between">
-        <div className="flex flex-col leading-tight">
-          <span className="text-[15px] font-semibold tracking-tight text-white" data-testid="text-banner-title">
-            Plexus Clinical
-          </span>
+        <div className="flex items-center">
+          <img
+            src="/plexus-logo.png"
+            alt="Plexus Clinical"
+            className="h-10 w-auto object-contain"
+            data-testid="img-banner-logo"
+          />
         </div>
 
         <div className="flex items-center gap-2">
