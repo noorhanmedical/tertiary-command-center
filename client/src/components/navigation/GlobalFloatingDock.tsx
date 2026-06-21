@@ -85,16 +85,6 @@ function DockButton({
     </span>
   );
 
-  const label = (
-    <span
-      className={`text-[11px] font-medium leading-none transition-[max-height,opacity] duration-200 overflow-hidden ${
-        expanded ? "max-h-[1.25rem] opacity-100" : "max-h-0 opacity-0"
-      }`}
-    >
-      {item.label}
-    </span>
-  );
-
   if (item.kind === "link" && item.href) {
     return (
       <Link
@@ -105,7 +95,6 @@ function DockButton({
         title={item.label}
       >
         {iconWrap}
-        {label}
       </Link>
     );
   }
@@ -120,7 +109,6 @@ function DockButton({
         title={item.label}
       >
         {iconWrap}
-        {label}
       </button>
     );
   }
@@ -135,7 +123,6 @@ function DockButton({
       title={`${item.label} (unavailable)`}
     >
       {iconWrap}
-      {label}
     </button>
   );
 }
