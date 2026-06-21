@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CalendarCheck,
@@ -481,6 +481,9 @@ export function PlexusIQWorkspace({
   onUpdatePatient,
   onDeletePatient,
   onAnalyzeOnePatient,
+  onSelectionChange,
+  focusBatch,
+  onFocusConsumed,
 }: {
   summary: CalendarSummaryRow[];
   batchDetails: Record<number, BatchWithPatients>;
@@ -493,6 +496,24 @@ export function PlexusIQWorkspace({
   onUpdatePatient: (id: number, updates: Record<string, unknown>) => void;
   onDeletePatient: (id: number) => void;
   onAnalyzeOnePatient: (id: number) => void;
+  /**
+   * Reports the currently-open facility (and its first dated schedule)
+   * up to the page so Add-Patient / Bulk-Import can default their
+   * destination to the facility the user is viewing. Emits null facility
+   * on the clinic-tile overview.
+   */
+  onSelectionChange?: (sel: {
+    facility: string | null;
+    scheduleDate: string | null;
+    batchId: number | null;
+  }) => void;
+  /**
+   * Imperative request to focus the facility a freshly added/imported
+   * batch landed in. Drills into that facility's interior, then calls
+   * onFocusConsumed.
+   */
+  focusBatch?: { id: number; facility: string } | null;
+  onFocusConsumed?: () => void;
 }) {
   // Active facilities (any patient count). Used both by the All Patients
   // accordion and as the base set for the status-derived worklists.
@@ -871,6 +892,29 @@ export function PlexusIQWorkspace({
       .filter((d): d is string => !!d);
     return dated[0] ?? null;
   }, [clinicDetailRollup]);
+
+  // Report the currently-open facility (and its first dated schedule)
+  // up so the page can default Add-Patient / Bulk-Import to the facility
+  // the user is viewing. On the clinic-tile overview the facility is null.
+  useEffect(() => {
+    onSelectionChange?.({
+      facility: selectedClinicFacility,
+      scheduleDate: selectedClinicFacility ? clinicDetailScheduleDate : null,
+      batchId: null,
+    });
+  }, [onSelectionChange, selectedClinicFacility, clinicDetailScheduleDate]);
+
+  // Apply an imperative focus request (e.g. after an add/import) by
+  // drilling into the requested facility's interior and switching to the
+  // "All" bucket so freshly landed patients are visible regardless of
+  // their qualification status, then clearing the request.
+  useEffect(() => {
+    if (!focusBatch) return;
+    setViewMode("clinics");
+    setSelectedClinicFacility(focusBatch.facility);
+    setClinicStatusFilter("all");
+    onFocusConsumed?.();
+  }, [focusBatch, onFocusConsumed]);
 
   if (grouped.length === 0) {
     return (

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { CalendarDays, Loader2, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
   useScreeningBatches,
   useCreateBatch,
@@ -37,8 +39,6 @@ import {
 import {
   importPlexusIqClinicalRows,
   startPlexusIqQualificationJob,
-  fetchPlexusIqQualificationJobStatus,
-  type QualificationJobStatus,
 } from "@/lib/plexusIqClinicalImportApi";
 import type { PlexusIqClinicalImportRow } from "@/lib/plexusIqClinicalImportParser";
 import {
@@ -71,7 +71,6 @@ function mergeQualificationJobs(
 import { PlexusIQDayModal } from "@/components/plexus-iq/PlexusIQDayModal";
 import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
 import { PlexusIQWorkspace } from "@/components/plexus-iq/PlexusIQWorkspace";
-import { PlexusIQOperatingList } from "@/components/plexus-iq/operating/PlexusIQOperatingList";
 
 // Plexus IQ page — patient workspace center + calendar drawer.
 //
@@ -400,40 +399,6 @@ export default function PlexusIQPage() {
       // localStorage unavailable (incognito quota, SSR, etc.); ignore.
     }
   }, [activeQualificationJobs]);
-
-  // Poll each active job's status (shares the cache/poll with the
-  // status strip — React Query dedups by queryKey). Auto-stops per job
-  // once terminal. Drives runningBatchIds so a batch leaves the
-  // "running" state the moment its job completes/fails/cancels rather
-  // than lingering until the user dismisses the strip.
-  const jobStatusQueries = useQueries({
-    queries: activeQualificationJobs.map((j) => ({
-      queryKey: ["plexus-iq-qualification-job", j.jobId] as const,
-      queryFn: () => fetchPlexusIqQualificationJobStatus(j.jobId),
-      refetchInterval: (q: { state: { data?: QualificationJobStatus } }) => {
-        const s = q.state.data?.status;
-        return s === "completed" || s === "failed" || s === "cancelled"
-          ? false
-          : 2500;
-      },
-    })),
-  });
-  const jobStatuses = jobStatusQueries.map((q) => q.data?.status);
-
-  // Batch IDs with a qualification run actively in flight — non-terminal
-  // jobs (survives refresh via localStorage) plus the in-session analyze
-  // action.
-  const runningBatchIds = useMemo(() => {
-    const ids = new Set<number>();
-    activeQualificationJobs.forEach((j, i) => {
-      const s = jobStatuses[i];
-      const terminal = s === "completed" || s === "failed" || s === "cancelled";
-      if (!terminal && typeof j.batchId === "number") ids.add(j.batchId);
-    });
-    if (analyzingBatchId != null) ids.add(analyzingBatchId);
-    return ids;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeQualificationJobs, jobStatuses.join("|"), analyzingBatchId]);
 
   const handleClinicalImport = useCallback(
     async (
@@ -831,6 +796,43 @@ export default function PlexusIQPage() {
 
   return (
     <div className="flex flex-col h-full w-full min-w-0">
+      <header className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
+        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-3 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />
+            <div>
+              <h1 className="text-xl font-semibold tracking-tight text-slate-900" data-testid="text-plexus-iq-title">
+                Plexus IQ
+              </h1>
+              <p className="text-[11px] text-slate-500">
+                Multi-day, multi-facility workspace
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm"
+              onClick={() => setAddHubOpen(true)}
+              className="gap-1.5 rounded-xl"
+              data-testid="button-plexus-iq-add-patient"
+            >
+              <Plus className="w-4 h-4" />
+              Add Patient(s)
+            </Button>
+            <button
+              type="button"
+              onClick={() => setCalendarOpen(true)}
+              aria-label="Open calendar"
+              title="Calendar"
+              className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-plexus-navy-800 text-white shadow-sm hover:bg-plexus-navy-700 transition-colors"
+              data-testid="button-plexus-iq-calendar"
+            >
+              <CalendarDays className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </header>
+
       <main
         ref={mainScrollRef}
         className="flex-1 min-h-0 overflow-auto bg-slate-50/40"
@@ -858,23 +860,21 @@ export default function PlexusIQPage() {
             />
           </div>
         )}
-        <PlexusIQOperatingList
+        <PlexusIQWorkspace
           summary={summary}
-          batches={batches}
           batchDetails={batchDetails}
-          runningBatchIds={runningBatchIds}
+          analyzingBatchId={analyzingBatchId}
           analyzingPatients={analyzingPatients}
-          saveFailedPatientIds={saveFailedPatientIds}
           onGenerateBatch={handleGenerateBatch}
+          onOpenFinalSchedule={handleOpenFinalSchedule}
           onDeleteAllForBatch={handleDeleteAllForBatch}
+          onDeleteAllForFacility={handleDeleteAllForFacility}
           onUpdatePatient={handleUpdatePatient}
           onDeletePatient={handleDeletePatient}
           onAnalyzeOnePatient={handleAnalyzePatient}
           onSelectionChange={setOperatingSelection}
           focusBatch={focusBatch}
           onFocusConsumed={handleFocusConsumed}
-          onAddPatient={() => setAddHubOpen(true)}
-          onOpenCalendar={() => setCalendarOpen(true)}
         />
       </main>
 
