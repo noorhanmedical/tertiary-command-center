@@ -3,7 +3,6 @@ import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { PageHeader } from "@/components/PageHeader";
 import {
   CalendarDays,
   ChevronDown,
@@ -244,14 +243,6 @@ export function HomeDashboard({
       <main className="flex-1 overflow-auto">
         <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-10 pb-16">
           <div className="max-w-5xl mx-auto">
-            <PageHeader
-              eyebrow="PLEXUS ANCILLARY · HOME"
-              title="Plexus"
-              subtitle="Ancillary Screening Platform"
-              titleTestId="text-home-heading"
-              className="mb-10"
-            />
-
             <div className="space-y-6">
               <Link href="/plexus-iq">
                 <Card
