@@ -14,36 +14,37 @@ type WindowKey = keyof HomeWindowStat;
 
 function MetricStat({
   label,
-  value,
   icon,
   testId,
+  today,
   last7,
   last30,
   windowKey,
   bodyOverride,
 }: {
   label: string;
-  value: number;
   icon: React.ReactNode;
   testId: string;
+  today?: HomeWindowStat;
   last7?: HomeWindowStat;
   last30?: HomeWindowStat;
   windowKey: WindowKey;
   bodyOverride?: React.ReactNode;
 }) {
+  const headline = last7?.[windowKey] ?? 0;
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={label}
-          title={label}
-          className="group flex flex-col items-center gap-2 rounded-xl px-4 py-3 transition-colors hover:bg-slate-900/5 dark:hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/60"
+          aria-label={`${label} (last 7 days)`}
+          title={`${label} · last 7 days`}
+          className="group flex flex-col items-center gap-2 rounded-xl px-4 py-3 transition-colors hover:bg-indigo-500/10 dark:hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/60"
           data-testid={testId}
         >
           <span className="shrink-0">{icon}</span>
-          <span className="text-4xl md:text-5xl font-bold text-black dark:text-white tabular-nums leading-none tracking-tight">
-            {value}
+          <span className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-white tabular-nums leading-none tracking-tight">
+            {headline}
           </span>
         </button>
       </PopoverTrigger>
@@ -59,8 +60,11 @@ function MetricStat({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-[12px]">
               <span className="text-slate-500 dark:text-muted-foreground">Today</span>
-              <span className="font-semibold tabular-nums text-slate-900 dark:text-foreground">
-                {value}
+              <span
+                className="font-semibold tabular-nums text-slate-900 dark:text-foreground"
+                data-testid={`${testId}-today`}
+              >
+                {today?.[windowKey] ?? 0}
               </span>
             </div>
             <div className="flex items-center justify-between text-[12px]">
@@ -142,32 +146,32 @@ function AncillaryStat({
   return (
     <div
       className="flex flex-col items-center gap-1.5"
-      aria-label={label}
-      title={label}
+      aria-label={`${label} (last 7 days)`}
+      title={`${label} · last 7 days`}
       data-testid={testId}
     >
       {icon}
-      <span className="text-2xl md:text-3xl font-bold tabular-nums text-black dark:text-white leading-none tracking-tight">
+      <span className="text-2xl md:text-3xl font-bold tabular-nums text-slate-900 dark:text-white leading-none tracking-tight">
         {value}
       </span>
     </div>
   );
 }
 
+const TILE_CLASS =
+  "rounded-2xl border border-indigo-100/80 dark:border-indigo-400/10 bg-gradient-to-br from-indigo-50 via-white to-sky-50 dark:from-indigo-950/30 dark:via-background dark:to-slate-900/40 ring-1 ring-inset ring-white/40 dark:ring-white/5 shadow-[0_8px_30px_-12px_rgba(79,70,229,0.25)] px-6 py-7 md:px-10 md:py-9";
+
 export function HomeLiveDashboard() {
   const { data, isLoading } = useHomeStats();
 
   if (isLoading) {
     return (
-      <div
-        className="rounded-2xl border border-slate-200/70 dark:border-border bg-gradient-to-br from-white to-slate-50 dark:from-muted/30 dark:to-background shadow-sm px-6 py-7 md:px-10 md:py-9"
-        data-testid="live-dashboard-loading"
-      >
+      <div className={TILE_CLASS} data-testid="live-dashboard-loading">
         <div className="flex flex-wrap items-center justify-center gap-8 md:gap-12">
           {Array.from({ length: 7 }).map((_, i) => (
             <div
               key={i}
-              className="h-[72px] w-[60px] rounded-xl bg-slate-100 dark:bg-muted/40 animate-pulse"
+              className="h-[72px] w-[60px] rounded-xl bg-indigo-100/60 dark:bg-muted/40 animate-pulse"
             />
           ))}
         </div>
@@ -182,43 +186,40 @@ export function HomeLiveDashboard() {
   const callsByMember = data?.callsByMember;
 
   return (
-    <div
-      className="rounded-2xl border border-slate-200/70 dark:border-border bg-gradient-to-br from-white to-slate-50 dark:from-muted/30 dark:to-background shadow-sm px-6 py-7 md:px-10 md:py-9"
-      data-testid="live-dashboard"
-    >
+    <div className={TILE_CLASS} data-testid="live-dashboard">
       <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-6 md:gap-x-4">
         <MetricStat
           label="Patients"
-          value={todayStat?.patients ?? 0}
-          icon={<Users className="w-8 h-8 md:w-9 md:h-9 text-black dark:text-white" strokeWidth={1.75} />}
+          icon={<Users className="w-8 h-8 md:w-9 md:h-9 text-slate-900 dark:text-white" strokeWidth={1.75} />}
           testId="stat-total-patients"
+          today={todayStat}
           last7={last7}
           last30={last30}
           windowKey="patients"
         />
         <MetricStat
           label="Ancillaries"
-          value={todayStat?.ancillaries ?? 0}
-          icon={<Activity className="w-8 h-8 md:w-9 md:h-9 text-black dark:text-white" strokeWidth={1.75} />}
+          icon={<Activity className="w-8 h-8 md:w-9 md:h-9 text-slate-900 dark:text-white" strokeWidth={1.75} />}
           testId="stat-total-ancillaries"
+          today={todayStat}
           last7={last7}
           last30={last30}
           windowKey="ancillaries"
         />
         <MetricStat
           label="Active Schedules"
-          value={todayStat?.activeSchedules ?? 0}
-          icon={<CalendarRange className="w-8 h-8 md:w-9 md:h-9 text-black dark:text-white" strokeWidth={1.75} />}
+          icon={<CalendarRange className="w-8 h-8 md:w-9 md:h-9 text-slate-900 dark:text-white" strokeWidth={1.75} />}
           testId="stat-active-schedules"
+          today={todayStat}
           last7={last7}
           last30={last30}
           windowKey="activeSchedules"
         />
         <MetricStat
           label="Calls Planned"
-          value={todayStat?.callsPlanned ?? 0}
-          icon={<Phone className="w-8 h-8 md:w-9 md:h-9 text-black dark:text-white" strokeWidth={1.75} />}
+          icon={<Phone className="w-8 h-8 md:w-9 md:h-9 text-slate-900 dark:text-white" strokeWidth={1.75} />}
           testId="stat-calls-planned"
+          today={todayStat}
           last7={last7}
           last30={last30}
           windowKey="callsPlanned"
@@ -272,7 +273,7 @@ export function HomeLiveDashboard() {
         />
 
         <div
-          className="mx-1 md:mx-3 h-12 w-px self-center bg-slate-200 dark:bg-border"
+          className="mx-1 md:mx-3 h-12 w-px self-center bg-indigo-200/70 dark:bg-border"
           aria-hidden="true"
         />
 
@@ -283,19 +284,19 @@ export function HomeLiveDashboard() {
           <AncillaryStat
             label="BrainWave"
             value={breakdown?.brainWave ?? 0}
-            icon={<Brain className="w-6 h-6 md:w-7 md:h-7 text-black dark:text-white" strokeWidth={2} />}
+            icon={<Brain className="w-6 h-6 md:w-7 md:h-7 text-slate-900 dark:text-white" strokeWidth={2} />}
             testId="ancillary-brainwave"
           />
           <AncillaryStat
             label="VitalWave"
             value={breakdown?.vitalWave ?? 0}
-            icon={<HeartPulse className="w-6 h-6 md:w-7 md:h-7 text-black dark:text-white" strokeWidth={2} />}
+            icon={<HeartPulse className="w-6 h-6 md:w-7 md:h-7 text-slate-900 dark:text-white" strokeWidth={2} />}
             testId="ancillary-vitalwave"
           />
           <AncillaryStat
             label="Ultrasound"
             value={breakdown?.ultrasound ?? 0}
-            icon={<Waves className="w-6 h-6 md:w-7 md:h-7 text-black dark:text-white" strokeWidth={2} />}
+            icon={<Waves className="w-6 h-6 md:w-7 md:h-7 text-slate-900 dark:text-white" strokeWidth={2} />}
             testId="ancillary-ultrasound"
           />
         </div>

@@ -38,7 +38,7 @@ function dayKeyMinus(dayKey: string, days: number): string {
  * Home-page "Today at a Glance" stats. Returns the four headline metrics
  * (patients, ancillaries, active schedules, calls planned) for today plus
  * trailing 7-day and 30-day windows (so each metric can be clicked to reveal
- * its recent history), today's ancillary breakdown, and a per-team-member
+ * its recent history), a trailing 7-day ancillary breakdown, and a per-team-member
  * breakdown of logged outreach calls over the 7- and 30-day windows.
  *
  * Calls-planned note: the "today" value is forward-looking (patients on the
@@ -86,7 +86,8 @@ export function registerHomeStatsRoutes(app: Express) {
       const last7 = blank();
       const last30 = blank();
 
-      // Today's ancillary breakdown (flat icon row).
+      // Trailing 7-day ancillary breakdown (flat icon row) — matches the
+      // 7-day default shown for the headline metrics.
       let brainWaveCount = 0;
       let vitalWaveCount = 0;
       let ultrasoundCount = 0;
@@ -106,7 +107,7 @@ export function registerHomeStatsRoutes(app: Express) {
             ? patient.qualifyingTests.filter(Boolean)
             : [];
           batchAncillaries += tests.length;
-          if (inToday) {
+          if (in7) {
             for (const test of tests) {
               const bucket = bucketForTest(String(test));
               if (bucket === "brain") brainWaveCount += 1;
