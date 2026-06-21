@@ -22,6 +22,7 @@ const invoiceReminderSchema = z.object({
 });
 
 const WORLD_CLOCKS_SETTING_KEY = "world_clocks";
+const worldClocksUserKey = (userId: string) => `world_clocks:user:${userId}`;
 const DEFAULT_WORLD_CLOCKS = [
   { label: "Manila", timeZone: "Asia/Manila" },
   { label: "Dhaka", timeZone: "Asia/Dhaka" },
@@ -131,18 +132,27 @@ export function registerSettingsRoutes(app: Express) {
     }
   });
 
-  app.get("/api/settings/world-clocks", async (_req, res) => {
+  app.get("/api/settings/world-clocks", async (req, res) => {
     try {
       const { getSetting } = await import("../dbSettings");
-      const raw = await getSetting(WORLD_CLOCKS_SETTING_KEY);
-      if (!raw) {
-        return res.json({ cities: DEFAULT_WORLD_CLOCKS });
-      }
-      const parsed = worldClocksSchema.safeParse({ cities: JSON.parse(raw) });
-      if (!parsed.success || parsed.data.cities.length === 0) {
-        return res.json({ cities: DEFAULT_WORLD_CLOCKS });
-      }
-      res.json({ cities: parsed.data.cities });
+      const userId = req.session?.userId;
+
+      const readCities = async (key: string) => {
+        const raw = await getSetting(key);
+        if (!raw) return null;
+        const parsed = worldClocksSchema.safeParse({ cities: JSON.parse(raw) });
+        if (!parsed.success || parsed.data.cities.length === 0) return null;
+        return parsed.data.cities;
+      };
+
+      // Prefer the logged-in user's personal list, then fall back to the
+      // org-wide list, then the built-in defaults.
+      const cities =
+        (userId ? await readCities(worldClocksUserKey(userId)) : null) ??
+        (await readCities(WORLD_CLOCKS_SETTING_KEY)) ??
+        DEFAULT_WORLD_CLOCKS;
+
+      res.json({ cities });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -155,7 +165,11 @@ export function registerSettingsRoutes(app: Express) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
       const { setSetting } = await import("../dbSettings");
-      await setSetting(WORLD_CLOCKS_SETTING_KEY, JSON.stringify(parsed.data.cities));
+      const userId = req.session?.userId;
+      // Logged-in staff save to their own personal list; anonymous callers
+      // (or legacy clients without a session) update the shared org-wide list.
+      const key = userId ? worldClocksUserKey(userId) : WORLD_CLOCKS_SETTING_KEY;
+      await setSetting(key, JSON.stringify(parsed.data.cities));
       res.json({ cities: parsed.data.cities });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
