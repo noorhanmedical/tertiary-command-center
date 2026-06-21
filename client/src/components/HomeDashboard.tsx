@@ -321,8 +321,15 @@ export function HomeDashboard({
                   />
                 </button>
 
-                {dashboardExpanded && (
-                  <div className="space-y-6 pt-2 pb-2" data-testid="panel-plexus-dashboard-detail">
+                <div
+                  className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${dashboardExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+                >
+                  <div className="overflow-hidden">
+                  <div
+                    className={`space-y-6 pt-2 pb-2 transition-opacity duration-300 ease-in-out ${dashboardExpanded ? "opacity-100" : "opacity-0"}`}
+                    data-testid="panel-plexus-dashboard-detail"
+                    aria-hidden={!dashboardExpanded}
+                  >
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                       <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                         <div className="text-[11px] uppercase tracking-wide text-slate-500">BrainWave</div>
@@ -407,7 +414,8 @@ export function HomeDashboard({
                       </div>
                     </div>
                   </div>
-                )}
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 auto-rows-fr">
