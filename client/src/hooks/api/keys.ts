@@ -20,6 +20,9 @@ export const qk = {
     weekly: (weekStart: string | null | undefined) =>
       ["/api/schedule/dashboard", weekStart || "current"] as const,
   },
+  homeStats: {
+    today: () => ["/api/home-stats"] as const,
+  },
   outreach: {
     dashboard: () => ["/api/outreach/dashboard"] as const,
     schedulers: () => ["/api/outreach/schedulers"] as const,
