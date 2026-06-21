@@ -26,6 +26,7 @@ import {
 } from "@shared/schema/executionCase";
 import type { OutreachScheduler } from "@shared/schema/outreach";
 import { getExecutionCaseById } from "../repositories/executionCase.repo";
+import { getAdminSettingValue } from "../repositories/adminSettings.repo";
 import { appendJourneyEvent } from "./journey/appendJourneyEvent";
 
 const TERMINAL_LIFECYCLE_STATUSES = new Set(["closed", "archived", "cancelled"]);
@@ -39,6 +40,7 @@ export type SchedulerAutoAssignSkippedReason =
   | "case_not_found"
   | "closed_or_archived"
   | "already_assigned"
+  | "auto_assign_disabled"
   | "no_scheduler_for_facility";
 
 export type SchedulerAutoAssignResult =
@@ -99,6 +101,22 @@ export async function autoAssignSchedulerForExecutionCase(
 
   if (TERMINAL_LIFECYCLE_STATUSES.has(ec.lifecycleStatus)) {
     return { applied: false, reason: "closed_or_archived", executionCase: ec };
+  }
+
+  // Manual-distribution gate. When the admin setting
+  // assignment.scheduler_auto_assign_enabled is off (the default),
+  // commit-time auto-assign is a no-op: the case stays unassigned and
+  // lands in the Engagement Center "Unassigned / Engagement Queue"
+  // pool for a manager to manually distribute to a PCS / ACS team
+  // member. Scope-aware (facility override falls back to global);
+  // missing/undefined value defaults to disabled (manual).
+  const autoAssignSetting = await getAdminSettingValue<{ enabled?: boolean }>(
+    "assignment",
+    "scheduler_auto_assign_enabled",
+    { facilityId: ec.facilityId ?? null },
+  );
+  if (!(autoAssignSetting?.enabled ?? false)) {
+    return { applied: false, reason: "auto_assign_disabled", executionCase: ec };
   }
 
   // Already assigned — preserve owner continuity. Helper is a no-op even

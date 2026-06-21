@@ -99,7 +99,7 @@ const DEFAULT_ADMIN_SETTINGS: DefaultAdminSetting[] = [
   { settingDomain: "engagement_center", settingKey: "queue_reentry_enabled", settingValue: { enabled: true }, description: "When true, callback-style outcomes re-enter the call list via nextActionAt." },
 
   // assignment domain — PR 2.1
-  { settingDomain: "assignment", settingKey: "scheduler_auto_assign_enabled", settingValue: { enabled: true }, description: "Auto-assign new patients to schedulers based on capacity + facility allow-list." },
+  { settingDomain: "assignment", settingKey: "scheduler_auto_assign_enabled", settingValue: { enabled: false }, description: "When ON, auto-assign new patients to schedulers at commit time (capacity + facility allow-list). When OFF (default), patients land unassigned in the Engagement Center queue for manual distribution to a PCS / ACS team member." },
   { settingDomain: "assignment", settingKey: "pcs_assignment_respects_facility_scope", settingValue: { enabled: true }, description: "PCS assignments must stay within the user's facility allow-list." },
   { settingDomain: "assignment", settingKey: "acs_assignment_respects_facility_scope", settingValue: { enabled: true }, description: "ACS assignments must stay within the user's facility allow-list." },
 
