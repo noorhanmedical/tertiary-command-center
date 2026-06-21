@@ -500,7 +500,8 @@ export function PlexusIQOperatingList({
             onClinicianPdf={() => runPdf("clinician")}
             onPlexusPdf={() => runPdf("plexus")}
           />
-          <div className="flex-1 min-h-0 overflow-auto p-3 space-y-1.5 bg-slate-50/30">
+          <div className="flex-1 min-h-0 overflow-auto bg-slate-50/30">
+            <div className="min-w-[860px] p-3 space-y-1.5">
             {sortedPatients.length === 0 ? (
               <div className="py-16 text-center text-xs text-slate-400">
                 {selectedBatchId == null
@@ -537,6 +538,7 @@ export function PlexusIQOperatingList({
                 ))}
               </>
             )}
+            </div>
           </div>
         </div>
       </div>

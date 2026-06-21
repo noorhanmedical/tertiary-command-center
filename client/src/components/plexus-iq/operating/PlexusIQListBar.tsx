@@ -3,14 +3,15 @@ import {
   Square,
   Trash2,
   RefreshCw,
-  FileText,
+  ClipboardList,
+  Network,
 } from "lucide-react";
 
 // Minimal night-sky List bar for the Plexus IQ operating list.
 //
-// A solid black header with the centered "Patient List" label and a
-// right-aligned cluster of circular white icon buttons (select all,
-// delete-when-selected, retry-when-failed, and the two PDF exports).
+// A solid black header with the centered "PATIENT LIST" label and a
+// right-aligned cluster of circular white icon buttons (delete-when-selected,
+// select all, retry-when-failed, and the two PDF exports).
 
 export type PlexusIQListBarProps = {
   patientCount: number;
@@ -51,25 +52,14 @@ export function PlexusIQListBar({
     >
       <div className="flex-1" />
       <div
-        className="shrink-0 text-sm font-semibold tracking-wide text-white"
+        className="shrink-0 text-sm font-semibold tracking-widest text-white uppercase"
         data-testid="text-list-bar-title"
       >
         Patient List
       </div>
 
       <div className="flex flex-1 items-center justify-end gap-2">
-        <button
-          type="button"
-          className={iconBtn}
-          disabled={!canAct || patientCount === 0}
-          onClick={allSelected ? onClear : onSelectAll}
-          aria-label={allSelected ? "Clear selection" : "Select all"}
-          title={allSelected ? "Clear selection" : "Select all"}
-          data-testid="button-list-bar-select-all"
-        >
-          {allSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
-        </button>
-
+        {/* Trash — appears LEFT of Select All when anything is selected */}
         {selectedCount > 0 && (
           <button
             type="button"
@@ -82,6 +72,18 @@ export function PlexusIQListBar({
             <Trash2 className="h-4 w-4" />
           </button>
         )}
+
+        <button
+          type="button"
+          className={iconBtn}
+          disabled={!canAct || patientCount === 0}
+          onClick={allSelected ? onClear : onSelectAll}
+          aria-label={allSelected ? "Clear selection" : "Select all"}
+          title={allSelected ? "Clear selection" : "Select all"}
+          data-testid="button-list-bar-select-all"
+        >
+          {allSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+        </button>
 
         {hasFailed && (
           <button
@@ -106,7 +108,7 @@ export function PlexusIQListBar({
           title="Clinician PDF"
           data-testid="button-list-bar-clinician-pdf"
         >
-          <FileText className="h-4 w-4" />
+          <ClipboardList className="h-4 w-4" />
         </button>
         <button
           type="button"
@@ -117,7 +119,7 @@ export function PlexusIQListBar({
           title="Plexus PDF"
           data-testid="button-list-bar-plexus-pdf"
         >
-          <FileText className="h-4 w-4" />
+          <Network className="h-4 w-4" />
         </button>
       </div>
     </div>

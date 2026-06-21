@@ -10,12 +10,7 @@ import {
   computePlexusIqStatus,
   computePlexusIqFlags,
 } from "@/lib/plexusIqStatus";
-import {
-  categoryIcons,
-  categoryStyles,
-  getAncillaryCategory,
-  type AncillaryCategory,
-} from "@/features/schedule/ancillaryMeta";
+import { getAncillaryCategory, type AncillaryCategory } from "@/features/schedule/ancillaryMeta";
 
 const ANCILLARY_ORDER: AncillaryCategory[] = ["brainwave", "vitalwave", "ultrasound"];
 
@@ -182,29 +177,50 @@ export function PlexusIQOperatingRow({
         )}
       </div>
 
-      {/* Qualifying ancillary icons */}
-      <div className="flex items-center gap-2 justify-center">
-        {ANCILLARY_ORDER.map((cat) => {
-          const count = ancillaryCounts[cat];
-          if (count === 0) return null;
-          const Icon = categoryIcons[cat];
-          const style = categoryStyles[cat];
-          return (
-            <span
-              key={cat}
-              className="relative inline-flex items-center"
-              title={`${cat} (${count})`}
-              data-testid={`icon-operating-row-${cat}-${patient.id}`}
-            >
-              <Icon className={`h-4 w-4 ${style.icon}`} strokeWidth={2} fill="none" />
-              {count > 1 && (
-                <span className="absolute -top-1 -right-2 inline-flex items-center justify-center min-w-[12px] h-3 px-1 rounded-full bg-slate-900 text-white text-[8px] font-semibold leading-none">
-                  {count}
-                </span>
-              )}
-            </span>
-          );
-        })}
+      {/* Qualifying ancillary dots — purple=BrainWave, red=VitalWave, green=Ultrasound */}
+      <div className="flex items-center gap-1.5 justify-center">
+        {ancillaryCounts.brainwave > 0 && (
+          <span
+            className="relative inline-flex items-center justify-center"
+            title={`BrainWave (${ancillaryCounts.brainwave})`}
+            data-testid={`icon-operating-row-brainwave-${patient.id}`}
+          >
+            <span className="h-2.5 w-2.5 rounded-full bg-purple-500 block" />
+            {ancillaryCounts.brainwave > 1 && (
+              <span className="absolute -top-1 -right-2 inline-flex items-center justify-center min-w-[12px] h-3 px-1 rounded-full bg-slate-900 text-white text-[8px] font-semibold leading-none">
+                {ancillaryCounts.brainwave}
+              </span>
+            )}
+          </span>
+        )}
+        {ancillaryCounts.vitalwave > 0 && (
+          <span
+            className="relative inline-flex items-center justify-center"
+            title={`VitalWave (${ancillaryCounts.vitalwave})`}
+            data-testid={`icon-operating-row-vitalwave-${patient.id}`}
+          >
+            <span className="h-2.5 w-2.5 rounded-full bg-red-500 block" />
+            {ancillaryCounts.vitalwave > 1 && (
+              <span className="absolute -top-1 -right-2 inline-flex items-center justify-center min-w-[12px] h-3 px-1 rounded-full bg-slate-900 text-white text-[8px] font-semibold leading-none">
+                {ancillaryCounts.vitalwave}
+              </span>
+            )}
+          </span>
+        )}
+        {ancillaryCounts.ultrasound > 0 && (
+          <span
+            className="relative inline-flex items-center justify-center"
+            title={`Ultrasound (${ancillaryCounts.ultrasound})`}
+            data-testid={`icon-operating-row-ultrasound-${patient.id}`}
+          >
+            <span className="h-2.5 w-2.5 rounded-full bg-green-500 block" />
+            {ancillaryCounts.ultrasound > 1 && (
+              <span className="absolute -top-1 -right-2 inline-flex items-center justify-center min-w-[12px] h-3 px-1 rounded-full bg-slate-900 text-white text-[8px] font-semibold leading-none">
+                {ancillaryCounts.ultrasound}
+              </span>
+            )}
+          </span>
+        )}
       </div>
 
       {/* Review */}
