@@ -487,6 +487,8 @@ export function PlexusIQWorkspace({
   onSelectionChange,
   focusBatch,
   onFocusConsumed,
+  onAddPatient,
+  onOpenCalendar,
 }: {
   summary: CalendarSummaryRow[];
   batches: ScreeningBatch[];
@@ -519,6 +521,16 @@ export function PlexusIQWorkspace({
    */
   focusBatch?: { id: number; facility: string } | null;
   onFocusConsumed?: () => void;
+  /**
+   * Opens the Add Patient(s) hub. Relocated from the old page header into
+   * the operating-list view's inline toolbar.
+   */
+  onAddPatient?: () => void;
+  /**
+   * Opens the calendar drawer. Relocated from the old page header into the
+   * operating-list view's inline toolbar.
+   */
+  onOpenCalendar?: () => void;
 }) {
   // Active facilities (any patient count). Used both by the All Patients
   // accordion and as the base set for the status-derived worklists.
@@ -933,53 +945,31 @@ export function PlexusIQWorkspace({
       const facilityBatches = batches.filter(
         (b) => b.facility === selectedClinicFacility,
       );
+      // Facility interior renders the standalone operating-list view with
+      // no "Back to clinics" pill-header wrapper and no qualification-job
+      // status chrome above it. Add Patient / Calendar live in the
+      // operating list's own inline toolbar; the back-to-tiles control is
+      // hosted there too (onBack) so the board stays one click away.
       return (
-        <>
-          <div
-            className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-5 pb-1 flex items-center gap-3"
-            data-testid="plexus-iq-clinic-detail-header"
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedClinicFacility(null);
-                setClinicStatusFilter("completed");
-              }}
-              className="inline-flex items-center gap-1 rounded-full bg-slate-100 hover:bg-slate-200 px-3 py-1 text-xs font-medium text-slate-800"
-              data-testid="button-plexus-iq-clinic-back"
-            >
-              <ChevronRight className="h-3.5 w-3.5 rotate-180" />
-              Back to clinics
-            </button>
-            <div className="text-base font-semibold text-slate-900">
-              {selectedClinicFacility}
-            </div>
-            <div className="ml-auto">
-              <button
-                type="button"
-                onClick={() => setViewMode("all")}
-                className="text-[11px] text-slate-500 hover:text-slate-700"
-                data-testid="button-plexus-iq-legacy-full-view"
-              >
-                Legacy full view →
-              </button>
-            </div>
-          </div>
-
-          <PlexusIQOperatingList
-            summary={summary}
-            batches={facilityBatches}
-            batchDetails={batchDetails}
-            runningBatchIds={runningBatchIds}
-            analyzingPatients={analyzingPatients}
-            onGenerateBatch={onGenerateBatch}
-            onDeleteAllForBatch={onDeleteAllForBatch}
-            onUpdatePatient={onUpdatePatient}
-            onDeletePatient={onDeletePatient}
-            onAnalyzeOnePatient={onAnalyzeOnePatient}
-            onSelectionChange={onSelectionChange}
-          />
-        </>
+        <PlexusIQOperatingList
+          summary={summary}
+          batches={facilityBatches}
+          batchDetails={batchDetails}
+          runningBatchIds={runningBatchIds}
+          analyzingPatients={analyzingPatients}
+          onGenerateBatch={onGenerateBatch}
+          onDeleteAllForBatch={onDeleteAllForBatch}
+          onUpdatePatient={onUpdatePatient}
+          onDeletePatient={onDeletePatient}
+          onAnalyzeOnePatient={onAnalyzeOnePatient}
+          onSelectionChange={onSelectionChange}
+          onAddPatient={onAddPatient}
+          onOpenCalendar={onOpenCalendar}
+          onBack={() => {
+            setSelectedClinicFacility(null);
+            setClinicStatusFilter("completed");
+          }}
+        />
       );
     }
 

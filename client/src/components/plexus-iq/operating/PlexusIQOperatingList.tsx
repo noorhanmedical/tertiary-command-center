@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Plus } from "lucide-react";
+import { CalendarDays, ChevronLeft, Plus } from "lucide-react";
 import type { AuthUser } from "@/App";
 import type { PatientScreening, ScreeningBatch } from "@shared/schema";
 import type { CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
@@ -70,6 +70,12 @@ export type PlexusIQOperatingListProps = {
   onAddPatient?: () => void;
   /** Opens the calendar drawer. Relocated from the old page header. */
   onOpenCalendar?: () => void;
+  /**
+   * Returns to the clinic-tile board. When provided, an inline back
+   * control is rendered at the start of the toolbar (instead of a separate
+   * "Back to clinics" pill-header above the list).
+   */
+  onBack?: () => void;
 };
 
 const UNSCHEDULED_KEY = "unscheduled";
@@ -143,6 +149,7 @@ export function PlexusIQOperatingList({
   onFocusConsumed,
   onAddPatient,
   onOpenCalendar,
+  onBack,
 }: PlexusIQOperatingListProps) {
   const { toast } = useToast();
   const { data: currentUser } = useQuery<AuthUser>({
@@ -419,6 +426,18 @@ export function PlexusIQOperatingList({
       <div className="mb-3 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="Back to clinics"
+              title="Back to clinics"
+              className="inline-flex items-center justify-center h-9 w-9 rounded-full text-slate-600 hover:bg-slate-100 transition-colors"
+              data-testid="button-plexus-iq-clinic-back"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+          )}
           <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
             Facility
           </span>

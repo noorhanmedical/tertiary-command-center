@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Loader2, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { SidebarTrigger } from "@/components/ui/sidebar";
+import { Loader2 } from "lucide-react";
 import {
   useScreeningBatches,
   useCreateBatch,
@@ -39,10 +37,11 @@ import {
 import {
   importPlexusIqClinicalRows,
   startPlexusIqQualificationJob,
+  fetchPlexusIqQualificationJobStatus,
+  type QualificationJobStatus,
 } from "@/lib/plexusIqClinicalImportApi";
 import type { PlexusIqClinicalImportRow } from "@/lib/plexusIqClinicalImportParser";
 import {
-  PlexusIQQualificationJobsStatus,
   type ActiveQualificationJob,
 } from "@/components/plexus-iq/PlexusIQQualificationJobsStatus";
 
@@ -399,6 +398,42 @@ export default function PlexusIQPage() {
       // localStorage unavailable (incognito quota, SSR, etc.); ignore.
     }
   }, [activeQualificationJobs]);
+
+  // Headless job lifecycle. The always-on status banner used to be the only
+  // thing that pruned terminal jobs from `activeQualificationJobs`. With the
+  // banner removed, we still must poll each tracked job and drop it once it
+  // reaches a terminal state — otherwise its batchId would stay in
+  // `runningBatchIds` forever (it is localStorage-backed) and permanently
+  // disable Generate/Retry in the operating list. Polling stops per job once
+  // it is terminal, and the job is removed from the tracked list.
+  const qualificationJobQueries = useQueries({
+    queries: activeQualificationJobs.map((j) => ({
+      queryKey: ["plexus-iq-qualification-job", j.jobId] as const,
+      queryFn: () => fetchPlexusIqQualificationJobStatus(j.jobId),
+      refetchInterval: (q: { state: { data?: QualificationJobStatus } }) => {
+        const s = q.state.data?.status;
+        return s === "completed" || s === "failed" || s === "cancelled"
+          ? false
+          : 2500;
+      },
+    })),
+  });
+
+  useEffect(() => {
+    const terminal = new Set<number>();
+    qualificationJobQueries.forEach((q, idx) => {
+      const status = q.data?.status;
+      if (status === "completed" || status === "failed" || status === "cancelled") {
+        const job = activeQualificationJobs[idx];
+        if (job) terminal.add(job.jobId);
+      }
+    });
+    if (terminal.size === 0) return;
+    // A finished job should refresh the batch/patient data so the operating
+    // list reflects the qualified results before we drop it from tracking.
+    queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+    setActiveQualificationJobs((prev) => prev.filter((j) => !terminal.has(j.jobId)));
+  }, [qualificationJobQueries, activeQualificationJobs, queryClient]);
 
   // Batch IDs with an actively-running qualification job. Drives the
   // "Running" state in the facility operating list. Combines the async
@@ -808,70 +843,16 @@ export default function PlexusIQPage() {
 
   return (
     <div className="flex flex-col h-full w-full min-w-0">
-      <header className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
-        <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 py-3 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <SidebarTrigger data-testid="button-sidebar-toggle-plexus-iq" />
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight text-slate-900" data-testid="text-plexus-iq-title">
-                Plexus IQ
-              </h1>
-              <p className="text-[11px] text-slate-500">
-                Multi-day, multi-facility workspace
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              size="sm"
-              onClick={() => setAddHubOpen(true)}
-              className="gap-1.5 rounded-xl"
-              data-testid="button-plexus-iq-add-patient"
-            >
-              <Plus className="w-4 h-4" />
-              Add Patient(s)
-            </Button>
-            <button
-              type="button"
-              onClick={() => setCalendarOpen(true)}
-              aria-label="Open calendar"
-              title="Calendar"
-              className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-plexus-navy-800 text-white shadow-sm hover:bg-plexus-navy-700 transition-colors"
-              data-testid="button-plexus-iq-calendar"
-            >
-              <CalendarDays className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </header>
-
       <main
         ref={mainScrollRef}
         className="flex-1 min-h-0 overflow-auto bg-slate-50/40"
       >
-        {/* Facility-first overview: the first Plexus IQ surface shows
-            facility tiles only. Global stat cards, recent qualification
-            cards, and recently-deleted panels (PlexusIQDashboardRow /
-            PlexusIQRecentQualificationCards / PlexusIQRecentlyDeleted)
-            remain off the overview per the facility-first rule. */}
-        {/* BatchFlow qualification status — only renders WHILE jobs are
-            active. Conditional on activeQualificationJobs.length > 0 so
-            it never becomes a permanent dashboard panel. State is
-            backed by localStorage so it survives a refresh while jobs
-            are still running on the server. */}
-        {activeQualificationJobs.length > 0 && (
-          <div
-            className="mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-10 xl:px-14 pt-3"
-            data-testid="plexus-iq-qualification-status-strip"
-            data-mount-gate="activeQualificationJobs.length > 0"
-          >
-            <PlexusIQQualificationJobsStatus
-              jobs={activeQualificationJobs}
-              onJobsChange={setActiveQualificationJobs}
-              onDismiss={() => setActiveQualificationJobs([])}
-            />
-          </div>
-        )}
+        {/* Facility-first landing: the Plexus IQ page renders the
+            clinic-tile board only. No page title banner and no always-on
+            qualification-job status strip. Add Patient + Calendar entry
+            points live inside the operating-list view's inline toolbar
+            (relocated via onAddPatient / onOpenCalendar below). Jobs still
+            run; only the always-on status chrome is removed. */}
         <PlexusIQWorkspace
           summary={summary}
           batches={batches}
@@ -889,6 +870,8 @@ export default function PlexusIQPage() {
           onSelectionChange={setOperatingSelection}
           focusBatch={focusBatch}
           onFocusConsumed={handleFocusConsumed}
+          onAddPatient={() => setAddHubOpen(true)}
+          onOpenCalendar={() => setCalendarOpen(true)}
         />
       </main>
 
