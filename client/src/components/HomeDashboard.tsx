@@ -3,7 +3,6 @@ import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
   ArrowRight,
   Building2,
@@ -351,12 +350,6 @@ export function HomeDashboard({
 
   return (
     <div className="flex flex-col h-full">
-      <header className="sticky top-0 z-40 bg-white/85 dark:bg-card/80 backdrop-blur-xl border-b border-slate-200/60 dark:border-border/60">
-        <div className="px-8 flex items-center gap-4">
-          <SidebarTrigger data-testid="button-sidebar-toggle-home" />
-        </div>
-      </header>
-
       <main className="flex-1 overflow-auto">
         <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-10 pb-16">
           <div className="max-w-5xl mx-auto">

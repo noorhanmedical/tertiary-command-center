@@ -18,10 +18,45 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
 
   return (
     <header
-      className="shrink-0 h-16 text-white border-b border-white/10 relative overflow-hidden"
+      className="shrink-0 h-20 text-white border-b border-white/10 relative overflow-hidden"
       style={{ background: "#05060f" }}
       data-testid="top-banner"
     >
+      <style>{`
+        @keyframes shootingStar {
+          0% {
+            transform: translate(0, 0) rotate(18deg);
+            opacity: 0;
+          }
+          3% {
+            opacity: 1;
+          }
+          18% {
+            opacity: 0.9;
+          }
+          28% {
+            transform: translate(420px, 130px) rotate(18deg);
+            opacity: 0;
+          }
+          100% {
+            transform: translate(420px, 130px) rotate(18deg);
+            opacity: 0;
+          }
+        }
+        .top-banner-shooting-star {
+          position: absolute;
+          height: 1.5px;
+          width: 70px;
+          background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.9) 60%, rgba(255,255,255,1) 100%);
+          border-radius: 9999px;
+          opacity: 0;
+          pointer-events: none;
+          animation-name: shootingStar;
+          animation-timing-function: ease-out;
+          animation-iteration-count: infinite;
+          filter: drop-shadow(0 0 2px rgba(255,255,255,0.5));
+        }
+      `}</style>
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
@@ -44,11 +79,28 @@ export function TopBanner({ user, onLogout }: { user?: AuthUser; onLogout?: () =
             "radial-gradient(1px 1px at 48% 10%, rgba(255,255,255,0.45) 0%, transparent 100%), " +
             "radial-gradient(1px 1px at 59% 90%, rgba(255,255,255,0.35) 0%, transparent 100%), " +
             "radial-gradient(1px 1px at 76% 25%, rgba(255,255,255,0.5) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 14% 45%, rgba(255,255,255,0.3) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 22% 18%, rgba(255,255,255,0.4) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 37% 78%, rgba(255,255,255,0.35) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 44% 38%, rgba(255,255,255,0.3) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 62% 62%, rgba(255,255,255,0.4) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 69% 88%, rgba(255,255,255,0.3) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 83% 12%, rgba(255,255,255,0.35) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 90% 52%, rgba(255,255,255,0.4) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 97% 28%, rgba(255,255,255,0.3) 0%, transparent 100%), " +
+            "radial-gradient(1px 1px at 8% 72%, rgba(255,255,255,0.35) 0%, transparent 100%), " +
             "radial-gradient(1.5px 1.5px at 3% 40%, rgba(255,255,255,0.6) 0%, transparent 100%), " +
             "radial-gradient(1.5px 1.5px at 50% 65%, rgba(255,255,255,0.55) 0%, transparent 100%), " +
             "radial-gradient(1.5px 1.5px at 85% 50%, rgba(255,255,255,0.6) 0%, transparent 100%)",
         }}
       />
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <span className="top-banner-shooting-star" style={{ top: "12%", left: "-10%", animationDuration: "6s", animationDelay: "0s" }} />
+        <span className="top-banner-shooting-star" style={{ top: "30%", left: "5%", animationDuration: "7s", animationDelay: "3s" }} />
+        <span className="top-banner-shooting-star" style={{ top: "8%", left: "30%", animationDuration: "5.5s", animationDelay: "7s" }} />
+        <span className="top-banner-shooting-star" style={{ top: "45%", left: "20%", animationDuration: "8s", animationDelay: "11s" }} />
+        <span className="top-banner-shooting-star" style={{ top: "20%", left: "45%", animationDuration: "6.5s", animationDelay: "17s" }} />
+      </div>
       <div className="relative h-full px-6 flex items-center justify-between">
         <div className="flex flex-col leading-tight">
           <span className="text-[15px] font-semibold tracking-tight text-white" data-testid="text-banner-title">
