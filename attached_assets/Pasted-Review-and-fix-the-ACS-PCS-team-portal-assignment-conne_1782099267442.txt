@@ -1,0 +1,122 @@
+Review and fix the ACS/PCS team-portal assignment connections in the existing repo.
+
+IMPORTANT: Do not rebuild the ACS or PCS portals. They already exist.
+
+Existing architecture:
+- /patient-care-specialist-portal mounts client/src/pages/patient-care-specialist-portal.tsx
+- /ancillary-care-specialist-portal mounts client/src/pages/ancillary-care-specialist-portal.tsx
+- Both pages route into ClinicWorkflowPortal
+- ClinicWorkflowPortal routes both new team-member workspaces into TeamPortalShell
+- PCS maps internally to liaison/scheduler defaults
+- ACS maps internally to technician defaults
+- PCS default mode is callList
+- ACS default mode is clinicSchedule
+- Both portals must remain the same UI and same workspace shell
+
+Business rule:
+PCS = scheduler/liaison default.
+ACS = technician default.
+But both can do each other's work if assigned/permitted.
+Therefore do not hardcode work visibility only by PCS vs ACS route. The route/role should set the default mode, not permanently limit what work can be shown.
+
+Current workspace structure:
+- Left rail = tools, filters, patient utilities, calendar, uploads, notes, resources
+- Center = Playground / PatientCommandCanvas / active patient workspace
+- Right rail = workspace modes and work queues:
+  1. clinicSchedule
+  2. ancillarySchedule
+  3. callList
+
+Canonical feed helpers already exist in:
+client/src/lib/workflow/teamMemberWorkspaceApi.ts
+
+Current right-panel feed mapping:
+- clinicSchedule → /api/technician-liaison/clinic-visits
+- ancillarySchedule → /api/technician-liaison/ancillary-schedule
+- callList → /api/scheduler-portal/cases
+
+Goal:
+Perfect the connection so that call lists assigned in Engagement Center appear in the existing TeamPortalShell right-panel Call List mode for the assigned team member.
+
+Do not create a new portal, new Playground, new team page, or duplicate ACS/PCS UI.
+
+Required behavior:
+1. Engagement Center assigns call-list cases to team members.
+2. Those assigned cases are saved to the same canonical assignment fields that /api/scheduler-portal/cases reads.
+3. TeamPortalShell callList mode fetches /api/scheduler-portal/cases.
+4. The logged-in team member sees only their assigned cases unless they have admin/view-all permission.
+5. Admin View-as can select a team member and see that person’s assigned work.
+6. PCS and ACS can both see callList if their profile/capability/assignment allows it.
+7. PCS defaults to callList, ACS defaults to clinicSchedule, but both can switch modes and work assigned queues.
+8. No assigned call should disappear because the person is labeled scheduler/liaison vs technician/ACS.
+9. Facility scoping must still apply.
+10. Admin audit identity must remain the real admin even when using View-as.
+
+Important fix area:
+The current View-as dropdown appears to list login users by workspace role:
+- PCS → liaison
+- ACS → technician
+
+But real work ownership may come from the Engagement Center/team roster/assignment model. Fix this so View-as and assignment scoping are based on the actual team members who can receive assigned work, not only hardcoded login role filters.
+
+Please inspect and verify:
+- client/src/components/workflow/ClinicWorkflowPortal.tsx
+- client/src/components/portal/TeamPortalShell.tsx
+- client/src/lib/workflow/teamMemberWorkspaceApi.ts
+- Engagement Center assignment code
+- /api/scheduler-portal/cases backend route
+- any assignment resolver such as resolveCallListAssignmentScope
+- team roster / outreach scheduler / team member profile tables
+- admin settings/effective team_member workspace_profile logic
+
+Implementation requirements:
+A. Preserve existing ACS/PCS routes and shared TeamPortalShell.
+B. Preserve existing left rail, center Playground, and right rail layout.
+C. Do not introduce a separate external Playground flow.
+D. Fix data wiring only where needed.
+E. Make Engagement Center assignment and TeamPortalShell callList read from the same source of truth.
+F. Make assigned team member identity consistent across:
+   - Engagement Center assignment
+   - /api/scheduler-portal/cases
+   - TeamPortalShell callList
+   - Admin View-as
+   - team member profile/facility scope
+G. If the repo has both user login IDs and roster/team-member IDs, create/standardize a resolver layer instead of mixing IDs directly in the UI.
+H. The client should not invent assignment filters. The backend should resolve the logged-in or viewed-as assignment scope and return only allowed cases.
+I. Keep audit safe: admin actor remains admin; viewed-as user only controls read scope.
+
+Daily assignment requirement:
+Admin/Engagement Center should be able to assign a daily number of calls/tasks per team member.
+
+Example:
+- Sarah: 50 calls today
+- Amina: 40 calls today
+- Tech 1: 25 ancillary/scheduling tasks today
+
+Those assignments should land in the existing right-panel queue:
+- callList for call/outreach/scheduling work
+- ancillarySchedule for ancillary appointment/testing work
+- clinicSchedule for clinic-day visits
+
+Acceptance criteria:
+1. A case assigned in Engagement Center to a PCS/scheduler appears in that user’s /patient-care-specialist-portal Call List.
+2. A case assigned in Engagement Center to an ACS/technician can also appear in that user’s Call List if assigned.
+3. Admin View-as shows the assigned call list for the selected team member.
+4. The selected View-as team member is not required to have the exact hardcoded role if they are a valid assignment owner.
+5. Facility scoping still works.
+6. Call list rows come from /api/scheduler-portal/cases and render inside TeamPortalShell callList mode.
+7. PCS and ACS portals remain visually identical except for default mode/label.
+8. No duplicate portal, duplicate Playground, or duplicate call-list component is created.
+9. Existing tests/scripts still pass:
+   - npm run check
+   - npm run test:scheduler-assignment-wiring
+   - npm run test:call-result-canonical-write
+   - npm run test:operational-flow-assigned-to-billing-ready
+   - any relevant call-list or canonical workflow smoke tests
+
+Please produce:
+1. A short architecture review of the current connection.
+2. A list of exact files changed.
+3. The final data flow from Engagement Center → assignment storage → /api/scheduler-portal/cases → TeamPortalShell callList.
+4. A note confirming ACS/PCS are not rebuilt and still share the same TeamPortalShell.
+5. Any remaining risks or missing DB fields if the current schema cannot fully support assignment quotas.
