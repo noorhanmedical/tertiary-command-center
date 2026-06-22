@@ -4,6 +4,7 @@
 This project is an AI-powered patient screening application designed to analyze clinical data to qualify patients for diagnostic tests. It aims to aggressively qualify patients for a predefined set of tests based on AI model justifications. The system automates screening, generates clinical notes, and integrates with Google Workspace for data synchronization and document management, streamlining medical practice workflows and improving patient care efficiency. The business vision is to enhance patient care and operational efficiency in medical practices by automating and intelligently streamlining the diagnostic test qualification process.
 
 ## User Preferences
+- Always put questions/decisions to the user inside a copyable code box (so they can paste into ChatGPT)
 - Aggressive qualification: qualify for everything unless glaringly inappropriate
 - UI terminology: "schedule" not "batch"
 - Schedule history in collapsible sidebar, not on the home page
