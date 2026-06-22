@@ -56,6 +56,7 @@ import { registerPatientPacketRoutes } from "./routes/patientPacket";
 import { registerAncillaryDocumentTemplateRoutes } from "./routes/ancillaryDocumentTemplates";
 import { registerOperationalQueueRoutes } from "./routes/operationalQueue";
 import { registerHomeStatsRoutes } from "./routes/homeStats";
+import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 import {
@@ -281,6 +282,7 @@ export async function registerRoutes(
   registerAncillaryDocumentTemplateRoutes(app);
   registerOperationalQueueRoutes(app);
   registerHomeStatsRoutes(app);
+  registerPhysicianPortalRoutes(app);
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {

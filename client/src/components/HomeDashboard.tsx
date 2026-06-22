@@ -219,6 +219,44 @@ function SecondaryTile({
 }
 
 
+function PhysicianPortalTile() {
+  const { data: me } = useQuery<{ role?: string }>({ queryKey: ["/api/auth/me"] });
+  const role = me?.role;
+  const enabled = role === "admin" || role === "clinician";
+  const { data: summary } = useQuery<{ needsSignature: number; reportsPending: number; pendingAR: number }>({
+    queryKey: ["/api/physician-portal/summary"],
+    enabled,
+  });
+  if (!enabled) return null;
+  const needs = summary?.needsSignature ?? 0;
+  return (
+    <Link href="/physician-portal">
+      <Card className="glass-tile glass-tile-interactive group cursor-pointer h-full" data-testid="tile-physician-portal">
+        <div className="h-[122px] flex items-center gap-4 px-5">
+          <div className="shrink-0 relative">
+            <Stethoscope className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />
+            {needs > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center tabular-nums" data-testid="badge-physician-needs-signature">
+                {needs}
+              </span>
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="text-[14px] font-semibold text-slate-900 dark:text-foreground leading-tight">
+              Physician Portal
+            </div>
+            {summary && (
+              <div className="text-[11px] text-muted-foreground mt-0.5 leading-tight" data-testid="text-physician-tile-counts">
+                {needs} to sign · {summary.reportsPending} reports
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
+    </Link>
+  );
+}
+
 export function HomeDashboard({
   batches,
   dashboardData,
@@ -503,6 +541,7 @@ export function HomeDashboard({
                   label="Plexus Drive"
                   icon={<FolderOpen className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
+                <PhysicianPortalTile />
               </div>
 
               <Card className="glass-tile overflow-hidden" data-testid="tile-calendar-bottom">

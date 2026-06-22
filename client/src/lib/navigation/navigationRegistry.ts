@@ -82,7 +82,7 @@ export const DOCK_ITEMS: DockItem[] = [
   },
 ];
 
-export const GLOBAL_NAV_ROUTES: string[] = ["/home"];
+export const GLOBAL_NAV_ROUTES: string[] = ["/home", "/physician-portal"];
 
 export function shouldShowGlobalNav(pathname: string): boolean {
   return GLOBAL_NAV_ROUTES.some(

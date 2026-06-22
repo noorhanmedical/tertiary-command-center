@@ -23,6 +23,7 @@ import OutreachPage from "@/pages/outreach";
 import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
 import TechnicianPortalPage from "@/pages/technician-portal";
 import LiaisonPortalPage from "@/pages/liaison-portal";
+import PhysicianPortalPage from "@/pages/physician-portal";
 import AdminOpsPage from "@/pages/admin-ops";
 import AdminPage from "@/pages/admin";
 import StovetopHeatSettingsPage from "@/pages/stovetop-heat-settings";
@@ -183,6 +184,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
         <Route path="/clinic-workflow-demo" component={ClinicWorkflowDemoPage} />
                 <Route path="/technician-portal" component={TechnicianPortalPage} />
                 <Route path="/liaison-technician-portal" component={LiaisonPortalPage} />
+                <Route path="/physician-portal">
+                  <RoleGuard user={user} roles={["admin", "clinician"]}><PhysicianPortalPage /></RoleGuard>
+                </Route>
                 <Route path="/liaison-portal">
                   <Redirect to="/liaison-technician-portal" />
                 </Route>

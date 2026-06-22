@@ -5,3 +5,4 @@
 - [procedure_complete mirror](procedure-complete-mirror.md) — calendar ✓ badge reads `global_schedule_events` eventType=procedure_complete; completion must mirror `procedure_events` into that table or the badge stays dead.
 - [Portal roster identity](portal-roster-identity.md) — call-list assignments + admin "View as" key on outreach_schedulers.id (roster), not users.id; all roster rows have user_id NULL so login-user view-as no-ops.
 - [Publish branch + PR when uncommitted](github-publish-uncommitted.md) — dirty tree + no local `git commit`: push via GitHub Git Data API (blobs/tree/commit/ref) on a remote base SHA, then open draft PR.
+- [Ancillary service-type buckets](ancillary-service-type-buckets.md) — service_type cols store full test names (e.g. "Echocardiogram TTE (93306)"), not Plexus labels; funnel-by-service must bucket to BrainWave/VitalWave/Ultrasound/PGx/other; cash_price_settings often empty for those.
