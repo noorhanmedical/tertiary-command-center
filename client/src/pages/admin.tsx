@@ -43,6 +43,8 @@ const ADMIN_SECTIONS = [
     title: "Audit Log", desc: "A read-only trail of who created, updated, or deleted records — for compliance and dispute resolution.", available: true },
   { href: "/admin/analysis-jobs", icon: History, iconBg: "bg-indigo-100 text-indigo-700",
     title: "Analysis Run History", desc: "Audit recent batch analysis runs — timing, patient counts, errors, and performance.", available: true },
+  { href: "/admin/settings-center/api-integrations", icon: Bot, iconBg: "bg-indigo-100 text-indigo-700",
+    title: "API Integration Station", desc: "eClinicalWorks FHIR R4 + future EMR integrations: scopes, mappings, routing, sync jobs, audit log. Phase 1 UI foundation — backend pending.", available: true },
   { href: "#", icon: Lock, iconBg: "bg-amber-100 text-amber-700",
     title: "Access Control", desc: "Manage role-based access, permissions, and security settings.", available: false },
   { href: "#", icon: ClipboardList, iconBg: "bg-violet-100 text-violet-700",

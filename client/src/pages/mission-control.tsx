@@ -526,6 +526,52 @@ export default function MissionControlPage() {
                 </Accordion>
               </Card>
             </section>
+
+            {/* eCW Sync Health — surfaced on Mission Control as a monitoring
+                snapshot. Backend-pending in Phase 1: every counter renders
+                as zero / "Not configured". The Integration Station ships
+                this for real in Phase 2. */}
+            <section className="space-y-3" data-testid="mission-control-ecw-sync-health">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">eCW Sync Health</h2>
+                <Link href="/admin/settings-center/api-integrations">
+                  <Button variant="outline" size="sm" data-testid="link-mission-ecw-station">Open API Integration Station <ChevronRight className="w-4 h-4 ml-1" /></Button>
+                </Link>
+              </div>
+              <Card className="rounded-xl border-amber-200 bg-amber-50/60 p-4 flex items-start gap-3" data-testid="mission-ecw-backend-pending">
+                <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                <div className="text-xs text-amber-900 leading-snug">
+                  <span className="font-semibold">Integration Station pending backend sync.</span>{" "}
+                  Phase 1 ships the admin UI for eClinicalWorks FHIR R4 (18 scopes). The sync worker, credential vault, and normalization pipeline ship in Phase 2. The counters below are placeholders, not live operational state.
+                </div>
+              </Card>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3" data-testid="mission-ecw-counters">
+                {[
+                  { label: "Connection", value: "Not configured" },
+                  { label: "Last successful sync", value: "Never" },
+                  { label: "Next sync", value: "—" },
+                  { label: "Patients imported", value: 0 },
+                  { label: "Encounters imported", value: 0 },
+                  { label: "Orders imported", value: 0 },
+                  { label: "Reports imported", value: 0 },
+                  { label: "Documents imported", value: 0 },
+                  { label: "Insurance imported", value: 0 },
+                  { label: "Procedures imported", value: 0 },
+                  { label: "Failed resources", value: 0 },
+                  { label: "Unmapped providers", value: 0 },
+                  { label: "Unmapped clinics", value: 0 },
+                  { label: "Duplicate MRNs", value: 0 },
+                  { label: "Missing insurance", value: 0 },
+                  { label: "API sync errors", value: 0 },
+                  { label: "Downstream routing errors", value: 0 },
+                ].map((c) => (
+                  <Card key={c.label} className="rounded-xl border-slate-200 p-3" data-testid={`mission-ecw-counter-${c.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                    <div className="text-lg font-bold tabular-nums text-slate-900">{c.value}</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">{c.label}</div>
+                  </Card>
+                ))}
+              </div>
+            </section>
           </>
         )}
       </main>
