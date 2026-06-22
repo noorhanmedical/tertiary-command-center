@@ -24,6 +24,7 @@ import AdminPage from "@/pages/admin";
 import StovetopHeatSettingsPage from "@/pages/stovetop-heat-settings";
 import AdminUsersPage from "@/pages/admin-users";
 import AdminSettingsCenterPage from "@/pages/admin-settings-center";
+import AdminApiIntegrationsPage from "@/pages/admin-api-integrations";
 import BillingSettingsPage from "@/pages/billing-settings";
 import BillingReadinessPage from "@/pages/billing-readiness";
 import InvoiceBatchesPage from "@/pages/invoice-batches";
@@ -207,6 +208,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/admin/settings-center">
                   <AdminGuard user={user}><AdminSettingsCenterPage /></AdminGuard>
+                </Route>
+                <Route path="/admin/settings-center/api-integrations">
+                  <AdminGuard user={user}><AdminApiIntegrationsPage /></AdminGuard>
                 </Route>
                 <Route path="/admin/billing-settings">
                   <AdminGuard user={user}><BillingSettingsPage /></AdminGuard>
