@@ -61,9 +61,10 @@ function Field({ label, value }: { label: string; value: string }) {
 export interface MissionControlWorkbenchProps {
   selected: MissionControlLaneRow | null;
   onClose: () => void;
-  // Fire-and-forget action handler. The page wires this to a toast.
-  // Productionizing should swap this for real route handoffs.
-  onAction: (title: string, description: string) => void;
+  // Fire-and-forget action handler. The page wires this to an honest
+  // "Backend endpoint pending" toast. Production will swap it for a
+  // real backend mutation.
+  onAction: (action: string) => void;
 }
 
 export function MissionControlWorkbench({
@@ -142,25 +143,25 @@ export function MissionControlWorkbench({
 
               {/* Monitoring / triage actions — no qualify/approve here. */}
               <div className="grid grid-cols-2 gap-2">
-                <Button variant="outline" size="sm" onClick={() => onAction("Marked Ready", `${selected.patient} flagged ready in ${selected.laneLabel}.`)} data-testid="button-mark-ready">
+                <Button variant="outline" size="sm" onClick={() => onAction("Mark Ready")} data-testid="button-mark-ready">
                   <CheckCircle2 className="w-4 h-4 mr-1.5" /> Mark Ready
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => onAction("Marked Blocked", `${selected.patient} flagged blocked for review.`)} data-testid="button-mark-blocked">
+                <Button variant="outline" size="sm" onClick={() => onAction("Mark Blocked")} data-testid="button-mark-blocked">
                   <ShieldAlert className="w-4 h-4 mr-1.5" /> Mark Blocked
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => onAction("Assign Owner", `Owner reassignment requested for ${selected.patient}.`)} data-testid="button-assign-owner">
+                <Button variant="outline" size="sm" onClick={() => onAction("Assign Owner")} data-testid="button-assign-owner">
                   <UserCog className="w-4 h-4 mr-1.5" /> Assign Owner
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => onAction("Sent to Engagement", `${selected.patient} routed to Engagement Center.`)} data-testid="button-send-engagement">
+                <Button variant="outline" size="sm" onClick={() => onAction("Send to Engagement")} data-testid="button-send-engagement">
                   <Send className="w-4 h-4 mr-1.5" /> To Engagement
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => onAction("Sent to Scheduler", `${selected.patient} routed to Scheduler.`)} data-testid="button-send-scheduler">
+                <Button variant="outline" size="sm" onClick={() => onAction("Send to Scheduler")} data-testid="button-send-scheduler">
                   <CalendarClock className="w-4 h-4 mr-1.5" /> To Scheduler
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => onAction("Sent to Billing", `${selected.patient} routed to Billing.`)} data-testid="button-send-billing">
+                <Button variant="outline" size="sm" onClick={() => onAction("Send to Billing")} data-testid="button-send-billing">
                   <Receipt className="w-4 h-4 mr-1.5" /> To Billing
                 </Button>
-                <Button variant="outline" size="sm" className="col-span-2" onClick={() => onAction("Documents", `Opening document package for ${selected.patient}.`)} data-testid="button-view-documents">
+                <Button variant="outline" size="sm" className="col-span-2" onClick={() => onAction("View Documents")} data-testid="button-view-documents">
                   <FileText className="w-4 h-4 mr-1.5" /> View Documents
                 </Button>
               </div>

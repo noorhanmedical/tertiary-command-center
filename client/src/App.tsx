@@ -113,15 +113,24 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                     <Home />
                   </SidebarProvider>
                 </Route>
+                {/* PR #294 MVP-production-readiness: all four enterprise
+                    tiles are AdminGuard-gated. Finer per-role authorization
+                    is pending — clinicians / billers may need read access
+                    to Clinic Analytics, etc. Documented in
+                    docs/architecture/pr-294-mvp-production-readiness.md. */}
                 <Route path="/mission-control">
-                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-                    <MissionControlPage />
-                  </SidebarProvider>
+                  <AdminGuard user={user}>
+                    <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                      <MissionControlPage />
+                    </SidebarProvider>
+                  </AdminGuard>
                 </Route>
                 <Route path="/imaging-central">
-                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-                    <ImagingCentralPage />
-                  </SidebarProvider>
+                  <AdminGuard user={user}>
+                    <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                      <ImagingCentralPage />
+                    </SidebarProvider>
+                  </AdminGuard>
                 </Route>
                 {/* Compatibility redirects: the imaging execution module was
                     renamed from Ultrasound/Technician Central to Imaging Central.
@@ -133,20 +142,26 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <Redirect to="/imaging-central" />
                 </Route>
                 <Route path="/clinic-analytics">
-                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-                    <ClinicAnalyticsPage />
-                  </SidebarProvider>
+                  <AdminGuard user={user}>
+                    <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                      <ClinicAnalyticsPage />
+                    </SidebarProvider>
+                  </AdminGuard>
                 </Route>
                 {/* /analytics is preserved and renders Clinic Analytics. */}
                 <Route path="/analytics">
-                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-                    <ClinicAnalyticsPage />
-                  </SidebarProvider>
+                  <AdminGuard user={user}>
+                    <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                      <ClinicAnalyticsPage />
+                    </SidebarProvider>
+                  </AdminGuard>
                 </Route>
                 <Route path="/clinic-onboarding">
-                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-                    <ClinicOnboardingPage />
-                  </SidebarProvider>
+                  <AdminGuard user={user}>
+                    <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                      <ClinicOnboardingPage />
+                    </SidebarProvider>
+                  </AdminGuard>
                 </Route>
                 <Route path="/schedule" component={SchedulePage} />
                 {/* Phase 1 Slice 1.5: /patient-directory/live consolidated

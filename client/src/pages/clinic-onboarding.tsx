@@ -56,6 +56,8 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { enterpriseBackendPendingToast } from "@/lib/enterprise-demo/demoMode";
+import { DemoFallbackBanner } from "@/components/enterprise-demo/DemoFallbackBanner";
 import type {
   OnboardingChecklistItem as ChecklistItem,
   OnboardingPhase as Phase,
@@ -209,11 +211,7 @@ export default function ClinicOnboardingPage() {
   ];
 
   const runBatch = () => {
-    toast({
-      title: "Batch intake queued (demo)",
-      description:
-        "No backend wired in this demo. In production this would create Outreach tasks, refresh the Call list, and update Scheduling triage downstream.",
-    });
+    toast(enterpriseBackendPendingToast("Run batch patient intake"));
   };
 
   return (
@@ -233,6 +231,10 @@ export default function ClinicOnboardingPage() {
       </header>
 
       <main className="flex-1 overflow-auto bg-slate-50/40 px-6 py-6 space-y-6">
+        <DemoFallbackBanner
+          testId="clinic-onboarding-demo-banner"
+          context="Clinic Onboarding tracks implementation, SOPs, and go-live readiness — not live production ops. Checklist items, maturity scores, blockers, and signoffs render from a deterministic per-clinic seed. Persistence + the real batch intake API ship later."
+        />
         {/* 1. Clinic selector + profile */}
         <Card className="rounded-xl border-slate-200">
           <CardContent className="p-5 space-y-4">
@@ -622,14 +624,14 @@ export default function ClinicOnboardingPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="outline"
-                  onClick={() => toast({ title: "Admin signoff recorded (demo)", description: `${clinic.name} signed off by admin.` })}
+                  onClick={() => toast(enterpriseBackendPendingToast("Admin signoff"))}
                   data-testid="button-admin-signoff"
                 >
                   <ShieldCheck className="w-4 h-4 mr-1.5" /> Admin signoff
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => toast({ title: "Owner signoff recorded (demo)", description: `${clinic.name} signed off by owner.` })}
+                  onClick={() => toast(enterpriseBackendPendingToast("Owner signoff"))}
                   data-testid="button-owner-signoff"
                 >
                   <CheckCircle2 className="w-4 h-4 mr-1.5" /> Owner signoff

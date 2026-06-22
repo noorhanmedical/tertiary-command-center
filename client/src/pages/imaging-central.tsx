@@ -63,6 +63,11 @@ import {
 } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import {
+  enterpriseBackendPendingToast,
+  isEnterpriseDemoFallbackEnabled,
+} from "@/lib/enterprise-demo/demoMode";
+import { DemoFallbackBanner } from "@/components/enterprise-demo/DemoFallbackBanner";
+import {
   ScanLine,
   Waves,
   MapPin,
@@ -133,6 +138,7 @@ type ViewState = "success" | "loading" | "empty" | "error";
 
 export default function ImagingCentralPage() {
   const { toast } = useToast();
+  const demoFallbackOn = isEnterpriseDemoFallbackEnabled();
 
   const [view, setView] = useState<ViewState>("success");
 
@@ -211,8 +217,12 @@ export default function ImagingCentralPage() {
     });
   }, []);
 
-  const fireToast = (title: string, description?: string) =>
-    toast({ title, description });
+  // MVP production-readiness: every action button surfaces an honest
+  // "Backend endpoint pending" toast instead of fake success. Real
+  // mutations (upload report, attach metadata, mark no-show, send to
+  // billing, etc.) ship in a follow-up PR.
+  const fireToast = (action: string) =>
+    toast(enterpriseBackendPendingToast(action));
 
   const resetFilters = () => {
     setSearch("");
@@ -252,24 +262,31 @@ export default function ImagingCentralPage() {
               <p className="text-sm text-slate-500">Imaging execution · ultrasound focus</p>
             </div>
           </div>
-          {/* Demo state switcher */}
-          <div className="flex items-center gap-2">
-            <Select value={view} onValueChange={(v) => setView(v as ViewState)}>
-              <SelectTrigger className="w-[150px]" data-testid="select-view-state">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="success">Live data</SelectItem>
-                <SelectItem value="loading">Loading state</SelectItem>
-                <SelectItem value="empty">Empty state</SelectItem>
-                <SelectItem value="error">Error state</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {/* Developer preview controls — gated on the demo fallback flag. */}
+          {demoFallbackOn && (
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px] uppercase tracking-wide">Developer preview controls</Badge>
+              <Select value={view} onValueChange={(v) => setView(v as ViewState)}>
+                <SelectTrigger className="w-[150px]" data-testid="select-view-state">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="success">Live data</SelectItem>
+                  <SelectItem value="loading">Loading state</SelectItem>
+                  <SelectItem value="empty">Empty state</SelectItem>
+                  <SelectItem value="error">Error state</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
       </header>
 
       <main className="flex-1 overflow-auto bg-slate-50/40 px-6 py-6 space-y-6">
+        <DemoFallbackBanner
+          testId="imaging-central-demo-banner"
+          context="Imaging Central is ultrasound-only by design. Coverage, the technician roster, the work queue, and the readiness queue render from local mock data. Real uploads, QC, and billing handoffs ship later."
+        />
         {/* KPI HEADER BAND */}
         <section data-testid="imaging-kpi-band">
           {view === "loading" ? (
@@ -747,9 +764,7 @@ export default function ImagingCentralPage() {
                         variant="outline"
                         size="default"
                         className="justify-start"
-                        onClick={() =>
-                          fireToast(a.label, `${a.label} for ${activeRow.patientName} (${activeRow.ultrasoundType}).`)
-                        }
+                        onClick={() => fireToast(a.label)}
                         data-testid={`button-${a.label.toLowerCase().replace(/\s+/g, "-")}`}
                       >
                         <a.Icon className="w-4 h-4 mr-2" /> {a.label}

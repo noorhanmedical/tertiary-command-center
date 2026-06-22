@@ -29,6 +29,8 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { enterpriseBackendPendingToast } from "@/lib/enterprise-demo/demoMode";
+import { DemoFallbackBanner } from "@/components/enterprise-demo/DemoFallbackBanner";
 import {
   BarChart3,
   Building2,
@@ -194,6 +196,10 @@ export default function ClinicAnalyticsPage() {
       </header>
 
       <main className="flex-1 overflow-auto bg-slate-50/40 px-6 py-6 space-y-6">
+        <DemoFallbackBanner
+          testId="clinic-analytics-demo-banner"
+          context="Clinic Analytics is a due-diligence + revenue-opportunity surface, not an execution workflow. Profiles, payor mix, financials, demographics, ICD/CPT catalogs, and AI summaries render from local mock data. Hooking each section to real EMR + billing reads ships later."
+        />
         {view === "loading" && (
           <div className="space-y-4" data-testid="status-clinic-analytics-loading">
             <Skeleton className="h-10 w-72" />
@@ -624,7 +630,7 @@ export default function ClinicAnalyticsPage() {
                 <Button
                   variant="secondary"
                   data-testid="button-export-clinic-report"
-                  onClick={() => toast({ title: "Export started", description: `Clinic report for ${clinic.name} is being generated.` })}
+                  onClick={() => toast(enterpriseBackendPendingToast("Export Clinic Report"))}
                 >
                   <FileBarChart className="w-4 h-4 mr-1" /> Export Clinic Report
                 </Button>

@@ -80,6 +80,12 @@ import {
   MISSION_CONTROL_ALERTS as ALERTS,
   MISSION_CONTROL_SECTIONS as OPS_SECTIONS,
 } from "@/lib/enterprise-demo/missionControlDemoData";
+import {
+  enterpriseBackendPendingToast,
+  isEnterpriseDemoFallbackEnabled,
+} from "@/lib/enterprise-demo/demoMode";
+import { DemoFallbackBanner } from "@/components/enterprise-demo/DemoFallbackBanner";
+import { Badge } from "@/components/ui/badge";
 
 /* ───────────────────────── Style maps ───────────────────────── */
 
@@ -125,6 +131,7 @@ export default function MissionControlPage() {
   const { toast } = useToast();
 
   // Simulated view state to demonstrate loading / empty / error / success.
+  const demoFallbackOn = isEnterpriseDemoFallbackEnabled();
   const [view, setView] = useState<"success" | "loading" | "empty" | "error">("success");
 
   const [search, setSearch] = useState("");
@@ -203,7 +210,11 @@ export default function MissionControlPage() {
     setActiveQueue("all");
   };
 
-  const fireAction = (title: string, description: string) => toast({ title, description });
+  // MVP production-readiness: every action button surfaces an honest
+  // "Backend endpoint pending" toast instead of a fake success message.
+  // The backend mutation for these routing actions ships separately.
+  const fireAction = (action: string) =>
+    toast(enterpriseBackendPendingToast(action));
 
   return (
     <div className="flex flex-col h-full">
@@ -220,24 +231,35 @@ export default function MissionControlPage() {
               <p className="text-sm text-slate-500">Executive operations command center</p>
             </div>
           </div>
-          {/* Demo state switcher (monitoring only — not a workflow action). */}
-          <div className="w-44">
-            <Select value={view} onValueChange={(v) => setView(v as typeof view)}>
-              <SelectTrigger data-testid="select-demo-view" className="h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="success">Live data</SelectItem>
-                <SelectItem value="loading">Loading state</SelectItem>
-                <SelectItem value="empty">Empty state</SelectItem>
-                <SelectItem value="error">Error state</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {/* Developer preview controls — only visible when the demo
+              fallback flag is enabled (localStorage.enterpriseDemoMode=1).
+              Hidden in normal production navigation. */}
+          {demoFallbackOn && (
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px] uppercase tracking-wide">Developer preview controls</Badge>
+              <div className="w-44">
+                <Select value={view} onValueChange={(v) => setView(v as typeof view)}>
+                  <SelectTrigger data-testid="select-demo-view" className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="success">Live data</SelectItem>
+                    <SelectItem value="loading">Loading state</SelectItem>
+                    <SelectItem value="empty">Empty state</SelectItem>
+                    <SelectItem value="error">Error state</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
       <main className="flex-1 overflow-auto bg-slate-50/40 px-6 py-6 space-y-6">
+        <DemoFallbackBanner
+          testId="mission-control-demo-banner"
+          context="Mission Control is monitoring-only. The lanes, queues, alerts, and ops sections below render from local mock data. Backend reads (lanes feed, alerts feed, ops counts) wire in a follow-up PR; backend writes (Mark Ready / Mark Blocked / route handoffs) ship later still."
+        />
         {/* LOADING */}
         {view === "loading" && (
           <div className="space-y-6" data-testid="status-mission-control-loading">
