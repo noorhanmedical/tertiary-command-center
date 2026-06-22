@@ -17,6 +17,10 @@ import {
   Stethoscope,
   HeartHandshake,
   Shield,
+  Radar,
+  ScanLine,
+  BarChart3,
+  ClipboardCheck,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { AuthUser } from "@/App";
@@ -30,7 +34,9 @@ type NavItemDef = {
 
 const NAV_ITEMS: NavItemDef[] = [
   { href: "/home",             label: "Home",             Icon: HomeIcon,     roles: ["admin", "clinician", "scheduler"] },
+  { href: "/mission-control",  label: "Mission Control",  Icon: Radar,        roles: ["admin"] },
   { href: "/schedule",         label: "Schedule",         Icon: CalendarDays, roles: ["admin", "clinician", "scheduler"] },
+  { href: "/imaging-central",  label: "Imaging Central",  Icon: ScanLine,     roles: ["admin", "clinician", "technician", "liaison"] },
   // Phase-1 team-portal correction: there is no standalone Scheduler
   // Portal product. The legacy /scheduler-portal route mounts the
   // OutreachPage (marketing / scheduler-coverage metrics) and is
@@ -43,6 +49,8 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/billing",          label: "Billing",          Icon: CreditCard,   roles: ["admin", "biller"] },
   { href: "/invoices",         label: "Invoices",         Icon: Receipt,      roles: ["admin", "biller"] },
   { href: "/team-ops",         label: "Team Ops",         Icon: Users2,       roles: ["admin"] },
+  { href: "/clinic-analytics", label: "Clinic Analytics", Icon: BarChart3,      roles: ["admin"] },
+  { href: "/clinic-onboarding", label: "Clinic Onboarding", Icon: ClipboardCheck, roles: ["admin"] },
   { href: "/patient-directory", label: "Patient Directory", Icon: Database,     roles: ["admin", "clinician", "biller"] },
   // Slice 1.5: legacy duplicate Patient-Directory-live nav item
   // removed. The /patient-directory/live URL still redirects to

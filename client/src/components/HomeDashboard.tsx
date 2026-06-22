@@ -28,6 +28,9 @@ import {
   Users2,
   Waves,
   CheckSquare,
+  ScanLine,
+  BarChart3,
+  ClipboardCheck,
 } from "lucide-react";
 import {
   CALENDAR_FILTERS,
@@ -435,10 +438,22 @@ export function HomeDashboard({
                   icon={<Radar className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
-                  href="/ultrasound-central"
-                  testId="tile-ultrasound-central"
-                  label="Ultrasound Central"
-                  icon={<Waves className="w-9 h-9 text-emerald-600" strokeWidth={1.5} />}
+                  href="/imaging-central"
+                  testId="tile-imaging-central"
+                  label="Imaging Central"
+                  icon={<ScanLine className="w-9 h-9 text-emerald-600" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/clinic-analytics"
+                  testId="tile-clinic-analytics"
+                  label="Clinic Analytics"
+                  icon={<BarChart3 className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/clinic-onboarding"
+                  testId="tile-clinic-onboarding"
+                  label="Clinic Onboarding"
+                  icon={<ClipboardCheck className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/team-member-portals"

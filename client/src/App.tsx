@@ -8,7 +8,9 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import MissionControlPage from "@/pages/mission-control";
-import UltrasoundCentralPage from "@/pages/ultrasound-central";
+import ImagingCentralPage from "@/pages/imaging-central";
+import ClinicAnalyticsPage from "@/pages/clinic-analytics";
+import ClinicOnboardingPage from "@/pages/clinic-onboarding";
 import SchedulePage from "@/pages/SchedulePage";
 import SharedSchedule from "@/pages/shared-schedule";
 import PatientDatabasePage from "@/pages/patient-database";
@@ -116,9 +118,34 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                     <MissionControlPage />
                   </SidebarProvider>
                 </Route>
-                <Route path="/ultrasound-central">
+                <Route path="/imaging-central">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-                    <UltrasoundCentralPage />
+                    <ImagingCentralPage />
+                  </SidebarProvider>
+                </Route>
+                {/* Compatibility redirects: the imaging execution module was
+                    renamed from Ultrasound/Technician Central to Imaging Central.
+                    Old deep links keep working. */}
+                <Route path="/ultrasound-central">
+                  <Redirect to="/imaging-central" />
+                </Route>
+                <Route path="/technician-central">
+                  <Redirect to="/imaging-central" />
+                </Route>
+                <Route path="/clinic-analytics">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <ClinicAnalyticsPage />
+                  </SidebarProvider>
+                </Route>
+                {/* /analytics is preserved and renders Clinic Analytics. */}
+                <Route path="/analytics">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <ClinicAnalyticsPage />
+                  </SidebarProvider>
+                </Route>
+                <Route path="/clinic-onboarding">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <ClinicOnboardingPage />
                   </SidebarProvider>
                 </Route>
                 <Route path="/schedule" component={SchedulePage} />

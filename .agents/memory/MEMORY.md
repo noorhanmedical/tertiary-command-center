@@ -3,3 +3,4 @@
 - [Admin Review source-edit regen gate](admin-review-regeneration-gate.md) — clear the Approve/PDF block only on a fully successful regenerate; never from edit-toggle/cancel; regenerate payloads must use local Hx/Dx/Rx mirrors.
 - [Canonical calendar embedding](canonical-calendar-embed.md) — embed `CanonicalMonthCalendar` directly for chrome-free surfaces (Universal/Command add filter/profile/add chrome); per-cell popover via optional `renderDayPopoverContent`.
 - [procedure_complete mirror](procedure-complete-mirror.md) — calendar ✓ badge reads `global_schedule_events` eventType=procedure_complete; completion must mirror `procedure_events` into that table or the badge stays dead.
+- [Publish branch + PR when uncommitted](github-publish-uncommitted.md) — dirty tree + no local `git commit`: push via GitHub Git Data API (blobs/tree/commit/ref) on a remote base SHA, then open draft PR.
