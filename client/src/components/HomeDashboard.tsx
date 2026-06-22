@@ -26,7 +26,6 @@ import {
   Upload,
   Users,
   Users2,
-  Waves,
   CheckSquare,
   ScanLine,
   BarChart3,
