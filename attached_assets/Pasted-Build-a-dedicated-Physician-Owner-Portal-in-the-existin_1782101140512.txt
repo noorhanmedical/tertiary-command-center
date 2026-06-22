@@ -1,0 +1,610 @@
+Build a dedicated Physician Owner Portal in the existing GitHub repo.
+
+CRITICAL FIRST STEP:
+Before writing code, review the actual GitHub repo and identify the current sources of truth.
+
+Do not invent a parallel workflow.
+Do not create duplicate document, billing, report, or financial data stores unless absolutely necessary.
+Do not rebuild ACS/PCS.
+Do not duplicate TeamPortalShell.
+Do not create another Playground.
+
+This portal should be a thin physician-owner layer over the repo's existing canonical flows.
+
+Target route:
+ /physician-portal
+
+Access:
+ - clinician
+ - admin
+
+Also add a front-page/home dashboard tile:
+ Title: Physician Owner Portal
+ Subtitle: Sign orders and notes, review reports, and monitor clinic financial health.
+ Route: /physician-portal
+ Visible for: clinician and admin
+
+If data is available, tile should show:
+ - Needs signature
+ - Reports pending review
+ - Billing blocked by missing signature/report
+ - This month paid
+ - Pending AR
+
+Example:
+ Physician Owner Portal
+ 23 need signature · 8 reports pending · $42k pending AR
+ [Open Portal]
+
+==================================================
+REPO REVIEW REQUIREMENT
+==================================================
+
+Inspect and document the current architecture before implementing.
+
+Review frontend:
+ - client/src/App.tsx
+ - client/src/pages/home.tsx or whatever renders the front-page tiles
+ - existing document pages/components
+ - existing billing pages/components
+ - existing generated-note/document-readiness components
+ - any existing physician/clinician/signature-related components if present
+
+Review schema:
+Start with:
+ - shared/schema/index.ts
+
+Then inspect the relevant domain files:
+ - shared/schema/users.ts
+ - shared/schema/screening.ts
+ - shared/schema/executionCase.ts
+ - shared/schema/generatedNotes.ts
+ - shared/schema/documents.ts
+ - shared/schema/documentReadiness.ts
+ - shared/schema/ancillaryDocumentTemplates.ts
+ - shared/schema/procedureEvents.ts
+ - shared/schema/globalSchedule.ts
+ - shared/schema/billingReadiness.ts
+ - shared/schema/billingDocuments.ts
+ - shared/schema/completedBillingPackages.ts
+ - shared/schema/invoices.ts
+ - shared/schema/invoiceBatches.ts
+ - shared/schema/invoiceFinancialEvents.ts
+ - any remittance/payment/denial/payer/claim-status schemas if present
+
+Review backend/API routes related to:
+ - generated notes
+ - documents
+ - document readiness
+ - ancillary document templates
+ - procedure completion/events
+ - report uploads/results
+ - billing readiness
+ - billing documents
+ - completed billing packages
+ - invoice batches
+ - invoice financial events
+ - remittance/payments/denials
+ - patient screening/qualification
+ - execution cases
+
+Before coding, produce a short architecture note:
+1. Which files/routes/tables were inspected.
+2. Source of truth for signatures.
+3. Source of truth for reports/results.
+4. Source of truth for ancillary metrics.
+5. Source of truth for overall financial health.
+6. Any new schema/routes required and why.
+
+==================================================
+CANONICAL DATA FLOW
+==================================================
+
+Build the portal around this existing flow:
+
+ patient_screenings / qualification
+   ↓
+ patient_execution_cases / ancillary workflows
+   ↓
+ global_schedule_events / procedure events
+   ↓
+ generated_notes / documents / ancillary reports
+   ↓
+ physician signature status
+   ↓
+ document_readiness / billing_readiness
+   ↓
+ billing_documents / completed_billing_packages
+   ↓
+ invoices / invoice_batches / financial_events / remittance if present
+   ↓
+ Physician Portal metrics + financial health
+
+The portal should not be the source of truth.
+It should read from and write back into the canonical workflow.
+
+==================================================
+SOURCE-OF-TRUTH RULES
+==================================================
+
+1. Screening / qualification source of truth
+
+Use existing patient screening/qualification data for:
+ - patients screened
+ - patients qualified
+ - diagnoses/qualifying conditions
+ - ancillary eligibility
+ - qualification status
+
+Do not calculate screened/qualified counts from documents alone.
+
+2. Execution case / ancillary workflow source of truth
+
+Use execution cases and/or schedule/procedure-event data for:
+ - ancillary type
+ - scheduled ancillary tests
+ - completed tests
+ - patient/test chain
+ - service type
+ - date of service
+
+3. Ancillary Documents layer
+
+Ancillary documents are a workflow layer, not the whole source of truth.
+
+They should connect:
+
+ patientScreeningId / executionCaseId
+   → serviceType / ancillary type
+   → order note / procedure note / post-procedure note
+   → report/result upload
+   → signature status
+   → billing readiness
+
+Generated notes/documents should power the signing queue only when linked back to the patient/test/execution case.
+
+4. Signature source of truth
+
+Use existing generated notes/document readiness if they already support status tracking.
+
+If not, add minimal canonical signature tracking.
+
+Do not create a disconnected signature table that cannot update billing readiness.
+
+Required signature relationships:
+ - documentId or generatedNoteId
+ - patientScreeningId
+ - executionCaseId if available
+ - facility/clinic
+ - clinician/physician user id
+ - document type: order, procedure note, post-procedure note
+ - service type: BrainWave, VitalWave, Ultrasound, PGx, etc.
+ - status: needs_signature, ready_to_sign, signed, returned_for_correction
+ - signed timestamp
+ - signed by user id
+ - audit entry
+
+If a new table is needed, possible concept:
+
+ physician_signature_items
+   id
+   patientScreeningId
+   executionCaseId
+   facilityId
+   clinicianUserId
+   documentId or generatedNoteId
+   documentType
+   serviceType
+   status: needs_signature | ready_to_sign | signed | returned_for_correction | voided
+   signable: boolean
+   blockReason
+   signedAt
+   signedByUserId
+   returnedAt
+   returnedByUserId
+   returnReason
+   createdAt
+   updatedAt
+
+But only add this if necessary. Prefer extending existing generated notes/document readiness if cleaner.
+
+5. Billing readiness source of truth
+
+Billing readiness should tell Financial Health what is blocked and why.
+
+Examples:
+ - missing signature
+ - missing order
+ - missing procedure note
+ - missing report/result
+ - missing billing document
+ - missing insurance/eligibility
+ - ready to bill
+ - submitted
+ - paid
+ - denied
+
+6. Financial Health source of truth
+
+Financial Health must be driven from billing/financial data, not estimated from appointment counts alone.
+
+Use available data in this order:
+1. remittance/payment/denial/ERA/EOB/claim status data if present
+2. invoice financial events
+3. invoice batches / submitted invoices
+4. completed billing packages
+5. billing documents and billing readiness
+6. projected/estimated values only where actual payment data does not exist
+
+Always separate:
+ - actual paid/remitted money
+ - submitted but unpaid
+ - pending AR
+ - denied/rejected
+ - billing-ready but not submitted
+ - estimated/projected revenue
+
+7. Plexus ancillary contribution
+
+Financial Health should show:
+
+ Overall Clinic Financial Health
+   └─ Plexus Ancillary Contribution
+
+Do not make Financial Health only an ancillary dashboard.
+
+==================================================
+PORTAL STRUCTURE
+==================================================
+
+Create:
+
+ Physician Owner Portal
+   ├─ Signatures  [default]
+   ├─ Results / Reports
+   ├─ Ancillary Metrics
+   └─ Financial Health
+
+UI requirements:
+ - clean white layout
+ - simple, readable cards
+ - non-cluttered
+ - no command-center overload
+ - no unnecessary side panels
+ - fast bulk signing
+ - physician can log in, sign, review metrics, check financial health, and leave
+
+Suggested frontend files:
+ - client/src/pages/physician-portal.tsx
+ - client/src/components/physician/PhysicianPortalShell.tsx
+ - client/src/components/physician/PhysicianSignatureQueue.tsx
+ - client/src/components/physician/PhysicianResultsReports.tsx
+ - client/src/components/physician/PhysicianAncillaryMetrics.tsx
+ - client/src/components/physician/PhysicianFinancialHealth.tsx
+ - client/src/components/physician/PhysicianPortalTile.tsx
+
+Suggested backend routes:
+ - /api/physician-portal/summary
+ - /api/physician-portal/signature-items
+ - /api/physician-portal/signature-items/:id/sign
+ - /api/physician-portal/signature-items/bulk-sign
+ - /api/physician-portal/signature-items/:id/return
+ - /api/physician-portal/reports
+ - /api/physician-portal/ancillary-metrics
+ - /api/physician-portal/financial-health
+
+Only add these routes if existing canonical routes cannot cleanly serve the portal.
+
+==================================================
+1. SIGNATURES TAB — DEFAULT
+==================================================
+
+Default landing tab must be Signatures.
+
+Purpose:
+Physician signs:
+ - pre-procedure orders
+ - procedure notes
+ - post-procedure notes
+ - addenda/corrections if needed
+ - optional future result acknowledgments if needed
+
+Top cards:
+ - Needs Signature
+ - Ready to Sign
+ - Signed Today
+ - Returned for Correction
+ - Billing Blocked by Signature
+
+Default message:
+ You have 23 documents ready to sign.
+
+Primary actions:
+ - Review Selected
+ - Bulk Sign Ready Documents
+
+Queue row fields:
+ - checkbox
+ - patient name
+ - DOB
+ - clinic/facility
+ - date of service
+ - ancillary type
+ - document type
+ - status
+ - flags
+ - open/preview
+ - sign
+
+Flags:
+ - missing report
+ - missing result
+ - billing blocked
+ - correction needed
+ - not signable
+
+Preview panel/modal:
+ - patient demographics
+ - clinic/facility
+ - date of service
+ - diagnosis/qualifying conditions
+ - ancillary type
+ - order/note content
+ - attached report/result if available
+ - prior signature/status history
+ - billing readiness status
+ - sign button
+ - return for correction button
+
+Actions:
+ - sign single document
+ - bulk sign selected documents
+ - return for correction with reason
+ - open PDF/document
+ - download PDF
+ - view attached report/result
+
+Bulk signing rules:
+ - physician can select multiple ready documents
+ - confirmation required
+ - confirmation summarizes counts by document type and ancillary type
+ - do not allow bulk signing documents with missing required data
+ - block and explain any item that is not signable
+ - write individual audit entries for every signed document
+
+Example confirmation:
+ You are signing 28 documents:
+ - 12 BrainWave orders
+ - 8 VitalWave procedure notes
+ - 8 Ultrasound post-procedure notes
+
+ Documents with missing required fields were excluded.
+
+Audit:
+Every signature/return action must write audit:
+ - user id
+ - timestamp
+ - document/generated note id
+ - patientScreeningId
+ - executionCaseId if available
+ - action: signed, bulk_signed, returned_for_correction
+ - return reason if applicable
+ - IP/session metadata if existing audit system supports it
+
+Signature write behavior:
+ - update signature status
+ - update signedAt/signedBy
+ - remove item from Needs Signature
+ - unblock billing readiness if signature was the blocker
+ - preserve audit trail
+
+==================================================
+2. RESULTS / REPORTS TAB
+==================================================
+
+Purpose:
+Physician can see ancillary reports/results without searching the documents page.
+
+Fields:
+ - patient name
+ - DOB
+ - clinic/facility
+ - test type
+ - date performed
+ - result/report status
+ - report uploaded timestamp
+ - open report
+ - download report
+ - linked order/note signature status
+ - billing readiness status
+
+Filters:
+ - clinic/facility
+ - date range
+ - ancillary/test type
+ - result status: pending, uploaded, reviewed
+ - signature status
+ - billing status
+
+Important:
+Reports/results must link to the same patient/test/order/procedure-note chain.
+
+==================================================
+3. ANCILLARY METRICS TAB
+==================================================
+
+Purpose:
+Physician-owner operational funnel for the ancillary program.
+
+Metrics by clinic/date range:
+ - patients screened
+ - patients qualified
+ - patients contacted
+ - patients scheduled
+ - patients completed testing
+ - reports uploaded
+ - documents signed
+ - claims/billing ready
+
+Conversion rates:
+ - qualified / screened
+ - contacted / qualified
+ - scheduled / qualified
+ - completed / scheduled
+ - reports uploaded / completed
+ - signed / completed
+ - billing ready / signed
+
+Breakdown by:
+ - BrainWave
+ - VitalWave
+ - Ultrasound
+ - PGx
+ - other enabled services
+
+Example table:
+ Ancillary      Screened   Qualified   Scheduled   Completed   Signed   Billing Ready
+ BrainWave      120        65          44          39          35       32
+ VitalWave      120        72          51          46          41       38
+ Ultrasound     120        28          20          18          16       15
+
+This tab should answer:
+ - Is the ancillary program being used?
+ - Are patients converting from screening to testing?
+ - Which ancillary performs best?
+ - Where are patients dropping off?
+ - Is the bottleneck outreach, scheduling, testing, reports, signatures, or billing?
+
+==================================================
+4. FINANCIAL HEALTH TAB
+==================================================
+
+Financial Health must show overall clinic financial health using billing data.
+
+It is not only Plexus ancillary revenue.
+
+Structure:
+ Financial Health
+   ├─ Overall Clinic Snapshot
+   ├─ Revenue & AR
+   ├─ Payer / Denial Health
+   ├─ Service Line Breakdown
+   ├─ Plexus Ancillary Contribution
+   └─ Bottlenecks / Action Needed
+
+Overall clinic financial cards:
+ - total billed
+ - total paid
+ - total pending AR
+ - total denied
+ - net collections
+ - collection rate
+ - denial rate
+ - days in AR if available
+ - claims submitted
+ - claims pending
+ - claims rejected/denied
+ - payments received
+
+Plexus Ancillary Contribution subsection:
+ - Plexus ancillary estimated gross revenue
+ - Plexus billing-ready amount
+ - Plexus submitted amount
+ - Plexus paid amount
+ - Plexus denied amount
+ - Plexus pending AR
+ - Plexus share of total clinic revenue
+ - estimated clinic share from Plexus ancillaries
+ - estimated Plexus/vendor share if applicable
+
+Default example:
+ This Month
+
+ Total Paid: $___
+ Pending AR: $___
+ Denied: $___
+ Collection Rate: __%
+
+ Plexus Ancillary Contribution
+ Generated: $___
+ Paid: $___
+ Pending: $___
+ % of clinic revenue: __%
+
+Bottlenecks / Action Needed:
+ - needs physician signature
+ - missing report/result
+ - missing procedure note
+ - missing billing document
+ - insurance issue
+ - claim rejected
+ - claim denied
+ - payment pending
+ - invoice pending
+
+Tie blockers back to action queues where practical, especially Signatures.
+
+==================================================
+ACCEPTANCE CRITERIA
+==================================================
+
+Repo review:
+ - Implementation starts by reviewing the actual repo files/tables/routes.
+ - Architecture summary identifies real sources of truth.
+ - No parallel fake data model is created.
+
+Route/access:
+ - /physician-portal exists.
+ - clinician/admin can access it.
+ - unauthorized roles are blocked or redirected.
+
+Front page tile:
+ - Physician Owner Portal tile exists on the main home/front page.
+ - Tile links to /physician-portal.
+ - Tile is visible to clinician/admin.
+ - Tile shows key counts if data is available.
+
+Signing:
+ - default tab is Signatures.
+ - Needs Signature queue displays order/procedure/post-procedure notes requiring signature.
+ - Physician can open/preview document.
+ - Physician can sign one document.
+ - Physician can bulk sign selected signable documents.
+ - Physician can return document for correction with reason.
+ - Signed documents move out of Needs Signature.
+ - Returned documents move to Returned for Correction.
+ - Signed documents unblock billing readiness when appropriate.
+ - Audit log records every signature and correction.
+
+Reports:
+ - Physician can see ancillary reports/results.
+ - Reports are linked to patient/test/document/signature/billing status.
+ - Filters work by clinic, date range, and ancillary type.
+
+Ancillary metrics:
+ - Screened, qualified, contacted, scheduled, completed, reports uploaded, signed, billing-ready counts are shown.
+ - Metrics break down by ancillary type.
+ - Conversion rates are shown.
+ - Bottlenecks are visible.
+
+Financial health:
+ - Overall clinic financial health is shown first.
+ - Plexus ancillary contribution is shown as a sub-section.
+ - Actual paid/submitted/denied/pending/estimated values are clearly separated.
+ - Billing blockers are shown and tied to actionable queues where possible.
+
+Technical:
+ - Do not rebuild ACS/PCS.
+ - Do not duplicate document storage.
+ - Do not duplicate billing source of truth.
+ - Add minimal schema only if existing workflow cannot support signature status.
+ - Run npm run check.
+ - Add smoke tests for physician portal signing and financial summary if practical.
+
+Final response should include:
+1. Architecture summary.
+2. Files changed.
+3. Data sources used for signatures, reports, metrics, and financial health.
+4. Schema changes and rationale.
+5. Confirmation ACS/PCS were not rebuilt.
+6. npm run check results.
