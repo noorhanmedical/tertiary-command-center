@@ -307,6 +307,14 @@ export type ViewAsTeamMember = {
   username: string;
   role: string;
   active: boolean;
+  /** The clinic the roster member belongs to. */
+  facility?: string | null;
+  /** Optional linked login account (null when the roster member has no
+   *  login). Used to target the workspace profile during view-as. */
+  userId?: string | null;
+  /** Soft per-day assignment target set in the Engagement Center; null
+   *  when no target has been set. Surfaced in the view-as picker. */
+  dailyTarget?: number | null;
 };
 
 export async function fetchTeamMembersForWorkspace(

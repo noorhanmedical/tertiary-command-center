@@ -19,8 +19,11 @@ import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 // portal/cases through the same role + facility access checks the
 // other portal endpoints already use. See the matching block in
 // server/routes/globalSchedule.ts.
-import { requirePortalRole, allowedFacilities, resolveAdminViewAsUserId, type ViewAsWorkspaceType } from "./portal";
-import { resolveCallListAssignmentScope } from "../services/teamMemberScope";
+import { requirePortalRole, allowedFacilities, type ViewAsWorkspaceType } from "./portal";
+import {
+  resolveCallListAssignmentScope,
+  resolveViewAsRosterMember,
+} from "../services/teamMemberScope";
 import {
   resolveCallResultAuditIdentity,
   callResultAuditMetadata,
@@ -40,11 +43,22 @@ async function resolvePhase1FacilityScope(
   rawFacilityId: string | undefined,
   rawViewAsTeamMemberId?: string,
   workspace?: ViewAsWorkspaceType,
-): Promise<{ ok: true; facilityId: string | null; viewAsUserId: string | null } | { ok: false }> {
-  const viewAsUserId = await resolveAdminViewAsUserId(req, rawViewAsTeamMemberId, workspace);
-  const allowed = await allowedFacilities(req, { viewAsUserId });
+): Promise<{ ok: true; facilityId: string | null } | { ok: false }> {
+  // The roster has no role split, so workspace-role compat does not apply to
+  // a roster view-as token; the param is kept for call-site symmetry.
+  void workspace;
+  const viewAsRoster = await resolveViewAsRosterMember(req, rawViewAsTeamMemberId);
+  const allowed = await allowedFacilities(req, {
+    viewAsRosterFacility: viewAsRoster?.facility ?? null,
+  });
+  // Admin view-as: lock the feed to the viewed-as member's facility and
+  // ignore any client-supplied facilityId (defense in depth). The session
+  // role stays "admin" so writes still log the real admin identity.
+  if (viewAsRoster) {
+    return { ok: true, facilityId: viewAsRoster.facility };
+  }
   const facilityId = (rawFacilityId ?? "").trim() || null;
-  if (allowed.all) return { ok: true, facilityId, viewAsUserId };
+  if (allowed.all) return { ok: true, facilityId };
   if (!facilityId) {
     res
       .status(400)
@@ -57,7 +71,7 @@ async function resolvePhase1FacilityScope(
       .json({ error: "Forbidden — clinic not assigned to this user" });
     return { ok: false };
   }
-  return { ok: true, facilityId, viewAsUserId };
+  return { ok: true, facilityId };
 }
 import {
   createSchedulingTriageCase,
@@ -975,10 +989,14 @@ export function registerExecutionCaseRoutes(app: Express) {
       // assigned team-member's workspace queue. See
       // docs/architecture/complete-team-portal-operations-runtime.md
       // §B (Anthony / Callista root cause).
+      // View-as identity is a ROSTER id (outreach_schedulers.id), not a
+      // login user — resolve it directly so the locked filter matches the
+      // Engagement-assigned cases (assignedTeamMemberId = roster id).
+      const viewAsRoster = await resolveViewAsRosterMember(req, q.viewAsTeamMemberId);
       const assignmentScope = await resolveCallListAssignmentScope(
         req,
         scope.facilityId,
-        scope.viewAsUserId,
+        viewAsRoster,
       );
       if (assignmentScope.locked) {
         // When locked, ignore any client-supplied override (defense

@@ -10,6 +10,10 @@ export const outreachSchedulers = pgTable("outreach_schedulers", {
   name: text("name").notNull(),
   facility: text("facility").notNull(),
   capacityPercent: integer("capacity_percent").notNull().default(100),
+  // Optional per-day assignment target (e.g. "Sarah 50 calls"). Additive and
+  // nullable — null means "no explicit target" and preserves prior behavior.
+  // capacityPercent is a relative load %, dailyTarget is an absolute count.
+  dailyTarget: integer("daily_target"),
   userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [

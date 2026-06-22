@@ -20,6 +20,7 @@ import {
   PORTAL_OUTREACH_HEAVY_DAY_CAP_FACTOR,
 } from "@shared/platformSettings";
 import { derivePatientType } from "@shared/patientType";
+import { listAssignableTeamMembers, resolveViewAsRosterMember } from "../services/teamMemberScope";
 
 type ConsentDoc = { id: number; sourceNotes: string | null; createdAt: Date | string; kind: string };
 
@@ -75,16 +76,26 @@ const SIGNED_BY_VALUES = new Set(["patient", "clinician", "technician", "liaison
 // this override (silently dropped — defense in depth).
 export async function allowedFacilities(
   req: Request,
-  opts: { viewAsUserId?: string | null } = {},
+  opts: { viewAsUserId?: string | null; viewAsRosterFacility?: string | null } = {},
 ): Promise<{ all: boolean; facilities: Set<string> }> {
   const isAdmin = (req.session.role ?? "") === "admin";
+  // Admin view-as: scope the response to the viewed-as team-member's
+  // facility allow-list EVEN THOUGH the caller is admin. The session role
+  // stays "admin" so writes still log the real admin identity.
+  //
+  // Preferred path is the roster facility (canonical: viewAsTeamMemberId
+  // carries an outreach_schedulers.id, and the roster is NOT linked to a
+  // login account in this org so userId matching never resolves). The
+  // legacy viewAsUserId path is kept for any caller still resolving a
+  // login-user view-as.
+  const viewAsFacility = isAdmin ? (opts.viewAsRosterFacility ?? null) : null;
+  if (viewAsFacility) {
+    return { all: false, facilities: new Set([viewAsFacility]) };
+  }
   const viewAs = isAdmin ? (opts.viewAsUserId ?? null) : null;
   if (viewAs) {
     const all = await storage.getOutreachSchedulers();
     const mine = all.filter((s) => s.userId === viewAs).map((s) => s.facility);
-    // Admin view-as: scope the response to the team-member's allow-list
-    // EVEN THOUGH the caller is admin. The session role stays "admin"
-    // so writes still log the real admin identity.
     return { all: false, facilities: new Set(mine) };
   }
   if (isAdmin) return { all: true, facilities: new Set() };
@@ -132,14 +143,36 @@ export async function resolveAdminViewAsUserId(
   return u.id;
 }
 
+// The View-as picker lists the actual clinic ROSTER (outreach_schedulers) —
+// the people who can receive assigned work — NOT login accounts filtered by
+// an exact role. This org has zero technician/liaison login accounts, so the
+// old role-filtered list was always empty even though call lists are
+// populated. Both PCS and ACS share the roster; the workspace label is kept
+// in the response only for display continuity. `id` is the roster id (the
+// canonical view-as token); `userId` is the optional linked login account.
 export async function listTeamMembersForWorkspace(
   workspace: ViewAsWorkspaceType,
-): Promise<Array<{ id: string; username: string; role: string; active: boolean }>> {
-  const expected = VIEWAS_WORKSPACE_TO_ROLE[workspace];
-  const users = await storage.getUsersByRole(expected);
-  return users
-    .filter((u) => u.active !== false)
-    .map((u) => ({ id: u.id, username: u.username, role: u.role, active: u.active }));
+): Promise<
+  Array<{
+    id: string;
+    username: string;
+    role: string;
+    active: boolean;
+    facility: string;
+    userId: string | null;
+    dailyTarget: number | null;
+  }>
+> {
+  const roster = await listAssignableTeamMembers();
+  return roster.map((m) => ({
+    id: m.id,
+    username: m.name,
+    role: workspace,
+    active: true,
+    facility: m.facility,
+    userId: m.userId,
+    dailyTarget: m.dailyTarget,
+  }));
 }
 
 function ensureFacility(allowed: { all: boolean; facilities: Set<string> }, facility: string | null): string | null {
@@ -206,8 +239,10 @@ export function registerPortalRoutes(app: Express) {
         return res.status(400).json({ error: "date must be YYYY-MM-DD" });
       }
       const q = req.query as Record<string, string | undefined>;
-      const viewAsUserId = await resolveAdminViewAsUserId(req, q.viewAsTeamMemberId);
-      const allowed = await allowedFacilities(req, { viewAsUserId });
+      const viewAsRoster = await resolveViewAsRosterMember(req, q.viewAsTeamMemberId);
+      const allowed = await allowedFacilities(req, {
+        viewAsRosterFacility: viewAsRoster?.facility ?? null,
+      });
       const denied = ensureFacility(allowed, facility || null);
       if (denied) return res.status(403).json({ error: denied });
 
@@ -920,8 +955,10 @@ export function registerPortalRoutes(app: Express) {
   app.get("/api/portal/my-facilities", requirePortalRole, async (req, res) => {
     try {
       const q = req.query as Record<string, string | undefined>;
-      const viewAsUserId = await resolveAdminViewAsUserId(req, q.viewAsTeamMemberId);
-      const allowed = await allowedFacilities(req, { viewAsUserId });
+      const viewAsRoster = await resolveViewAsRosterMember(req, q.viewAsTeamMemberId);
+      const allowed = await allowedFacilities(req, {
+        viewAsRosterFacility: viewAsRoster?.facility ?? null,
+      });
       if (allowed.all) {
         // Admin gets every facility ever used by an appointment.
         const rows = await db.selectDistinct({ facility: ancillaryAppointments.facility })

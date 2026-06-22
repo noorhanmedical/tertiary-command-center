@@ -409,6 +409,48 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
     },
   );
 
+  // ─── Per-day assignment target (additive, admin-only) ─────────────
+  // Sets outreach_schedulers.daily_target for one roster member. This
+  // is a soft planning number surfaced in the workspace — it does not
+  // change how assignments are routed, so it is fully additive and
+  // behind the existing assignment flow.
+  app.patch(
+    "/api/engagement/assignment-board/team-members/:schedulerId/daily-target",
+    async (req: Request, res: Response) => {
+      if ((req.session.role ?? "") !== "admin") {
+        return res.status(403).json({ error: "Admin only", code: "forbidden" });
+      }
+      const schedulerId = Number(req.params.schedulerId);
+      if (!Number.isInteger(schedulerId) || schedulerId <= 0) {
+        return res
+          .status(400)
+          .json({ error: "Invalid schedulerId", code: "bad_request" });
+      }
+      const parsed = z
+        .object({ dailyTarget: z.number().int().min(0).nullable() })
+        .safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: "dailyTarget must be a non-negative integer or null", code: "bad_request" });
+      }
+      const updated = await storage.updateOutreachScheduler(schedulerId, {
+        dailyTarget: parsed.data.dailyTarget,
+      });
+      if (!updated) {
+        return res
+          .status(404)
+          .json({ error: "Team member not found", code: "not_found" });
+      }
+      return res.json({
+        id: updated.id,
+        name: updated.name,
+        facility: updated.facility,
+        dailyTarget: updated.dailyTarget ?? null,
+      });
+    },
+  );
+
   // ─── Bulk / single assignment ─────────────────────────────────────
   app.post(
     "/api/engagement/assignment-board/assign",

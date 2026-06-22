@@ -786,11 +786,22 @@ export function TeamPortalShell({
     }
   }, [isAdmin, viewAsWorkspaceType, viewAsCandidates, viewAsTeamMemberId]);
 
+  // The selected view-as token is a ROSTER id (outreach_schedulers.id), not
+  // a login user. The call list resolves it server-side. For the workspace
+  // PROFILE (capabilities / facility allow-list), only switch to the viewed-as
+  // identity when the roster member is linked to a login account; otherwise
+  // keep the admin's own profile so admin retains broad facility access while
+  // observing.
+  const selectedViewAsCandidate =
+    (isAdmin && viewAsTeamMemberId
+      ? viewAsCandidates.find((u) => u.id === viewAsTeamMemberId)
+      : undefined) ?? null;
   // Profile fetch is keyed on the *viewed-as* user when an admin is
-  // observing, so capabilities / facility allow-list / allowedServiceTypes
-  // reflect what the team member would see.
-  const profileTargetUserId = isAdmin && viewAsTeamMemberId ? viewAsTeamMemberId : currentUserId;
-  const profileTargetRole = isAdmin && viewAsTeamMemberId
+  // observing a roster member with a linked login, so capabilities /
+  // facility allow-list / allowedServiceTypes reflect what they would see.
+  const profileTargetUserId =
+    selectedViewAsCandidate?.userId ? selectedViewAsCandidate.userId : currentUserId;
+  const profileTargetRole = selectedViewAsCandidate?.userId
     ? (viewAsWorkspaceType === "acs" ? "technician" : "liaison")
     : currentUserRole;
   const { data: workspaceProfile } = useQuery({
@@ -865,6 +876,19 @@ export function TeamPortalShell({
       }
     }
   }, [facilities, facility, workspaceProfile?.defaultFacilityId]);
+
+  // Admin view-as: snap the selected facility to the viewed-as roster
+  // member's clinic so every right-panel feed (call list, clinic +
+  // ancillary schedule) observes the same facility the member would see.
+  // Without this the server narrows feeds to the member's facility while a
+  // stale admin-selected clinic could yield empty/forbidden feeds.
+  useEffect(() => {
+    if (!isAdmin) return;
+    const target = selectedViewAsCandidate?.facility ?? null;
+    if (!target) return;
+    if (facility === target) return;
+    if (facilities.includes(target)) setFacility(target);
+  }, [isAdmin, selectedViewAsCandidate?.facility, facilities, facility]);
 
   // Seed the right-panel default mode from the profile once it loads.
   const profileSeededRef = useRef(false);
@@ -1537,7 +1561,7 @@ export function TeamPortalShell({
                         value={u.id}
                         data-testid={`admin-viewas-option-${u.id}`}
                       >
-                        {u.username} · {viewAsWorkspaceType.toUpperCase()}
+                        {u.username}{u.facility ? ` · ${u.facility}` : ""}{typeof u.dailyTarget === "number" ? ` · target ${u.dailyTarget}` : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
