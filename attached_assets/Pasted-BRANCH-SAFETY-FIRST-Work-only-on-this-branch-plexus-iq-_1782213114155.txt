@@ -1,0 +1,276 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Redesign Engagement Center UI to feel modern, premium, intuitive, and iOS-like.
+
+Current problem:
+The Engagement Center looks like an old Windows 1999 dashboard. It has bucket-heavy UI at the top and too many raw dates stacked down the page. It is not attractive or intuitive. Remove the ugly bucket-heavy top section and redesign the whole experience around assignment, outreach readiness, and patient action.
+
+Core product purpose:
+Engagement Center is the assignment and outreach command center.
+It is where admin/manager reviews qualified patient cases, understands why the patient needs outreach, assigns the work to ACS/PCS/team members, sets priority and next action, and sends the case into Team Member Portal call lists.
+
+Architecture rules:
+- Engagement Center assigns work.
+- Team Member Portal is where ACS/PCS works call lists.
+- patient_execution_cases is the source of truth for assigned call work.
+- Engagement Center must write assignment state to patient_execution_cases.
+- Do not use /api/scheduler-assignments for Engagement Center-assigned call work.
+- Do not resurrect old Outreach Center.
+- Do not route users to scheduler cards or old outreach pages.
+- Do not change schema unless absolutely required.
+- Do not break existing assignment logic.
+
+PART 1 — Remove / replace bucket-heavy top UI
+
+Find the current bucket/status section at the top of Engagement Center.
+
+Replace it with a clean premium command header and compact summary strip.
+
+Do not show giant bucket cards across the top.
+
+New header should include:
+- Engagement Center title
+- subtitle: Patient outreach assignment and engagement control
+- clinic/facility filter
+- team member/team filter if available
+- status filter
+- search patient input
+- compact summary metrics:
+  Ready to Assign
+  Due Today
+  Follow-up
+  Callbacks
+  Blocked
+
+Use a clean iOS-like style:
+- white cards
+- soft gray background
+- rounded corners
+- strong typography
+- subtle borders/shadows
+- minimal badges
+- no clutter
+
+PART 2 — New main layout
+
+Redesign the page into a clean 3-zone command center:
+
+Left:
+Smart filter rail
+
+Center:
+Patient engagement worklist
+
+Right:
+Selected patient/case preview and assignment panel
+
+Layout:
+- Left rail should be compact but readable.
+- Center worklist should be the primary focus.
+- Right panel should show selected case details and assignment actions.
+- Avoid dense tables unless used inside a clean card.
+- The page should feel premium and easy to scan.
+
+PART 3 — Smart filter rail
+
+Replace raw bucket UI with smart filters.
+
+Filters should include, when data supports them:
+- Ready to Assign
+- Due Today
+- Overdue
+- Due Soon
+- Follow-up
+- Callbacks
+- No Answer
+- Left Voicemail
+- Needs Scheduling
+- Missing PDF
+- Blocked
+- Declined
+- Re-Eligible
+
+Show counts if available.
+Do not make them giant cards.
+Use a clean sidebar/rail style.
+
+PART 4 — Patient worklist
+
+The center worklist should show patient/case rows or cards.
+
+Each patient row/card should include:
+- patient name
+- call reason
+- target test/procedure/ancillary
+- clinic/facility
+- priority
+- due/next action in human terms
+  examples:
+  Overdue
+  Today 2:00 PM
+  Tomorrow
+  This week
+- assigned team member or Unassigned
+- last call outcome if available
+- cooldown/outreach eligibility if available
+- Clinician PDF status if available
+- Plexus PDF status if available
+
+Actions on each row/card:
+- assign
+- set priority
+- set next action
+- open patient
+- open PDFs/proof
+- send/update in Team Member Portal call list if existing logic supports it
+
+Do not make the list just dates going down the page.
+Group dates intelligently:
+- Overdue
+- Today
+- Tomorrow
+- This Week
+- Later
+
+PART 5 — Right-side case preview / assignment panel
+
+When a patient/case is selected, the right panel should show:
+
+- patient name
+- clinic/facility
+- target test/procedure
+- call reason
+- qualification reason
+- supporting diagnoses/factors if available
+- Clinician PDF
+- Plexus PDF
+- cooldown/outreach eligibility
+- last call outcome
+- journey/timeline summary
+- current owner/assigned team member
+- assignment dropdown
+- priority selector
+- next action date/time
+- notes
+- save/update assignment button
+
+This right panel should be attractive and useful, not a cramped technical drawer.
+
+PART 6 — Date handling
+
+Dates are important but should not dominate the UI.
+
+Replace long raw date lists with:
+- Overdue
+- Today
+- Tomorrow
+- This Week
+- Later
+
+Inside each patient card, show the exact next action date/time only as supporting info.
+
+PART 7 — Visual style
+
+Make the entire Engagement Center feel:
+- bright
+- bold
+- clean
+- iOS-like
+- enterprise-grade
+- simple to use
+- easy to scan
+
+Use:
+- large rounded white cards
+- soft gray page background
+- subtle elevation
+- clean typography
+- clear section headers
+- icon-supported actions
+- generous spacing
+- tasteful accent color
+
+Avoid:
+- pill-heavy UI
+- bucket-heavy UI
+- raw data dumps
+- giant date stacks
+- dense old tables
+- heavy borders
+- Windows 1999 styling
+
+PART 8 — Preserve data and behavior
+
+Do not fake data.
+Use existing Engagement Center data sources and existing patient_execution_cases assignment logic.
+If some fields are missing, show graceful empty states.
+Do not invent call outcomes, PDFs, or cooldown values.
+
+Preserve:
+- assignment to team member
+- nextActionAt updates
+- priority/status updates if existing
+- role guards
+- admin behavior
+- call-list feed into Team Member Portal
+
+PART 9 — Debug/report before editing
+
+Before editing, report:
+- Engagement Center route
+- key page/component files
+- current bucket component/file
+- current assignment component/file
+- current data hooks/endpoints
+- exact files to be touched
+- whether this is frontend-only or full-stack
+
+PART 10 — Validation
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Redesign Engagement Center command UI
+
+Push:
+origin plexus-iq-admin-review-persistence-fix
