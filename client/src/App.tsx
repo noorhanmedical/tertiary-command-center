@@ -184,8 +184,11 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
         <Route path="/clinic-workflow-demo" component={ClinicWorkflowDemoPage} />
                 <Route path="/technician-portal" component={TechnicianPortalPage} />
                 <Route path="/liaison-technician-portal" component={LiaisonPortalPage} />
-                <Route path="/physician-portal">
+                <Route path="/clinician-portal">
                   <RoleGuard user={user} roles={["admin", "clinician"]}><PhysicianPortalPage /></RoleGuard>
+                </Route>
+                <Route path="/physician-portal">
+                  <Redirect to="/clinician-portal" />
                 </Route>
                 <Route path="/liaison-portal">
                   <Redirect to="/liaison-technician-portal" />

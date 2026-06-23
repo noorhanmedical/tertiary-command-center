@@ -130,7 +130,7 @@ export function FinancialHealthTab() {
                   <Badge variant="destructive" className="tabular-nums">{b.count}</Badge>
                   <span className="text-sm">{b.label}</span>
                 </div>
-                <Link href={`/physician-portal?tab=${b.action}`}>
+                <Link href={`/clinician-portal?tab=${b.action}`}>
                   <span className="text-sm text-primary inline-flex items-center gap-1 cursor-pointer hover:underline" data-testid={`link-bottleneck-${b.key}`}>
                     Resolve <ArrowRight className="w-3.5 h-3.5" />
                   </span>

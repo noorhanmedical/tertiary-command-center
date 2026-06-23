@@ -1,0 +1,158 @@
+Review the actual GitHub repo first, then update the large front-page launcher tile grid.
+
+IMPORTANT:
+I am talking about the big launcher cards on the home/front page, not the left sidebar.
+
+The front-page tiles currently look like large rounded cards with icon + title, including:
+- Plexus IQ
+- Mission Control
+- Imaging Central
+- Clinic Analytics
+- Clinic Onboarding
+- Team Member Portals
+- Outreach / Engagement Center
+- Team Ops
+- Patient Directory
+- Document Upload
+- Ancillary Documents
+- Plexus Tasks
+- Plexus Drive
+
+Review the actual files before changing:
+- client/src/pages/home.tsx
+- client/src/components/HomeDashboard.tsx
+- client/src/components/HomeSidebar.tsx
+- any tile/card config or navigation config if the tile grid was moved elsewhere
+
+Do not rebuild the whole home page.
+Do not change the overall visual language.
+Keep the same large card style:
+- rounded white cards
+- icon on left
+- title on right
+- 4-column desktop grid
+- clean spacing
+- no dense text
+- Plexus IQ can keep its premium dark card style
+
+Rename the planned “Physician Owner Portal” to:
+
+Clinician Portal
+
+The route can be:
+ /clinician-portal
+
+If /physician-portal was already created, either redirect it to /clinician-portal or rename it cleanly so the front-facing product name is Clinician Portal.
+
+Clinician Portal purpose:
+- physician/clinician signing portal
+- sign orders and procedure notes
+- review ancillary reports/results
+- see ancillary metrics
+- see overall clinic financial health using billing data
+- see Plexus ancillary contribution inside overall clinic financial health
+
+Update the front-page tile order exactly as follows:
+
+Row 1:
+Mission Control | Patient Directory | Plexus IQ | Outreach / Engagement Center
+
+Row 2:
+Team Member Portals | Team Ops | Plexus Tasks | Plexus Drive
+
+Row 3:
+Imaging Central | Document Upload | Ancillary Documents
+
+Row 4:
+Clinician Portal | Clinic Onboarding | Clinic Analytics
+
+Tile details:
+
+Mission Control
+- keep existing route if present
+- keep existing icon/style
+
+Patient Directory
+- route: /patient-directory
+
+Plexus IQ
+- route: /plexus-iq
+- keep premium/dark card styling
+
+Outreach / Engagement Center
+- route: /engagement-center
+
+Team Member Portals
+- route: /team-member-portals
+
+Team Ops
+- route: /team-ops
+
+Plexus Tasks
+- route: /plexus-tasks
+
+Plexus Drive
+- route: /drive
+
+Imaging Central
+- keep existing route if present
+- if route does not exist, leave tile disabled or route to the closest existing imaging/ancillary workflow only if already present
+
+Document Upload
+- route: /document-upload
+
+Ancillary Documents
+- route: /ancillary-documents
+
+Clinician Portal
+- route: /clinician-portal
+- test id: tile-clinician-portal
+- title: Clinician Portal
+- subtitle if the tile supports subtitle: Sign, review, and monitor clinic financial health.
+- icon should feel clinical/signature/owner-level, such as stethoscope, file-signature, or shield-check
+
+Clinic Onboarding
+- keep existing route if present
+- if route does not exist, leave disabled or route only to an existing onboarding page if already present
+
+Clinic Analytics
+- keep existing route if present
+- if route does not exist, leave disabled or route only to an existing analytics/dashboard page if already present
+
+Important layout rules:
+1. Use the exact row order above.
+2. Do not put Clinician Portal in Row 1.
+3. Do not call it Physician Owner Portal on the tile.
+4. Do not bury Clinician Portal in settings or sidebar.
+5. Do not add too much text to the cards.
+6. Keep the tile grid visually clean like the current screenshot.
+7. If a tile route does not exist, do not invent a fake workflow. Either disable it cleanly or connect it only to an existing real route after confirming in the repo.
+
+Left sidebar:
+Review HomeSidebar.tsx, but do not turn it into a full app directory.
+The left sidebar should remain focused on schedule/history context unless there is already a different intended navigation system.
+The large launcher cards are the main navigation surface.
+
+Acceptance criteria:
+- Home/front page tile grid uses this exact row order:
+
+Row 1:
+Mission Control | Patient Directory | Plexus IQ | Outreach / Engagement Center
+
+Row 2:
+Team Member Portals | Team Ops | Plexus Tasks | Plexus Drive
+
+Row 3:
+Imaging Central | Document Upload | Ancillary Documents
+
+Row 4:
+Clinician Portal | Clinic Onboarding | Clinic Analytics
+
+- Clinician Portal tile exists.
+- Tile label says Clinician Portal, not Physician Owner Portal.
+- Clinician Portal routes to /clinician-portal.
+- Existing tile style is preserved.
+- Plexus IQ keeps its premium dark tile styling.
+- No unrelated sidebar clutter is added.
+- Run npm run check.
+- Report exact files changed.

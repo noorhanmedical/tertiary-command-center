@@ -31,6 +31,7 @@ import {
   ScanLine,
   BarChart3,
   ClipboardCheck,
+  FileSignature,
 } from "lucide-react";
 import {
   CALENDAR_FILTERS,
@@ -219,7 +220,7 @@ function SecondaryTile({
 }
 
 
-function PhysicianPortalTile() {
+function ClinicianPortalTile() {
   const { data: me } = useQuery<{ role?: string }>({ queryKey: ["/api/auth/me"] });
   const role = me?.role;
   const enabled = role === "admin" || role === "clinician";
@@ -230,26 +231,24 @@ function PhysicianPortalTile() {
   if (!enabled) return null;
   const needs = summary?.needsSignature ?? 0;
   return (
-    <Link href="/physician-portal">
-      <Card className="glass-tile glass-tile-interactive group cursor-pointer h-full" data-testid="tile-physician-portal">
+    <Link href="/clinician-portal" className="xl:col-start-1">
+      <Card className="glass-tile glass-tile-interactive group cursor-pointer h-full" data-testid="tile-clinician-portal">
         <div className="h-[122px] flex items-center gap-4 px-5">
           <div className="shrink-0 relative">
-            <Stethoscope className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />
+            <FileSignature className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />
             {needs > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center tabular-nums" data-testid="badge-physician-needs-signature">
+              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center tabular-nums" data-testid="badge-clinician-needs-signature">
                 {needs}
               </span>
             )}
           </div>
           <div className="min-w-0">
             <div className="text-[14px] font-semibold text-slate-900 dark:text-foreground leading-tight">
-              Physician Portal
+              Clinician Portal
             </div>
-            {summary && (
-              <div className="text-[11px] text-muted-foreground mt-0.5 leading-tight" data-testid="text-physician-tile-counts">
-                {needs} to sign · {summary.reportsPending} reports
-              </div>
-            )}
+            <div className="text-[11px] text-muted-foreground mt-0.5 leading-tight" data-testid="text-clinician-tile-subtitle">
+              Sign, review, and monitor clinic financial health.
+            </div>
           </div>
         </div>
       </Card>
@@ -436,6 +435,19 @@ export function HomeDashboard({
               <HomeWorldClocks />
 
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 auto-rows-fr">
+                {/* Row 1: Mission Control | Patient Directory | Plexus IQ | Outreach / Engagement Center */}
+                <SecondaryTile
+                  href="/mission-control"
+                  testId="tile-mission-control"
+                  label="Mission Control"
+                  icon={<Radar className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/patient-directory"
+                  testId="tile-patient-directory"
+                  label="Patient Directory"
+                  icon={<Users className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
                 <Link href="/plexus-iq">
                   <Card
                     className="glass-tile-interactive group cursor-pointer relative overflow-hidden border-0 bg-[radial-gradient(ellipse_at_top_left,_#1e1b4b_0%,_#000000_55%,_#0b0716_100%)] text-white shadow-2xl h-full"
@@ -470,29 +482,13 @@ export function HomeDashboard({
                   </Card>
                 </Link>
                 <SecondaryTile
-                  href="/mission-control"
-                  testId="tile-mission-control"
-                  label="Mission Control"
-                  icon={<Radar className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                  href="/engagement-center"
+                  testId="tile-engagement-center"
+                  label="Outreach / Engagement Center"
+                  icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
-                <SecondaryTile
-                  href="/imaging-central"
-                  testId="tile-imaging-central"
-                  label="Imaging Central"
-                  icon={<ScanLine className="w-9 h-9 text-emerald-600" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/clinic-analytics"
-                  testId="tile-clinic-analytics"
-                  label="Clinic Analytics"
-                  icon={<BarChart3 className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/clinic-onboarding"
-                  testId="tile-clinic-onboarding"
-                  label="Clinic Onboarding"
-                  icon={<ClipboardCheck className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
+
+                {/* Row 2: Team Member Portals | Team Ops | Plexus Tasks | Plexus Drive */}
                 <SecondaryTile
                   href="/team-member-portals"
                   testId="tile-team-member-portals"
@@ -500,34 +496,10 @@ export function HomeDashboard({
                   icon={<Users2 className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
-                  href="/engagement-center"
-                  testId="tile-engagement-center"
-                  label="Outreach / Engagement Center"
-                  icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
                   href="/team-ops"
                   testId="tile-team-ops"
                   label="Team Ops"
                   icon={<Stethoscope className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/patient-directory"
-                  testId="tile-patient-directory"
-                  label="Patient Directory"
-                  icon={<Users className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/document-upload"
-                  testId="tile-document-upload"
-                  label="Document Upload"
-                  icon={<Upload className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
-                <SecondaryTile
-                  href="/ancillary-documents"
-                  testId="tile-documents"
-                  label="Ancillary Documents"
-                  icon={<FileText className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
                 <SecondaryTile
                   href="/plexus-tasks"
@@ -541,7 +513,41 @@ export function HomeDashboard({
                   label="Plexus Drive"
                   icon={<FolderOpen className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
-                <PhysicianPortalTile />
+
+                {/* Row 3: Imaging Central | Document Upload | Ancillary Documents */}
+                <SecondaryTile
+                  href="/imaging-central"
+                  testId="tile-imaging-central"
+                  label="Imaging Central"
+                  icon={<ScanLine className="w-9 h-9 text-emerald-600" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/document-upload"
+                  testId="tile-document-upload"
+                  label="Document Upload"
+                  icon={<Upload className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/ancillary-documents"
+                  testId="tile-documents"
+                  label="Ancillary Documents"
+                  icon={<FileText className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+
+                {/* Row 4: Clinician Portal | Clinic Onboarding | Clinic Analytics */}
+                <ClinicianPortalTile />
+                <SecondaryTile
+                  href="/clinic-onboarding"
+                  testId="tile-clinic-onboarding"
+                  label="Clinic Onboarding"
+                  icon={<ClipboardCheck className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
+                <SecondaryTile
+                  href="/clinic-analytics"
+                  testId="tile-clinic-analytics"
+                  label="Clinic Analytics"
+                  icon={<BarChart3 className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
+                />
               </div>
 
               <Card className="glass-tile overflow-hidden" data-testid="tile-calendar-bottom">
