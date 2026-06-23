@@ -20,8 +20,14 @@ export type HomeUpcomingStat = {
   callsDone: number;
 };
 
+export type HomeFinanceStat = {
+  last7: number;
+  upcoming: number;
+};
+
 export type HomeStatsResponse = {
   today: string;
+  finance: HomeFinanceStat;
   windows: {
     today: HomeWindowStat;
     last7: HomeWindowStat;
@@ -32,6 +38,9 @@ export type HomeStatsResponse = {
     brainWave: number;
     vitalWave: number;
     ultrasound: number;
+    brainWaveUpcoming: number;
+    vitalWaveUpcoming: number;
+    ultrasoundUpcoming: number;
   };
   callsByMember: {
     last7: HomeMemberCallStat[];

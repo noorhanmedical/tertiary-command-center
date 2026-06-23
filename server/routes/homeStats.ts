@@ -65,9 +65,10 @@ export function registerHomeStatsRoutes(app: Express) {
       const upcomingStartKey = dayKeyMinus(today, -1); // today + 1
       const upcomingEndKey = dayKeyMinus(today, -7); // today + 7
 
-      const [batches, allPatients] = await Promise.all([
+      const [batches, allPatients, billingRecords] = await Promise.all([
         storage.getAllScreeningBatches(),
         storage.getAllPatientScreenings(),
+        storage.getAllBillingRecords(),
       ]);
 
       // Index active patients by batch so we can aggregate any window without
@@ -99,6 +100,10 @@ export function registerHomeStatsRoutes(app: Express) {
       // Forward-looking next-7-day counters (additive to the historical tile).
       let upcomingAncillaryPatients = 0;
       let upcomingActiveSchedules = 0;
+      // Per-category upcoming ancillary tallies (green numbers on the icon row).
+      let brainWaveUpcoming = 0;
+      let vitalWaveUpcoming = 0;
+      let ultrasoundUpcoming = 0;
 
       for (const batch of batches) {
         const day = canonicalDay(batch.scheduleDate);
@@ -116,6 +121,12 @@ export function registerHomeStatsRoutes(app: Express) {
               ? patient.qualifyingTests.filter(Boolean)
               : [];
             if (tests.length > 0) upcomingAncillaryPatients += 1;
+            for (const test of tests) {
+              const bucket = bucketForTest(String(test));
+              if (bucket === "brain") brainWaveUpcoming += 1;
+              else if (bucket === "vital") vitalWaveUpcoming += 1;
+              else ultrasoundUpcoming += 1;
+            }
           }
         }
 
@@ -243,8 +254,27 @@ export function registerHomeStatsRoutes(app: Express) {
         callsByMember30 = [];
       }
 
+      // Finance: collected (paidAmount) over the trailing 7-day window vs.
+      // anticipated (totalCharges) over the upcoming 7-day window, keyed by
+      // each billing record's dateOfService.
+      let financeLast7 = 0;
+      let financeUpcoming = 0;
+      for (const rec of billingRecords) {
+        const day = canonicalDay(rec.dateOfService ?? "");
+        if (!day) continue;
+        if (day >= start7Key && day <= today) {
+          financeLast7 += Number(rec.paidAmount ?? 0) || 0;
+        } else if (day >= upcomingStartKey && day <= upcomingEndKey) {
+          financeUpcoming += Number(rec.totalCharges ?? 0) || 0;
+        }
+      }
+
       res.json({
         today,
+        finance: {
+          last7: financeLast7,
+          upcoming: financeUpcoming,
+        },
         windows: {
           today: todayStat,
           last7,
@@ -260,6 +290,9 @@ export function registerHomeStatsRoutes(app: Express) {
           brainWave: brainWaveCount,
           vitalWave: vitalWaveCount,
           ultrasound: ultrasoundCount,
+          brainWaveUpcoming,
+          vitalWaveUpcoming,
+          ultrasoundUpcoming,
         },
         callsByMember: {
           last7: callsByMember7,
