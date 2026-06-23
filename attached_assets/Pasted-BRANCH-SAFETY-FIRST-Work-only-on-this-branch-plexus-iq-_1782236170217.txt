@@ -1,0 +1,253 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Fix BatchFlow parsed-list persistence so each new patient upload/paste creates a separate timestamped batch instead of reusing or appending to the previous parsed list.
+
+Current problem:
+When patients are placed into BatchFlow and qualification starts, then I go back into BatchFlow later, the previously parsed list is still persisted as the active list. If I paste another group of patients, it risks adding to or mixing with the previous batch.
+
+That is wrong.
+
+Expected behavior:
+Each new BatchFlow intake should create a new batch session with its own timestamp. Previous parsed lists should be saved into Batch History, not automatically loaded as the active working list.
+
+Architecture rules:
+- BatchFlow is the intake/parser/qualification entry point.
+- Plexus IQ qualification runs should be tied to a specific batch session.
+- Admin Review receives qualified patients from a specific batch/run.
+- Do not merge separate pasted/imported groups unless the user explicitly chooses to append.
+- Do not lose historical parsed batches.
+- Do not create fake patient data.
+- Do not break Admin Review, Plexus IQ qualification, Engagement Center, or Team Member Portal.
+- Do not change schema unless absolutely required. If schema is required, add a proper migration.
+
+PART 1 — Investigate current BatchFlow persistence
+
+Before editing, locate and report:
+- BatchFlow route/page/component files
+- where parsed patients are stored in frontend state
+- whether parsed patients persist in localStorage, sessionStorage, React Query cache, backend table, or URL state
+- where qualification run starts
+- whether there is currently a batchId / qualificationRunId / importSessionId
+- how parsed patients are sent to Plexus IQ qualification
+- how qualified patients flow to Admin Review
+- exact files to be touched
+- whether this is frontend-only or full-stack
+
+PART 2 — Create proper batch-session behavior
+
+Implement or fix BatchFlow so there is a clear concept of a batch session.
+
+Each batch should have:
+- batchId or equivalent existing ID
+- createdAt timestamp
+- date grouping
+- source type: paste/import/upload/manual
+- patient count
+- parsed patients
+- qualification status
+- qualification run ID if available
+- status:
+  draft
+  parsed
+  qualifying
+  qualified
+  sent_to_admin_review
+  completed
+  archived
+
+Use existing backend concepts if already available.
+Do not create duplicate concepts if a batch/run/session model already exists.
+
+PART 3 — New Batch behavior
+
+When user opens BatchFlow:
+- Do not automatically load the previous parsed patient list as the active batch.
+- Show a clean starting screen:
+  Start New Batch
+  Continue Recent Batch
+  View Batch History
+
+If there is an unfinished batch, show it as resumable, but do not force it into the active input area.
+
+When user chooses Start New Batch:
+- clear the active parsed list
+- create a new empty batch draft or local draft state
+- new paste/import belongs to this new batch only
+
+When user pastes/imports patients:
+- create a new timestamped batch if one is not already active
+- parsed patients attach to that batch
+- do not append to previous batch unless user explicitly clicks an Append to Existing Batch action
+
+PART 4 — Batch History
+
+Add or improve Batch History.
+
+Display batches grouped by date, with separate timestamped sessions under the same date.
+
+Example:
+
+Today
+- 08:15 AM · 104 patients · Qualification started
+- 11:42 AM · 37 patients · Sent to Admin Review
+- 03:05 PM · 72 patients · Draft
+
+Yesterday
+- 04:20 PM · 88 patients · Completed
+
+Each historical batch row should show:
+- timestamp
+- patient count
+- status
+- source type
+- qualification status
+- action buttons:
+  View
+  Resume if unfinished
+  Send to Admin Review if ready
+  Archive if appropriate
+
+Do not merge all batches under the same date into one list.
+
+PART 5 — Active batch isolation
+
+Strict isolation rules:
+- New paste/import creates a new batch by default.
+- Starting a new batch clears the active parsed list.
+- Previous batches remain in history.
+- Qualification only runs for the active batch.
+- Admin Review receives patients from the selected batch only.
+- Refreshing the page should preserve the current active batch only if the user intentionally resumed/continued it.
+- Navigating away and coming back should not accidentally append new patients to the prior batch.
+
+PART 6 — User confirmation for append
+
+If the app supports appending patients to an existing batch, require explicit user action.
+
+Example:
+- “Append to current batch”
+- “Start separate batch”
+
+Default should be:
+Start separate batch.
+
+PART 7 — UI requirements
+
+Make BatchFlow clear and premium:
+- bright/iOS-like
+- simple Start New Batch action
+- current active batch clearly labeled with timestamp
+- historical batches grouped by date
+- clean empty states
+- no confusion between old list and new list
+
+Active batch header should show:
+- Batch created time
+- patient count
+- status
+- source
+- qualification status
+
+Example:
+Batch: Today 11:42 AM
+37 patients · Parsed · Ready for qualification
+
+PART 8 — Qualification linkage
+
+When starting qualification:
+- qualification run must be linked to the active batchId/sessionId
+- qualification results must not mix across batches
+- Admin Review should be able to trace which batch a patient came from if existing data supports it
+- If a patient appears in multiple batches, keep the batch contexts separate while preventing duplicate operational cases later in Admin Review/patient_execution_cases as appropriate
+
+PART 9 — Validation scenarios
+
+After implementation, verify:
+
+Scenario A:
+Paste 50 patients.
+Start qualification.
+Leave BatchFlow.
+Return to BatchFlow.
+Expected: old 50-patient list is not active by default; it appears in Batch History.
+
+Scenario B:
+Start New Batch.
+Paste 30 patients.
+Expected: active list has only 30 patients, not 80.
+
+Scenario C:
+Same date, multiple batches.
+Expected: Batch History shows separate timestamped rows under the same date.
+
+Scenario D:
+Resume previous unfinished batch.
+Expected: selected historical batch loads intentionally.
+
+Scenario E:
+Start qualification on second batch.
+Expected: only second batch patients are qualified.
+
+Scenario F:
+Send to Admin Review.
+Expected: only selected batch patients are sent.
+
+PART 10 — Do not break downstream
+
+Do not break:
+- Plexus IQ qualification
+- Admin Review
+- supporting factors
+- ancillary selection
+- PDF generation
+- Engagement Center
+- Team Member Portal
+- patient_execution_cases
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Isolate BatchFlow sessions and history
+
+Push:
+origin plexus-iq-admin-review-persistence-fix

@@ -173,6 +173,8 @@ function DocumentReadinessPanel({
 
 export type PatientCommandCanvasProps = {
   patientScreeningId: number;
+  /** Name from the call-list context, shown instantly while the canvas loads. */
+  seedName?: string | null;
   workspaceRole?: string;
   onSchedulePatient?: (patient: CommandCenterResponse["patient"]) => void;
   onOpenMarketingForPatient?: (patient: CommandCenterResponse["patient"]) => void;
@@ -285,8 +287,37 @@ function HistoryIcon({
   );
 }
 
+// Instant shell painted while the command-center query is in flight. Shows the
+// seeded name from the call-list context so the canvas never blanks to a spinner.
+function PatientCommandCanvasSkeleton({ seedName }: { seedName?: string | null }) {
+  return (
+    <div className="flex h-full w-full flex-col gap-3 overflow-y-auto p-4" data-testid="patient-command-canvas-loading">
+      <Card className="p-4 bg-white">
+        <div className="text-base font-semibold text-slate-900" data-testid="patient-command-canvas-name">
+          {seedName || "Loading patient…"}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2 animate-pulse">
+          <div className="h-3 w-24 rounded bg-slate-200" />
+          <div className="h-3 w-20 rounded bg-slate-200/80" />
+          <div className="h-3 w-28 rounded bg-slate-200/70" />
+        </div>
+      </Card>
+      {[0, 1, 2].map((i) => (
+        <Card key={i} className="p-4 bg-white">
+          <div className="space-y-3 animate-pulse">
+            <div className="h-3.5 w-1/3 rounded bg-slate-200" />
+            <div className="h-3.5 w-2/3 rounded bg-slate-200/80" />
+            <div className="h-3.5 w-1/2 rounded bg-slate-200/70" />
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 export function PatientCommandCanvas({
   patientScreeningId,
+  seedName,
   workspaceRole,
   onSchedulePatient,
   onOpenMarketingForPatient,
@@ -306,16 +337,12 @@ export function PatientCommandCanvas({
     queryKey: ["portal-command-center", patientScreeningId],
     queryFn: () => fetchPatientCommandCenter(patientScreeningId),
     refetchInterval: 60_000,
+    // Patient-tab cache: re-opening a recently-viewed patient (or one prefetched
+    // from the call list) paints instantly from cache instead of respinning.
+    staleTime: 30_000,
+    gcTime: 300_000,
   });
 
-  if (isLoading || !data) {
-    return (
-      <div className="flex h-full w-full items-center justify-center text-sm text-slate-500" data-testid="patient-command-canvas-loading">
-        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-        Loading patient…
-      </div>
-    );
-  }
   if (isError) {
     return (
       <div className="flex h-full w-full items-center justify-center text-sm text-rose-700" data-testid="patient-command-canvas-error">
@@ -323,6 +350,9 @@ export function PatientCommandCanvas({
         {error instanceof Error ? error.message : "Failed to load patient"}
       </div>
     );
+  }
+  if (isLoading || !data) {
+    return <PatientCommandCanvasSkeleton seedName={seedName} />;
   }
 
   const {

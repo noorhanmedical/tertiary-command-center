@@ -1,0 +1,261 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Optimize Patient Directory loading when opened from Team Member Portal.
+
+Current problem:
+The new Patient Directory EMR-style chart is excellent, but it takes too long to load when opened from the Team Member Portal call list / Playground. It likely loads too much EMR data up front.
+
+Goal:
+Make patient profile opening feel instant from Team Member Portal while preserving the full premium Patient Directory chart.
+
+Do not remove EMR sections.
+Do not dumb down the Patient Directory.
+Do not redesign the whole page again.
+This task is performance and loading architecture.
+
+Architecture rules:
+- Patient Directory remains the canonical patient identity/profile/chart area.
+- Team Member Portal remains the ACS/PCS call-list workspace.
+- Playground remains the operational workspace.
+- patient_execution_cases remains the source of truth for assigned work.
+- Do not create fake data.
+- Do not break call-list patient name linking.
+- Do not break Patient Directory deep linking.
+- Do not change database schema unless absolutely required.
+
+PART 1 — Investigate current loading path
+
+Before editing, inspect and report:
+- Team Member Portal file/component that opens Patient Directory/patient profile
+- Patient Directory route/page/component
+- patient profile data hooks/endpoints
+- whether full chart data is loaded immediately
+- what queries fire on initial patient open
+- whether labs/imaging/documents/timeline are loaded upfront
+- whether React Query caching is used
+- whether selected patient row data from the call list is reused
+- exact files to be touched
+- whether this is frontend-only or full-stack
+
+PART 2 — Fast patient shell
+
+When opening a patient from Team Member Portal, show an immediate patient shell using already-available call-list row data.
+
+Use available data from the call-list item:
+- patientId
+- executionCaseId
+- patient name
+- call reason
+- target ancillary/test
+- phone if available
+- clinic/facility if available
+- next action if available
+- status if available
+- PDF status if available
+- cooldown summary if available
+
+This should render immediately without waiting for the full Patient Directory chart payload.
+
+PART 3 — Split loading into summary vs heavy sections
+
+Create or use a lightweight patient summary query for initial render.
+
+Initial patient summary should include only:
+- demographics summary
+- contact summary
+- insurance summary if cheap
+- clinic/facility
+- provider
+- active execution case summary
+- call reason
+- target ancillary/test
+- cooldown summary
+- PDF availability/status
+- next action
+
+Do not load these heavy sections on first render unless already cached:
+- labs
+- imaging
+- full medications
+- full allergies
+- full encounters/notes
+- full documents
+- full journey timeline
+- full call history
+- full scheduling history
+- detailed billing readiness
+
+PART 4 — Lazy-load heavy EMR sections
+
+Lazy-load heavy sections only when their category is opened or visible.
+
+Sections to lazy-load:
+- Labs
+- Imaging
+- Medications
+- Allergies
+- Encounters / Notes
+- Documents
+- Calls & Communication full history
+- Scheduling full history
+- Journey Timeline
+- Billing / Readiness details
+- Ad Automation details if heavy
+
+Use separate React Query keys per section, for example:
+- patient-profile-summary patientId
+- patient-labs patientId
+- patient-imaging patientId
+- patient-documents patientId
+- patient-timeline patientId
+- patient-billing-readiness patientId
+
+Do not block the entire profile on heavy sections.
+
+PART 5 — Skeleton and progressive hydration
+
+The patient profile should open immediately and show:
+- real patient name/call reason from call-list context
+- premium skeleton cards for sections still loading
+- graceful empty states when data is unavailable
+
+Avoid full-page spinners after clicking a patient.
+
+Expected UX:
+- click patient
+- profile shell appears immediately
+- heavy sections fill in progressively
+
+PART 6 — Prefetch smartly
+
+When the right-panel call list is visible, prefetch lightweight patient summaries for the top few visible call-list patients only.
+
+Do not prefetch every heavy chart section for every patient.
+Do not overload the backend.
+
+Suggested:
+- prefetch summary for first 5–10 visible call-list patients
+- prefetch full chart only when user hovers/clicks if easy
+- use staleTime/cacheTime to avoid refetching when switching patient tabs
+
+PART 7 — Patient tabs cache
+
+If the Playground/patient tabs are patient-centered:
+- keep already-opened patient tabs cached
+- switching between patient tabs should not refetch everything
+- only refetch stale sections as needed
+- do not destroy loaded section state when switching tabs
+
+PART 8 — Backend optimization if needed
+
+If the current patient profile endpoint returns everything at once and is slow:
+- add or reuse a lightweight summary endpoint, such as:
+  GET /api/patients/:id/summary
+  or existing equivalent
+- preserve the full endpoint for the full Patient Directory chart
+- do not remove existing fields
+- do not change schema
+
+If backend endpoint changes are needed, keep them additive.
+
+PART 9 — Guard against waterfall requests
+
+Avoid unnecessary request waterfalls:
+- do not wait for full patient profile before rendering summary
+- do not fetch labs/imaging/documents unless section opened
+- do not duplicate the same patient summary request across Team Portal and Patient Directory if cached data exists
+- ensure query keys include patientId and section name
+
+PART 10 — Validation checklist
+
+After implementation, verify and report:
+
+Scenario A:
+From Team Member Portal call list, click patient name.
+Expected: patient shell appears immediately using call-list data.
+
+Scenario B:
+Full EMR chart sections hydrate progressively.
+Expected: no full-page spinner.
+
+Scenario C:
+Labs section is not fetched until Labs is opened or visible.
+
+Scenario D:
+Imaging section is not fetched until Imaging is opened or visible.
+
+Scenario E:
+Documents/PDF status remains available quickly.
+
+Scenario F:
+Switch between two patient tabs.
+Expected: already-loaded patient summary remains cached and does not reload from scratch.
+
+Scenario G:
+Patient Directory direct route still works.
+
+Scenario H:
+npm run check passes.
+
+Scenario I:
+npm run build passes.
+
+DO NOT:
+- Do not remove EMR sections.
+- Do not remove cooldown.
+- Do not remove ad automation.
+- Do not remove labs/imaging categories.
+- Do not fake missing data.
+- Do not break Team Member Portal call list.
+- Do not break Playground tabs.
+- Do not break Patient Directory direct route.
+- Do not change schema unless absolutely required.
+- Do not merge to main.
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Optimize Patient Directory progressive loading
+
+Push:
+origin plexus-iq-admin-review-persistence-fix

@@ -1,0 +1,220 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Restore the previous Plexus PDF Packet and Clinician PDF Packet preview/print workflow.
+
+Current regression:
+The PDF packet content is correct, but the old workflow was broken or bypassed.
+
+Previous required workflow:
+1. User clicks Plexus PDF Packet or Clinician PDF Packet.
+2. App opens a preview page/view.
+3. User clicks Print.
+4. A popup/modal opens with checkboxes for which patients to include in the printout.
+5. User selects patients.
+6. Printout renders each selected patient on their own separate page.
+7. Browser print opens or the printable packet is generated.
+
+This old flow must be restored.
+
+Important:
+Do not only fix PDF content.
+The issue is the workflow:
+Preview → Print → Patient checkbox selector → One patient per page.
+
+PART 1 — Find old packet workflow
+
+Before editing, search the codebase for existing/previous components related to:
+- Plexus PDF Packet
+- Clinician PDF Packet
+- packet preview
+- print preview
+- patient checkboxes
+- selected patients
+- print modal
+- window.print
+- page-break
+- pageBreakAfter
+- print packet
+- clinician packet
+- plexus packet
+
+Report:
+- current files/components used when clicking Plexus PDF Packet
+- current files/components used when clicking Clinician PDF Packet
+- whether the old preview component still exists
+- whether the old print modal/checkbox component still exists
+- whether the old per-patient page break CSS still exists
+- what changed or what is currently bypassing the old flow
+- exact files to be touched
+
+PART 2 — Restore packet preview page/view
+
+Clicking either packet button must open a preview page/view, not immediately skip to raw content.
+
+For Plexus PDF Packet:
+- open Plexus packet preview
+- show packet content
+- show Print button
+- show Back/Close if existing pattern supports it
+
+For Clinician PDF Packet:
+- open Clinician packet preview
+- show packet content
+- show Print button
+- show Back/Close if existing pattern supports it
+
+Do not invent fake packet content.
+Use the current correct packet content renderer.
+
+PART 3 — Restore Print patient selector popup
+
+When user clicks Print inside the preview:
+- open a modal/popup
+- show patient checklist
+- allow selecting/deselecting patients
+- include Select All
+- include Clear All
+- include Cancel
+- include Print Selected
+
+The patient checklist should be based on the patients included in the current batch/packet context.
+
+If opened from Admin Review or BatchFlow:
+- use that selected batch/review patient list
+
+If opened from Patient Directory or Team Member Portal:
+- use the current patient/case as the only selected patient by default, but preserve the modal pattern
+
+Do not print all patients blindly unless all are selected.
+
+PART 4 — Per-patient print layout
+
+The printout must render every selected patient on their own page.
+
+Required print behavior:
+- Each patient starts on a new printed page.
+- Use print CSS such as:
+  page-break-before: always;
+  break-before: page;
+  page-break-after: always;
+  break-after: page;
+- Avoid cutting a patient packet across another patient’s page.
+- Keep packet header/footer consistent if already existing.
+- Preserve packet type:
+  Plexus PDF packet vs Clinician PDF packet
+
+Do not merge multiple patients onto one continuous page.
+
+PART 5 — Preserve correct content
+
+The current packet content is reportedly correct. Preserve it.
+
+Do not rewrite the clinical/Plexus packet content unless needed for the preview/print wrapper.
+
+Required:
+- Plexus PDF Packet content remains correct.
+- Clinician PDF Packet content remains correct.
+- The restored workflow wraps the existing content in preview/print selection behavior.
+
+PART 6 — Batch context
+
+If the packet was generated from a batch/list:
+- Print modal must show all patients in that batch/list.
+- User can choose which patients to include.
+- Printed packet includes only selected patients.
+- Each selected patient gets their own page.
+
+Do not mix patients from old BatchFlow sessions.
+Use the active/current batch/list context only.
+
+PART 7 — Validation checklist
+
+After implementation, verify and report:
+
+Scenario A:
+Click Plexus PDF Packet.
+Expected: preview page/view opens.
+
+Scenario B:
+Click Print.
+Expected: patient checkbox modal opens.
+
+Scenario C:
+Select 3 patients and print.
+Expected: print packet contains exactly 3 patients.
+
+Scenario D:
+Each selected patient starts on their own page.
+
+Scenario E:
+Click Clinician PDF Packet.
+Expected: same preview → print → checkbox → per-patient page flow.
+
+Scenario F:
+Single-patient context.
+Expected: modal still opens or patient is selected by default, and print layout still works.
+
+Scenario G:
+npm run check passes.
+
+Scenario H:
+npm run build passes.
+
+DO NOT:
+- Do not delete existing packet content.
+- Do not bypass preview.
+- Do not bypass patient selection.
+- Do not print all patients without checkbox selection.
+- Do not merge patients into one continuous printed page.
+- Do not use stale BatchFlow patients from previous sessions.
+- Do not change database schema.
+- Do not touch unrelated Team Portal, Engagement Center, Mission Control, or Admin Review logic except where packet buttons are wired.
+- Do not merge to main.
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Restore packet preview and patient print selection
+
+Push:
+origin plexus-iq-admin-review-persistence-fix

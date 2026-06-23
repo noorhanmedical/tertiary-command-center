@@ -14,6 +14,7 @@ import {
   Upload, X, UserSearch,
 } from "lucide-react";
 import { PatientProfileWorkspace } from "@/components/patient-directory/PatientProfileWorkspace";
+import { PatientChartSkeleton } from "@/components/patient-directory/PatientChart";
 import { initials, fmtDate } from "@/components/patient-directory/profileTypes";
 
 type RosterPatient = {
@@ -192,6 +193,9 @@ export default function PatientDatabasePage() {
   const selectedKey = rosterMatch?.encodedKey ?? resolveQuery.data?.encodedKey ?? null;
   const selectedRepId = rosterMatch?.representativeScreeningId
     ?? (urlPatientId && Number.isFinite(Number(urlPatientId)) ? Number(urlPatientId) : null);
+  // Name shown instantly in the chart shell before the heavy profile resolves.
+  // Prefer roster/resolve data; fall back to a name passed on the deep link.
+  const seedName = rosterMatch?.name ?? resolveQuery.data?.name ?? urlParams.get("name") ?? null;
 
   function selectPatient(p: RosterPatient) {
     const sp = new URLSearchParams(window.location.search);
@@ -448,14 +452,13 @@ export default function PatientDatabasePage() {
         data-testid="patient-directory-detail"
       >
         {resolving ? (
-          <div className="flex items-center justify-center h-full" data-testid="profile-resolving">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-          </div>
+          <PatientChartSkeleton seedName={seedName} onBack={clearSelection} />
         ) : selectedKey ? (
           <PatientProfileWorkspace
             key={selectedKey}
             encodedKey={selectedKey}
             representativeScreeningId={selectedRepId}
+            seedName={seedName}
             onBack={clearSelection}
           />
         ) : hasSelection ? (

@@ -59,6 +59,27 @@ export function EmptyState({ icon, title, hint, testId }: { icon: React.ReactNod
   );
 }
 
+// Placeholder rendered in place of a section whose backing query is still in
+// flight, so the chart frame paints instantly and each section hydrates on its
+// own without a blocking full-page spinner.
+export function SectionSkeleton({
+  id, title, icon,
+}: {
+  id: string;
+  title: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <SectionCard id={id} title={title} icon={icon}>
+      <div className="space-y-3 animate-pulse" data-testid={`chart-section-skeleton-${id}`}>
+        <div className="h-3.5 w-2/3 rounded bg-slate-200/80 dark:bg-muted" />
+        <div className="h-3.5 w-1/2 rounded bg-slate-200/70 dark:bg-muted/80" />
+        <div className="h-3.5 w-3/4 rounded bg-slate-200/60 dark:bg-muted/70" />
+      </div>
+    </SectionCard>
+  );
+}
+
 function KV({ label, value, testId }: { label: string; value: React.ReactNode; testId?: string }) {
   return (
     <div className="flex items-start justify-between gap-3 py-2 border-b border-slate-100 dark:border-border/40 last:border-0">
