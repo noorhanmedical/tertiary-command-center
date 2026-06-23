@@ -338,7 +338,11 @@ export async function schedulePatientAncillary(input: {
 
 // /api/scheduler-portal/cases doesn't support startDate/endDate, so we
 // fetch by facility/assigned and filter `nextActionAt` client-side when
-// a date window is supplied.
+// a date window is supplied. Cases with NO next-action date are assigned
+// backlog (the Engagement Center shows them with no date) — they must
+// always appear in the member's call list rather than being dropped by
+// the day window. Only cases that DO carry a scheduled next-action date
+// are narrowed to the selected window.
 export async function fetchWorkspaceCallList(
   params: CallListParams = {},
 ): Promise<TeamWorkspaceCallListItem[]> {
@@ -357,7 +361,7 @@ export async function fetchWorkspaceCallList(
     const startMs = params.startDate ? new Date(params.startDate).getTime() : -Infinity;
     const endMs = params.endDate ? new Date(params.endDate).getTime() : Infinity;
     out = out.filter((row) => {
-      if (!row.nextActionAt) return false;
+      if (!row.nextActionAt) return true;
       const t = new Date(row.nextActionAt).getTime();
       return Number.isFinite(t) && t >= startMs && t <= endMs;
     });
