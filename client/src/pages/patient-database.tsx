@@ -109,7 +109,10 @@ function CooldownBadge({ p }: { p: RosterPatient }) {
 export default function PatientDatabasePage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("search") ?? "";
+  });
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [clinicFilter, setClinicFilter] = useState<string>("");
   const [windowFilter, setWindowFilter] = useState<"" | "1d" | "1w" | "1m">("");

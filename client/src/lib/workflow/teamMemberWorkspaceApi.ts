@@ -54,7 +54,74 @@ export type TeamWorkspaceCallListItem = {
   qualificationStatus?: string | null;
   patientScreeningId?: number | null;
   executionCaseId?: number | null;
+  /** Target ancillary/workflow services on the execution case (drives the
+   *  human-readable call reason). */
+  selectedServices?: string[] | null;
+  /** Most recent call outcome — used to refine the call reason (e.g. a
+   *  missed-call follow-up vs. a fresh outreach). */
+  lastCallOutcome?: string | null;
+  /** Engagement bucket: 'visit' | 'outreach' | 'scheduling_triage'. */
+  engagementBucket?: string | null;
 };
+
+// Short, human-readable explanation of why a patient is on the call list,
+// derived entirely from existing execution-case fields (no new backend data).
+// Examples: "BrainWave outreach", "VitalWave follow-up", "Ultrasound
+// scheduling", "Missed call follow-up", "Order follow-up".
+export function deriveCallReason(item: TeamWorkspaceCallListItem): string {
+  const outcome = (item.lastCallOutcome ?? "").toLowerCase();
+  const services = (item.selectedServices ?? []).filter(Boolean);
+  const primary = services[0] ?? null;
+
+  const niceService = (s: string): string => {
+    const v = s.toLowerCase();
+    if (v.includes("brainwave") || v.includes("brain")) return "BrainWave";
+    if (v.includes("vitalwave") || v.includes("vital")) return "VitalWave";
+    if (
+      v.includes("ultrasound") ||
+      v.includes("duplex") ||
+      v.includes("doppler") ||
+      v.includes("echo") ||
+      v.includes("carotid")
+    )
+      return "Ultrasound";
+    return s;
+  };
+
+  // Outcome-driven reasons take priority — they describe the next action.
+  if (outcome) {
+    if (outcome.includes("no_answer") || outcome.includes("missed"))
+      return "Missed call follow-up";
+    if (outcome.includes("voicemail")) return "Voicemail follow-up";
+    if (outcome.includes("callback")) return "Patient requested callback";
+    if (outcome.includes("reschedule")) return "Reschedule follow-up";
+    if (outcome.includes("needs_records") || outcome.includes("document"))
+      return "Document follow-up";
+  }
+
+  const bucket = (item.engagementBucket ?? "").toLowerCase();
+  if (bucket === "scheduling_triage") return "Scheduling follow-up";
+
+  if (primary) {
+    const label = niceService(primary);
+    if (label === "Ultrasound") return "Ultrasound scheduling";
+    const verb =
+      item.engagementStatus === "contacted" ? "follow-up" : "outreach";
+    return `${label} ${verb}`;
+  }
+
+  // Fallbacks based on engagement status when no service is attached.
+  switch ((item.engagementStatus ?? "").toLowerCase()) {
+    case "new":
+      return "New outreach";
+    case "contacted":
+      return "Follow-up call";
+    case "scheduled":
+      return "Confirm appointment";
+    default:
+      return "Outreach call";
+  }
+}
 
 type ScheduleParams = {
   facilityId?: string | null;

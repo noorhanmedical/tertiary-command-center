@@ -34,8 +34,10 @@ import {
   fetchWorkspaceClinicSchedule,
   fetchWorkspaceAncillarySchedule,
   fetchTeamMembersForWorkspace,
+  deriveCallReason,
   type ViewAsTeamMember,
   type ViewAsWorkspaceType,
+  type TeamWorkspaceCallListItem,
 } from "@/lib/workflow/teamMemberWorkspaceApi";
 import { fetchTeamMemberProfile } from "@/lib/workflow/teamMemberProfileApi";
 import { useLocation } from "wouter";
@@ -52,6 +54,7 @@ import {
   SchedulePatientDialog,
   type SchedulePatientDialogPatient,
 } from "@/components/portal/SchedulePatientDialog";
+import { DispositionSheet } from "@/components/outreach/DispositionSheet";
 import { SchedulePatientPlayground } from "@/components/portal/SchedulePatientPlayground";
 import { PatientMiniCalendar } from "@/components/portal/PatientMiniCalendar";
 import { PatientCommandCanvas } from "@/components/portal/PatientCommandCanvas";
@@ -943,6 +946,10 @@ export function TeamPortalShell({
   const [teamPortalCalendarOpen, setTeamPortalCalendarOpen] = useState(false);
   const [schedulePatientPlaygroundContext, setSchedulePatientPlaygroundContext] =
     useState<{ patient: SchedulePatientDialogPatient; selectedDate: string } | null>(null);
+  // Quick-call popup for the right-panel call list. Reuses the canonical
+  // DispositionSheet (posts /api/engagement-center/call-result). Holds the
+  // selected call-list row so we can also offer Push-to-Playground.
+  const [callDialogRow, setCallDialogRow] = useState<TeamWorkspaceCallListItem | null>(null);
   const [portalTabs, setPortalTabs] = useState<PortalTab[]>([]);
   const [activePortalTabId, setActivePortalTabId] = useState<string | null>(null);
   // Left-rail Marketing → Email handoff payloads. The Marketing tool
@@ -1264,6 +1271,45 @@ export function TeamPortalShell({
     setDockActiveApp(null);
   }
 
+  // --- Right-panel call-list tile actions ------------------------------
+  // Map a call-list row into the shared SchedulePatientDialogPatient shape
+  // so the calendar/schedule + playground flows can reuse it.
+  function callRowToDialogPatient(
+    row: TeamWorkspaceCallListItem,
+  ): SchedulePatientDialogPatient {
+    return {
+      patientName: row.patientName ?? null,
+      patientDob: row.patientDob ?? null,
+      facilityId: row.facilityId ?? facility ?? null,
+      patientScreeningId: row.patientScreeningId ?? null,
+      executionCaseId:
+        row.executionCaseId ??
+        (typeof row.id === "number" ? row.id : null),
+      serviceType: row.selectedServices?.[0] ?? null,
+    };
+  }
+
+  // Patient name click → Patient Directory (identity/profile), pre-filtered
+  // to this patient. No per-profile route exists, so we deep-link the
+  // canonical directory search.
+  function openPatientInDirectory(row: TeamWorkspaceCallListItem) {
+    const name = (row.patientName ?? "").trim();
+    setLocation(
+      name
+        ? `/patient-directory?search=${encodeURIComponent(name)}`
+        : "/patient-directory",
+    );
+  }
+
+  // Push a call-list case into the detailed Playground workspace, preserving
+  // patient/case identity + scheduling context.
+  function pushCallRowToPlayground(row: TeamWorkspaceCallListItem) {
+    openSchedulePatientPlayground({
+      patient: callRowToDialogPatient(row),
+      selectedDate,
+    });
+  }
+
   function expandScheduleToPlayground(p: TodayPatient) {
     if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
     setCenterMode("scheduleDay");
@@ -1536,7 +1582,7 @@ export function TeamPortalShell({
                   className="text-sm text-white/80"
                   data-testid="admin-viewas-label"
                 >
-                  View as
+                  Viewing as
                 </Label>
                 <Select
                   value={viewAsTeamMemberId ?? "__self__"}
@@ -2408,7 +2454,10 @@ export function TeamPortalShell({
                         No calls for this facility/date.
                       </div>
                     ) : (
-                      (applyTagFilter(workspaceCallList as any, callListFilterTag) as typeof workspaceCallList).map((row, idx) => (
+                      (applyTagFilter(workspaceCallList as any, callListFilterTag) as typeof workspaceCallList).map((row, idx) => {
+                        const callReason = deriveCallReason(row);
+                        const canCall = row.patientScreeningId != null;
+                        return (
                         <div
                           key={`${row.id ?? idx}`}
                           className="rounded-lg border border-white/10 bg-white px-2.5 py-2 text-slate-900"
@@ -2416,24 +2465,78 @@ export function TeamPortalShell({
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="min-w-0">
-                              <div className="text-sm font-medium truncate">
+                              {/* Name → Patient Directory (identity/profile). */}
+                              <button
+                                type="button"
+                                onClick={() => openPatientInDirectory(row)}
+                                className="block max-w-full truncate text-left text-sm font-medium text-slate-900 hover:text-[#4863A0] hover:underline"
+                                title={`Open ${row.patientName ?? "patient"} in Patient Directory`}
+                                data-testid={`button-call-patient-${row.id ?? idx}`}
+                              >
                                 {row.patientName ?? "Unnamed patient"}
+                              </button>
+                              {/* Call reason — why this patient is on the list. */}
+                              <div
+                                className="text-[11px] text-slate-500 truncate"
+                                data-testid={`text-call-reason-${row.id ?? idx}`}
+                              >
+                                {callReason}
                               </div>
-                              <div className="text-[11px] text-slate-500 truncate">
+                            </div>
+                            {/* Icon-only action cluster: phone / calendar / push. */}
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                disabled={!canCall}
+                                onClick={() => canCall && setCallDialogRow(row)}
+                                aria-label={`Call ${row.patientName ?? "patient"}`}
+                                title="Quick call"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                data-testid={`button-call-phone-${row.id ?? idx}`}
+                              >
+                                <Phone className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
+                                aria-label={`Schedule ${row.patientName ?? "patient"}`}
+                                title="Quick schedule"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-[#4863A0] hover:bg-blue-50"
+                                data-testid={`button-call-schedule-${row.id ?? idx}`}
+                              >
+                                <CalendarIcon className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => pushCallRowToPlayground(row)}
+                                aria-label={`Push ${row.patientName ?? "patient"} to Playground`}
+                                title="Push to Playground"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-indigo-600 hover:bg-indigo-50"
+                                data-testid={`button-call-playground-${row.id ?? idx}`}
+                              >
+                                <Maximize2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                          {/* Secondary meta: time + status, de-emphasized. */}
+                          {(row.nextActionAt || row.engagementStatus || row.lifecycleStatus) && (
+                            <div className="mt-1.5 flex items-center justify-between gap-2">
+                              <span className="text-[10px] text-slate-400 truncate">
                                 {row.facilityId ?? "—"}
                                 {row.nextActionAt
                                   ? ` · ${new Date(row.nextActionAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
                                   : ""}
-                              </div>
+                              </span>
+                              {(row.engagementStatus || row.lifecycleStatus) && (
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                  {row.engagementStatus ?? row.lifecycleStatus}
+                                </Badge>
+                              )}
                             </div>
-                            {(row.engagementStatus || row.lifecycleStatus) && (
-                              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                                {row.engagementStatus ?? row.lifecycleStatus}
-                              </Badge>
-                            )}
-                          </div>
+                          )}
                         </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 )}
@@ -2723,6 +2826,26 @@ export function TeamPortalShell({
         patient={schedulePatientDialog}
         defaultDate={selectedDate}
         onOpenInPlayground={(payload) => openSchedulePatientPlayground(payload)}
+      />
+
+      {/* Quick-call popup for the right-panel call list. Posts the canonical
+          call result (/api/engagement-center/call-result) via DispositionSheet.
+          When admin is viewing as a team member, the case stays assigned to
+          that member (assignedUserId) while the server records the admin as the
+          acting user. Includes a Push-to-Playground shortcut. */}
+      <DispositionSheet
+        open={!!callDialogRow}
+        onOpenChange={(o) => {
+          if (!o) setCallDialogRow(null);
+        }}
+        patientId={callDialogRow?.patientScreeningId ?? null}
+        patientName={callDialogRow?.patientName ?? ""}
+        schedulerUserId={viewAsTeamMemberId ?? currentUserId}
+        onPushToPlayground={
+          callDialogRow
+            ? () => pushCallRowToPlayground(callDialogRow)
+            : undefined
+        }
       />
 
       {/* Canonical calendar shared by PCS, ACS, Plexus IQ, and Dashboard. */}

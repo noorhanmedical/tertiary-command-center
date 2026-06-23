@@ -1,0 +1,274 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Build the Team Member Portal right-panel call-list action suite for ACS and PCS portals.
+
+This is a functional implementation task. Do not do cleanup-only work. Do not delete legacy Outreach files. Do not migrate unrelated endpoints. Do not change database schema unless absolutely required.
+
+Core concept:
+Inside /team-member-portals, the ACS Portal and PCS Portal should have a compact right-panel call list. Each call-list tile should be simple and icon-driven. The right panel is the fast queue. The Playground is the detailed workspace.
+
+Terminology:
+Use “Playground,” not “Canvas Playground.”
+Use “Push to Playground” as the action concept.
+
+Architecture rules:
+- Team Member Portal is the canonical destination for call-list work.
+- Engagement Center assigns work.
+- patient_execution_cases is the source of truth for assigned call work.
+- The current active Team Portal Call List endpoint is /api/scheduler-portal/cases, which projects patient_execution_cases.
+- /api/operational-queue/me exists as canonical/additive and future migration target, but do not migrate endpoints in this task unless absolutely necessary.
+- /api/scheduler-assignments is legacy/compatibility only and must not be used for Engagement Center-assigned call work.
+- Old Outreach Center / scheduler-card / outreach scheduler portal call-list surfaces are retired.
+- Do not send call-list users to:
+  /scheduler-portal
+  /outreach/scheduler/:id
+  /outreach-scheduler-portal
+  /outreach-center
+  /outreach
+
+Build this in the ACS Portal and PCS Portal inside Team Member Portals.
+
+RIGHT-PANEL CALL LIST TILE:
+
+Each call tile should show only:
+
+1. Patient name
+2. Call reason
+3. Phone icon
+4. Calendar icon
+5. Push to Playground icon button
+
+No text labels on the icon buttons. Icons only.
+
+Tile behavior:
+- Patient name click:
+  Open or route to the patient in Patient Directory.
+  This should be wired to the canonical patient directory/profile route if one already exists.
+  Do not open the Playground from the name click.
+  Name click means patient identity/profile.
+
+- Call reason:
+  Short text explaining why the patient is on the call list.
+  Examples:
+  BrainWave outreach
+  VitalWave follow-up
+  Ultrasound scheduling
+  Needs consent
+  Missed call follow-up
+  Patient requested callback
+  Order follow-up
+  Document follow-up
+
+- Phone icon:
+  Opens a quick call popup.
+  Popup must include:
+  patient name
+  call reason
+  phone number or available phone numbers
+  RingCentral-oriented call action if existing RingCentral wiring exists
+  call outcome selector
+  notes
+  follow-up needed option
+  next follow-up date/time if needed
+  submit button
+  Push to Playground option/icon inside the popup
+
+  Call outcomes should include:
+  reached
+  no_answer
+  left_voicemail
+  scheduled
+  declined
+  needs_follow_up
+  unable_to_contact
+  wrong_number
+
+  Submitting the call result must use the existing canonical call-result path:
+  POST /api/engagement-center/call-result
+
+  It must use existing backend logic to update:
+  patient_execution_cases
+  patient_journey_events
+
+  Do not create a new source of truth.
+
+- Calendar icon:
+  Opens a quick scheduling popup.
+  Popup must include:
+  patient name
+  call reason
+  target ancillary/workflow category if available
+  current next action date/time if available
+  schedule type
+  date/time picker
+  notes
+  save button
+  Push to Playground option/icon inside the popup
+
+  Schedule types should include:
+  initial_call
+  follow_up_call
+  brainwave_appointment
+  vitalwave_appointment
+  ultrasound_appointment
+  document_follow_up
+  order_follow_up
+  patient_callback
+
+  Saving should update the existing execution case workflow if supported by current backend endpoints.
+  It should record an appropriate journey/timeline event if existing backend logic supports it.
+  Do not create a new scheduling source of truth.
+
+- Push to Playground icon:
+  Pushes the selected patient/case into the Playground detailed workspace.
+  This should pass or preserve:
+  patientId
+  executionCaseId
+  callReason
+  targetAncillary/workflow category
+  sourcePortal: ACS or PCS
+
+  The Playground should show much more detail than the right-panel tile.
+
+PLAYGROUND REQUIREMENTS:
+
+When a case is pushed to the Playground, the Playground should show a full call and scheduling suite with more detail and complete ease for ACS/PCS users.
+
+The Playground should include, if data is available:
+- patient summary
+- patient phone numbers
+- call reason
+- target ancillary/workflow category
+- qualification reason
+- Admin Review context
+- current case status
+- assigned team member
+- priority/due status
+- next action date/time
+- call history
+- scheduling history
+- journey timeline
+- notes
+- documents/orders status if available
+- quick call action
+- quick schedule action
+- follow-up action
+
+The Playground should allow ACS/PCS to:
+- call patient
+- log call result
+- schedule appointment
+- set follow-up
+- reschedule
+- add notes
+- review why the patient is on the list
+- see past attempts
+- move the case to the next operational step if existing backend logic supports it
+
+ADMIN VIEW-AS DROPDOWN:
+
+I am admin. In the top banner of ACS Portal and PCS Portal, admin users should have a dropdown to choose team members and view their call lists.
+
+Requirements:
+- Admin sees a top-banner dropdown for team member selection.
+- Normal ACS/PCS users should not see this dropdown.
+- Normal ACS/PCS users should only see their own assigned call list.
+- When admin selects a team member, the right-panel call list reloads to show that selected team member’s assigned patient_execution_cases.
+- Preserve existing backend role guard behavior. The backend must only honor view-as parameters for admins.
+- Do not allow non-admins to view other team members’ lists.
+- If admin performs an action while viewing another team member’s queue, the audit/history must not falsely imply the team member performed the action.
+- The case remains assigned to the selected team member, but the action should be attributable to the logged-in admin if the current backend supports performedBy/actor tracking.
+
+Preferred top-banner wording:
+Viewing as: [Team Member Name ▼]
+
+or:
+Team Member: [Team Member Name ▼]
+
+Keep this dropdown in the top banner, not inside each call tile.
+
+DATA FLOW:
+
+Expected flow:
+ACS/PCS Team Member Portal
+  ↓
+Right-panel call list reads assigned work from patient_execution_cases
+  ↓
+Tile shows:
+Patient Name + Call Reason + Phone Icon + Calendar Icon + Push to Playground Icon
+  ↓
+Name → Patient Directory
+Phone icon → Call popup + option to Push to Playground
+Calendar icon → Scheduling popup + option to Push to Playground
+Push icon → Push directly to Playground
+  ↓
+Call/schedule actions update patient_execution_cases and patient_journey_events through existing backend paths
+
+UI/UX REQUIREMENTS:
+
+- Keep the right-panel tile compact.
+- Do not overload the tile with full chart details.
+- Use icon-only action buttons.
+- Make the call and schedule popups simple, fast, and easy for ACS/PCS.
+- Playground can be detailed.
+- The right panel is for speed.
+- The Playground is for full operational detail.
+- Patient Directory is for patient identity/profile.
+
+DO NOT:
+- Do not use old Outreach Center components unless they are being safely reused without resurrecting old routes/surfaces.
+- Do not route users to old scheduler or outreach pages.
+- Do not use /api/scheduler-assignments for Engagement Center-assigned call work.
+- Do not create a new source of truth.
+- Do not change database schema unless absolutely required.
+- Do not perform a broad refactor.
+- Do not touch unrelated files.
+- Do not merge to main.
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Build Team Portal call-list action suite
+
+Push:
+origin plexus-iq-admin-review-persistence-fix
