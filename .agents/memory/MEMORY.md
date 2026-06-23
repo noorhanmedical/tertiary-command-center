@@ -10,3 +10,4 @@
 - [Portal call-list Playground tabs](portal-call-tabs.md) — call-row icons open deduped Call/Schedule/Case tabs; RingCentral dormant ("pending" callId ⇒ honest boundary, never fake a call); Sheet inside z-[80] portal must be z-[95].
 - [Ancillary service-type buckets](ancillary-service-type-buckets.md) — service_type cols store full test names (e.g. "Echocardiogram TTE (93306)"), not Plexus labels; funnel-by-service must bucket to BrainWave/VitalWave/Ultrasound/PGx/other; cash_price_settings often empty for those.
 - [EMR patient chart architecture](emr-patient-chart.md) — /patient-directory full-page chart: CHART_SECTIONS registry drives left-rail nav + scroll-spy; buildEmrChart projector keeps sections data-only; degrade-on-404 fetches.
+- [Admin Review manual add-ancillary](admin-review-add-ancillary.md) — adding a test name to qualifyingTests is the single lever; downstream exec-case/call-reason/PDF all read it. Honest "not generated" = leave narrative blank.

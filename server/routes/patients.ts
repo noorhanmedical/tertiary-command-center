@@ -558,6 +558,54 @@ export function registerPatientRoutes(
     },
   );
 
+  // Add a manually-selected ancillary to a patient by hand. Appends the
+  // canonical qualifying-test name to patient.qualifyingTests (deduped) and
+  // stamps admin-added provenance in the supplemental `adminReview:*`
+  // metadata keys. Canonical reasoning is created in an HONEST blank state
+  // (operator-selected factors only; AI narrative left empty so the UI/PDF
+  // render "not generated yet" rather than fabricated text).
+  //
+  // Delegated to server/services/plexusIq/adminReviewAddService.ts. Mirrors
+  // the validation order / status codes of remove-ancillary.
+  app.post(
+    "/api/patient-screenings/:id/admin-review/add-ancillary",
+    async (req, res) => {
+      try {
+        const id = parseInt(req.params.id);
+        const { addAdminReviewAncillary } = await import(
+          "../services/plexusIq/adminReviewAddService"
+        );
+        const outcome = await addAdminReviewAncillary(id, req.body);
+        if (!outcome.ok) {
+          if (outcome.error.kind === "invalid_id") {
+            return res.status(400).json({ error: "Invalid patient id" });
+          }
+          if (outcome.error.kind === "invalid_ancillary_id") {
+            return res.status(400).json({
+              error: "ancillaryId must be one of brainwave / vitalwave / ultrasound",
+            });
+          }
+          return res.status(404).json({ error: "Patient not found" });
+        }
+        res.json({
+          ok: true,
+          patient: outcome.patient,
+          ancillaryId: outcome.ancillaryId,
+          testName: outcome.testName,
+          alreadyPresent: outcome.alreadyPresent,
+        });
+      } catch (error: any) {
+        console.error(
+          "[admin-review/add-ancillary] error:",
+          error?.message ?? error,
+        );
+        res.status(500).json({
+          error: error?.message ?? "Failed to add ancillary",
+        });
+      }
+    },
+  );
+
   // Sets the admin approval state on a patient_screenings row.
   // Backs the Admin Review modal on Plexus IQ patient cards.
   // Journey-event append is best-effort; if patient_journey_events /

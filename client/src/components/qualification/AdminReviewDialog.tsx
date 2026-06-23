@@ -104,6 +104,22 @@ const REGENERATE_TEST_IDS: Record<AdminReviewAncillaryId, string> = {
 // box. This is a thin trace surface, not a second clinical truth
 // layer — every entry mirrors an action the admin took during this
 // review session.
+// Canonical ultrasound subtype names offered by the manual "Add Ancillary"
+// control. These match the qualifying-test strings used across scheduling /
+// PDF surfaces (with CPT codes) so a hand-added test dedupes against an
+// AI-qualified one. Generic "Ultrasound Studies" is offered separately.
+const ADD_ULTRASOUND_SUBTYPES: readonly string[] = [
+  "Bilateral Carotid Duplex (93880)",
+  "Echocardiogram TTE (93306)",
+  "Renal Artery Doppler (93975)",
+  "Lower Extremity Arterial Doppler (93925)",
+  "Abdominal Aortic Aneurysm Duplex (93978)",
+  "Lower Extremity Venous Duplex (93971)",
+  "Stress Echocardiogram (93350)",
+  "Upper Extremity Arterial Doppler (93930)",
+  "Upper Extremity Venous Duplex (93970)",
+];
+
 export type AdminReviewUpdateType =
   | "diagnosis_added"
   | "medication_added"
@@ -111,7 +127,9 @@ export type AdminReviewUpdateType =
   | "icd_added"
   | "suggestion_accepted"
   | "qualifying_factor_removed"
+  | "ancillary_added"
   | "ancillary_removed"
+  | "ultrasound_child_added"
   | "ultrasound_child_removed"
   | "regenerate"
   | "pdf_previewed"
@@ -143,7 +161,9 @@ const UPDATE_CHANGE_TYPES: ReadonlySet<AdminReviewUpdateType> = new Set([
   "medication_added",
   "symptom_added",
   "qualifying_factor_removed",
+  "ancillary_added",
   "ancillary_removed",
+  "ultrasound_child_added",
   "ultrasound_child_removed",
 ]);
 
@@ -508,6 +528,8 @@ export type CanonicalReasoningCard = {
   pearls: string[];
   confidence: "high" | "medium" | "low" | null;
   approvalRequired: boolean;
+  adminAdded: boolean;
+  addedReason: string | null;
 };
 
 function reasoningAsObject(value: unknown): Record<string, any> {
@@ -529,6 +551,12 @@ export function buildCanonicalReasoningByAncillary(
     const category = getAncillaryCategory(test);
     if (category !== "brainwave" && category !== "vitalwave" && category !== "ultrasound") continue;
     const value = reasoning[test];
+    const adminMeta = reasoningAsObject(reasoning[`adminReview:test:${test}`]);
+    const adminAdded = !!adminMeta.adminAdded;
+    const addedReason =
+      typeof adminMeta.reason === "string" && adminMeta.reason.trim()
+        ? adminMeta.reason
+        : null;
     const empty: CanonicalReasoningCard = {
       testName: test,
       clinicianReasoning: "",
@@ -538,6 +566,8 @@ export function buildCanonicalReasoningByAncillary(
       pearls: [],
       confidence: null,
       approvalRequired: false,
+      adminAdded,
+      addedReason,
     };
     if (value == null) {
       grouped[category].push(empty);
@@ -562,6 +592,8 @@ export function buildCanonicalReasoningByAncillary(
             ? value.confidence
             : null,
         approvalRequired: !!value.approvalRequired,
+        adminAdded,
+        addedReason,
       });
     }
   }
@@ -888,6 +920,9 @@ export function AdminReviewDialog({
   );
   const [adminNote, setAdminNote] = useState<string>("");
   const [ancillaryNotes, setAncillaryNotes] = useState<Record<string, string>>({});
+  // Manual "Add Ancillary" control state.
+  const [addOpen, setAddOpen] = useState(false);
+  const [addReason, setAddReason] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // Per-ultrasound-child dropdown collapse state — defaults closed.
   const [ultrasoundChildExpanded, setUltrasoundChildExpanded] = useState<
@@ -1973,6 +2008,82 @@ export function AdminReviewDialog({
     );
   }
 
+  // Backend: add a manually-selected ancillary to this patient. The added
+  // test name lands in qualifyingTests so the whole downstream spine
+  // (execution case → call reason → PDFs) flows for free; admin-added
+  // provenance is stamped in adminReview:* metadata.
+  const addAncillaryMutation = useMutation<
+    {
+      ok: boolean;
+      patient: PatientScreening;
+      ancillaryId: AdminReviewAncillaryId;
+      testName: string;
+      alreadyPresent: boolean;
+    },
+    Error,
+    { ancillaryId: AdminReviewAncillaryId; testName: string; reason?: string }
+  >({
+    mutationFn: async (vars) => {
+      const res = await apiRequest(
+        "POST",
+        `/api/patient-screenings/${patient.id}/admin-review/add-ancillary`,
+        vars,
+      );
+      return res.json();
+    },
+    onSuccess: (data, vars) => {
+      if (data.patient) {
+        onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
+        if (Array.isArray(data.patient.qualifyingTests)) {
+          onUpdate("qualifyingTests", data.patient.qualifyingTests as string[]);
+        }
+      }
+      // Surface the affected bar so the operator sees the result of the add.
+      setExpanded((prev) => ({ ...prev, [vars.ancillaryId]: true }));
+      if (data.alreadyPresent) {
+        toast({
+          title: `${data.testName} already added`,
+          description: "Focused the existing entry — no duplicate created.",
+        });
+        return;
+      }
+      toast({
+        title: `Added ${data.testName}`,
+        description: "Regenerate to populate clinical reasoning.",
+      });
+      const isChild =
+        vars.ancillaryId === "ultrasound" && data.testName !== "Ultrasound Studies";
+      recordAdminReviewUpdate(
+        isChild ? "ultrasound_child_added" : "ancillary_added",
+        isChild
+          ? `Added ultrasound test: ${data.testName}`
+          : `Added ${data.testName}`,
+        { ancillary: vars.ancillaryId, testName: data.testName, reason: vars.reason ?? null },
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
+    },
+    onError: (err) => {
+      toast({
+        title: "Could not add ancillary",
+        description: err?.message ?? "Unknown error",
+        variant: "destructive",
+      });
+    },
+  });
+
+  function handleAddAncillary(
+    ancillaryId: AdminReviewAncillaryId,
+    testName: string,
+  ) {
+    addAncillaryMutation.mutate({
+      ancillaryId,
+      testName,
+      reason: addReason.trim() || undefined,
+    });
+    setAddReason("");
+    setAddOpen(false);
+  }
+
   // Backend: remove an entire ancillary from this patient.
   const removeAncillaryMutation = useMutation<
     { ok: boolean; patient: PatientScreening; ancillaryId: AdminReviewAncillaryId; removedTests: string[] },
@@ -2581,6 +2692,95 @@ export function AdminReviewDialog({
                   className="space-y-4"
                   data-testid="admin-review-ancillary-playground"
                 >
+              {/* Manual add-ancillary control. Hand-adds a service to
+                  qualifyingTests + stamps admin-added provenance. */}
+              <div
+                className="flex items-center justify-between gap-2"
+                data-testid="admin-review-add-ancillary-row"
+              >
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Ancillaries
+                </div>
+                <Popover open={addOpen} onOpenChange={setAddOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="admin-review-add-ancillary-trigger"
+                      disabled={addAncillaryMutation.isPending}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
+                    >
+                      {addAncillaryMutation.isPending ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="w-3.5 h-3.5" />
+                      )}
+                      Add Ancillary
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-72 p-2"
+                    align="end"
+                    data-testid="admin-review-add-ancillary-menu"
+                  >
+                    <div className="space-y-2">
+                      <Textarea
+                        value={addReason}
+                        onChange={(e) => setAddReason(e.target.value)}
+                        placeholder="Optional qualification reason / notes"
+                        rows={2}
+                        className="text-xs resize-none"
+                        data-testid="admin-review-add-ancillary-reason"
+                      />
+                      <div className="space-y-1">
+                        <button
+                          type="button"
+                          onClick={() => handleAddAncillary("brainwave", "BrainWave")}
+                          data-testid="admin-review-add-brainwave"
+                          className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-violet-50 text-violet-800 transition-colors"
+                        >
+                          Add BrainWave
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAddAncillary("vitalwave", "VitalWave")}
+                          data-testid="admin-review-add-vitalwave"
+                          className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-rose-50 text-rose-800 transition-colors"
+                        >
+                          Add VitalWave
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAddAncillary("ultrasound", "Ultrasound Studies")}
+                          data-testid="admin-review-add-ultrasound-generic"
+                          className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-emerald-50 text-emerald-800 transition-colors"
+                        >
+                          Add Ultrasound (generic)
+                        </button>
+                      </div>
+                      <Separator className="my-1" />
+                      <div className="px-1 text-[10px] uppercase tracking-wider text-slate-500">
+                        Ultrasound subtype
+                      </div>
+                      <ScrollArea className="max-h-44">
+                        <div className="space-y-0.5 pr-1">
+                          {ADD_ULTRASOUND_SUBTYPES.map((t) => (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => handleAddAncillary("ultrasound", t)}
+                              data-testid="admin-review-add-ultrasound-subtype"
+                              data-test-name={t}
+                              className="w-full text-left rounded-md px-2 py-1.5 text-[11px] hover:bg-emerald-50 text-emerald-900 transition-colors"
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
               {/* BrainWave + VitalWave panels. Bar shows only qualifying-
                   factor chips + icon-only Regenerate/Delete. Status
                   labels, the services row, and the selected list were removed
@@ -4439,8 +4639,33 @@ function CanonicalReasoningCardView({
               Approval required
             </span>
           )}
+          <span
+            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${
+              card.adminAdded
+                ? "border-sky-200 bg-sky-50 text-sky-800"
+                : "border-slate-200 bg-slate-50 text-slate-500"
+            }`}
+            data-testid="admin-review-source-badge"
+            data-source={card.adminAdded ? "admin_added" : "plexus_iq"}
+          >
+            {card.adminAdded ? "Admin-added" : "Plexus IQ"}
+          </span>
         </div>
       </div>
+
+      {card.adminAdded && card.addedReason && (
+        <div
+          className="rounded-md border border-sky-100 bg-sky-50/60 px-2 py-1.5"
+          data-testid="admin-review-added-reason"
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-sky-700">
+            Qualification Reason
+          </div>
+          <div className="mt-0.5 text-xs text-slate-800 whitespace-pre-wrap">
+            {card.addedReason}
+          </div>
+        </div>
+      )}
 
       {hasFactors && (
         <div className="space-y-1" data-testid="admin-review-qualifying-factors-list">
