@@ -1,0 +1,222 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Redesign the Patient Directory patient profile experience to feel like a premium EMR-style patient chart.
+
+Current problem:
+When clicking a patient in Patient Directory, the patient opens in an expanding side panel/drawer. I hate that. It feels cramped and not premium.
+
+Goal:
+Inside Patient Directory, clicking a patient should open a full EMR-style patient profile workspace, not a side drawer.
+
+Do not touch unrelated modules.
+Do not change database schema unless absolutely required.
+Do not break Team Member Portal, Engagement Center, call lists, or Playground.
+
+Architecture rules:
+- Patient Directory is the canonical patient identity/profile area.
+- Team Member Portal call-list patient name should route/open to this Patient Directory profile.
+- Playground is the operational workspace for working a case.
+- Patient Directory is the EMR-style patient chart/profile.
+- Do not make Patient Directory become the Playground.
+- Do not route patient name clicks to the Playground.
+
+Required UX:
+
+1. Remove or stop using the expanding side-panel/drawer behavior for selected patients.
+
+2. Replace it with a full patient profile workspace inside Patient Directory.
+
+Preferred structure:
+Left side:
+- patient list
+- search
+- filters
+
+Right/main area:
+- full selected patient profile
+
+If there is no selected patient, show a premium empty state:
+“Select a patient to view their profile.”
+
+3. Patient profile header should look like an EMR chart header and include available fields:
+- patient name
+- DOB
+- MRN
+- gender if available
+- phone number
+- clinic/facility
+- provider if available
+- insurance if available
+- current workflow status
+- priority/due status if available
+
+4. Add clean status badges if data exists:
+- BrainWave eligible
+- VitalWave eligible
+- Ultrasound eligible
+- Call due
+- Scheduled
+- Needs follow-up
+- Billing ready / not ready if available
+
+5. Add EMR-style tabs or section navigation:
+- Overview
+- Clinical
+- Plexus IQ
+- Calls
+- Scheduling
+- Documents
+- Timeline
+- Billing Readiness if available
+
+If all data is not available, build the layout with graceful empty states. Do not invent fake patient data.
+
+6. Overview tab should show:
+- demographics
+- contact info
+- clinic/facility
+- provider
+- insurance
+- assigned team member
+- current case/workflow status
+- next action
+
+7. Clinical tab should show:
+- diagnoses
+- problem list
+- relevant clinical flags
+- medications if available
+- notes if available
+
+8. Plexus IQ tab should show:
+- qualifying ancillary opportunities
+- qualification reasons
+- supporting diagnoses/factors
+- Admin Review status/context if available
+
+9. Calls tab should show:
+- call history
+- call outcomes
+- call notes
+- who called
+- when they called
+- next follow-up
+
+10. Scheduling tab should show:
+- scheduled appointments
+- pending scheduling
+- next action date/time
+- reschedule/follow-up information
+
+11. Documents tab should show:
+- orders
+- procedure notes
+- reports
+- uploaded documents
+- missing documents if available
+
+12. Timeline tab should show patient journey events if available:
+- qualified by Plexus IQ
+- approved in Admin Review
+- assigned in Engagement Center
+- call attempts
+- scheduled
+- documents uploaded
+- physician signed
+- billing ready
+
+13. Billing Readiness tab or section should show if available:
+- order present
+- procedure note present
+- report uploaded
+- diagnosis attached
+- insurance verified
+- ready to bill / not ready
+
+14. Add quick actions in the patient profile header or Overview:
+- Call
+- Schedule
+- Push to Playground
+
+Use existing call/schedule/playground logic if available.
+Do not create duplicate sources of truth.
+
+15. Patient Directory deep linking:
+If the current code supports URL search like ?search=, preserve it.
+If patient ID/profile routing exists, use it.
+If not, add a safe query-param-based selected patient state such as:
+?patientId=123
+or equivalent existing pattern.
+
+The important behavior:
+- From Team Member Portal call-list, clicking patient name should open Patient Directory focused on that patient.
+- Inside Patient Directory, the profile should show in the full EMR-style workspace, not a side drawer.
+
+Visual style:
+- Premium
+- Clean
+- White/iOS-like
+- Organized like an EMR
+- Not cluttered
+- No giant side drawer
+- No cramped expanding panel
+- Use cards, tabs, badges, and clear section headings
+- Make it feel enterprise-grade
+
+Do NOT:
+- Do not change Team Member Portal call-list logic except preserving patient name link behavior.
+- Do not change Engagement Center assignment logic.
+- Do not change patient_execution_cases source-of-truth behavior.
+- Do not create new backend tables.
+- Do not use old Outreach Center as a source.
+- Do not break existing patient search/filter behavior.
+- Do not invent fake data.
+- Do not make a broad refactor.
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Redesign Patient Directory EMR profile
+
+Push:
+origin plexus-iq-admin-review-persistence-fix

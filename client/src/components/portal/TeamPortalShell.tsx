@@ -55,6 +55,7 @@ import {
   type SchedulePatientDialogPatient,
 } from "@/components/portal/SchedulePatientDialog";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
+import { CallRowQuickActions } from "@/components/portal/CallRowQuickActions";
 import { SchedulePatientPlayground } from "@/components/portal/SchedulePatientPlayground";
 import { PatientMiniCalendar } from "@/components/portal/PatientMiniCalendar";
 import { PatientCommandCanvas } from "@/components/portal/PatientCommandCanvas";
@@ -1289,16 +1290,20 @@ export function TeamPortalShell({
     };
   }
 
-  // Patient name click → Patient Directory (identity/profile), pre-filtered
-  // to this patient. No per-profile route exists, so we deep-link the
-  // canonical directory search.
-  function openPatientInDirectory(row: TeamWorkspaceCallListItem) {
-    const name = (row.patientName ?? "").trim();
-    setLocation(
-      name
-        ? `/patient-directory?search=${encodeURIComponent(name)}`
-        : "/patient-directory",
-    );
+  // Patient name click → pull the patient into the center Playground
+  // (Patient Command Canvas) instead of navigating away. When the row has
+  // no real screening id we fall back to the scheduling playground so the
+  // case still opens in-place.
+  function openCallRowPatient(row: TeamWorkspaceCallListItem) {
+    if (typeof row.patientScreeningId === "number" && row.patientScreeningId > 0) {
+      openPatientTabById({
+        patientScreeningId: row.patientScreeningId,
+        name: row.patientName ?? "Patient",
+        facility: row.facilityId ?? facility ?? null,
+      });
+      return;
+    }
+    pushCallRowToPlayground(row);
   }
 
   // Push a call-list case into the detailed Playground workspace, preserving
@@ -2465,12 +2470,12 @@ export function TeamPortalShell({
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="min-w-0">
-                              {/* Name → Patient Directory (identity/profile). */}
+                              {/* Name → pull patient into the Playground. */}
                               <button
                                 type="button"
-                                onClick={() => openPatientInDirectory(row)}
+                                onClick={() => openCallRowPatient(row)}
                                 className="block max-w-full truncate text-left text-sm font-medium text-slate-900 hover:text-[#4863A0] hover:underline"
-                                title={`Open ${row.patientName ?? "patient"} in Patient Directory`}
+                                title={`Open ${row.patientName ?? "patient"} in Playground`}
                                 data-testid={`button-call-patient-${row.id ?? idx}`}
                               >
                                 {row.patientName ?? "Unnamed patient"}
@@ -2483,40 +2488,19 @@ export function TeamPortalShell({
                                 {callReason}
                               </div>
                             </div>
-                            {/* Icon-only action cluster: phone / calendar / push. */}
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button
-                                type="button"
-                                disabled={!canCall}
-                                onClick={() => canCall && setCallDialogRow(row)}
-                                aria-label={`Call ${row.patientName ?? "patient"}`}
-                                title="Quick call"
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                                data-testid={`button-call-phone-${row.id ?? idx}`}
-                              >
-                                <Phone className="h-4 w-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
-                                aria-label={`Schedule ${row.patientName ?? "patient"}`}
-                                title="Quick schedule"
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-[#4863A0] hover:bg-blue-50"
-                                data-testid={`button-call-schedule-${row.id ?? idx}`}
-                              >
-                                <CalendarIcon className="h-4 w-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => pushCallRowToPlayground(row)}
-                                aria-label={`Push ${row.patientName ?? "patient"} to Playground`}
-                                title="Push to Playground"
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-indigo-600 hover:bg-indigo-50"
-                                data-testid={`button-call-playground-${row.id ?? idx}`}
-                              >
-                                <Maximize2 className="h-4 w-4" />
-                              </button>
-                            </div>
+                            {/* Quick-action cluster: phone pop-up + calendar
+                                day→time scheduler, each with a corner expand
+                                that pulls the patient into the Playground. */}
+                            <CallRowQuickActions
+                              row={row}
+                              idx={row.id ?? idx}
+                              facility={facility}
+                              selectedDate={selectedDate}
+                              canCall={canCall}
+                              callReason={callReason}
+                              onLogCall={() => canCall && setCallDialogRow(row)}
+                              onExpandToPlayground={() => pushCallRowToPlayground(row)}
+                            />
                           </div>
                           {/* Secondary meta: time + status, de-emphasized. */}
                           {(row.nextActionAt || row.engagementStatus || row.lifecycleStatus) && (
