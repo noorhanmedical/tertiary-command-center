@@ -34,11 +34,19 @@ import {
   PlexusIQBulkImportModal,
   type ParsedRow,
 } from "@/components/plexus-iq/PlexusIQBulkImportModal";
+import { PlexusIQBatchFlowDialog } from "@/components/plexus-iq/PlexusIQBatchFlowDialog";
+import { PlexusIQActiveBatchHeader } from "@/components/plexus-iq/PlexusIQActiveBatchHeader";
+import {
+  setActiveBatchId,
+  setBatchSource,
+  type BatchSource,
+} from "@/lib/plexusIqBatchSession";
 import {
   importPlexusIqClinicalRows,
   startPlexusIqQualificationJob,
   fetchPlexusIqQualificationJobStatus,
   type QualificationJobStatus,
+  type PlexusIqBatchPlacement,
 } from "@/lib/plexusIqClinicalImportApi";
 import type { PlexusIqClinicalImportRow } from "@/lib/plexusIqClinicalImportParser";
 import {
@@ -222,6 +230,13 @@ export default function PlexusIQPage() {
   // ───── Modals + drawer state ─────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  // BatchFlow session isolation (task #515). The "Plexus BatchFlow" tile
+  // opens this landing/history dialog first; choosing Start New / Continue
+  // / Resume sets the placement intent below and THEN opens the bulk
+  // import modal. Default placement is `newRun` so every fresh intake
+  // creates its own isolated, timestamped batch.
+  const [batchFlowOpen, setBatchFlowOpen] = useState(false);
+  const batchPlacementRef = useRef<PlexusIqBatchPlacement>({ mode: "newRun" });
   // 3-tile hub state. `addHubOpen` controls the chooser dialog; the
   // selected tile then opens either PlexusIQAddPatientModal (with a
   // pre-set patientType) or PlexusIQBulkImportModal.
@@ -451,9 +466,14 @@ export default function PlexusIQPage() {
     async (
       rows: PlexusIqClinicalImportRow[],
       defaults: { facility: string; scheduleDate: string; patientType: "visit" | "outreach" },
+      source: BatchSource = "paste",
     ) => {
       if (rows.length === 0) return;
       setBulkPending(true);
+      // BatchFlow placement intent set by the landing dialog. Default
+      // `newRun` isolates every intake into its own timestamped batch;
+      // `append` (Resume / Append to current batch) reuses a target batch.
+      const placement = batchPlacementRef.current;
       try {
         const result = await importPlexusIqClinicalRows(
           rows.map((r) => ({
@@ -461,7 +481,7 @@ export default function PlexusIQPage() {
             // strip `raw` from the wire payload — the server doesn't need it
             raw: undefined,
           })),
-          defaults,
+          { ...defaults, placement },
         );
 
         // Refresh the workspace and calendar to show the new batches/patients.
@@ -485,6 +505,10 @@ export default function PlexusIQPage() {
           }`,
         });
 
+        // Record the source for every batch this import created/landed in
+        // so Batch History can show "Pasted list" vs "File import".
+        for (const id of result.batchIds) setBatchSource(id, source);
+
         // Focus the operating list on the batch the patients landed in.
         // Prefer the group matching the import defaults; otherwise the
         // first group in the map.
@@ -496,7 +520,14 @@ export default function PlexusIQPage() {
           ) ?? result.batchPatientMap[0];
         if (targetGroup) {
           setFocusBatch({ id: targetGroup.batchId, facility: targetGroup.facility });
+          // The batch the patients landed in becomes the active BatchFlow
+          // session batch. Subsequent qualification + Admin Review target
+          // exactly this batch.
+          setActiveBatchId(targetGroup.batchId);
         }
+        // Reset placement so a later import defaults back to an isolated
+        // new batch unless the operator explicitly chooses Append again.
+        batchPlacementRef.current = { mode: "newRun" };
 
         // Kick off qualification jobs for every created batch. We poll
         // all of them concurrently in the banner; failed/incomplete
@@ -547,7 +578,7 @@ export default function PlexusIQPage() {
   );
 
   const handleBulkImport = useCallback(
-    async (rows: ParsedRow[]) => {
+    async (rows: ParsedRow[], source: BatchSource = "paste") => {
       if (rows.length === 0) return;
       setBulkPending(true);
 
@@ -565,10 +596,30 @@ export default function PlexusIQPage() {
 
       let firstBatch: { id: number; facility: string } | null = null;
 
+      // BatchFlow placement intent. `append` reuses a target batch (only
+      // valid for a single-group paste); `newRun` creates a fresh isolated
+      // batch per facility/date group.
+      const placement = batchPlacementRef.current;
+      const appendTargetId =
+        placement.mode === "append" && groups.size === 1
+          ? placement.targetBatchId ?? null
+          : null;
+
       try {
         for (const [, groupRows] of groups) {
           const first = groupRows[0];
-          const targetBatchId = await resolveBatchId(first.facility, first.scheduleDate);
+          const targetBatchId =
+            appendTargetId != null
+              ? appendTargetId
+              : placement.mode === "newRun"
+                ? ((await createBatchMut.mutateAsync({
+                    name: `${first.facility} - ${first.scheduleDate}`,
+                    facility: first.facility,
+                    scheduleDate: first.scheduleDate,
+                    placement: { mode: "newRun" },
+                  })) as { id: number }).id
+                : await resolveBatchId(first.facility, first.scheduleDate);
+          setBatchSource(targetBatchId, source);
           if (!firstBatch) firstBatch = { id: targetBatchId, facility: first.facility };
 
           for (const r of groupRows) {
@@ -600,8 +651,13 @@ export default function PlexusIQPage() {
           description: `Imported ${total} patient${total === 1 ? "" : "s"} into ${groups.size} batch${groups.size === 1 ? "" : "es"} across ${uniqueFacilities} facilit${uniqueFacilities === 1 ? "y" : "ies"}.`,
         });
         refreshAll();
-        // Focus the operating list on the first batch the patients landed in.
-        if (firstBatch) setFocusBatch(firstBatch);
+        // Focus the operating list on the first batch the patients landed in
+        // and make it the active BatchFlow session batch.
+        if (firstBatch) {
+          setFocusBatch(firstBatch);
+          setActiveBatchId(firstBatch.id);
+        }
+        batchPlacementRef.current = { mode: "newRun" };
         setBulkOpen(false);
       } catch (err) {
         toast({
@@ -614,7 +670,7 @@ export default function PlexusIQPage() {
         setBulkProgress(null);
       }
     },
-    [resolveBatchId, addPatientMut, toast, refreshAll],
+    [resolveBatchId, createBatchMut, addPatientMut, toast, refreshAll],
   );
 
   const handleAssignDate = useCallback(
@@ -853,6 +909,14 @@ export default function PlexusIQPage() {
             points live inside the operating-list view's inline toolbar
             (relocated via onAddPatient / onOpenCalendar below). Jobs still
             run; only the always-on status chrome is removed. */}
+        <PlexusIQActiveBatchHeader
+          batches={batches}
+          summary={summary}
+          batchDetails={batchDetails}
+          runningBatchIds={runningBatchIds}
+          onChangeBatch={() => setBatchFlowOpen(true)}
+          onViewBatch={(id, facility) => setFocusBatch({ id, facility })}
+        />
         <PlexusIQWorkspace
           summary={summary}
           batches={batches}
@@ -906,7 +970,7 @@ export default function PlexusIQPage() {
         }}
         onPickBatchFlow={() => {
           setAddHubOpen(false);
-          setBulkOpen(true);
+          setBatchFlowOpen(true);
         }}
       />
 
@@ -918,6 +982,32 @@ export default function PlexusIQPage() {
         defaultPatientType={defaultPatientType}
         defaultFacility={addDefaultFacility}
         defaultScheduleDate={addDefaultScheduleDate}
+      />
+
+      <PlexusIQBatchFlowDialog
+        open={batchFlowOpen}
+        onClose={() => setBatchFlowOpen(false)}
+        batches={batches}
+        summary={summary}
+        batchDetails={batchDetails}
+        runningBatchIds={runningBatchIds}
+        onStartNew={() => {
+          // Fresh isolated intake: every import lands in a new batch.
+          batchPlacementRef.current = { mode: "newRun" };
+          setBatchFlowOpen(false);
+          setBulkOpen(true);
+        }}
+        onResume={(batchId) => {
+          // Continue an existing batch: imports append into it.
+          batchPlacementRef.current = { mode: "append", targetBatchId: batchId };
+          setActiveBatchId(batchId);
+          setBatchFlowOpen(false);
+          setBulkOpen(true);
+        }}
+        onViewBatch={(id, facility) => {
+          setFocusBatch({ id, facility });
+          setBatchFlowOpen(false);
+        }}
       />
 
       <PlexusIQBulkImportModal

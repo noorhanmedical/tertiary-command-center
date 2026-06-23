@@ -312,12 +312,13 @@ export function PlexusIQBulkImportModal({
   onClose: () => void;
   // Legacy code-path: per-row POST loop (still used for the Start/End
   // label-block and legacy CSV formats so existing behaviour is preserved).
-  onImport: (rows: ParsedRow[]) => Promise<void>;
+  onImport: (rows: ParsedRow[], source: "paste" | "import") => Promise<void>;
   // New clinical-spreadsheet code-path: one bulk POST + optional
   // qualification-job kickoff. Supplied by /plexus-iq.tsx.
   onClinicalImport?: (
     rows: PlexusIqClinicalImportRow[],
     defaults: { facility: string; scheduleDate: string; patientType: "visit" | "outreach" },
+    source: "paste" | "import",
   ) => Promise<void>;
   pending: boolean;
   progress: { current: number; total: number; uniqueBatches: number; uniqueFacilities: number } | null;
@@ -334,6 +335,10 @@ export function PlexusIQBulkImportModal({
   const [text, setText] = useState("");
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [errors, setErrors] = useState<ParsedRowError[]>([]);
+  // Tracks whether the current source text was populated from a file
+  // upload (vs. a manual paste) so the page can record the batch's source
+  // for Batch History.
+  const [usedFile, setUsedFile] = useState(false);
 
   // On open, seed the default facility/date from the operating list's
   // current selection so an import lands in the list the user is viewing.
@@ -352,6 +357,7 @@ export function PlexusIQBulkImportModal({
     setText("");
     setFileNotice(null);
     setErrors([]);
+    setUsedFile(false);
   }
 
   async function handleFile(file: File) {
@@ -365,6 +371,7 @@ export function PlexusIQBulkImportModal({
     try {
       const content = await file.text();
       setText((prev) => (prev ? `${prev}\n${content}` : content));
+      setUsedFile(true);
     } catch {
       setFileNotice(`Could not read ${file.name}.`);
     }
@@ -538,17 +545,21 @@ export function PlexusIQBulkImportModal({
         setStep("source");
         return;
       }
-      await onClinicalImport(preview.clinicalRows, {
-        // Defaults are still passed so any row with a blank Clinic /
-        // Appointment Date cell can fall back. The clinical-import
-        // route applies them when row values are missing.
-        facility: defFacility || preview.clinicalRows[0].facility || "",
-        scheduleDate: defDate || preview.clinicalRows[0].scheduleDate || "",
-        patientType: defType,
-      });
+      await onClinicalImport(
+        preview.clinicalRows,
+        {
+          // Defaults are still passed so any row with a blank Clinic /
+          // Appointment Date cell can fall back. The clinical-import
+          // route applies them when row values are missing.
+          facility: defFacility || preview.clinicalRows[0].facility || "",
+          scheduleDate: defDate || preview.clinicalRows[0].scheduleDate || "",
+          patientType: defType,
+        },
+        usedFile ? "import" : "paste",
+      );
       return;
     }
-    await onImport(preview.rows);
+    await onImport(preview.rows, usedFile ? "import" : "paste");
   }
 
   return (
