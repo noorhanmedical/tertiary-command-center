@@ -5,7 +5,7 @@ import {
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
   Sparkles, Send, Minimize2, Maximize2, FileBarChart, FilePlus, User, Bell, Bot,
   Home, BookOpen, CalendarDays, Mail, ClipboardPen, Pill, History, ShieldCheck, Users, Search, Megaphone,
-  NotebookPen,
+  NotebookPen, ChevronDown, Wrench,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -2095,27 +2095,33 @@ export function TeamPortalShell({
         </div>
 
         <div
-          className={`absolute left-4 top-4 bottom-4 z-20 rounded-[28px] text-white shadow-[0_24px_70px_rgba(15,23,42,0.34)] backdrop-blur-2xl transition-all duration-300 ${
-            leftRailCollapsed
-              ? "w-10 bg-[rgba(71,85,105,0.22)]"
-              : "w-[320px] bg-[rgba(72,99,160,0.80)]"
-          }`}
+          className="pointer-events-none absolute left-4 top-4 bottom-4 z-20 flex w-[320px] flex-col"
           data-testid="portal-left-rail"
         >
-          <div className="flex h-full flex-col">
-            <div className="flex items-center justify-between px-3 py-3 border-b border-white/40">
-              {!leftRailCollapsed && <div className="text-sm font-semibold text-white">Tools</div>}
-              <button
-                type="button"
-                onClick={() => setLeftRailCollapsed((v) => !v)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/35 bg-white/90 text-[#4863A0] hover:bg-white"
-                data-testid="button-toggle-left-rail"
-              >
-                {leftRailCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-              </button>
-            </div>
+          {/* Trigger bar — anchored at the top-left edge. Stays visible when
+              the panel below is collapsed, so only this slim bar shows. */}
+          <button
+            type="button"
+            onClick={() => setLeftRailCollapsed((v) => !v)}
+            className="pointer-events-auto inline-flex h-7 items-center gap-1.5 self-start rounded-full border border-white/15 border-t-white/30 bg-[rgba(72,99,160,0.85)] px-3 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl transition-colors hover:bg-[rgba(72,99,160,0.95)]"
+            data-testid="button-toggle-left-rail"
+          >
+            <Wrench className="h-3.5 w-3.5 text-white/75" />
+            <span className="text-[11px] font-semibold tracking-wide text-white/90">Tools</span>
+            <ChevronDown className={`h-3.5 w-3.5 text-white/80 transition-transform duration-300 ${leftRailCollapsed ? "" : "rotate-180"}`} />
+          </button>
 
-            {!leftRailCollapsed && (() => {
+          {/* Body — drops down from the trigger with a transform + opacity
+              transition rather than expanding horizontally. */}
+          <div
+            className={`pointer-events-auto mt-2 min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/15 border-t-white/30 bg-[rgba(72,99,160,0.80)] text-white shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
+              leftRailCollapsed
+                ? "pointer-events-none -translate-y-3 scale-y-95 opacity-0"
+                : "translate-y-0 scale-y-100 opacity-100"
+            }`}
+          >
+            <div className="flex h-full flex-col">
+            {(() => {
               // Active center-canvas tab kind so we can highlight the
               // matching left-rail tool. Single source of truth.
               const activeKind = portalTabs.find((t) => t.id === activePortalTabId)?.kind ?? null;
@@ -2228,43 +2234,46 @@ export function TeamPortalShell({
               </div>
               );
             })()}
+            </div>
           </div>
         </div>
 
         <div
-          className={`absolute right-4 top-4 bottom-4 z-20 rounded-[28px] text-white shadow-[0_24px_70px_rgba(15,23,42,0.34)] backdrop-blur-2xl transition-all duration-300 ${
-            rightRailCollapsed
-              ? "w-10 bg-[rgba(71,85,105,0.22)]"
-              : "w-[340px] bg-[rgba(72,99,160,0.80)]"
-          }`}
+          className="pointer-events-none absolute right-4 top-4 bottom-4 z-20 flex w-[340px] flex-col"
           data-testid="portal-right-rail"
         >
-          <div className="flex h-full flex-col">
-            <div className="flex items-center justify-between px-3 py-3 border-b border-white/40">
-              {!rightRailCollapsed && (
-                <div>
-                  <div className="text-sm font-semibold text-white">Ancillary Test Schedule</div>
-                  <div className="text-[11px] text-slate-200">{selectedDate === todayIso() ? "Today" : selectedDate}</div>
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => setRightRailCollapsed((v) => !v)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/35 bg-white/90 text-[#4863A0] hover:bg-white"
-                data-testid="button-toggle-right-rail"
-              >
-                {rightRailCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              </button>
-            </div>
+          {/* Trigger bar — anchored at the top-right edge. Stays visible when
+              the work-queue panel below is collapsed. */}
+          <button
+            type="button"
+            onClick={() => setRightRailCollapsed((v) => !v)}
+            className="pointer-events-auto inline-flex h-7 items-center gap-1.5 self-end rounded-full border border-white/15 border-t-white/30 bg-[rgba(72,99,160,0.85)] px-3 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl transition-colors hover:bg-[rgba(72,99,160,0.95)]"
+            data-testid="button-toggle-right-rail"
+          >
+            <span className="text-[11px] font-semibold tracking-wide text-white/90">Work Queue</span>
+            <ChevronDown className={`h-3.5 w-3.5 text-white/80 transition-transform duration-300 ${rightRailCollapsed ? "" : "rotate-180"}`} />
+          </button>
 
-            {!rightRailCollapsed && (
-              <div className="flex-1 overflow-y-auto p-3">
-                {/* Workspace mode tabs — mounted at the top of the
-                    existing right panel. Selection is UI-only in this
-                    batch; the panel body below renders the same canonical
-                    content it always has. Canonical data hydration per
-                    mode lands in a follow-up batch. */}
-                <div className="mb-3">
+          {/* Body — drops down from the trigger with a transform + opacity
+              transition rather than expanding horizontally. */}
+          <div
+            className={`pointer-events-auto mt-2 min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/15 border-t-white/30 bg-[rgba(72,99,160,0.80)] text-white shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
+              rightRailCollapsed
+                ? "pointer-events-none -translate-y-3 scale-y-95 opacity-0"
+                : "translate-y-0 scale-y-100 opacity-100"
+            }`}
+          >
+            <div className="flex h-full flex-col">
+              <div className="flex-1 overflow-y-auto">
+                {/* Pinned header + mode switcher. Stays fixed to the top of
+                    the scroll region so it's reachable while the patient
+                    list below scrolls. Selection is UI-only; the body
+                    renders the same canonical content per mode. */}
+                <div className="sticky top-0 z-10 border-b border-white/10 bg-[rgba(64,90,150,0.92)] px-3 pb-2.5 pt-2.5 backdrop-blur-xl">
+                  <div className="mb-1.5 flex items-center justify-between px-0.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-white/70">Work Queue</span>
+                    <span className="text-[10px] text-slate-200">{selectedDate === todayIso() ? "Today" : selectedDate}</span>
+                  </div>
                   <WorkspaceModeSwitcher
                     activeMode={activeWorkspaceMode}
                     onModeChange={setActiveWorkspaceMode}
@@ -2278,6 +2287,7 @@ export function TeamPortalShell({
                     }}
                   />
                 </div>
+                <div className="p-3">
                 {noFacilityAssigned && (
                   <div
                     className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800"
@@ -2306,7 +2316,9 @@ export function TeamPortalShell({
                       return (
                         <div
                           key={(p.patientScreeningId ?? p.name) + ""}
-                          className={`rounded-lg border px-2.5 py-2 text-slate-900 transition-colors ${
+                          className={`relative rounded-xl border border-l-4 px-2.5 py-2 text-slate-900 shadow-sm transition-colors ${
+                            consentDone ? "border-l-emerald-400" : "border-l-amber-400"
+                          } ${
                             isSelected && centerMode === "patient" ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-slate-50"
                           }`}
                           data-testid={`patient-row-${p.patientScreeningId ?? p.name}`}
@@ -2465,7 +2477,7 @@ export function TeamPortalShell({
                         return (
                         <div
                           key={`${row.id ?? idx}`}
-                          className="rounded-lg border border-white/10 bg-white px-2.5 py-2 text-slate-900"
+                          className="rounded-xl border border-l-4 border-l-sky-400 bg-white px-2.5 py-2 text-slate-900 shadow-sm transition-colors hover:bg-slate-50"
                           data-testid={`workspace-call-${row.id ?? idx}`}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -2539,7 +2551,7 @@ export function TeamPortalShell({
                       filteredAncillarySchedule.map((row, idx) => (
                         <div
                           key={`${row.id ?? idx}`}
-                          className="rounded-lg border border-white/10 bg-white px-2.5 py-2 text-slate-900"
+                          className="rounded-xl border border-l-4 border-l-violet-400 bg-white px-2.5 py-2 text-slate-900 shadow-sm transition-colors hover:bg-slate-50"
                           data-testid={`workspace-ancillary-${row.id ?? idx}`}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -2653,8 +2665,9 @@ export function TeamPortalShell({
                       Loading clinic schedule…
                     </div>
                   )}
+                </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
         <div className="absolute bottom-5 left-1/2 z-50 -translate-x-1/2 w-full max-w-[95vw] overflow-x-auto">
