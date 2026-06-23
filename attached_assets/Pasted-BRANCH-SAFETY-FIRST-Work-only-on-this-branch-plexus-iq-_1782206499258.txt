@@ -1,0 +1,151 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Fix the ACS/PCS Team Member Portal admin view-as dropdown.
+
+Current problem:
+In the Team Member Portal top banner, admin sees a dropdown that says “Admin,” but when clicked it does not show team members. I need this dropdown to show actual ACS/PCS team members so admin can select a person and see that person’s assigned call list.
+
+This is not just a label change. Wire the dropdown to the real team-member roster and use the selected team member to reload the right-panel call list.
+
+Architecture rules:
+- Team Member Portal is the canonical destination for call-list work.
+- Engagement Center assigns work.
+- patient_execution_cases is the source of truth for assigned call work.
+- The current active Team Portal Call List endpoint is /api/scheduler-portal/cases, which projects patient_execution_cases.
+- Team-member roster currently appears to be backed by /api/outreach/schedulers. Despite the legacy name, this roster endpoint is canonical and should remain available.
+- /api/scheduler-assignments is legacy/compatibility only and must not be used for Engagement Center-assigned call work.
+- Do not route users to old Outreach Center or scheduler pages.
+- Do not change database schema unless absolutely required.
+
+Fix requirements:
+
+1. Identify the current top-banner dropdown that displays “Admin” in ACS/PCS Team Member Portals.
+
+2. Determine whether that dropdown is currently showing:
+   - logged-in user role/account
+   - portal role
+   - or attempted admin view-as
+
+3. If it is only an account/role dropdown, do not reuse it incorrectly.
+   Add or replace with a true admin “Viewing as” team-member dropdown in the ACS/PCS top banner.
+
+4. For admin users only:
+   - Fetch the active team-member roster.
+   - Use the existing canonical roster endpoint if available:
+     GET /api/outreach/schedulers
+   - Display real team member names in the dropdown.
+   - Include active ACS/PCS/team-member users.
+   - If role filtering is reliable, filter PCS Portal to PCS users and ACS Portal to ACS users.
+   - If role filtering is not reliable yet, show all active team members instead of showing an empty dropdown.
+
+5. For non-admin ACS/PCS users:
+   - Hide the view-as dropdown.
+   - They should only see their own call list.
+
+6. When admin selects a team member:
+   - Store the selected team member ID.
+   - Reload the right-panel call list for that selected member.
+   - Pass the correct backend view-as param to the existing call-list endpoint:
+     /api/scheduler-portal/cases
+   - Inspect the backend to determine whether the param is:
+     viewAsTeamMemberId
+     viewAsSchedulerId
+     or another existing supported name.
+   - Do not invent a new param if one already exists.
+
+7. Backend safety:
+   - Verify the backend only honors the view-as param for admin users.
+   - Non-admin users must not be able to see another team member’s list by manually adding the param.
+   - If this guard already exists, preserve it.
+   - If missing, add the smallest safe guard.
+
+8. Right-panel behavior:
+   - After selecting a team member, the right-panel call list must show that selected member’s assigned patient_execution_cases.
+   - The list should update immediately or after a clear loading state.
+   - Empty state should say something like:
+     “No assigned calls for this team member.”
+   - It should not say admin has no calls if the selected team member has calls.
+
+9. Keep existing call-list tile behavior:
+   - patient name
+   - call reason
+   - phone icon
+   - calendar icon
+   - push to Playground icon
+
+10. Preserve existing actions:
+   - name opens Patient Directory
+   - phone opens call popup
+   - calendar opens schedule popup
+   - push icon sends case to Playground
+
+11. Audit behavior:
+   - If admin acts while viewing another team member’s queue, do not falsely imply the selected team member performed the action.
+   - The case can remain assigned to the selected team member.
+   - The action should be attributable to the logged-in admin if the backend already supports actor/performedBy tracking.
+
+Debug/report requirements:
+Before making changes, report:
+- where the current “Admin” dropdown is rendered
+- whether it is account/role dropdown or view-as dropdown
+- what endpoint provides team members
+- what param /api/scheduler-portal/cases expects for admin view-as
+- what files will be touched
+
+After implementation, report:
+- whether the dropdown now shows real team members
+- how selected team member ID is passed to the call-list query
+- whether admin role guard exists
+- whether non-admins are blocked from view-as
+- files changed
+- check/build result
+- latest commit SHA
+- risks
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Wire admin view-as team member dropdown
+
+Push:
+origin plexus-iq-admin-review-persistence-fix
