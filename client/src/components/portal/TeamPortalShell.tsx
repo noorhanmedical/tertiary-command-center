@@ -1597,7 +1597,7 @@ export function TeamPortalShell({
                   >
                     <SelectValue placeholder="Admin (self)" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="z-[90]">
                     <SelectItem value="__self__" data-testid="admin-viewas-option-self">
                       Admin (self)
                     </SelectItem>
@@ -1619,7 +1619,7 @@ export function TeamPortalShell({
               <SelectTrigger id="facility-select" className="w-[220px] border-white/20 bg-white/90 text-slate-900" data-testid="select-facility">
                 <SelectValue placeholder={facilities.length === 0 ? "No clinic assignments" : "Choose clinic"} />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[90]">
                 {facilities.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
               </SelectContent>
             </Select>

@@ -390,12 +390,7 @@ export async function fetchTeamMembersForWorkspace(
   const res = await fetch(`/api/portal/team-members?workspace=${workspace}`, {
     credentials: "include",
   });
-  if (!res.ok) {
-    console.debug("[view-as] team-members fetch not ok", { workspace, status: res.status });
-    return [];
-  }
+  if (!res.ok) return [];
   const body = (await res.json()) as { teamMembers?: ViewAsTeamMember[] };
-  const list = Array.isArray(body.teamMembers) ? body.teamMembers : [];
-  console.debug("[view-as] team-members loaded", { workspace, count: list.length });
-  return list;
+  return Array.isArray(body.teamMembers) ? body.teamMembers : [];
 }
