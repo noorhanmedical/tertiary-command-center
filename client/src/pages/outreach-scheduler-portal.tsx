@@ -121,6 +121,7 @@ export default function OutreachSchedulerPortalPage() {
       latestCallByPatient,
       sortedCallList,
       callbacksDue,
+      schedulerMappingMissing,
     } = useOutreachData(schedulerId);
 
   // ── Canonical execution cases (per-facility) — surfaces patients that
@@ -885,6 +886,16 @@ export default function OutreachSchedulerPortalPage() {
                       );
                     })}
                   </ul>
+                </div>
+              )}
+              {schedulerMappingMissing && (
+                <div
+                  className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+                  data-testid="banner-missing-scheduler-mapping"
+                >
+                  <span className="font-semibold">Account not linked to a scheduler.</span>{" "}
+                  Engagement-assigned patients won't appear here until an admin links
+                  your login to a scheduler in the Call List Audit.
                 </div>
               )}
               <CallListPanel

@@ -11,6 +11,7 @@ import {
   outreachSchedulers,
 } from "@shared/schema";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+import { calculateNextActionAt } from "../services/callList/nextActionPolicy";
 
 // No-duplicate-scheduler-per-date guard.
 //
@@ -472,11 +473,22 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
         }
         const role = assignedRole ?? "scheduler";
 
+        // Option 2 visibility: the assigned work only appears in the Team
+        // Member Portal call list (/api/operational-queue/me) when the
+        // scheduler row is linked to a login via outreach_schedulers.user_id.
+        // Surface this up-front so the Engagement Center can warn the user.
+        const visibility: "visible" | "missing_user_mapping" =
+          (newScheduler as { userId?: string | null }).userId
+            ? "visible"
+            : "missing_user_mapping";
+
         const updated: Array<{
           patientScreeningId: number;
           executionCaseId: number;
           previousSchedulerId: number | null;
           previousSchedulerName: string | null;
+          nextActionAt: string | null;
+          visibility: "visible" | "missing_user_mapping";
         }> = [];
         const failed: Array<{ patientScreeningId: number; reason: string }> = [];
 
@@ -535,12 +547,32 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             ? "assigned"
             : execCase.engagementStatus;
 
+          // Option 2 (§2 + §4): set next_action_at via the shared policy so the
+          // case surfaces on the call list immediately. A pending future
+          // callback (e.g. a prior disposition) is preserved instead of being
+          // pulled forward; otherwise the fresh assignment surfaces now.
+          const now = new Date();
+          const existingNext = execCase.nextActionAt
+            ? new Date(execCase.nextActionAt as unknown as string)
+            : null;
+          const existingFuture =
+            existingNext && !Number.isNaN(existingNext.getTime()) && existingNext.getTime() > now.getTime()
+              ? existingNext
+              : null;
+          const { nextActionAt: policyNext } = calculateNextActionAt({
+            isAssignment: true,
+            now,
+          });
+          const nextActionAt = existingFuture ?? policyNext;
+
           await db
             .update(patientExecutionCases)
             .set({
               assignedTeamMemberId: newScheduler.id,
               assignedRole: role,
               engagementStatus: nextEngagementStatus,
+              nextActionAt: nextActionAt ?? undefined,
+              updatedAt: now,
             })
             .where(eq(patientExecutionCases.id, execCase.id));
 
@@ -563,6 +595,8 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
               assignedRole: role,
               reason: reason ?? null,
               batch: patientScreeningIds.length > 1,
+              nextActionAt: nextActionAt ? nextActionAt.toISOString() : null,
+              callListVisibility: visibility,
             },
           });
 
@@ -571,6 +605,8 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             executionCaseId: execCase.id,
             previousSchedulerId,
             previousSchedulerName: previousScheduler?.name ?? null,
+            nextActionAt: nextActionAt ? nextActionAt.toISOString() : null,
+            visibility,
           });
 
           // ─── Optional: engagement-board → call-list bridge (Batch 11c) ───
@@ -623,6 +659,7 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
             schedulerName: newScheduler.name,
             schedulerFacility: newScheduler.facility,
             assignedRole: role,
+            visibility,
           },
         });
       } catch (error: unknown) {

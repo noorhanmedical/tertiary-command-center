@@ -61,6 +61,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/clinician-portal", label: "Clinician Portal", Icon: Stethoscope,    roles: ["admin", "clinician"] },
   { href: "/technician-portal", label: "Technician Portal", Icon: Stethoscope,    roles: ["admin", "technician", "liaison"] },
   { href: "/liaison-technician-portal",    label: "Liaison Technician Portal",    Icon: HeartHandshake, roles: ["admin", "technician", "liaison"] },
+  { href: "/call-list-audit",  label: "Call List Audit",  Icon: Shield,       roles: ["admin"] },
   { href: "/admin-ops",        label: "Admin",            Icon: Shield,       roles: ["admin"] },
 ];
 

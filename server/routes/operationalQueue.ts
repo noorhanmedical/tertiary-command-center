@@ -25,6 +25,7 @@ import {
   getOperationalQueueForUser,
   type OperationalQueueItemKind,
 } from "../modules/operational-queue";
+import { resolveSchedulerForUser } from "../services/callList/schedulerUserMapping";
 
 const VALID_KIND_SET = new Set<string>(OPERATIONAL_QUEUE_ITEM_KINDS);
 
@@ -91,19 +92,34 @@ export function registerOperationalQueueRoutes(app: Express) {
         includeClosedRaw === "true" ||
         includeClosedRaw === "yes";
 
-      const items = await getOperationalQueueForUser(
-        String(userId),
-        {
-          facility: q.facility?.trim() || undefined,
-          dateFrom: parseDateString(q.dateFrom),
-          dateTo: parseDateString(q.dateTo),
-          includeClosed,
-          kinds: parseKinds(q.kinds),
-        },
-        clampPerSourceLimit(q.perSourceLimit),
-      );
+      const [items, mapping] = await Promise.all([
+        getOperationalQueueForUser(
+          String(userId),
+          {
+            facility: q.facility?.trim() || undefined,
+            dateFrom: parseDateString(q.dateFrom),
+            dateTo: parseDateString(q.dateTo),
+            includeClosed,
+            kinds: parseKinds(q.kinds),
+          },
+          clampPerSourceLimit(q.perSourceLimit),
+        ),
+        resolveSchedulerForUser(String(userId)),
+      ]);
 
-      res.json({ items });
+      // meta.schedulerMapping lets the Team Member Portal distinguish
+      // "no work today" from "your login is not linked to a scheduler row"
+      // (in which case engagement-assigned cases can never appear). Additive:
+      // existing consumers that only read `items` are unaffected.
+      const meta =
+        mapping.status === "ok"
+          ? {
+              schedulerMapping: "ok" as const,
+              schedulerIds: mapping.schedulers.map((s) => s.id),
+            }
+          : { schedulerMapping: "missing_user_mapping" as const, schedulerIds: [] };
+
+      res.json({ items, meta });
     } catch (error: any) {
       console.error("[operational-queue/me] error:", error?.message ?? error);
       res.status(500).json({

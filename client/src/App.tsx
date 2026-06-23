@@ -25,6 +25,7 @@ import TechnicianPortalPage from "@/pages/technician-portal";
 import LiaisonPortalPage from "@/pages/liaison-portal";
 import PhysicianPortalPage from "@/pages/physician-portal";
 import AdminOpsPage from "@/pages/admin-ops";
+import CallListAuditPage from "@/pages/call-list-audit";
 import AdminPage from "@/pages/admin";
 import StovetopHeatSettingsPage from "@/pages/stovetop-heat-settings";
 import AdminUsersPage from "@/pages/admin-users";
@@ -296,6 +297,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/admin-ops">
                   <AdminGuard user={user}><AdminOpsPage /></AdminGuard>
+                </Route>
+                <Route path="/call-list-audit">
+                  <AdminGuard user={user}><CallListAuditPage /></AdminGuard>
                 </Route>
                 <Route path="/dashboard" component={ScheduleDashboardPage} />
                 <Route path="/schedule-dashboard">

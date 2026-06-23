@@ -279,37 +279,64 @@ export async function listSchedulerTasksFromEngagementBoardForUser(
       engagementBucket: patientExecutionCases.engagementBucket,
       engagementStatus: patientExecutionCases.engagementStatus,
       nextActionAt: patientExecutionCases.nextActionAt,
+      priorityScore: patientExecutionCases.priorityScore,
+      callAttemptCount: patientExecutionCases.callAttemptCount,
+      lastCallOutcome: patientExecutionCases.lastCallOutcome,
+      selectedServices: patientExecutionCases.selectedServices,
       createdAt: patientExecutionCases.createdAt,
       updatedAt: patientExecutionCases.updatedAt,
+      phoneNumber: patientScreenings.phoneNumber,
+      insurance: patientScreenings.insurance,
     })
     .from(patientExecutionCases)
+    .leftJoin(
+      patientScreenings,
+      eq(patientExecutionCases.patientScreeningId, patientScreenings.id),
+    )
     .where(and(...conditions))
     .orderBy(desc(patientExecutionCases.updatedAt))
     .limit(safeLimit);
 
-  return rows.map((r) => ({
-    id: `st-ec:${r.id}`,
-    kind: "scheduler_task" as const,
-    ownerType: "engagement_case" as const,
-    ownerId: r.id,
-    assigneeUserId: userId,
-    assigneeName: schedulerNameById.get(r.assignedTeamMemberId ?? -1) ?? null,
-    patientScreeningId: r.patientScreeningId,
-    patientName: r.patientName,
-    patientDob: r.patientDob,
-    facility: r.facilityId,
-    scheduledDate: null,
-    scheduledTime: null,
-    status: r.engagementStatus,
-    isOpen: engagementCaseIsOpen(r.engagementStatus),
-    metadata: {
-      engagementBucket: r.engagementBucket,
-      assignedRole: r.assignedRole,
-      nextActionAt: r.nextActionAt,
-    },
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt,
-  }));
+  return rows.map((r) => {
+    // Derive scheduledDate/scheduledTime from next_action_at so engagement
+    // call work sorts alongside the other operational-queue sources (which
+    // key off scheduledDate). Cases with no next_action_at stay null and are
+    // still returned (date filters treat null scheduledDate as "always").
+    const next = r.nextActionAt ? new Date(r.nextActionAt as unknown as string) : null;
+    const hasNext = next && !Number.isNaN(next.getTime());
+    const scheduledDate = hasNext ? next!.toISOString().slice(0, 10) : null;
+    const scheduledTime = hasNext ? next!.toISOString().slice(11, 16) : null;
+    return {
+      id: `st-ec:${r.id}`,
+      kind: "scheduler_task" as const,
+      ownerType: "engagement_case" as const,
+      ownerId: r.id,
+      assigneeUserId: userId,
+      assigneeName: schedulerNameById.get(r.assignedTeamMemberId ?? -1) ?? null,
+      patientScreeningId: r.patientScreeningId,
+      patientName: r.patientName,
+      patientDob: r.patientDob,
+      facility: r.facilityId,
+      scheduledDate,
+      scheduledTime,
+      status: r.engagementStatus,
+      isOpen: engagementCaseIsOpen(r.engagementStatus),
+      metadata: {
+        engagementBucket: r.engagementBucket,
+        assignedRole: r.assignedRole,
+        assignedTeamMemberId: r.assignedTeamMemberId,
+        nextActionAt: r.nextActionAt,
+        priorityScore: r.priorityScore,
+        callAttemptCount: r.callAttemptCount,
+        lastCallOutcome: r.lastCallOutcome,
+        selectedServices: r.selectedServices ?? [],
+        phoneNumber: r.phoneNumber ?? null,
+        insurance: r.insurance ?? null,
+      },
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    };
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────

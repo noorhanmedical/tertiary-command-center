@@ -55,6 +55,7 @@ import { registerProjectedInvoiceRoutes } from "./routes/projectedInvoices";
 import { registerPatientPacketRoutes } from "./routes/patientPacket";
 import { registerAncillaryDocumentTemplateRoutes } from "./routes/ancillaryDocumentTemplates";
 import { registerOperationalQueueRoutes } from "./routes/operationalQueue";
+import { registerCallListAuditRoutes } from "./routes/callListAudit";
 import { registerHomeStatsRoutes } from "./routes/homeStats";
 import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
 import { setupVite } from "./vite";
@@ -281,6 +282,7 @@ export async function registerRoutes(
   registerPatientPacketRoutes(app);
   registerAncillaryDocumentTemplateRoutes(app);
   registerOperationalQueueRoutes(app);
+  registerCallListAuditRoutes(app, requireRole);
   registerHomeStatsRoutes(app);
   registerPhysicianPortalRoutes(app);
 

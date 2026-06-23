@@ -34,6 +34,9 @@ export const qk = {
   schedulerAssignments: {
     all: () => ["/api/scheduler-assignments"] as const,
   },
+  operationalQueue: {
+    me: () => ["/api/operational-queue", "me"] as const,
+  },
   appointments: {
     byFacility: (facility: string | null | undefined) =>
       ["/api/appointments", facility ?? null] as const,
