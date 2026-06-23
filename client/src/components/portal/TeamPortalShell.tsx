@@ -209,6 +209,42 @@ function formatTime(t: string | null) {
   return `${h12}:${mm} ${period}`;
 }
 
+// Persist a boolean UI preference (e.g. a side-rail collapsed state) to
+// localStorage, keyed per user/role. The key is allowed to be null while
+// the logged-in user is still loading; persistence kicks in once a stable
+// key is available. The first hydration for a given key never writes back
+// to storage, so the stored preference is never clobbered by the default.
+function usePersistedBool(storageKey: string | null, defaultValue: boolean) {
+  const [value, setValue] = useState<boolean>(defaultValue);
+  const skipPersistRef = useRef(false);
+  useEffect(() => {
+    if (!storageKey) return;
+    skipPersistRef.current = true;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      setValue(raw !== null ? raw === "true" : defaultValue);
+    } catch {
+      setValue(defaultValue);
+    }
+    // defaultValue intentionally omitted — it is a stable literal here and
+    // re-hydration should only follow key changes, not default churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+  useEffect(() => {
+    if (!storageKey) return;
+    if (skipPersistRef.current) {
+      skipPersistRef.current = false;
+      return;
+    }
+    try {
+      localStorage.setItem(storageKey, String(value));
+    } catch {
+      /* ignore quota / unavailable storage */
+    }
+  }, [storageKey, value]);
+  return [value, setValue] as const;
+}
+
 function MonthlyMiniCalendar({ facility, selectedDate, onSelect }: { facility: string; selectedDate: string; onSelect: (d: string) => void }) {
   const [cursor, setCursor] = useState(() => {
     const d = new Date(selectedDate);
@@ -973,8 +1009,20 @@ export function TeamPortalShell({
   // refetch the assigned-work queries, change the active patient,
   // change the facility, or affect activeWorkspaceMode.
   const [globalCalendarDate, setGlobalCalendarDate] = useState<string>(todayIso());
-  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
-  const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
+  // Per-user/role persistence of the side-rail collapsed states. The key
+  // waits for the logged-in user id (loads async) before persisting; the
+  // workspace role keeps PCS vs ACS layouts independent. Default on first
+  // visit stays expanded (false).
+  const railKeyScope =
+    currentUserId != null ? `${currentUserId}:${workspaceRole ?? role}` : null;
+  const [leftRailCollapsed, setLeftRailCollapsed] = usePersistedBool(
+    railKeyScope ? `teamPortal:leftRailCollapsed:${railKeyScope}` : null,
+    false,
+  );
+  const [rightRailCollapsed, setRightRailCollapsed] = usePersistedBool(
+    railKeyScope ? `teamPortal:rightRailCollapsed:${railKeyScope}` : null,
+    false,
+  );
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiDraft, setAiDraft] = useState("");
