@@ -68,7 +68,7 @@ export default function TeamMemberPortalsPage() {
 
       <main className="flex-1 min-h-0 overflow-auto bg-slate-50/40">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {PORTALS.map((portal) => (
               <Link key={portal.href} href={portal.href}>
                 <div
