@@ -1,0 +1,595 @@
+Now that PR #299 is backed up and pushed, continue the Call List work in Replit, but do it architecturally.
+
+Do NOT do a quick patch.
+Do NOT randomly edit route handlers only.
+Do NOT touch unrelated enterprise tiles.
+Do NOT touch API Integration Station.
+Do NOT merge to main.
+Do NOT reset/rebase/force push.
+Do NOT delete work.
+
+Current branch:
+plexus-iq-admin-review-persistence-fix
+
+Goal:
+Architecturally fix the Engagement Center → Team Member Portal Call List flow.
+
+This is the most important operational flow:
+
+Plexus IQ / Admin Review
+→ Engagement Center
+→ Team Member Portal Call List
+→ Call result logging
+→ Scheduler / Follow-up / Admin Review / Mission Control
+
+Confirmed issue:
+1. outreach_schedulers.user_id is NULL for all scheduler rows.
+2. real scheduler login accounts are not linked to outreach_schedulers.
+3. Engagement Center assignment updates patient_execution_cases but does not create/update scheduler_assignments.
+4. Team Member Portal Call List reads scheduler_assignments and filters by logged-in user mapped through outreach_schedulers.user_id.
+5. scheduler_assignments rows are released, so live call list is empty.
+6. active cases have next_action_at NULL, so timing/callback buckets do not populate.
+
+Required outcome:
+When an admin assigns a case in Engagement Center to a team member/scheduler, that assigned user sees the case in their Team Member Portal Call List when they log in.
+
+============================================================
+STEP 1 — ARCHITECTURE MAP BEFORE EDITING
+============================================================
+
+Before editing any code, produce an architecture map.
+
+Inspect:
+
+- shared/schema.ts
+- server/routes.ts
+- server/repositories/*
+- server/services/*
+- client/src/pages/engagement-center*
+- client/src/pages/team-member-portals*
+- client/src/pages/*portal*
+- client/src/components/*engagement*
+- client/src/components/*call*
+- client/src/lib/*
+- client/src/hooks/*
+
+Search for:
+
+- patient_execution_cases
+- scheduler_assignments
+- outreach_schedulers
+- assigned_team_member_id
+- assigned_scheduler_id
+- user_id
+- next_action_at
+- call list
+- operational queue
+- assignment
+- released
+- call result
+- call attempt
+- disposition
+- callback
+- Team Portal
+- Team Member Portal
+- Engagement Center
+- Plexus IQ
+- Admin Review
+- scheduler
+- outreach scheduler
+
+Before editing, report:
+
+1. Current data model:
+- tables involved
+- primary keys
+- important fields
+- statuses
+- foreign key assumptions
+
+2. Current write path:
+- where Engagement Center assigns cases
+- what endpoint/function runs
+- what table is updated
+- what table is not updated
+
+3. Current read path:
+- how Team Member Portal Call List loads
+- what endpoint/function runs
+- how logged-in user is mapped
+- what filters are applied
+- why rows are invisible
+
+4. Current call result path:
+- where call results are logged
+- what statuses/dispositions exist
+- whether call history exists
+- how next_action_at is used
+
+5. Existing repo architecture:
+- repository/service pattern
+- API response pattern
+- validation pattern
+- audit logging pattern
+- transaction pattern
+- frontend API/query pattern
+
+6. Implementation plan:
+- files to change
+- service/repository functions to add
+- endpoints to change
+- UI surfaces to update
+- whether schema changes are required
+- repair/backfill approach
+
+Do not edit until this map is complete.
+
+============================================================
+ARCHITECTURE PRINCIPLE
+============================================================
+
+Use this model:
+
+patient_execution_cases = canonical operational case / assignment truth
+
+scheduler_assignments = live call-list work item / scheduler visibility queue
+
+call attempts/history = immutable interaction history if table exists
+
+admin audit view = shows whether the bridge is healthy
+
+The flow should be:
+
+Engagement assignment command
+→ CallListEngine / CaseAssignmentService
+→ updates patient_execution_cases
+→ upserts scheduler_assignments
+→ records audit or bridge event if available
+→ recalculates next_action_at
+→ returns call-list visibility status
+
+Team Portal read endpoint
+→ resolves logged-in user to scheduler/team-member identity
+→ reads active scheduler_assignments
+→ joins patient_execution_cases/patient data
+→ returns visible call-list rows
+
+Call result command
+→ updates scheduler_assignments
+→ updates patient_execution_cases
+→ appends call attempt/history if available
+→ recalculates next_action_at
+→ routes to scheduler/admin review/follow-up as needed
+
+============================================================
+STEP 2 — CREATE OR EXTEND CALL LIST ENGINE LAYER
+============================================================
+
+Do not scatter logic randomly.
+
+Create or extend an existing engine/service layer.
+
+Preferred if consistent with repo:
+
+server/services/callListEngine.ts
+server/repositories/callListRepository.ts
+
+If an operational queue/call-list engine already exists, extend that instead of duplicating it.
+
+The engine should expose clear functions:
+
+- resolveSchedulerForUser(userId)
+- assignCaseToScheduler(input)
+- upsertCallListAssignment(input)
+- getCallListForUser(userId, filters)
+- logCallResult(input)
+- calculateNextActionAt(input)
+- computeCallListVisibility(caseId)
+- getCallListAuditRows(filters)
+- dryRunRepairCallListAssignments()
+- applyRepairCallListAssignments() only if admin-protected and explicitly called
+
+============================================================
+STEP 3 — SCHEDULER / USER MAPPING
+============================================================
+
+Do not guess ambiguous mappings.
+
+Implement:
+
+1. Resolver:
+Given logged-in user.id, find matching outreach_schedulers.user_id.
+
+If no mapping, return structured error:
+MISSING_SCHEDULER_USER_MAPPING
+
+2. Admin audit:
+Show scheduler rows without user_id.
+Show user accounts that look like schedulers but are not mapped.
+Show suggested mappings only when confidence is high.
+
+3. Dry-run repair:
+Output:
+- scheduler_id
+- scheduler name
+- suggested user_id
+- suggested username/email
+- confidence
+- reason
+- action = link / skip / ambiguous
+
+4. Apply repair:
+Only if admin endpoint is protected.
+Do not run automatically.
+Audit every applied mapping if audit pattern exists.
+
+============================================================
+STEP 4 — ENGAGEMENT ASSIGNMENT BRIDGE
+============================================================
+
+When Engagement Center assigns a case, call the Call List Engine.
+
+Implement assignCaseToScheduler(input):
+
+Input:
+- executionCaseId
+- patientId
+- schedulerId or teamMemberId
+- assignedByUserId
+- assignmentSource = engagement_center
+- priority if present
+- clinicId if present
+- service/ancillary if present
+- notes if present
+- callbackAt if present
+
+It must:
+
+1. Update patient_execution_cases:
+- assigned_team_member_id or equivalent
+- assignment status
+- assigned_at
+- assigned_by if field exists
+- next_action_at
+- updated_at
+
+2. Upsert scheduler_assignments:
+- execution_case_id or equivalent case reference
+- patient_id
+- scheduler_id
+- assigned_by
+- assigned_at
+- status = active / assigned / pending_call using existing convention
+- source = engagement_center if supported
+- next_action_at
+- priority
+- notes
+
+3. Avoid duplicates:
+- If active assignment exists for same execution case and same scheduler, update it.
+- If active assignment exists for same execution case and different scheduler, mark old one reassigned/released only if repo status model supports it.
+- Preserve history.
+- Never create duplicate active work rows for same case.
+
+4. Return:
+- execution case id
+- scheduler assignment id
+- assigned scheduler/user
+- visible_to_user yes/no
+- visibility_blocker if no
+- next_action_at
+
+============================================================
+STEP 5 — NEXT_ACTION_AT POLICY
+============================================================
+
+Create one function:
+
+calculateNextActionAt(input)
+
+Rules:
+- On assignment with no callback time: now or current queue time.
+- Callback Requested: callback datetime required.
+- No Answer / Voicemail: retry policy or existing repo policy.
+- Wrong Number: no next_action_at unless alternate number exists.
+- Declined: null and inactive.
+- Scheduled: null or appointment datetime based on current scheduler convention.
+- Needs Admin Review: null for normal call list and route to admin review.
+- Completed: null.
+
+Do not leave active assigned cases with NULL next_action_at unless intentionally documented.
+
+============================================================
+STEP 6 — TEAM MEMBER PORTAL CALL LIST READ PATH
+============================================================
+
+Harden the read endpoint.
+
+Required behavior:
+
+1. Get logged-in user.
+2. Resolve scheduler/team-member mapping.
+3. If no mapping, return:
+{
+  rows: [],
+  status: "missing_mapping",
+  message: "Your login is not linked to a scheduler/team member profile. Ask an admin to map your account."
+}
+
+4. If mapping exists:
+read active scheduler_assignments for that scheduler/team member.
+
+5. Exclude:
+- released
+- completed
+- cancelled
+- inactive
+- declined if final
+- needs_admin_review if moved out of normal queue
+
+6. Join:
+- patient details
+- execution case
+- service/ancillary
+- clinic
+- call attempt count
+- last call result
+- next_action_at
+- priority
+
+7. Return:
+- patient name
+- DOB/age if allowed in current UI
+- phone
+- clinic
+- service/ancillary
+- status
+- priority
+- attempts
+- last call result
+- next action time
+- assigned by
+- notes
+- visibility status
+
+============================================================
+STEP 7 — CALL RESULT LOGGING
+============================================================
+
+Create/extend:
+
+logCallResult(input)
+
+Input:
+- schedulerAssignmentId
+- executionCaseId
+- patientId
+- result
+- notes
+- callbackAt if applicable
+- appointment info if scheduled
+- loggedByUserId
+
+Supported results:
+- Answered
+- No Answer
+- Voicemail
+- Wrong Number
+- Callback Requested
+- Scheduled
+- Declined
+- Needs Admin Review
+- Not Eligible
+- Unable to Reach
+- Completed
+
+Rules:
+- Callback Requested requires callbackAt.
+- Scheduled moves out of normal active call list or into scheduled bucket.
+- Needs Admin Review removes from normal call list and flags admin review.
+- Declined preserves reason and removes from active queue.
+- No Answer / Voicemail increments attempt count and recalculates next_action_at.
+- Completed removes from active call list.
+- Every result appends to call history if table exists.
+- Every result updates patient_execution_cases and scheduler_assignments consistently.
+
+No fake success unless backend mutation succeeds.
+
+============================================================
+STEP 8 — ADMIN AUDIT STOP-GAP
+============================================================
+
+Add an admin audit surface or endpoint.
+
+Preferred:
+- existing Admin Ops
+- existing Mission Control
+- Engagement admin surface
+- or admin route using existing pattern
+
+Call List Audit should show:
+
+- patient
+- execution_case_id
+- patient_execution_cases status
+- assigned_team_member_id
+- scheduler_assignment_id
+- scheduler_assignment status
+- outreach_scheduler_id
+- mapped user_id
+- mapped username/email
+- next_action_at
+- last call result
+- visibility status
+- visibility blocker
+- repair suggestion
+
+Visibility statuses:
+- visible_to_assigned_user
+- missing_user_mapping
+- missing_scheduler_assignment
+- inactive_assignment_status
+- missing_next_action_at
+- duplicate_active_assignment
+- missing_patient
+- needs_admin_review
+- visible_but_overdue
+- visible
+
+Repair actions should be dry-run first:
+- dry-run create missing scheduler_assignment
+- dry-run recalculate next_action_at
+- dry-run link scheduler user
+- dry-run release duplicate assignment
+- send to admin review
+
+No destructive one-click repair without confirmation.
+
+============================================================
+STEP 9 — DATA REPAIR / BACKFILL
+============================================================
+
+Create safe dry-run repair endpoint or script.
+
+Examples:
+- GET /api/admin/call-list-audit
+- POST /api/admin/call-list-repair/dry-run
+- POST /api/admin/call-list-repair/apply
+
+Only create apply endpoint if auth/admin/audit pattern is clear.
+
+Dry-run output:
+- schedulers needing user mapping
+- suggested mappings
+- assigned cases missing scheduler_assignments
+- assignments with released/completed status but active cases
+- active cases with next_action_at NULL
+- duplicate active assignments
+- rows to create
+- rows to update
+- rows skipped
+- ambiguous rows
+- errors
+
+Do not run apply automatically.
+
+============================================================
+STEP 10 — FRONTEND UI
+============================================================
+
+Team Member Portal Call List:
+- Show missing mapping message when applicable.
+- Show true empty state if no active calls.
+- Show active call list if assignments exist.
+- Use existing call result controls if present.
+- Do not redesign unrelated pages.
+
+Engagement Center:
+- After assignment, show whether call-list work item was created.
+- If blocked, show reason:
+  - missing user mapping
+  - missing scheduler row
+  - duplicate assignment
+  - backend error
+
+Admin Audit UI:
+- Add Call List Audit panel/table.
+- Show dry-run repair output.
+- Keep production safe.
+
+============================================================
+STEP 11 — TESTING
+============================================================
+
+Manually verify or implement tests:
+
+1. Assign case in Engagement Center.
+Expected:
+patient_execution_cases updated.
+scheduler_assignments active row created.
+next_action_at set.
+visibility status visible if scheduler has user mapping.
+
+2. Scheduler login with mapping.
+Expected:
+Team Portal Call List returns assigned case.
+
+3. Scheduler login without mapping.
+Expected:
+structured missing mapping response.
+
+4. No Answer.
+Expected:
+attempt increments.
+next_action_at recalculated.
+case remains active.
+
+5. Callback Requested.
+Expected:
+callbackAt required.
+next_action_at equals callbackAt.
+
+6. Scheduled.
+Expected:
+case leaves normal active call list or enters scheduled bucket per repo convention.
+
+7. Needs Admin Review.
+Expected:
+case leaves normal call list and appears in admin audit/admin review path.
+
+8. Dry-run repair.
+Expected:
+reports missing scheduler_assignments and next_action_at nulls without mutating data.
+
+============================================================
+STEP 12 — DOCUMENTATION
+============================================================
+
+Create:
+
+docs/architecture/call-list-engine-architecture.md
+
+Include:
+- current problem
+- canonical data model
+- assignment bridge
+- scheduler-user mapping
+- Team Portal read path
+- call result propagation
+- next_action_at policy
+- admin audit stop-gap
+- repair/backfill strategy
+- endpoints changed
+- database fields used
+- future improvements
+
+============================================================
+VALIDATION AND PUSH
+============================================================
+
+Run:
+
+npm run check
+npm run build
+
+Commit:
+
+Fix call list engine architecture
+
+Push to current branch:
+plexus-iq-admin-review-persistence-fix
+
+Update PR #299.
+
+Final report:
+1. Files changed
+2. Schema changes yes/no
+3. Endpoints changed
+4. UI pages changed
+5. Service/repository files created
+6. Scheduler-user mapping behavior
+7. Assignment bridge behavior
+8. next_action_at policy
+9. Dry-run repair output
+10. check/build result
+11. Remaining risks
