@@ -241,17 +241,38 @@ export async function listSchedulerTasksFromEngagementBoardForUser(
   filters: OperationalQueueForUserFilters,
   limit?: number,
 ): Promise<OperationalQueueItem[]> {
-  const safeLimit = clampLimit(limit);
-
-  // Resolve userId → outreach_schedulers.id, then filter execution cases
-  // by assignedTeamMemberId (which today is an outreach_schedulers.id).
+  // Resolve userId → outreach_schedulers.id, then delegate to the
+  // scheduler-id variant so admin "view as" can reuse the same query.
   const schedulers = await db
-    .select({ id: outreachSchedulers.id, name: outreachSchedulers.name })
+    .select({ id: outreachSchedulers.id })
     .from(outreachSchedulers)
     .where(eq(outreachSchedulers.userId, userId));
 
   if (schedulers.length === 0) return [];
-  const schedulerIds = schedulers.map((s) => s.id);
+  return listSchedulerTasksFromEngagementBoardForSchedulerIds(
+    schedulers.map((s) => s.id),
+    filters,
+    limit,
+    userId,
+  );
+}
+
+// Scheduler-id-scoped variant of the engagement-board source. Used directly by
+// the admin "view as" path on /api/operational-queue/me, where an admin views
+// another team member's call list without being mapped to that scheduler row.
+export async function listSchedulerTasksFromEngagementBoardForSchedulerIds(
+  schedulerIds: number[],
+  filters: OperationalQueueForUserFilters,
+  limit: number | undefined,
+  assigneeUserId: string | null,
+): Promise<OperationalQueueItem[]> {
+  const safeLimit = clampLimit(limit);
+
+  if (schedulerIds.length === 0) return [];
+  const schedulers = await db
+    .select({ id: outreachSchedulers.id, name: outreachSchedulers.name })
+    .from(outreachSchedulers)
+    .where(inArray(outreachSchedulers.id, schedulerIds));
   const schedulerNameById = new Map(schedulers.map((s) => [s.id, s.name]));
 
   const conditions = [
@@ -311,7 +332,7 @@ export async function listSchedulerTasksFromEngagementBoardForUser(
       kind: "scheduler_task" as const,
       ownerType: "engagement_case" as const,
       ownerId: r.id,
-      assigneeUserId: userId,
+      assigneeUserId,
       assigneeName: schedulerNameById.get(r.assignedTeamMemberId ?? -1) ?? null,
       patientScreeningId: r.patientScreeningId,
       patientName: r.patientName,

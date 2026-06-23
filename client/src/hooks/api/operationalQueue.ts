@@ -42,9 +42,22 @@ export type OperationalQueueResponse = {
   meta: OperationalQueueMeta;
 };
 
-export function useMyOperationalQueue() {
+export function useMyOperationalQueue(viewAsSchedulerId?: number | null) {
   return useQuery<OperationalQueueResponse>({
-    queryKey: qk.operationalQueue.me(),
+    queryKey: [...qk.operationalQueue.me(), viewAsSchedulerId ?? "self"],
+    queryFn: async () => {
+      const url =
+        viewAsSchedulerId != null
+          ? `/api/operational-queue/me?viewAsSchedulerId=${encodeURIComponent(
+              String(viewAsSchedulerId),
+            )}`
+          : "/api/operational-queue/me";
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) {
+        throw new Error(`Failed to load operational queue (${res.status})`);
+      }
+      return res.json();
+    },
     refetchInterval: 60_000,
   });
 }

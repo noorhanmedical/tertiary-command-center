@@ -119,7 +119,21 @@ export function useOutreachData(schedulerId: string) {
   // path. We merge the engagement-assigned screening IDs into the visible set
   // and synthesize rows for any assigned patient that is not already in the
   // facility dashboard call list, so assigned work always surfaces.
-  const { data: opQueue } = useMyOperationalQueue();
+  // Admin "view as": when an admin opens any scheduler card, scope the
+  // engagement queue to that card's scheduler row so they see that team
+  // member's call list (not their own). Resolve the scheduler id from the
+  // card slug via the same name+facility mapping. Non-admins always read
+  // their own queue (the server ignores the param for them).
+  const isAdmin = currentUser?.role === "admin";
+  const viewedSchedulerId = useMemo(() => {
+    for (const [sid, cid] of cardIdBySchedulerId) {
+      if (cid === schedulerId) return sid;
+    }
+    return null;
+  }, [cardIdBySchedulerId, schedulerId]);
+  const { data: opQueue } = useMyOperationalQueue(
+    isAdmin ? viewedSchedulerId : null,
+  );
 
   // /me can return engagement cases for every scheduler row the user is mapped
   // to (potentially across facilities/cards). Scope to the currently selected
@@ -146,8 +160,10 @@ export function useOutreachData(schedulerId: string) {
     });
   }, [opQueue, card, cardIdBySchedulerId]);
 
+  // Admins use view-as, so the "your login isn't linked to a scheduler" banner
+  // never applies to them — only to a self-viewing team member.
   const schedulerMappingMissing =
-    opQueue?.meta?.schedulerMapping === "missing_user_mapping";
+    !isAdmin && opQueue?.meta?.schedulerMapping === "missing_user_mapping";
 
   const engagementByScreeningId = useMemo(() => {
     const m = new Map<number, OperationalQueueItem>();

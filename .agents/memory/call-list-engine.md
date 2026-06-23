@@ -30,6 +30,21 @@ only when the assigned scheduler id can't be resolved.
 scoping leaks across same-facility schedulers; scheduler-id-only scoping breaks
 because the card key is not the scheduler id.
 
+## Admin "view as any team member"
+Because all `outreach_schedulers.user_id` are NULL, `/operational-queue/me`
+(scoped by the logged-in user's mapped schedulers) returns nothing for everyone —
+including admins, who could not see any team member's call list. Fix: `/me`
+accepts a `viewAsSchedulerId` query param honored ONLY when
+`req.session.role === "admin"` (silently ignored otherwise — server-enforced, no
+escalation). It scopes the engagement source to that `outreach_schedulers.id` via
+`listSchedulerTasksFromEngagementBoardForSchedulerIds` instead of the user
+mapping. Client: `useMyOperationalQueue(viewAsSchedulerId)` puts the id in the
+query key + URL; `useOutreachData` resolves the viewed card's scheduler id (same
+name+facility slug) and passes it for admins only, and suppresses the
+missing-mapping banner for admins.
+**Why:** opening a scheduler card is how an admin "picks a name"; the data was
+invisible purely because of NULL user mappings.
+
 ## Scheduler↔user mapping
 A user only sees engagement work for the `outreach_schedulers` row whose
 `user_id` = their id. When unmapped, `/me` `meta.schedulerMapping ===
