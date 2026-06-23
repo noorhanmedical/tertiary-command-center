@@ -7,4 +7,5 @@
 - [Call list engine (Option 2)](call-list-engine.md) — patient_execution_cases is canonical for engagement call work via /operational-queue/me; per-card consumers MUST scope by cardIdFor(name,facility), not scheduler id.
 - [Portal roster identity](portal-roster-identity.md) — call-list assignments + admin "View as" key on outreach_schedulers.id (roster), not users.id; all roster rows have user_id NULL so login-user view-as no-ops.
 - [Publish branch + PR when uncommitted](github-publish-uncommitted.md) — dirty tree + no local `git commit`: push via GitHub Git Data API (blobs/tree/commit/ref) on a remote base SHA, then open draft PR.
+- [Portal call-list Playground tabs](portal-call-tabs.md) — call-row icons open deduped Call/Schedule/Case tabs; RingCentral dormant ("pending" callId ⇒ honest boundary, never fake a call); Sheet inside z-[80] portal must be z-[95].
 - [Ancillary service-type buckets](ancillary-service-type-buckets.md) — service_type cols store full test names (e.g. "Echocardiogram TTE (93306)"), not Plexus labels; funnel-by-service must bucket to BrainWave/VitalWave/Ultrasound/PGx/other; cash_price_settings often empty for those.

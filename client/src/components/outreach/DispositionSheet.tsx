@@ -409,7 +409,7 @@ export function DispositionSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-full sm:max-w-md overflow-y-auto"
+        className="z-[95] w-full sm:max-w-md overflow-y-auto"
         data-testid="disposition-sheet"
       >
         <SheetHeader>

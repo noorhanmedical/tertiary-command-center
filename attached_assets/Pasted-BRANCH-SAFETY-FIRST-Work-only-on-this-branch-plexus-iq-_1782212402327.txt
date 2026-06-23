@@ -1,0 +1,385 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Build Mission Control as the top-level operational oversight dashboard for the Plexus enterprise platform.
+
+Current desired screen:
+Mission Control should show:
+- top-level operational oversight across platform domains
+- active facility selector
+- Super Admin access preview
+- global patient search
+- RingCentral live/API status
+- execution spine summary
+- operational lanes
+- lane workbench
+- today’s ancillary operations
+- calls and communication
+- clinic operations
+- patient services
+- clinic team metrics
+- finance and revenue
+- operations and logistics
+- clinic success metrics
+- RVU tracking
+- role queue board
+- Plexus Chat overlay
+
+Important:
+Do not make Mission Control a fake static dashboard. It must be wired to real platform data where available, with honest empty states where data is not available.
+
+Architecture rules:
+- Mission Control is the admin/executive command center.
+- It is not Team Member Portal.
+- It is not Engagement Center.
+- It is not Playground.
+- It is not Patient Directory.
+- It should oversee the full execution spine across clinics, teams, patients, calls, documents, reports, billing, and revenue.
+- patient_execution_cases is the source of truth for assigned operational work.
+- patient_journey_events is the timeline/audit history source.
+- Team Member Portal remains where ACS/PCS work call lists.
+- Engagement Center remains where work is assigned.
+- Mission Control shows oversight and blockers.
+
+Core data spine:
+Mission Control should aggregate, where available, from:
+- patient_execution_cases
+- patient_journey_events
+- patients / patient directory source
+- clinics/facilities
+- team members / roster
+- call outcomes
+- scheduling status
+- document/report status
+- billing readiness
+- revenue/profit assumptions
+- role queues
+
+PART 1 — Find current Mission Control
+
+Before editing, locate and report:
+- Mission Control route
+- Mission Control page/component files
+- data hooks/endpoints currently used
+- why current cards show zero/unavailable
+- why scheduler queue fails to load
+- whether current dashboard is static, partially wired, or fully wired
+- files that will be touched
+
+PART 2 — Mission Control spine endpoint/projection
+
+Create or fix a Mission Control data projection using existing data.
+
+Preferred endpoint if none exists:
+GET /api/mission-control/spine
+
+This endpoint should return:
+1. facility scope
+2. spine summary counts:
+   - prescreen
+   - readyToCall
+   - followUp
+   - callbacks
+   - pending
+   - noReport
+   - reEligible
+   - declined
+   - readyForBilling
+   - tasks
+
+3. operational lane rows:
+   - lane
+   - clinic
+   - subject
+   - patientId if applicable
+   - executionCaseId if applicable
+   - owner
+   - status
+   - priority
+   - dueAt / nextActionAt
+   - blocker if available
+   - revenue estimate if available
+
+4. lane workbench details:
+   - case status
+   - next action
+   - blockers
+   - call history summary
+   - document/report readiness
+   - billing readiness
+
+5. calls and communication metrics:
+   - open outreach
+   - calls today
+   - answered
+   - missed
+   - scheduled
+   - orders
+   - conversion
+   - week total
+   - active callers
+   - follow-up queue
+   - communication log count
+
+6. patient services metrics:
+   - eligibility due
+   - due soon
+   - visit
+   - outreach
+   - screening ready
+   - consent ready
+   - report ready
+   - billing ready
+   - packet ready
+   - in progress
+   - missing docs
+   - prior auth tasks
+
+7. finance/revenue metrics where available:
+   - today revenue
+   - today profit
+   - margin
+   - outstanding
+   - in progress
+   - ready
+   - complete
+   - AR aging if available
+   - RVU/service counts if available
+
+8. operations/logistics metrics:
+   - active services
+   - pending execution
+   - no report
+   - coverage risks
+   - blocked rows
+   - follow-up queue
+   - missing packets
+   - pending vendors
+   - equipment risks
+
+9. role queue board:
+   - Scheduler
+   - Liaison
+   - Technician
+   - Billing
+   - Manager
+   - counts by total / urgent / blocked / ready
+
+Do not invent fake counts. If a source is missing, return zero with a clear unavailable/sourceMissing flag so the UI can show an honest empty state.
+
+PART 3 — Frontend Mission Control layout
+
+Keep the existing section structure but make it premium and useful.
+
+Top header:
+- Mission Control
+- active facility selector
+- role/access preview
+- global patient search
+- RingCentral live/API docs status
+- Plexus Chat button/overlay
+
+Spine summary:
+- bright/bold cards for:
+  Prescreen
+  Ready to Call
+  Follow-up
+  Callbacks
+  Pending
+  No Report
+  Re-Eligible
+  Declined
+  Ready for Billing
+  Tasks
+
+Operational Lanes:
+- searchable/filterable table:
+  Lane | Clinic | Subject | Owner | Status
+- clicking a row opens Lane Workbench details
+- if no rows, show:
+  “No live mission rows available from current execution inputs.”
+
+Lane Workbench:
+- readiness
+- blockers
+- next action
+- patient/case summary
+- call history
+- document/report status
+- billing readiness
+- quick links to Patient Directory / Team Member Portal / Engagement Center where applicable
+
+Today’s Ancillary Operations:
+- completed today
+- pending today
+- anticipated revenue
+- anticipated profit
+- overhead per service
+- profit margin
+
+Calls & Communication:
+- open outreach
+- calls today
+- answered
+- missed
+- scheduled
+- orders
+- conversion
+- week total
+- active callers
+- follow-up queue
+- communication log
+- RingCentral status
+- AI call redistribution placeholder if not wired
+
+Clinic Operations:
+- clinic schedules
+- shift coverage
+- technician tracking
+
+Patient Services:
+- eligibility tracker
+- ancillary completion
+- insurance verification
+- prior auth tracking
+- workspace attachments
+
+Clinic Team Metrics:
+- physicians
+- MAs
+- office managers
+- vendor impact
+
+Finance & Revenue:
+- revenue snapshot
+- billing status
+- AR aging
+- RVU dashboard
+
+Operations & Logistics:
+- equipment and supplies
+- real-time alerts
+- vendor management
+- compliance
+- quality metrics
+- documents/resources
+
+Clinic Success Metrics:
+- claims approval
+- time to payment
+- average reimbursement
+- patient volume
+- provider adoption
+- ROI
+- billing readiness
+- packet completion
+- growth trends
+
+RVU Tracking:
+- RVU per service
+- compensation summary
+- per clinic totals
+
+Role Queue Board:
+- read-only queue projected from canonical patient workflow cards
+- do not break existing queues
+- fix “Failed to load scheduler queue” if caused by frontend wiring or missing endpoint mapping
+
+PART 4 — Role/access behavior
+
+Mission Control is for admin/super admin/owner-level oversight.
+
+Requirements:
+- preserve existing route guards
+- do not expose admin-only operational data to normal ACS/PCS users
+- access preview should honestly reflect current permissions:
+  view
+  edit
+  approve
+  upload
+  generate
+  finalize
+  export
+
+PART 5 — Search
+
+Global patient search should:
+- search patient directory source
+- allow opening Patient Directory profile if patient selected
+- not invent patient data
+- preserve existing patient profile routes if available
+
+PART 6 — RingCentral
+
+Mission Control should show RingCentral status only if wired.
+If not wired, show integration boundary:
+- “RingCentral not connected”
+- “API Docs”
+- “Live” only if actual health/status is available
+
+Do not fake RingCentral live status.
+
+PART 7 — Plexus Chat
+
+Keep Plexus Chat as an overlay assistant panel.
+Do not alter page routes or workflow logic.
+It should overlay Mission Control without destroying page layout.
+
+DO NOT:
+- Do not create fake data.
+- Do not hardcode Taylor Family Practice/NWPG metrics unless those are real active facility values.
+- Do not duplicate Team Member Portal.
+- Do not duplicate Engagement Center.
+- Do not move call-list work into Mission Control.
+- Do not use /api/scheduler-assignments for Engagement Center-assigned call work.
+- Do not resurrect old Outreach Center.
+- Do not broad-refactor unrelated modules.
+- Do not change schema unless absolutely required.
+- Do not merge to main.
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Wire Mission Control execution spine
+
+Push:
+origin plexus-iq-admin-review-persistence-fix

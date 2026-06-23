@@ -56,6 +56,10 @@ import {
 } from "@/components/portal/SchedulePatientDialog";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
 import { CallRowQuickActions } from "@/components/portal/CallRowQuickActions";
+import type { CallCaseContext } from "@/components/portal/caseWorkspace";
+import { CallWorkspace } from "@/components/portal/CallWorkspace";
+import { SchedulingWorkspace } from "@/components/portal/SchedulingWorkspace";
+import { CaseOverview } from "@/components/portal/CaseOverview";
 import { SchedulePatientPlayground } from "@/components/portal/SchedulePatientPlayground";
 import { PatientMiniCalendar } from "@/components/portal/PatientMiniCalendar";
 import { PatientCommandCanvas } from "@/components/portal/PatientCommandCanvas";
@@ -148,13 +152,21 @@ type PortalTabKind =
   | "quickNote"
   // Phase 2 PR 2.7 — Internal Contacts tool. Reads from canonical
   // /api/contacts.
-  | "internalContacts";
+  | "internalContacts"
+  // Tabbed call-list Playground workflows — each call-row action opens its
+  // own tab that stays open alongside the others.
+  | "call"
+  | "caseSchedule"
+  | "caseOverview";
 type PortalTab = {
   id: string;
   kind: PortalTabKind;
   patientId?: number | null;
   patientName?: string;
   label: string;
+  /** Carried by call/caseSchedule/caseOverview tabs so the center can
+   *  render the Call / Schedule / Case workspaces without re-deriving. */
+  caseContext?: CallCaseContext;
 };
 
 // The hardcoded demo-patient injection was removed during Phase 1
@@ -1363,6 +1375,61 @@ export function TeamPortalShell({
     });
   }
 
+  // Map a call-list row into the shared CallCaseContext consumed by the
+  // Call / Schedule / Case Overview Playground tabs.
+  function callRowToCaseContext(row: TeamWorkspaceCallListItem): CallCaseContext {
+    return {
+      patientScreeningId: row.patientScreeningId ?? null,
+      executionCaseId:
+        row.executionCaseId ?? (typeof row.id === "number" ? row.id : null),
+      patientName: row.patientName ?? "Patient",
+      patientDob: row.patientDob ?? null,
+      facilityId: row.facilityId ?? facility ?? null,
+      callReason: deriveCallReason(row),
+      targetServices: (row.selectedServices ?? []).filter(Boolean),
+      sourcePortal: (workspaceCallListContext ?? "acs").toUpperCase(),
+      engagementStatus: row.engagementStatus ?? null,
+      lifecycleStatus: row.lifecycleStatus ?? null,
+    };
+  }
+
+  // Open (or focus) a call-list Playground workflow tab. Each kind keeps a
+  // stable id per patient/case so re-clicking the same action focuses the
+  // existing tab instead of duplicating it. Multiple kinds for the same
+  // patient stay open side-by-side ("John Smith - Call" / "- Schedule").
+  function openCaseTab(
+    kind: "call" | "caseSchedule" | "caseOverview",
+    ctx: CallCaseContext,
+  ) {
+    const identity =
+      ctx.patientScreeningId != null
+        ? `p${ctx.patientScreeningId}`
+        : ctx.executionCaseId != null
+          ? `c${ctx.executionCaseId}`
+          : ctx.patientName;
+    const id = `${kind}:${identity}`;
+    const suffix =
+      kind === "call" ? "Call" : kind === "caseSchedule" ? "Schedule" : "Case";
+    const label = `${ctx.patientName} - ${suffix}`;
+
+    const existing = portalTabs.find((t) => t.id === id);
+    if (existing) {
+      focusPortalTab(existing);
+      return;
+    }
+
+    const tab: PortalTab = {
+      id,
+      kind,
+      patientId: ctx.patientScreeningId ?? null,
+      patientName: ctx.patientName,
+      label,
+      caseContext: ctx,
+    };
+    setPortalTabs((prev) => [...prev, tab]);
+    focusPortalTab(tab);
+  }
+
   function expandScheduleToPlayground(p: TodayPatient) {
     if (p.patientScreeningId != null) setSelectedPatientId(p.patientScreeningId);
     setCenterMode("scheduleDay");
@@ -1384,8 +1451,31 @@ export function TeamPortalShell({
 
     setActivePortalTabId(tab.id);
 
+    // The schedulePatientPlaygroundContext branch renders BEFORE the
+    // tab switch in the center JSX, so it must be cleared whenever we
+    // focus a tab or the tab content would be hidden behind it.
+    setSchedulePatientPlaygroundContext(null);
+
     if (tab.patientId != null) {
       setSelectedPatientId(tab.patientId);
+    }
+
+    // Call-list Playground workflow tabs (Call / Schedule / Case) all
+    // route through the playground surface; the center JSX branches on
+    // tab.kind + tab.caseContext.
+    if (
+      tab.kind === "call" ||
+      tab.kind === "caseSchedule" ||
+      tab.kind === "caseOverview"
+    ) {
+      setCenterMode("playground");
+      setCenterSrc("");
+      setCenterTitle(tab.label);
+      setDockActiveApp(null);
+      if (tab.caseContext?.patientScreeningId != null) {
+        setSelectedPatientId(tab.caseContext.patientScreeningId);
+      }
+      return;
     }
 
     if (tab.kind === "patient") {
@@ -1448,7 +1538,7 @@ export function TeamPortalShell({
 
     const label =
       kind === "patient"
-        ? patient?.name ?? "Patient"
+        ? `${patient?.name ?? "Patient"} - Patient`
         : kind === "schedule"
           ? `Schedule · ${patient?.name ?? "Patient"}`
           : kind === "tasks"
@@ -1963,6 +2053,55 @@ export function TeamPortalShell({
                   return (
                     <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-internal-contacts">
                       <InternalContactsTool />
+                    </div>
+                  );
+                }
+                // Call-list Playground workflow tabs.
+                if (activeTab?.kind === "call" && activeTab.caseContext) {
+                  const ctx = activeTab.caseContext;
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-call-workspace">
+                      <CallWorkspace
+                        ctx={ctx}
+                        onScheduleCase={() => openCaseTab("caseSchedule", ctx)}
+                        onOpenCase={() => openCaseTab("caseOverview", ctx)}
+                        onClose={() => activePortalTabId && closePortalTab(activePortalTabId)}
+                      />
+                    </div>
+                  );
+                }
+                if (activeTab?.kind === "caseSchedule" && activeTab.caseContext) {
+                  const ctx = activeTab.caseContext;
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-scheduling-workspace">
+                      <SchedulingWorkspace
+                        ctx={ctx}
+                        facility={ctx.facilityId ?? facility}
+                        selectedDate={selectedDate}
+                        onClose={() => activePortalTabId && closePortalTab(activePortalTabId)}
+                      />
+                    </div>
+                  );
+                }
+                if (activeTab?.kind === "caseOverview" && activeTab.caseContext) {
+                  const ctx = activeTab.caseContext;
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-case-overview">
+                      <CaseOverview
+                        ctx={ctx}
+                        onCall={() => openCaseTab("call", ctx)}
+                        onSchedule={() => openCaseTab("caseSchedule", ctx)}
+                        onOpenPatient={() => {
+                          if (ctx.patientScreeningId != null && ctx.patientScreeningId > 0) {
+                            openPatientTabById({
+                              patientScreeningId: ctx.patientScreeningId,
+                              name: ctx.patientName,
+                              facility: ctx.facilityId,
+                            });
+                          }
+                        }}
+                        onClose={() => activePortalTabId && closePortalTab(activePortalTabId)}
+                      />
                     </div>
                   );
                 }
@@ -2554,12 +2693,10 @@ export function TeamPortalShell({
                             <CallRowQuickActions
                               row={row}
                               idx={row.id ?? idx}
-                              facility={facility}
-                              selectedDate={selectedDate}
                               canCall={canCall}
-                              callReason={callReason}
-                              onLogCall={() => canCall && setCallDialogRow(row)}
-                              onExpandToPlayground={() => pushCallRowToPlayground(row)}
+                              onOpenCall={() => openCaseTab("call", callRowToCaseContext(row))}
+                              onOpenSchedule={() => openCaseTab("caseSchedule", callRowToCaseContext(row))}
+                              onOpenCase={() => openCaseTab("caseOverview", callRowToCaseContext(row))}
                             />
                           </div>
                           {/* Secondary meta: time + status, de-emphasized. */}
