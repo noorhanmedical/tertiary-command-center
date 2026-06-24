@@ -1,0 +1,124 @@
+Yes, proceed.
+
+1. GIT WORKFLOW:
+Yes. Build it in the Replit workspace. I understand I will push it from the Replit Git pane to:
+plexus-iq-admin-review-persistence-fix
+
+Do not worry about pushing from your side.
+
+2. SCHEMA:
+Yes, schema is allowed only if required.
+
+If you need persistent admin Call Settings, KPI targets, manual overrides, distribution runs, or distribution audit history, add proper database tables/columns with a migration.
+
+Do not use localStorage for production-critical call settings.
+
+Keep schema additive and narrow.
+
+3. SEQUENCING:
+Yes, phase it. Do not try to build the entire thing in one giant change.
+
+Use this order:
+
+Phase 1:
+Engagement Center repository + admin Call Settings.
+
+This phase should include:
+- repository/pool of patients approved from Admin Review
+- per-team-member call settings
+- platform calendar / TeamOps working status if available
+- manual admin override
+- calculated targets
+- carryover visibility
+- premium UI section inside Engagement Center
+
+Phase 2:
+Distribution engine.
+
+This phase should include:
+- preview distribution
+- apply distribution
+- carryover-aware capacity
+- visit/outreach split
+- no over-assignment beyond remaining capacity
+- updates to patient_execution_cases
+- journey events/audit if existing
+
+Phase 3:
+Live team metrics + activity feed.
+
+This phase should include:
+- completed conversations
+- scheduled patients
+- no answer / voicemail / declined / follow-up
+- remaining KPI
+- active queue
+- carryover
+- team progress
+- activity feed visible in Engagement Center without logging into team portals
+
+Start with Phase 1 only.
+
+4. CALL EVENT DATA:
+Yes. For now, derive completed conversations and scheduled-patient metrics from existing call-result / journey-event / patient_execution_cases data only.
+
+Do not fake RingCentral events.
+
+Show a clear RingCentral integration boundary if needed, but do not block Phase 1 on RingCentral.
+
+5. IMPORTANT CALENDAR RULE:
+Do not use Google Calendar.
+
+Use the platform calendar / TeamOps calendar only.
+
+If TeamOps/platform calendar data is available, use it for:
+- working today
+- shift availability
+- PTO
+- absence
+- coverage
+
+If platform calendar data is not fully wired yet:
+- show an honest state like “Platform calendar schedule unavailable”
+- allow manual admin override in Call Settings
+- do not fake calendar data
+
+Manual admin override must be available either way.
+
+6. PHASE 1 SCOPE:
+Build only Phase 1 now:
+
+Engagement Center repository + admin Call Settings with platform calendar awareness/manual override.
+
+Do not build the full distribution engine yet.
+Do not build apply distribution yet unless a tiny safe preview-only calculation is needed.
+Do not build live metrics feed yet except basic carryover/target calculations needed for Call Settings.
+
+Phase 1 must answer:
+- Which approved patients are waiting in Engagement Center?
+- Which team members can receive calls?
+- What are their configured call settings?
+- Are they working today based on platform calendar or manual override?
+- What is their completed-call KPI?
+- What is their scheduled-patient KPI?
+- What is their visit/outreach split?
+- What is their carryover?
+- What is their remaining capacity?
+
+7. VALIDATION FOR PHASE 1:
+After implementation, verify:
+- Admin Review-approved patients appear in Engagement repository.
+- Call Settings persist after refresh.
+- Team members show facility coverage, working today, workday percent, visit/outreach split, completed-call KPI, scheduled-patient KPI.
+- 100% workday calculates 30 completed calls and 15 scheduled.
+- 50% workday calculates 15 completed calls and 8 scheduled.
+- 25% workday calculates 7 completed calls and 3 scheduled.
+- 0% workday calculates 0 calls.
+- Visit/outreach targets add up to the completed-call KPI.
+- Carryover incomplete calls are visible per team member.
+- Remaining capacity = completed-call KPI minus carryover.
+- Platform calendar / TeamOps status is used if available.
+- Manual override works.
+- No Google Calendar references are added.
+
+Proceed with Phase 1.
