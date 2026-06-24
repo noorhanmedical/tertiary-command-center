@@ -23,6 +23,9 @@ export const qk = {
   homeStats: {
     today: () => ["/api/home-stats"] as const,
   },
+  missionControl: {
+    spine: () => ["/api/mission-control/spine"] as const,
+  },
   outreach: {
     dashboard: () => ["/api/outreach/dashboard"] as const,
     schedulers: () => ["/api/outreach/schedulers"] as const,
