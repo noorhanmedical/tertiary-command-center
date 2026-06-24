@@ -16,9 +16,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  generateClinicianPDFAsync,
-  generatePlexusPDFAsync,
+  openPatientPacketPrintPreview,
+  PACKET_PREVIEW_MESSAGE_SOURCE,
 } from "@/lib/pdfGeneration";
+import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
 import { isPatientPdfEligible } from "@/lib/pdfPacketGrouping";
 import { computePlexusIqStatus } from "@/lib/plexusIqStatus";
 import { AdminReviewDialog } from "@/components/qualification/AdminReviewDialog";
@@ -377,13 +378,58 @@ export function PlexusIQOperatingList({
   }, [focusBatch, onFocusConsumed]);
 
   // ── PDF actions ─────────────────────────────────────────────────────
+  // Preview-first workflow (matches the Schedule results view):
+  //   1. Clicking a packet button opens a print-preview popup of the
+  //      eligible patients in "select" mode.
+  //   2. The popup's Print button posts back to this window, which opens
+  //      PdfPatientSelectDialog so the operator can narrow the roster.
+  //   3. "Print Selected" re-opens the preview in "print" mode rendering
+  //      only the chosen patients, each on its own page.
+  const [pdfMode, setPdfMode] = useState<"clinician" | "plexus" | null>(null);
+  const [pdfPatients, setPdfPatients] = useState<PatientScreening[]>([]);
+
   const pdfTargets = useCallback(() => {
     const base = selectedHere.length > 0 ? selectedHere : sortedPatients;
     return base.filter(isPatientPdfEligible);
   }, [selectedHere, sortedPatients]);
 
+  const openPreview = useCallback(
+    (
+      mode: "clinician" | "plexus",
+      selected: PatientScreening[],
+      printMode: "print" | "select" = "print",
+    ) => {
+      if (!selectedBatch) return;
+      try {
+        const result = openPatientPacketPrintPreview({
+          mode,
+          batchName: selectedBatch.name,
+          patients: selected,
+          scheduleDate: selectedBatch.scheduleDate,
+          createdAt: selectedBatch.createdAt,
+          printMode,
+        });
+        if (!result.ok && result.reason === "popup-blocked") {
+          toast({
+            title: "Popup blocked. Allow popups to print this packet.",
+            description:
+              "Your browser blocked the print preview window. Re-enable popups for this site and try again.",
+            variant: "destructive",
+          });
+        }
+      } catch (err) {
+        toast({
+          title: "Could not open print preview",
+          description: err instanceof Error ? err.message : "Could not generate PDF",
+          variant: "destructive",
+        });
+      }
+    },
+    [selectedBatch, toast],
+  );
+
   const runPdf = useCallback(
-    async (mode: "clinician" | "plexus") => {
+    (mode: "clinician" | "plexus") => {
       if (!selectedBatch) return;
       const targets = pdfTargets();
       if (targets.length === 0) {
@@ -394,24 +440,28 @@ export function PlexusIQOperatingList({
         });
         return;
       }
-      try {
-        const fn = mode === "clinician" ? generateClinicianPDFAsync : generatePlexusPDFAsync;
-        await fn(
-          selectedBatch.name,
-          targets,
-          selectedBatch.scheduleDate,
-          selectedBatch.createdAt,
-        );
-      } catch (err) {
-        toast({
-          title: "PDF failed",
-          description: err instanceof Error ? err.message : "Could not generate PDF",
-          variant: "destructive",
-        });
-      }
+      setPdfPatients(targets);
+      openPreview(mode, targets, "select");
     },
-    [selectedBatch, pdfTargets, toast],
+    [selectedBatch, pdfTargets, toast, openPreview],
   );
+
+  // Listen for the preview popup's Print click (origin- and source-
+  // validated) and open the patient-selection dialog for that packet mode.
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as
+        | { source?: string; action?: string; mode?: "clinician" | "plexus" }
+        | null;
+      if (!data || data.source !== PACKET_PREVIEW_MESSAGE_SOURCE) return;
+      if (data.action !== "open-select") return;
+      if (data.mode !== "clinician" && data.mode !== "plexus") return;
+      setPdfMode(data.mode);
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
 
   const deleteSelected = useCallback(() => {
     if (selectedHere.length === 0) return;
@@ -599,6 +649,18 @@ export function PlexusIQOperatingList({
           onClose={() => setReviewPatientId(null)}
         />
       )}
+
+      <PdfPatientSelectDialog
+        open={pdfMode !== null}
+        mode={pdfMode}
+        patients={pdfPatients}
+        onClose={() => setPdfMode(null)}
+        onGenerate={(selected) => {
+          const mode = pdfMode;
+          setPdfMode(null);
+          if (mode) openPreview(mode, selected, "print");
+        }}
+      />
     </div>
   );
 }

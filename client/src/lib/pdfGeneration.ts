@@ -765,7 +765,26 @@ const PREVIEW_TOOLBAR_STYLES = `
 // toolbar `<h1>` block and inherits the existing print-hide rule
 // (@media print { .preview-toolbar { display:none } }) so it does
 // NOT bleed into the printed packet.
-function buildPreviewPopupHtml(docTitle: string, sections: PacketPrintPreviewSection[]): string {
+// Controls what the preview popup's Print button does.
+// - { kind: "print" }  → window.print() (direct print / save as PDF).
+// - { kind: "select" } → posts a message back to the opener so the app
+//   can open the patient-selection dialog, then closes the popup. The
+//   final, narrowed render re-opens a "print" preview with only the
+//   selected patients.
+export type PreviewPrintAction =
+  | { kind: "print" }
+  | { kind: "select"; packetMode: PacketPrintPreviewMode; targetOrigin: string };
+
+// Message posted by a "select"-mode preview popup back to its opener
+// when the operator clicks Print. The app listens for this to open the
+// PdfPatientSelectDialog.
+export const PACKET_PREVIEW_MESSAGE_SOURCE = "plexus-packet-preview";
+
+function buildPreviewPopupHtml(
+  docTitle: string,
+  sections: PacketPrintPreviewSection[],
+  printAction: PreviewPrintAction = { kind: "print" },
+): string {
   const sectionsHtml = sections
     .map((s) => {
       const head = s.heading
@@ -781,6 +800,17 @@ function buildPreviewPopupHtml(docTitle: string, sections: PacketPrintPreviewSec
     hour: "numeric",
     minute: "2-digit",
   });
+  // The Print button either prints directly or hands control back to
+  // the opener so it can show the patient-selection dialog. In
+  // "select" mode the popup posts a message (validated by source +
+  // origin on the listener side) and closes itself so the app window
+  // comes forward with the dialog.
+  const printOnClick =
+    printAction.kind === "select"
+      ? `(function(){try{if(window.opener&&!window.opener.closed){window.opener.postMessage({source:'${PACKET_PREVIEW_MESSAGE_SOURCE}',action:'open-select',mode:'${printAction.packetMode}'},'${printAction.targetOrigin}');}}catch(e){}window.close();})()`
+      : `window.print()`;
+  const printLabel =
+    printAction.kind === "select" ? "Print" : "Print / Save as PDF";
   return (
     `<!DOCTYPE html><html><head><meta charset="utf-8">` +
     `<title>${esc(docTitle)}</title>` +
@@ -793,7 +823,7 @@ function buildPreviewPopupHtml(docTitle: string, sections: PacketPrintPreviewSec
     `<span data-testid="packet-print-preview-generated-at" style="font-size:10px;font-weight:500;opacity:0.75;">Generated at ${esc(generatedAt)}</span>` +
     `</div>` +
     `<div>` +
-    `<button type="button" class="preview-print-btn" data-testid="packet-print-preview-print-button" onclick="window.print()">Print / Save as PDF</button>` +
+    `<button type="button" class="preview-print-btn" data-testid="packet-print-preview-print-button" onclick="${printOnClick}">${printLabel}</button>` +
     ` ` +
     `<button type="button" class="preview-close-btn" data-testid="packet-print-preview-close-button" onclick="window.close()">Close</button>` +
     `</div></div>` +
@@ -813,6 +843,10 @@ export function openPatientPacketPrintPreview(input: {
   scheduleDate?: string | null;
   createdAt?: string | Date | null;
   title?: string;
+  // "print" (default) → Print button prints directly.
+  // "select" → Print button asks the opener to open the patient-selection
+  //   dialog (preview-first workflow on the main schedule view).
+  printMode?: "print" | "select";
 }): PacketPrintPreviewResult {
   const { mode, batchName, patients, scheduleDate, createdAt } = input;
   const body =
@@ -837,7 +871,16 @@ export function openPatientPacketPrintPreview(input: {
     return { ok: false, reason: "popup-blocked" };
   }
 
-  const html = buildPreviewPopupHtml(docTitle, [{ body }]);
+  const printAction: PreviewPrintAction =
+    input.printMode === "select"
+      ? {
+          kind: "select",
+          packetMode: mode,
+          targetOrigin:
+            typeof window !== "undefined" ? window.location.origin : "*",
+        }
+      : { kind: "print" };
+  const html = buildPreviewPopupHtml(docTitle, [{ body }], printAction);
   win.document.open();
   win.document.write(html);
   win.document.close();

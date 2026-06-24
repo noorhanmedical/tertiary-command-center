@@ -1,10 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
   openPatientPacketPrintPreview,
+  PACKET_PREVIEW_MESSAGE_SOURCE,
   type ReasoningValue,
 } from "@/lib/pdfGeneration";
 import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
@@ -346,7 +347,11 @@ export function ResultsView({
   // Opens the print-preview popup for a clean (or operator-confirmed)
   // subset. Kept separate from handlePdfGenerate so the QA gate's
   // "Print N safe rows" path can reuse it without re-auditing.
-  const openPreview = useCallback((mode: "clinician" | "plexus", selected: PatientScreening[]) => {
+  const openPreview = useCallback((
+    mode: "clinician" | "plexus",
+    selected: PatientScreening[],
+    printMode: "print" | "select" = "print",
+  ) => {
     if (!batch) return;
     try {
       const result = openPatientPacketPrintPreview({
@@ -355,6 +360,7 @@ export function ResultsView({
         patients: selected,
         scheduleDate: batch.scheduleDate,
         createdAt: batch.createdAt,
+        printMode,
       });
       if (!result.ok && result.reason === "popup-blocked") {
         toast({
@@ -403,12 +409,35 @@ export function ResultsView({
     openPreview(mode, selected);
   }, [batch, pdfMode, queryClient, openPreview]);
 
+  // Preview-first workflow: clicking a packet button opens a print
+  // preview popup containing every patient. The popup's Print button
+  // posts back to this window (see PACKET_PREVIEW_MESSAGE_SOURCE) so the
+  // operator can narrow down which patients to print via
+  // PdfPatientSelectDialog before the final render.
   const handleOpenClinicianPdf = useCallback(() => {
-    setPdfMode("clinician");
-  }, []);
+    openPreview("clinician", patients, "select");
+  }, [openPreview, patients]);
 
   const handleOpenPlexusPdf = useCallback(() => {
-    setPdfMode("plexus");
+    openPreview("plexus", patients, "select");
+  }, [openPreview, patients]);
+
+  // Listen for the preview popup's Print click. We validate the message
+  // origin (same-origin popup) and source tag before opening the
+  // patient-selection dialog for the requested packet mode.
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as
+        | { source?: string; action?: string; mode?: "clinician" | "plexus" }
+        | null;
+      if (!data || data.source !== PACKET_PREVIEW_MESSAGE_SOURCE) return;
+      if (data.action !== "open-select") return;
+      if (data.mode !== "clinician" && data.mode !== "plexus") return;
+      setPdfMode(data.mode);
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
   }, []);
 
   const handleShare = useCallback(() => {
