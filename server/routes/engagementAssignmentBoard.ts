@@ -11,6 +11,7 @@ import {
   outreachSchedulers,
 } from "@shared/schema";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
+import { listJourneyEvents } from "../repositories/executionCase.repo";
 import { calculateNextActionAt } from "../services/callList/nextActionPolicy";
 
 // No-duplicate-scheduler-per-date guard.
@@ -108,6 +109,33 @@ async function findConflictingActiveAssignment(
 // Board-row shape lives in the shared contract so the client + server
 // agree on one canonical type. See shared/contracts/engagementBoard.ts.
 import type { EngagementBoardRow as BoardRow } from "@shared/contracts/engagementBoard";
+
+// Decide how to scope a patient's journey-timeline lookup.
+//
+// Identity-scoped history (name + DOB) lets the timeline span every
+// execution case the same person has had — BatchFlow re-imports a
+// person across batches. But name alone is NOT a safe identity key:
+// two different patients can share a name, so matching on name-only
+// would merge their histories — a correctness bug AND a PHI
+// cross-patient leak. We therefore require BOTH name and DOB to scope
+// by identity; when DOB is missing we fall back to the unique
+// execution-case id, which never mixes patients (at the cost of not
+// spanning sibling cases for that one person).
+//
+// Exported (pure, no DB) so it can be regression-tested in isolation.
+// SOURCE MARKER: journey timeline identity scoping requires name AND dob
+export function journeyLookupFilter(args: {
+  executionCaseId: number;
+  patientName: string | null | undefined;
+  patientDob: string | null | undefined;
+}):
+  | { patientName: string; patientDob: string }
+  | { executionCaseId: number } {
+  const name = args.patientName?.trim() || null;
+  const dob = args.patientDob?.trim() || null;
+  if (name && dob) return { patientName: name, patientDob: dob };
+  return { executionCaseId: args.executionCaseId };
+}
 
 const assignBoardSchema = z.object({
   patientScreeningIds: z.array(z.number().int().positive()).min(1),
@@ -405,6 +433,94 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
         res.status(500).json({
           error:
             error instanceof Error ? error.message : "Failed to load board",
+        });
+      }
+    },
+  );
+
+  // ─── Per-case journey timeline (read-only) ────────────────────────
+  // Returns the full chronological history of engagement events for the
+  // patient behind a given execution case — call outcomes, assignments/
+  // reassignments, notes, and every other journey-event kind. Events are
+  // matched by patient identity (name + DOB) so the timeline spans every
+  // execution case the same person has had (BatchFlow can re-import a
+  // person across batches), falling back to the execution case id when
+  // identity is missing. Returned newest-first.
+  app.get(
+    "/api/engagement/assignment-board/cases/:executionCaseId/journey",
+    async (req: Request, res: Response) => {
+      try {
+        const executionCaseId = Number(req.params.executionCaseId);
+        if (!Number.isInteger(executionCaseId) || executionCaseId <= 0) {
+          return res
+            .status(400)
+            .json({ error: "Invalid executionCaseId", code: "bad_request" });
+        }
+
+        const [execCase] = await db
+          .select()
+          .from(patientExecutionCases)
+          .where(eq(patientExecutionCases.id, executionCaseId))
+          .limit(1);
+        if (!execCase) {
+          return res
+            .status(404)
+            .json({ error: "Execution case not found", code: "not_found" });
+        }
+
+        // Identity-scoped vs. case-scoped lookup — see journeyLookupFilter.
+        const events = await listJourneyEvents(
+          journeyLookupFilter({
+            executionCaseId,
+            patientName: execCase.patientName,
+            patientDob: execCase.patientDob,
+          }),
+          500,
+        );
+
+        // Resolve distinct actor ids to usernames for display.
+        const actorIds = Array.from(
+          new Set(
+            events
+              .map((e) => e.actorUserId)
+              .filter((id): id is string => !!id),
+          ),
+        );
+        const actorNameById = new Map<string, string>();
+        await Promise.all(
+          actorIds.map(async (id) => {
+            const user = await storage.getUser(id);
+            if (user?.username) actorNameById.set(id, user.username);
+          }),
+        );
+
+        const timeline = events.map((e) => ({
+          id: e.id,
+          eventType: e.eventType,
+          eventSource: e.eventSource,
+          summary: e.summary,
+          actorName: e.actorUserId
+            ? actorNameById.get(e.actorUserId) ?? null
+            : null,
+          createdAt:
+            e.createdAt != null
+              ? new Date(e.createdAt as unknown as string).toISOString()
+              : null,
+          metadata:
+            e.metadata && typeof e.metadata === "object"
+              ? (e.metadata as Record<string, unknown>)
+              : null,
+        }));
+
+        return res.json({ events: timeline });
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/assignment-board:journey] error:",
+          error instanceof Error ? error.message : error,
+        );
+        return res.status(500).json({
+          error:
+            error instanceof Error ? error.message : "Failed to load journey",
         });
       }
     },

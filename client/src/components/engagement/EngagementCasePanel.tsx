@@ -47,6 +47,70 @@ const PRIORITY_TONE: Record<string, string> = {
   normal: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
 };
 
+type JourneyEvent = {
+  id: number;
+  eventType: string;
+  eventSource: string;
+  summary: string;
+  actorName: string | null;
+  createdAt: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+// Dot colour per event-type family — calls vs. assignments vs. docs/billing
+// vs. lifecycle — so the timeline reads at a glance.
+const JOURNEY_EVENT_TONE: Record<string, string> = {
+  call_result_logged: "bg-indigo-500",
+  engagement_assigned: "bg-emerald-500",
+  engagement_assignment_changed: "bg-emerald-500",
+  scheduler_assigned: "bg-emerald-500",
+  engagement_assignment_cancelled: "bg-rose-500",
+  schedule_cancelled: "bg-rose-500",
+  schedule_no_show: "bg-rose-500",
+  scheduled_ancillary: "bg-sky-500",
+  schedule_rescheduled: "bg-amber-500",
+  schedule_confirmed: "bg-emerald-500",
+  screening_committed: "bg-violet-500",
+  execution_case_created: "bg-violet-500",
+  execution_case_updated: "bg-slate-400",
+  task_created: "bg-amber-500",
+  document_sent: "bg-cyan-500",
+  document_completed: "bg-cyan-500",
+  billing_payment_updated: "bg-teal-500",
+  added_to_invoice: "bg-teal-500",
+};
+
+// Human label for a journey event-type. Falls back to a humanized form of
+// any unknown kind (the column is plain text and may grow new kinds).
+function journeyEventLabel(eventType: string): string {
+  const LABELS: Record<string, string> = {
+    call_result_logged: "Call outcome",
+    engagement_assigned: "Assigned",
+    engagement_assignment_changed: "Reassigned",
+    engagement_assignment_cancelled: "Assignment cancelled",
+    scheduler_assigned: "Scheduler assigned",
+    scheduled_ancillary: "Scheduled",
+    schedule_cancelled: "Cancelled",
+    schedule_rescheduled: "Rescheduled",
+    schedule_no_show: "No show",
+    schedule_confirmed: "Confirmed",
+    screening_committed: "Committed",
+    execution_case_created: "Case opened",
+    execution_case_updated: "Case updated",
+    task_created: "Task created",
+    document_sent: "Document sent",
+    document_completed: "Document completed",
+    billing_payment_updated: "Payment updated",
+    added_to_invoice: "Added to invoice",
+  };
+  return (
+    LABELS[eventType] ??
+    eventType
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (ch) => ch.toUpperCase())
+  );
+}
+
 function Section({
   icon: Icon,
   title,
@@ -112,6 +176,17 @@ export function EngagementCasePanel({
     enabled: psid != null,
   });
   const patient = patientQuery.data;
+
+  const executionCaseId = row?.executionCaseId ?? null;
+  const journeyQuery = useQuery<{ events: JourneyEvent[] }>({
+    queryKey: [
+      "/api/engagement/assignment-board/cases",
+      executionCaseId,
+      "journey",
+    ],
+    enabled: executionCaseId != null,
+  });
+  const journeyEvents = journeyQuery.data?.events ?? [];
 
   const reasoningEntries = useMemo(() => {
     const r = patient?.reasoning as
@@ -409,37 +484,69 @@ export function EngagementCasePanel({
           )}
         </Section>
 
-        {/* Journey timeline (stub) — currently shows the latest known
-            outcome only. The board contract exposes a single last-activity
-            summary, not a full event stream, so older steps are not yet
-            available here; a full per-case timeline is filed as a follow-up. */}
+        {/* Journey timeline — full chronological history of engagement
+            events for this patient (call outcomes, assignments/
+            reassignments, notes, and every other journey-event kind). */}
         <Section icon={History} title="Journey timeline" testId="engagement-case-panel-timeline">
-          <ol className="relative space-y-3 border-l border-slate-200 pl-4 dark:border-slate-800">
-            {row.lastActivitySummary ? (
-              <li className="relative">
-                <span className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-indigo-500 ring-2 ring-white dark:ring-slate-900" />
-                <div className="text-[11px] font-medium text-slate-700 dark:text-slate-200">
-                  {row.lastActivitySummary}
-                </div>
-                <div className="text-[10px] text-slate-400">
-                  {fmtRel(row.lastActivityAt)}
-                </div>
-              </li>
-            ) : (
+          {journeyQuery.isLoading ? (
+            <p className="flex items-center gap-1.5 text-xs italic text-slate-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading history…
+            </p>
+          ) : journeyQuery.isError ? (
+            <p className="text-xs italic text-rose-400">
+              Could not load history.
+            </p>
+          ) : journeyEvents.length ? (
+            <ol
+              className="relative max-h-72 space-y-3 overflow-y-auto border-l border-slate-200 pl-4 pr-1 dark:border-slate-800"
+              data-testid="engagement-case-panel-timeline-list"
+            >
+              {journeyEvents.map((e, idx) => {
+                const tone = JOURNEY_EVENT_TONE[e.eventType] ?? "bg-slate-300 dark:bg-slate-600";
+                return (
+                  <li
+                    key={e.id}
+                    className="relative"
+                    data-testid={`engagement-case-panel-timeline-event-${e.id}`}
+                  >
+                    <span
+                      className={`absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-slate-900 ${
+                        idx === 0 ? tone : `${tone} opacity-70`
+                      }`}
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">
+                        {journeyEventLabel(e.eventType)}
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-medium leading-snug text-slate-700 dark:text-slate-200">
+                      {e.summary}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[10px] text-slate-400">
+                      <span title={e.createdAt ? new Date(e.createdAt).toLocaleString() : undefined}>
+                        {fmtRel(e.createdAt)}
+                      </span>
+                      {e.actorName && (
+                        <>
+                          <span aria-hidden>·</span>
+                          <span>{e.actorName}</span>
+                        </>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <ol className="relative space-y-3 border-l border-slate-200 pl-4 dark:border-slate-800">
               <li className="relative">
                 <span className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-slate-300 ring-2 ring-white dark:bg-slate-600 dark:ring-slate-900" />
                 <div className="text-[11px] italic text-slate-400">
-                  No activity recorded yet.
+                  No call history recorded yet.
                 </div>
               </li>
-            )}
-            <li className="relative">
-              <span className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-slate-200 ring-2 ring-white dark:bg-slate-700 dark:ring-slate-900" />
-              <div className="text-[10px] italic text-slate-400">
-                Full call-by-call history coming soon.
-              </div>
-            </li>
-          </ol>
+            </ol>
+          )}
         </Section>
 
         {/* PDF links */}
