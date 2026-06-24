@@ -38,6 +38,7 @@ import { EngagementWorklist } from "@/components/engagement/EngagementAssignment
 import { EngagementDuplicateBanner } from "@/components/engagement/EngagementDuplicateBanner";
 import { EngagementFilterRail } from "@/components/engagement/EngagementFilterRail";
 import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel";
+import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
 import {
   type BoardResponse,
   type BoardRow,
@@ -91,6 +92,7 @@ export default function EngagementCenterPage() {
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [smartFilter, setSmartFilter] = useState<SmartFilterKey>("all");
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
+  const [view, setView] = useState<"repository" | "callSettings">("repository");
 
   const board = useQuery<BoardResponse>({
     queryKey: ["/api/engagement/assignment-board", "command"],
@@ -272,8 +274,40 @@ export default function EngagementCenterPage() {
             </h1>
           </div>
 
+          {/* View switcher */}
+          <div
+            className="ml-auto inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-100 p-0.5 dark:border-slate-800 dark:bg-slate-800"
+            data-testid="engagement-view-switcher"
+          >
+            <button
+              type="button"
+              onClick={() => setView("repository")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                view === "repository"
+                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+              data-testid="button-view-repository"
+            >
+              Repository
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("callSettings")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                view === "callSettings"
+                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+              data-testid="button-view-call-settings"
+            >
+              Call Settings
+            </button>
+          </div>
+
           {/* Search */}
-          <div className="relative ml-auto w-full max-w-xs">
+          {view === "repository" ? (
+          <div className="relative w-full max-w-xs">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
             <Input
               value={q}
@@ -283,8 +317,11 @@ export default function EngagementCenterPage() {
               data-testid="input-engagement-search"
             />
           </div>
+          ) : null}
 
           {/* Header filters */}
+          {view === "repository" ? (
+          <>
           <Select value={clinicFilter} onValueChange={setClinicFilter}>
             <SelectTrigger className="h-9 w-[150px] text-xs" data-testid="select-engagement-clinic">
               <SelectValue placeholder="All clinics" />
@@ -324,9 +361,12 @@ export default function EngagementCenterPage() {
               ))}
             </SelectContent>
           </Select>
+          </>
+          ) : null}
         </div>
 
         {/* Summary strip */}
+        {view === "repository" ? (
         <div className="flex flex-wrap gap-2 px-4 pb-3 sm:px-6">
           <HeaderMetric label="Ready to Assign" value={smartCounts.ready_to_assign} tone="indigo" />
           <HeaderMetric label="Due Today" value={smartCounts.due_today} tone="emerald" />
@@ -334,9 +374,17 @@ export default function EngagementCenterPage() {
           <HeaderMetric label="Callbacks" value={smartCounts.callbacks} tone="amber" />
           <HeaderMetric label="Blocked" value={smartCounts.blocked} tone="rose" />
         </div>
+        ) : null}
       </header>
 
-      {/* 3-zone body */}
+      {view === "callSettings" ? (
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+          <div className="mx-auto max-w-6xl">
+            <EngagementCallSettings />
+          </div>
+        </main>
+      ) : (
+      /* 3-zone body */
       <div className="flex min-h-0 flex-1">
         {/* Left rail */}
         <aside className="hidden w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-white px-2 py-3 dark:border-slate-800 dark:bg-slate-900 lg:block">
@@ -386,6 +434,7 @@ export default function EngagementCenterPage() {
           />
         </aside>
       </div>
+      )}
     </div>
   );
 }

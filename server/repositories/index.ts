@@ -19,6 +19,7 @@ export * from "./uploadedDocuments.repo";
 export * from "./appointments.repo";
 export * from "./outreach.repo";
 export * from "./schedulerAssignments.repo";
+export * from "./engagementCallSettings.repo";
 export * from "./analysisJobs.repo";
 export * from "./plexus.repo";
 export * from "./marketingMaterials.repo";
