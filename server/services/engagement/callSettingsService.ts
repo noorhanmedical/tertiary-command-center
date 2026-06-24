@@ -1,33 +1,45 @@
 import { and, eq, lt, or, isNull, isNotNull, count, sql, inArray } from "drizzle-orm";
 import { db } from "../../db";
-import { patientExecutionCases, ptoRequests } from "@shared/schema";
-import type { EngagementCallConfig, RoundingMode, WorkdayTier } from "@shared/schema";
+import {
+  patientExecutionCases,
+  ptoRequests,
+  appSettings,
+  DEFAULT_GLOBAL_CALL_CONFIG,
+  DEFAULT_WORKDAY_TIERS,
+  ENGAGEMENT_CALL_CONFIG_KEY,
+  ENGAGEMENT_WORKDAY_TIERS_KEY,
+  globalCallConfigSchema,
+  workdayTiersSchema,
+  type GlobalCallConfig,
+  type WorkdayTier,
+  type RoundingMode,
+} from "@shared/schema";
 
 // ─── Pure target math ───────────────────────────────────────────────────────
 //
-// All Engagement Call Settings targets are DERIVED from the persisted per-
-// member inputs plus the global admin config so the math is a single source
-// of truth (never stored, never drifts).
+// All Engagement Call Settings targets are DERIVED from the persisted inputs +
+// the admin-configurable global config and workday-tier table, so the math is a
+// single source of truth (never stored, never drifts).
 //
-// Priority order (admin spec):
-//   completed-call KPI : explicit per-member override
-//                        → matching workday tier
-//                        → floor(fullDayCompletedCallTarget × workday%)
-//   scheduled KPI      : explicit per-member override
-//                        → round/floor/ceil(completedKpi × scheduledPct%)
-//   visit / outreach   : per-member split → global default; the rounding mode
-//                        rounds the visit target and outreach = completedKpi −
-//                        visit, so the two counts always sum to completedKpi.
+// Priority order (Configurable Call Settings):
+//   • completed-call KPI: explicit member override → matching workday tier →
+//     global full-day target × workday % (rounded with the configured mode).
+//   • scheduled KPI: explicit member override → completed KPI × scheduled
+//     target % (rounded with the configured mode).
+//   • visit/outreach: per-member visit % → global default; outreach target =
+//     completed KPI − visit target, so the split ALWAYS sums to the completed
+//     KPI (and visit % + outreach % always = 100).
 //
-// The completed-call KPI formula always floors so it never overstates daily
-// capacity; the configurable rounding mode applies to the scheduled KPI and
-// the visit-target split.
+// The rounding mode (round / floor / ceil) is admin-configurable and applies to
+// every formula-derived value (it does not change exact tier or explicit
+// overrides, which are already integers).
 
 export interface CallSettingsInputs {
   callWorkdayPercent: number;
+  // Per-member visit %. Null/undefined → use the global default.
   visitPercent?: number | null;
-  outreachPercent?: number | null;
-  explicitCompletedCallKpi?: number | null;
+  // Per-member explicit overrides (highest priority). Null → derive.
+  explicitCompletedKpi?: number | null;
   explicitScheduledKpi?: number | null;
   maxDailyCapacity?: number | null;
 }
@@ -38,8 +50,6 @@ export interface CallTargets {
   visitTarget: number;
   outreachTarget: number;
   maxDailyCapacity: number;
-  effectiveVisitPercent: number;
-  effectiveOutreachPercent: number;
 }
 
 function clampPercent(n: number): number {
@@ -47,59 +57,68 @@ function clampPercent(n: number): number {
   return Math.max(0, Math.min(100, n));
 }
 
-function applyRounding(mode: RoundingMode, n: number): number {
-  if (mode === "floor") return Math.floor(n);
-  if (mode === "ceil") return Math.ceil(n);
-  return Math.round(n);
+export function applyRounding(value: number, mode: RoundingMode): number {
+  if (!Number.isFinite(value)) return 0;
+  switch (mode) {
+    case "floor":
+      return Math.floor(value);
+    case "ceil":
+      return Math.ceil(value);
+    case "round":
+    default:
+      return Math.round(value);
+  }
 }
 
-function findTierKpi(tiers: WorkdayTier[], workdayPercent: number): number | null {
-  const match = tiers.find((t) => t.workdayPercent === workdayPercent);
-  return match ? Math.max(0, Math.floor(match.completedCallKpi)) : null;
+// Look up the completed-call KPI for an exact workday-% match in the tier
+// table. Returns null when no tier matches (caller falls back to the formula).
+export function lookupTierKpi(
+  tiers: WorkdayTier[],
+  workdayPercent: number,
+): number | null {
+  const wd = clampPercent(workdayPercent);
+  const match = tiers.find((t) => clampPercent(t.workdayPercent) === wd);
+  return match ? Math.max(0, Math.floor(match.completedKpi)) : null;
 }
 
 export function computeCallTargets(
   input: CallSettingsInputs,
-  config: EngagementCallConfig,
+  config: GlobalCallConfig = DEFAULT_GLOBAL_CALL_CONFIG,
+  tiers: WorkdayTier[] = DEFAULT_WORKDAY_TIERS,
 ): CallTargets {
+  const mode = config.roundingMode;
   const workday = clampPercent(input.callWorkdayPercent);
-  const round = (n: number) => applyRounding(config.roundingMode, n);
+  const visitPct = clampPercent(
+    input.visitPercent ?? config.defaultVisitPercent,
+  );
+  const scheduledPct = clampPercent(config.scheduledKpiPercent);
+  const fullDay = Math.max(0, Math.floor(config.fullDayCompletedTarget || 0));
 
-  // Completed-call KPI: explicit override → tier match → floor(formula).
+  // completed-call KPI: explicit → tier → formula.
   let completedCallKpi: number;
-  if (input.explicitCompletedCallKpi != null && input.explicitCompletedCallKpi >= 0) {
-    completedCallKpi = Math.floor(input.explicitCompletedCallKpi);
+  if (input.explicitCompletedKpi != null && input.explicitCompletedKpi >= 0) {
+    completedCallKpi = Math.floor(input.explicitCompletedKpi);
   } else {
-    const tierKpi = findTierKpi(config.workdayTiers, workday);
+    const tierKpi = lookupTierKpi(tiers, workday);
     completedCallKpi =
       tierKpi != null
         ? tierKpi
-        : Math.floor(
-            (Math.max(0, config.fullDayCompletedCallTarget) * workday) / 100,
-          );
+        : Math.max(0, applyRounding((fullDay * workday) / 100, mode));
   }
 
-  // Scheduled KPI: explicit override → rounded(completedKpi × scheduledPct%).
-  let scheduledKpi: number;
-  if (input.explicitScheduledKpi != null && input.explicitScheduledKpi >= 0) {
-    scheduledKpi = Math.floor(input.explicitScheduledKpi);
-  } else {
-    scheduledKpi = round(
-      (completedCallKpi * clampPercent(config.scheduledPatientTargetPercent)) / 100,
-    );
-  }
+  // scheduled KPI: explicit → formula.
+  const scheduledKpi =
+    input.explicitScheduledKpi != null && input.explicitScheduledKpi >= 0
+      ? Math.floor(input.explicitScheduledKpi)
+      : Math.max(0, applyRounding((completedCallKpi * scheduledPct) / 100, mode));
 
-  // Visit / outreach: per-member split → global default; counts sum to KPI.
-  const effectiveVisitPercent = clampPercent(
-    input.visitPercent ?? config.defaultVisitCallPercent,
-  );
-  const effectiveOutreachPercent = 100 - effectiveVisitPercent;
+  // visit/outreach split — outreach is the remainder so the split always sums
+  // exactly to the completed-call KPI.
   const visitTarget = Math.min(
     completedCallKpi,
-    Math.max(0, round((completedCallKpi * effectiveVisitPercent) / 100)),
+    Math.max(0, applyRounding((completedCallKpi * visitPct) / 100, mode)),
   );
   const outreachTarget = Math.max(0, completedCallKpi - visitTarget);
-
   const maxDailyCapacity =
     input.maxDailyCapacity != null && input.maxDailyCapacity >= 0
       ? input.maxDailyCapacity
@@ -111,9 +130,86 @@ export function computeCallTargets(
     visitTarget,
     outreachTarget,
     maxDailyCapacity,
-    effectiveVisitPercent,
-    effectiveOutreachPercent,
   };
+}
+
+// ─── Global config + workday tiers persistence (app_settings JSON) ───────────
+//
+// Stored as JSON strings in the key-value app_settings table so the whole
+// distribution model is admin-editable without code/schema changes. Defaults
+// are applied (and individual fields back-filled) whenever a key is unset or
+// malformed, so reads never throw and always return a complete config.
+
+export interface ResolvedGlobalConfig {
+  config: GlobalCallConfig;
+  tiers: WorkdayTier[];
+}
+
+function parseConfig(raw: string | null): GlobalCallConfig {
+  if (!raw) return DEFAULT_GLOBAL_CALL_CONFIG;
+  try {
+    const parsed = globalCallConfigSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : DEFAULT_GLOBAL_CALL_CONFIG;
+  } catch {
+    return DEFAULT_GLOBAL_CALL_CONFIG;
+  }
+}
+
+function parseTiers(raw: string | null): WorkdayTier[] {
+  if (!raw) return DEFAULT_WORKDAY_TIERS;
+  try {
+    const parsed = workdayTiersSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) return DEFAULT_WORKDAY_TIERS;
+    return sortTiers(parsed.data);
+  } catch {
+    return DEFAULT_WORKDAY_TIERS;
+  }
+}
+
+// Highest workday % first, so the UI and any lookups read top-down.
+export function sortTiers(tiers: WorkdayTier[]): WorkdayTier[] {
+  return [...tiers].sort((a, b) => b.workdayPercent - a.workdayPercent);
+}
+
+export async function getGlobalCallConfig(): Promise<ResolvedGlobalConfig> {
+  const rows = await db
+    .select()
+    .from(appSettings)
+    .where(
+      inArray(appSettings.key, [
+        ENGAGEMENT_CALL_CONFIG_KEY,
+        ENGAGEMENT_WORKDAY_TIERS_KEY,
+      ]),
+    );
+  const byKey = new Map(rows.map((r) => [r.key, r.value]));
+  return {
+    config: parseConfig(byKey.get(ENGAGEMENT_CALL_CONFIG_KEY) ?? null),
+    tiers: parseTiers(byKey.get(ENGAGEMENT_WORKDAY_TIERS_KEY) ?? null),
+  };
+}
+
+export async function saveGlobalCallConfig(
+  config: GlobalCallConfig,
+  tiers: WorkdayTier[],
+): Promise<ResolvedGlobalConfig> {
+  const sorted = sortTiers(tiers);
+  await db
+    .insert(appSettings)
+    .values([
+      {
+        key: ENGAGEMENT_CALL_CONFIG_KEY,
+        value: JSON.stringify(config),
+      },
+      {
+        key: ENGAGEMENT_WORKDAY_TIERS_KEY,
+        value: JSON.stringify(sorted),
+      },
+    ])
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: sql`excluded.value` },
+    });
+  return { config, tiers: sorted };
 }
 
 export function remainingCapacity(

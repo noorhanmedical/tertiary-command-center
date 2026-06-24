@@ -18,62 +18,9 @@ import { outreachSchedulers } from "./outreach";
 export const ENGAGEMENT_TEAMS = ["PCS", "ACS"] as const;
 export type EngagementTeam = typeof ENGAGEMENT_TEAMS[number];
 
-// ─── Global, admin-configurable call-distribution config ────────────────────
-// Persisted as a single JSON blob in app_settings (key "engagement.callConfig")
-// via server/services/engagement/callConfigService.ts. It is one row of global
-// knobs plus a small workday-tier table, so key/value JSON is the right fit —
-// no dedicated table needed. The rounding mode applies to the scheduled-call
-// KPI and the visit-target split (the completed-call KPI formula always floors
-// so it never overstates capacity).
+// ─── Rounding mode (shared by the global config + the derivation service) ────
 export const ROUNDING_MODES = ["round", "floor", "ceil"] as const;
 export type RoundingMode = typeof ROUNDING_MODES[number];
-
-export interface WorkdayTier {
-  workdayPercent: number;
-  completedCallKpi: number;
-}
-
-export interface EngagementCallConfig {
-  fullDayCompletedCallTarget: number;
-  scheduledPatientTargetPercent: number;
-  defaultVisitCallPercent: number;
-  defaultOutreachCallPercent: number;
-  roundingMode: RoundingMode;
-  workdayTiers: WorkdayTier[];
-}
-
-export const DEFAULT_WORKDAY_TIERS: WorkdayTier[] = [
-  { workdayPercent: 100, completedCallKpi: 30 },
-  { workdayPercent: 50, completedCallKpi: 15 },
-  { workdayPercent: 25, completedCallKpi: 7 },
-  { workdayPercent: 0, completedCallKpi: 0 },
-];
-
-export const DEFAULT_CALL_CONFIG: EngagementCallConfig = {
-  fullDayCompletedCallTarget: 30,
-  scheduledPatientTargetPercent: 50,
-  defaultVisitCallPercent: 75,
-  defaultOutreachCallPercent: 25,
-  roundingMode: "round",
-  workdayTiers: DEFAULT_WORKDAY_TIERS,
-};
-
-export const workdayTierSchema = z.object({
-  workdayPercent: z.number().int().min(0).max(100),
-  completedCallKpi: z.number().int().min(0).max(1000),
-});
-
-export const callConfigSchema = z.object({
-  fullDayCompletedCallTarget: z.number().int().min(0).max(1000),
-  scheduledPatientTargetPercent: z.number().int().min(0).max(100),
-  defaultVisitCallPercent: z.number().int().min(0).max(100),
-  defaultOutreachCallPercent: z.number().int().min(0).max(100),
-  roundingMode: z.enum(ROUNDING_MODES),
-  workdayTiers: z.array(workdayTierSchema).max(50),
-});
-
-export const callConfigPatchSchema = callConfigSchema.partial();
-export type CallConfigPatch = z.infer<typeof callConfigPatchSchema>;
 
 // ─── Per-team-member Call Settings table ────────────────────────────────────
 export const engagementCallSettings = pgTable("engagement_call_settings", {
@@ -85,16 +32,17 @@ export const engagementCallSettings = pgTable("engagement_call_settings", {
   team: text("team").notNull().default("PCS"),
   // % of the workday spent on calls (0–100). Drives completed-call KPI.
   callWorkdayPercent: integer("call_workday_percent").notNull().default(100),
-  // Per-member Visit % (0–100). Null → use global defaultVisitCallPercent.
+  // Per-member Visit % (0–100). Null → use global defaultVisitPercent.
   visitPercent: integer("visit_percent"),
-  // Per-member Outreach % (0–100). Null → use global defaultOutreachCallPercent.
-  // Always paired with visitPercent so the two sum to 100.
+  // Per-member outreach %, mirror of visitPercent (visit + outreach = 100).
+  // Null → derive outreach as 100 - visitPercent.
   outreachPercent: integer("outreach_percent"),
-  // Explicit per-member overrides — when set, they win over tiers/formulas.
-  explicitCompletedCallKpi: integer("explicit_completed_call_kpi"),
+  // ─── Explicit per-member overrides — win over tiers/formulas when set ─────
+  // All nullable: null means "fall back to the tier/global formula".
+  explicitCompletedKpi: integer("explicit_completed_kpi"),
   explicitScheduledKpi: integer("explicit_scheduled_kpi"),
-  // Facilities this member covers (names from outreach_schedulers.facility).
-  // Stored here now; routing consumption arrives with the distribution engine.
+  // Facilities this member covers (informational/edited here; routing use
+  // arrives with the distribution engine — Phase 2).
   facilitiesCovered: text("facilities_covered").array(),
   // Legacy Phase-1 inputs — superseded by the global config + explicit
   // overrides above and no longer used in the target math. Kept (non-null,
@@ -122,7 +70,7 @@ export const insertEngagementCallSettingsSchema = createInsertSchema(engagementC
   callWorkdayPercent: z.number().int().min(0).max(100).optional(),
   visitPercent: z.number().int().min(0).max(100).optional().nullable(),
   outreachPercent: z.number().int().min(0).max(100).optional().nullable(),
-  explicitCompletedCallKpi: z.number().int().min(0).max(1000).optional().nullable(),
+  explicitCompletedKpi: z.number().int().min(0).max(1000).optional().nullable(),
   explicitScheduledKpi: z.number().int().min(0).max(1000).optional().nullable(),
   facilitiesCovered: z.array(z.string()).optional().nullable(),
   baseCompletedCallKpi: z.number().int().min(0).max(1000).optional(),
@@ -134,3 +82,71 @@ export const insertEngagementCallSettingsSchema = createInsertSchema(engagementC
 
 export type EngagementCallSettings = typeof engagementCallSettings.$inferSelect;
 export type InsertEngagementCallSettings = z.infer<typeof insertEngagementCallSettingsSchema>;
+
+// ─── Global Engagement Call config + workday tiers (app_settings JSON) ───────
+//
+// Admin-configurable distribution model defaults. Persisted as JSON in the
+// key-value app_settings store (not a dedicated table), so the whole model is
+// editable without code/schema changes. Targets are still DERIVED at read
+// time (see callSettingsService) — this just supplies the configurable
+// inputs/defaults the derivation consumes.
+
+// app_settings keys.
+export const ENGAGEMENT_CALL_CONFIG_KEY = "engagement.callConfig";
+export const ENGAGEMENT_WORKDAY_TIERS_KEY = "engagement.workdayTiers";
+
+export const globalCallConfigSchema = z
+  .object({
+    // Completed-call KPI for a full (100%) workday — the base the formula scales.
+    fullDayCompletedTarget: z.number().int().min(0).max(1000),
+    // Scheduled-patient KPI as a % of the completed-call KPI.
+    scheduledKpiPercent: z.number().int().min(0).max(100),
+    // Default visit/outreach split (visit + outreach must equal 100).
+    defaultVisitPercent: z.number().int().min(0).max(100),
+    defaultOutreachPercent: z.number().int().min(0).max(100),
+    roundingMode: z.enum(ROUNDING_MODES),
+  })
+  .refine((c) => c.defaultVisitPercent + c.defaultOutreachPercent === 100, {
+    message: "visit % and outreach % must sum to 100",
+    path: ["defaultOutreachPercent"],
+  });
+
+export type GlobalCallConfig = z.infer<typeof globalCallConfigSchema>;
+
+export const workdayTierSchema = z.object({
+  workdayPercent: z.number().int().min(0).max(100),
+  completedKpi: z.number().int().min(0).max(1000),
+});
+export type WorkdayTier = z.infer<typeof workdayTierSchema>;
+
+// A well-formed tier list: unique workday percents, sorted desc by the caller.
+export const workdayTiersSchema = z
+  .array(workdayTierSchema)
+  .max(50)
+  .refine(
+    (tiers) =>
+      new Set(tiers.map((t) => t.workdayPercent)).size === tiers.length,
+    { message: "workday tiers must have unique workday %" },
+  );
+
+export const DEFAULT_GLOBAL_CALL_CONFIG: GlobalCallConfig = {
+  fullDayCompletedTarget: 30,
+  scheduledKpiPercent: 50,
+  defaultVisitPercent: 75,
+  defaultOutreachPercent: 25,
+  roundingMode: "round",
+};
+
+export const DEFAULT_WORKDAY_TIERS: WorkdayTier[] = [
+  { workdayPercent: 100, completedKpi: 30 },
+  { workdayPercent: 50, completedKpi: 15 },
+  { workdayPercent: 25, completedKpi: 7 },
+  { workdayPercent: 0, completedKpi: 0 },
+];
+
+// Combined admin update payload for the global config + tier table.
+export const updateGlobalCallConfigSchema = z.object({
+  config: globalCallConfigSchema,
+  tiers: workdayTiersSchema,
+});
+export type UpdateGlobalCallConfig = z.infer<typeof updateGlobalCallConfigSchema>;

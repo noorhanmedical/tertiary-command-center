@@ -10,33 +10,39 @@ import {
   deriveWorkingStatus,
   resolveWorkingToday,
   startOfTodayUtc,
+  getGlobalCallConfig,
+  saveGlobalCallConfig,
 } from "../services/engagement/callSettingsService";
 import {
-  getCallConfig,
-  setCallConfig,
-} from "../services/engagement/callConfigService";
-import { ENGAGEMENT_TEAMS, callConfigPatchSchema } from "@shared/schema";
+  ENGAGEMENT_TEAMS,
+  updateGlobalCallConfigSchema,
+} from "@shared/schema";
 
-// Engagement Center — admin Call Settings (Phase 1).
+// Engagement Center — admin Call Settings.
 //
-// Persists per-team-member call-distribution inputs in
-// engagement_call_settings (one row per outreach_schedulers.id) and serves
-// a read model that merges the roster + saved settings + DERIVED targets
-// (completed-call KPI, scheduled KPI, visit/outreach split, capacity),
-// live carryover, and platform-calendar (PTO)/manual-override working
-// status. No Google Calendar. No distribution writes here — that is Phase 2.
+// Persists the admin-configurable distribution model:
+//   • Global config + workday-tier table as JSON in app_settings.
+//   • Per-team-member inputs/overrides in engagement_call_settings (one row
+//     per outreach_schedulers.id).
+// Serves a read model that merges the global config + tiers + roster + saved
+// settings + DERIVED targets (completed-call KPI, scheduled KPI, visit/outreach
+// split, capacity) following the priority order explicit override → workday
+// tier → global formula, plus live carryover and platform-calendar (PTO)/manual
+// override working status. No Google Calendar. No distribution writes here —
+// that is Phase 2.
 
-// Sensible defaults for a roster member who has never been configured. Per-
-// member percent/KPI overrides default to null so the global config drives them.
+// Sensible defaults for a roster member who has never been configured.
 const SETTINGS_DEFAULTS = {
   team: "PCS" as const,
   callWorkdayPercent: 100,
   visitPercent: null as number | null,
-  outreachPercent: null as number | null,
-  explicitCompletedCallKpi: null as number | null,
-  explicitScheduledKpi: null as number | null,
-  facilitiesCovered: null as string[] | null,
+  baseCompletedCallKpi: 30,
+  scheduledKpiPercent: 50,
   maxDailyCapacity: null as number | null,
+  explicitCompletedKpi: null as number | null,
+  explicitScheduledKpi: null as number | null,
+  outreachPercent: null as number | null,
+  facilitiesCovered: null as string[] | null,
   manualWorkingToday: null as boolean | null,
   active: true,
 };
@@ -45,12 +51,14 @@ const updateSettingsSchema = z
   .object({
     team: z.enum(ENGAGEMENT_TEAMS).optional(),
     callWorkdayPercent: z.number().int().min(0).max(100).optional(),
-    visitPercent: z.number().int().min(0).max(100).nullable().optional(),
-    outreachPercent: z.number().int().min(0).max(100).nullable().optional(),
-    explicitCompletedCallKpi: z.number().int().min(0).max(1000).nullable().optional(),
-    explicitScheduledKpi: z.number().int().min(0).max(1000).nullable().optional(),
-    facilitiesCovered: z.array(z.string()).nullable().optional(),
+    visitPercent: z.number().int().min(0).max(100).optional(),
+    baseCompletedCallKpi: z.number().int().min(0).max(1000).optional(),
+    scheduledKpiPercent: z.number().int().min(0).max(100).optional(),
     maxDailyCapacity: z.number().int().min(0).max(1000).nullable().optional(),
+    explicitCompletedKpi: z.number().int().min(0).max(1000).nullable().optional(),
+    explicitScheduledKpi: z.number().int().min(0).max(1000).nullable().optional(),
+    outreachPercent: z.number().int().min(0).max(100).nullable().optional(),
+    facilitiesCovered: z.array(z.string()).nullable().optional(),
     manualWorkingToday: z.boolean().nullable().optional(),
     active: z.boolean().optional(),
   })
@@ -60,12 +68,12 @@ export function registerEngagementCallSettingsRoutes(
   app: Express,
   requireRole: (...roles: string[]) => RequestHandler,
 ) {
-  // ─── Read model: roster × settings × derived targets × working status ───
+  // ─── Read model: config + tiers + roster × settings × derived targets ───
   app.get(
     "/api/engagement/call-settings",
     async (_req: Request, res: Response) => {
       try {
-        const config = await getCallConfig();
+        const { config, tiers } = await getGlobalCallConfig();
         const schedulers = await storage.getOutreachSchedulers();
         const schedulerIds = schedulers.map((s) => s.id);
 
@@ -96,24 +104,40 @@ export function registerEngagementCallSettingsRoutes(
             callWorkdayPercent:
               saved?.callWorkdayPercent ?? SETTINGS_DEFAULTS.callWorkdayPercent,
             visitPercent: saved?.visitPercent ?? SETTINGS_DEFAULTS.visitPercent,
-            outreachPercent:
-              saved?.outreachPercent ?? SETTINGS_DEFAULTS.outreachPercent,
-            explicitCompletedCallKpi:
-              saved?.explicitCompletedCallKpi ??
-              SETTINGS_DEFAULTS.explicitCompletedCallKpi,
+            baseCompletedCallKpi:
+              saved?.baseCompletedCallKpi ??
+              SETTINGS_DEFAULTS.baseCompletedCallKpi,
+            scheduledKpiPercent:
+              saved?.scheduledKpiPercent ??
+              SETTINGS_DEFAULTS.scheduledKpiPercent,
+            maxDailyCapacity:
+              saved?.maxDailyCapacity ?? SETTINGS_DEFAULTS.maxDailyCapacity,
+            explicitCompletedKpi:
+              saved?.explicitCompletedKpi ??
+              SETTINGS_DEFAULTS.explicitCompletedKpi,
             explicitScheduledKpi:
               saved?.explicitScheduledKpi ??
               SETTINGS_DEFAULTS.explicitScheduledKpi,
+            outreachPercent:
+              saved?.outreachPercent ?? SETTINGS_DEFAULTS.outreachPercent,
             facilitiesCovered:
               saved?.facilitiesCovered ?? SETTINGS_DEFAULTS.facilitiesCovered,
-            maxDailyCapacity:
-              saved?.maxDailyCapacity ?? SETTINGS_DEFAULTS.maxDailyCapacity,
             manualWorkingToday:
               saved?.manualWorkingToday ?? SETTINGS_DEFAULTS.manualWorkingToday,
             active: saved?.active ?? SETTINGS_DEFAULTS.active,
           };
 
-          const targets = computeCallTargets(merged, config);
+          const targets = computeCallTargets(
+            {
+              callWorkdayPercent: merged.callWorkdayPercent,
+              visitPercent: merged.visitPercent,
+              explicitCompletedKpi: merged.explicitCompletedKpi,
+              explicitScheduledKpi: merged.explicitScheduledKpi,
+              maxDailyCapacity: merged.maxDailyCapacity,
+            },
+            config,
+            tiers,
+          );
           const carryover = carryoverBySched.get(s.id) ?? 0;
           const working = deriveWorkingStatus(s.userId, ptoUserIds);
           const workingToday = resolveWorkingToday(
@@ -144,6 +168,7 @@ export function registerEngagementCallSettingsRoutes(
 
         res.json({
           config,
+          tiers,
           members,
           calendarAvailable,
           asOfDate: new Date().toISOString().slice(0, 10),
@@ -158,6 +183,39 @@ export function registerEngagementCallSettingsRoutes(
             error instanceof Error
               ? error.message
               : "Failed to load call settings",
+        });
+      }
+    },
+  );
+
+  // ─── Update global config + workday tiers (admin-only) ───────────────────
+  app.put(
+    "/api/engagement/call-settings/config",
+    requireRole("admin"),
+    async (req: Request, res: Response) => {
+      const parsed = updateGlobalCallConfigSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: parsed.error.issues[0]?.message ?? "Invalid configuration",
+          code: "bad_request",
+        });
+      }
+      try {
+        const saved = await saveGlobalCallConfig(
+          parsed.data.config,
+          parsed.data.tiers,
+        );
+        res.json(saved);
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/call-settings/config:put] error:",
+          error instanceof Error ? error.message : error,
+        );
+        res.status(500).json({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to save configuration",
         });
       }
     },
@@ -191,30 +249,22 @@ export function registerEngagementCallSettingsRoutes(
           .json({ error: "Team member not found", code: "not_found" });
       }
 
-      // Keep the stored visit/outreach split coherent regardless of caller:
-      // outreach is always the complement of visit (both null = inherit global).
-      const patch = { ...parsed.data };
-      if ("visitPercent" in patch) {
-        patch.outreachPercent =
-          patch.visitPercent == null ? null : 100 - patch.visitPercent;
-      }
-
       const saved = await engagementCallSettingsRepository.upsert(
         schedulerId,
-        patch,
+        parsed.data,
       );
 
-      const config = await getCallConfig();
+      const { config, tiers } = await getGlobalCallConfig();
       const targets = computeCallTargets(
         {
           callWorkdayPercent: saved.callWorkdayPercent,
           visitPercent: saved.visitPercent,
-          outreachPercent: saved.outreachPercent,
-          explicitCompletedCallKpi: saved.explicitCompletedCallKpi,
+          explicitCompletedKpi: saved.explicitCompletedKpi,
           explicitScheduledKpi: saved.explicitScheduledKpi,
           maxDailyCapacity: saved.maxDailyCapacity,
         },
         config,
+        tiers,
       );
       const carryover =
         (await getCarryoverCounts([schedulerId])).get(schedulerId) ?? 0;
@@ -225,34 +275,6 @@ export function registerEngagementCallSettingsRoutes(
         carryover,
         remainingCapacity: remainingCapacity(targets.completedCallKpi, carryover),
       });
-    },
-  );
-
-  // ─── Global call config (defaults + workday tiers + rounding) ───────────
-  app.patch(
-    "/api/engagement/call-config",
-    requireRole("admin"),
-    async (req: Request, res: Response) => {
-      const parsed = callConfigPatchSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({
-          error: parsed.error.issues[0]?.message ?? "Invalid config",
-          code: "bad_request",
-        });
-      }
-      try {
-        const config = await setCallConfig(parsed.data);
-        res.json(config);
-      } catch (error: unknown) {
-        console.error(
-          "[engagement/call-config:patch] error:",
-          error instanceof Error ? error.message : error,
-        );
-        res.status(500).json({
-          error:
-            error instanceof Error ? error.message : "Failed to save config",
-        });
-      }
     },
   );
 }
