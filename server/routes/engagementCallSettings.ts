@@ -17,6 +17,7 @@ import {
   ENGAGEMENT_TEAMS,
   updateGlobalCallConfigSchema,
 } from "@shared/schema";
+import { logAudit } from "../services/auditService";
 
 // Engagement Center — admin Call Settings.
 //
@@ -201,10 +202,15 @@ export function registerEngagementCallSettingsRoutes(
         });
       }
       try {
+        const before = await getGlobalCallConfig();
         const saved = await saveGlobalCallConfig(
           parsed.data.config,
           parsed.data.tiers,
         );
+        void logAudit(req, "update", "engagement_call_config", null, {
+          before: { config: before.config, tiers: before.tiers },
+          after: { config: saved.config, tiers: saved.tiers },
+        });
         res.json(saved);
       } catch (error: unknown) {
         console.error(
@@ -249,9 +255,26 @@ export function registerEngagementCallSettingsRoutes(
           .json({ error: "Team member not found", code: "not_found" });
       }
 
+      const before =
+        await engagementCallSettingsRepository.getByScheduler(schedulerId);
+
       const saved = await engagementCallSettingsRepository.upsert(
         schedulerId,
         parsed.data,
+      );
+
+      void logAudit(
+        req,
+        before ? "update" : "create",
+        "engagement_call_member_settings",
+        schedulerId,
+        {
+          schedulerName: scheduler.name,
+          facility: scheduler.facility,
+          changedFields: Object.keys(parsed.data),
+          before: before ?? null,
+          after: saved,
+        },
       );
 
       const { config, tiers } = await getGlobalCallConfig();
