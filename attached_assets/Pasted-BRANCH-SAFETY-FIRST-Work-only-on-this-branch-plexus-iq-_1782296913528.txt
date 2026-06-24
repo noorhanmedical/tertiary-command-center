@@ -1,0 +1,494 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+Before editing, run and report:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+If you are not on plexus-iq-admin-review-persistence-fix, STOP and switch to it before editing.
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is UI-only, frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Commit with a clear message.
+4. Push to origin plexus-iq-admin-review-persistence-fix.
+5. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA
+   - risks
+
+TASK:
+
+Build Engagement Center call settings, patient repository, distribution logic, and live team metrics using the platform calendar / TeamOps calendar for working status and schedule availability.
+
+IMPORTANT:
+Do NOT use Google Calendar.
+Do NOT connect to Google Calendar.
+Do NOT inspect Google Calendar.
+Do NOT show “Google Calendar not connected.”
+Do NOT add Google Calendar placeholders, fields, hooks, endpoints, or UI.
+
+Use the platform’s own calendar/schedule system only.
+
+Core concept:
+Engagement Center is the call-distribution brain. Patients approved in Admin Review should enter an Engagement Center repository. Admin-configured Call Settings determine how lists are distributed to ACS/PCS team members. Distribution must account for:
+- each team member’s daily call capacity
+- platform calendar / TeamOps schedule status
+- visit/outreach call mix
+- carryover incomplete calls from previous days
+- live completed-call metrics
+- live scheduled-patient metrics
+
+Architecture rules:
+- Admin Review approves patients/tests.
+- Approved patients flow into Engagement Center repository.
+- Engagement Center holds ready-to-distribute patients.
+- Engagement Center distributes call work based on admin Call Settings.
+- The platform calendar / TeamOps calendar is the source for internal working status, shifts, PTO, absences, and coverage.
+- patient_execution_cases is the source of truth for assigned call work.
+- Team Member Portal is where ACS/PCS works assigned call lists.
+- Engagement Center must show live team metrics without admin needing to log into each team member portal.
+- Do not use /api/scheduler-assignments for Engagement Center-assigned call work.
+- Do not resurrect old Outreach Center.
+- Do not create fake data.
+- Do not break Team Member Portal call lists.
+- Do not change schema unless absolutely required. If schema is required, add a proper migration.
+
+PART 1 — Inspect current Engagement Center and platform calendar model
+
+Before editing, inspect and report:
+- Engagement Center route/page/component files
+- current assignment component/files
+- current data hooks/endpoints
+- how patients from Admin Review become assignable
+- whether there is currently an Engagement repository/pool
+- how patient_execution_cases are created/updated
+- how assignedTeamMemberId is stored
+- how nextActionAt/status/priority are stored
+- how call outcomes are recorded
+- how Team Member Portal reads assigned calls
+- whether team roster comes from /api/outreach/schedulers or another endpoint
+- TeamOps route/page/component files
+- platform calendar / schedule / PTO / coverage component files
+- current platform calendar endpoints/hooks
+- where team member working status, PTO, shifts, absences, and coverage are stored
+- whether TeamOps calendar has day/week/month schedule data
+- exact files to be touched
+- whether this is frontend-only or full-stack
+
+PART 2 — Engagement Center patient repository
+
+Add or formalize a repository/pool inside Engagement Center for all patients sent after Admin Review.
+
+Repository should show all ready-to-distribute patient cases with:
+- patient name
+- patientId
+- executionCaseId if already created
+- clinic/facility
+- approved ancillary/test
+- call reason
+- call type: visit or outreach
+- priority
+- cooldown/outreach eligibility if available
+- Clinician PDF status
+- Plexus PDF status
+- Admin Review status
+- assigned/unassigned status
+- assigned team member if assigned
+- next action
+- current case status
+
+This repository is the holding area before and during distribution.
+It should not be the Team Member Portal.
+It should not use old Outreach Center.
+
+PART 3 — Admin Call Settings
+
+Create or improve an admin-configurable Call Settings section inside Engagement Center.
+
+Settings should be per team member.
+
+Fields:
+- teamMemberId
+- team member name
+- role/team: PCS or ACS
+- facilities covering
+- platform calendar status
+- working today
+- shift start/end if available from platform calendar
+- PTO/absence status if available from platform calendar
+- coverage status if available from TeamOps
+- manual admin override for workingToday
+- % of workday doing scheduling/calls
+- % calls being Visit calls
+- % calls being Outreach calls
+- KPI minimum completed outgoing calls
+- KPI minimum patients scheduled
+- calculated Visit completed-call target
+- calculated Outreach completed-call target
+- max daily assignment capacity
+- active incomplete carryover count
+- remaining new assignment capacity
+- active/inactive status
+
+Important definition:
+Completed outgoing calls means the team member reached the patient and discussed with them.
+It does not mean total call attempts.
+Voicemails, no answer, missed calls, and failed attempts do not count as completed outgoing calls.
+
+Use these example calculations:
+- 100% workday = 30 completed calls
+- 50% workday = 15 completed calls
+- 25% workday = 7 completed calls
+- 0% workday = 0 completed calls
+- minimum patients scheduled = 50% of completed call KPI
+
+Visit/outreach split examples:
+- 75% Visit / 25% Outreach on 30 completed calls = 22 visit, 8 outreach
+- 75% Visit / 25% Outreach on 15 completed calls = 8 visit, 7 outreach
+- 75% Visit / 25% Outreach on 7 completed calls = 5 visit, 2 outreach
+- 25% Visit / 75% Outreach on 22 completed calls = about 5 visit, 17 outreach
+
+If exact rounding is needed:
+- use integer targets
+- ensure visit target + outreach target = completed call KPI
+
+PART 4 — Platform calendar / TeamOps working status
+
+Use the platform’s own calendar/schedule system, not Google Calendar.
+
+Working status should come from:
+1. TeamOps staffing calendar / platform calendar if available
+2. platform PTO/absence/coverage data if available
+3. admin manual override in Engagement Center Call Settings
+
+Rules:
+- If platform calendar says team member is scheduled to work today, workingToday can default to true.
+- If platform calendar says PTO/absent/unavailable, workingToday should default to false.
+- If TeamOps coverage marks someone covered/reassigned, distribution should respect the coverage assignment if existing data supports it.
+- If platform calendar has partial shift availability, calculate or suggest reduced call workday percentage.
+- Admin can manually override workingToday and callWorkdayPercent inside Engagement Center.
+- Admin override should be explicit and visible.
+- Do not use Google Calendar for any of this.
+
+If platform calendar is not fully wired:
+- show “Platform calendar schedule unavailable”
+- allow admin manual working status and call capacity settings
+- do not fake schedule data
+- do not block the entire distribution system just because platform calendar data is missing
+
+PART 5 — Distribution engine
+
+Add or improve distribution logic.
+
+Distribution must consider:
+- available repository patients
+- facility coverage
+- platform calendar working status
+- TeamOps staffing/PTO/coverage status if available
+- admin manual workingToday override
+- call workday percentage
+- completed call KPI
+- visit/outreach mix
+- current active incomplete carryover
+- current assigned active calls
+- calls completed today
+- scheduled-patient KPI
+- priority
+- cooldown eligibility
+- whether patient has required PDFs/proof if required
+- role/team suitability: PCS vs ACS if available
+
+Critical rule:
+Do not assign a team member more new calls than their remaining capacity after carryover.
+
+Formula:
+daily assignment capacity
+minus active incomplete carryover
+equals new assignment capacity
+
+Example:
+Target 30 calls
+12 incomplete carryover
+New assignment capacity = 18
+
+Do not blindly assign 30 new calls to someone who already has 12 incomplete calls.
+
+PART 6 — Carryover logic
+
+Incomplete calls from prior days should count against today’s capacity.
+
+Carryover should include assigned cases that are:
+- not completed
+- not declined/finalized
+- still needing call/follow-up/scheduling
+- assigned to that team member
+- due before today or created before today if still open
+
+Carryover should not include:
+- completed cases
+- scheduled/finalized cases if no call action remains
+- declined/closed cases
+- transferred/reassigned cases
+
+Show carryover count in Call Settings and live metrics.
+
+PART 7 — Distribution modes
+
+Support at least:
+1. Preview Distribution
+2. Apply Distribution
+
+Preview Distribution:
+- shows who would receive how many calls
+- shows visit/outreach split
+- shows carryover considered
+- shows platform calendar/TeamOps working status considered
+- shows manual override status if used
+- shows patients left unassigned
+- does not write changes
+
+Apply Distribution:
+- updates patient_execution_cases with assignedTeamMemberId, status, nextActionAt, call type, priority as supported
+- preserves existing assignments unless reassignment is explicitly requested
+- does not create duplicates
+- creates patient_journey_events if existing logic supports it
+
+PART 8 — Live team metrics
+
+Engagement Center must show live metrics without admin logging into individual ACS/PCS portals.
+
+Per team member metrics:
+- platform calendar status
+- working today
+- manual override status
+- target completed calls
+- target scheduled patients
+- active incomplete carryover
+- new calls assigned today
+- total active queue
+- calls attempted today
+- completed conversations today
+- voicemails today
+- no answers today
+- patients scheduled today
+- declined today
+- follow-up needed today
+- remaining completed-call KPI
+- remaining scheduled-patient KPI
+- visit completed calls today
+- outreach completed calls today
+- visit target
+- outreach target
+- conversion percentage
+- last activity time
+
+Important:
+Completed conversations only count outcomes where the patient was reached and discussed.
+Do not count voicemail/no answer as completed conversations.
+
+Metrics should update from:
+- patient_execution_cases
+- patient_journey_events
+- call result endpoint data
+- RingCentral events if wired
+- schedule events if wired
+- platform calendar/TeamOps schedule status if wired
+
+If RingCentral is not wired:
+- use existing call-result logs
+- show RingCentral integration boundary
+- do not fake live call events
+
+PART 9 — UI layout
+
+Engagement Center should have a premium iOS-like structure:
+
+Sections:
+1. Command header
+2. Repository
+3. Call Settings
+4. Distribution Preview
+5. Live Team Metrics
+6. Activity Feed / Communication Feed
+
+Command header:
+- clinic/facility filter
+- team filter
+- date selector
+- distribution mode
+- search patient
+- platform calendar status summary
+- summary counts:
+  ready in repository
+  assigned today
+  carryover
+  completed conversations
+  scheduled patients
+  remaining capacity
+
+Repository:
+- clean worklist of patients ready for distribution
+- filters for facility, call type, ancillary, priority, cooldown, PDF status, assigned/unassigned
+
+Call Settings:
+- editable per-team-member grid/cards
+- not ugly spreadsheet dump
+- premium table/cards
+- admin can edit percentages and targets
+- admin can override platform calendar working status
+- show calculated targets live
+- show platform calendar/TeamOps status when available
+
+Distribution Preview:
+- before applying distribution, show:
+  team member
+  platform calendar status
+  manual override status
+  capacity
+  carryover
+  new assignments
+  visit assignments
+  outreach assignments
+  patients left unassigned
+
+Live Team Metrics:
+- team member cards/table
+- target vs completed
+- scheduled target vs scheduled
+- carryover
+- active queue
+- conversion
+- remaining capacity
+- platform calendar/TeamOps status
+
+Activity Feed:
+- recent assignments
+- recent completed calls
+- scheduled patients
+- missed/no answer/voicemail
+- reassignment events
+- blocked/cooldown events
+- platform calendar/PTO/coverage changes if available
+
+PART 10 — Example settings from attached metrics
+
+Support this configuration pattern:
+
+PCS Remote Team:
+- Callista: TFP, working yes, 100% calls, 75% visit, 25% outreach, 30 completed calls, 15 scheduled
+- Ashraful: TFP, working yes, 50% calls, 75% visit, 25% outreach, 15 completed calls, 8 scheduled
+- Marge: TFP, working yes, 100% calls, 75% visit, 25% outreach, 30 completed calls, 15 scheduled
+- Freddie: TFP, working yes, 100% calls, 75% visit, 25% outreach, 30 completed calls, 15 scheduled
+- Brian: TFP, working yes, 25% calls, 75% visit, 25% outreach, 7 completed calls, 3 scheduled
+- Roilan: TFP, working yes, 0% calls, 0 target
+- Ahmad: TFP, working yes, 50% calls, 25% visit, 75% outreach, 22 completed calls, 11 scheduled
+- Osama: TFP, working yes, 0% calls, 0 target
+
+ACS Team:
+- Jason, Whitney, Glenda, Anthony, Kimberly, Jeff, Carmen should support the same setting structure.
+- If KPI fields are blank, allow admin to configure them.
+- Do not assume blank means zero unless admin sets it or role defaults say so.
+
+PART 11 — Persistence
+
+Admin call settings must persist.
+Use existing settings/preferences/config infrastructure if available.
+
+If no backend settings store exists:
+- add an additive settings endpoint/table only if necessary
+- include migration if schema is added
+- do not store only in localStorage for production-critical settings
+
+At minimum, settings must survive refresh and be available to distribution logic.
+
+Platform calendar/TeamOps working status should remain tied to the platform calendar source if available.
+Manual overrides should persist and clearly display that they override platform calendar status.
+
+PART 12 — Safety and role guards
+
+Only admin/super admin should edit call settings and run distribution.
+
+Normal ACS/PCS users should not edit distribution settings.
+
+Team Member Portal should only show the assigned list for the current user unless admin view-as is allowed.
+
+PART 13 — Validation scenarios
+
+Verify and report:
+
+Scenario A:
+Admin Review sends 100 ready patients to Engagement Center.
+Expected: repository shows 100 ready patients grouped/filterable.
+
+Scenario B:
+Callista target is 30 and has 12 incomplete carryover.
+Expected: distribution assigns at most 18 new calls to Callista.
+
+Scenario C:
+Ashraful target is 15 and has 0 carryover.
+Expected: distribution can assign up to 15 new calls.
+
+Scenario D:
+Roilan has 0% call workday.
+Expected: distribution assigns 0 calls.
+
+Scenario E:
+Visit/outreach split is 75/25 for 30 calls.
+Expected: distribution targets about 22 visit and 8 outreach.
+
+Scenario F:
+Team member completes calls during the day.
+Expected: live metrics update completed conversations and remaining KPI.
+
+Scenario G:
+Voicemail/no answer does not count as completed conversation.
+
+Scenario H:
+Scheduled patients count toward scheduled KPI.
+
+Scenario I:
+Admin can see live metrics without logging into Team Member Portal.
+
+Scenario J:
+Assigned calls appear in the selected team member’s Team Member Portal call list.
+
+Scenario K:
+Platform calendar / TeamOps marks a team member absent or unavailable.
+Expected: distribution assigns 0 new calls unless admin explicitly overrides.
+
+Scenario L:
+Platform calendar / TeamOps data is unavailable.
+Expected: Engagement Center still works with manual admin working status and shows an honest empty/integration state.
+
+Scenario M:
+No Google Calendar references exist in the implementation.
+
+Run:
+npm run check
+npm run build
+
+Commit message:
+Add Engagement call settings with platform calendar distribution
+
+Push:
+origin plexus-iq-admin-review-persistence-fix
