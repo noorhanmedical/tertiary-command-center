@@ -12,6 +12,7 @@ import { registerPatientRoutes } from "./routes/patients";
 import { registerPlexusIqClinicalImportRoutes } from "./routes/plexusIqClinicalImport";
 import { registerEngagementAssignmentBoardRoutes } from "./routes/engagementAssignmentBoard";
 import { registerEngagementCallSettingsRoutes } from "./routes/engagementCallSettings";
+import { registerEngagementDistributionRoutes } from "./routes/engagementDistribution";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerInvoiceRoutes } from "./routes/invoices";
 import { registerOutreachRoutes } from "./routes/outreach";
@@ -243,6 +244,7 @@ export async function registerRoutes(
   registerPlexusIqClinicalImportRoutes(app);
   registerEngagementAssignmentBoardRoutes(app);
   registerEngagementCallSettingsRoutes(app, requireRole);
+  registerEngagementDistributionRoutes(app, requireRole);
   registerBillingRoutes(app, { backgroundSyncBilling });
   registerInvoiceRoutes(app);
   registerOutreachRoutes(app);

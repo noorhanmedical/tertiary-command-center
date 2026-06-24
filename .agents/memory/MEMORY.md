@@ -14,3 +14,4 @@
 - [Admin Review manual add-ancillary](admin-review-add-ancillary.md) — adding a test name to qualifyingTests is the single lever; downstream exec-case/call-reason/PDF all read it. Honest "not generated" = leave narrative blank.
 - [Plexus IQ BatchFlow sessions](plexus-iq-batchflow-sessions.md) — BatchFlow tile opens a landing dialog that sets a placement ref (default newRun isolates; server default is append); active batch in sessionStorage; source map separate.
 - [Engagement Center command UI](engagement-center-command-ui.md) — assign endpoint persists only schedulerId/role/reason; priority + smart filters are DERIVED read-only; no priority/next-action field in board contract.
+- [engagement_call_settings column drift](engagement-call-settings-column-drift.md) — explicit completed-KPI maps to DB `explicit_completed_call_kpi`; a `.select()` drift throws PG 42703 and breaks the call-settings repo for all consumers.

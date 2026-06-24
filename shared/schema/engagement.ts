@@ -39,7 +39,7 @@ export const engagementCallSettings = pgTable("engagement_call_settings", {
   outreachPercent: integer("outreach_percent"),
   // ─── Explicit per-member overrides — win over tiers/formulas when set ─────
   // All nullable: null means "fall back to the tier/global formula".
-  explicitCompletedKpi: integer("explicit_completed_kpi"),
+  explicitCompletedKpi: integer("explicit_completed_call_kpi"),
   explicitScheduledKpi: integer("explicit_scheduled_kpi"),
   // Facilities this member covers (informational/edited here; routing use
   // arrives with the distribution engine — Phase 2).

@@ -39,6 +39,7 @@ import { EngagementDuplicateBanner } from "@/components/engagement/EngagementDup
 import { EngagementFilterRail } from "@/components/engagement/EngagementFilterRail";
 import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel";
 import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
+import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
 import {
   type BoardResponse,
   type BoardRow,
@@ -92,7 +93,7 @@ export default function EngagementCenterPage() {
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [smartFilter, setSmartFilter] = useState<SmartFilterKey>("all");
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
-  const [view, setView] = useState<"repository" | "callSettings">("repository");
+  const [view, setView] = useState<"repository" | "distribution" | "callSettings">("repository");
 
   const board = useQuery<BoardResponse>({
     queryKey: ["/api/engagement/assignment-board", "command"],
@@ -293,6 +294,18 @@ export default function EngagementCenterPage() {
             </button>
             <button
               type="button"
+              onClick={() => setView("distribution")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                view === "distribution"
+                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+              data-testid="button-view-distribution"
+            >
+              Distribution
+            </button>
+            <button
+              type="button"
               onClick={() => setView("callSettings")}
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                 view === "callSettings"
@@ -381,6 +394,12 @@ export default function EngagementCenterPage() {
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="mx-auto max-w-6xl">
             <EngagementCallSettings />
+          </div>
+        </main>
+      ) : view === "distribution" ? (
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+          <div className="mx-auto max-w-6xl">
+            <EngagementDistributionPanel />
           </div>
         </main>
       ) : (
