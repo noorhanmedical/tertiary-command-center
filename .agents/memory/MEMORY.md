@@ -12,3 +12,4 @@
 - [EMR patient chart architecture](emr-patient-chart.md) — /patient-directory full-page chart: CHART_SECTIONS registry drives left-rail nav + scroll-spy; buildEmrChart projector keeps sections data-only; degrade-on-404 fetches.
 - [Admin Review manual add-ancillary](admin-review-add-ancillary.md) — adding a test name to qualifyingTests is the single lever; downstream exec-case/call-reason/PDF all read it. Honest "not generated" = leave narrative blank.
 - [Plexus IQ BatchFlow sessions](plexus-iq-batchflow-sessions.md) — BatchFlow tile opens a landing dialog that sets a placement ref (default newRun isolates; server default is append); active batch in sessionStorage; source map separate.
+- [Engagement Center command UI](engagement-center-command-ui.md) — assign endpoint persists only schedulerId/role/reason; priority + smart filters are DERIVED read-only; no priority/next-action field in board contract.
