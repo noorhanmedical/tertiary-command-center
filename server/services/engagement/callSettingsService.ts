@@ -1,22 +1,34 @@
 import { and, eq, lt, or, isNull, isNotNull, count, sql, inArray } from "drizzle-orm";
 import { db } from "../../db";
 import { patientExecutionCases, ptoRequests } from "@shared/schema";
+import type { EngagementCallConfig, RoundingMode, WorkdayTier } from "@shared/schema";
 
 // ─── Pure target math ───────────────────────────────────────────────────────
 //
-// All Engagement Call Settings targets are DERIVED from the persisted
-// inputs so the math is a single source of truth (never stored, never
-// drifts). Rounding rule, matching the product spec's worked examples:
-//   • completed-call KPI uses floor (25% of 30 = 7.5 → 7)
-//   • scheduled KPI + visit target use round-half-up
-//   • outreach target = completed KPI − visit target (so the split always
-//     sums exactly to the completed-call KPI)
+// All Engagement Call Settings targets are DERIVED from the persisted per-
+// member inputs plus the global admin config so the math is a single source
+// of truth (never stored, never drifts).
+//
+// Priority order (admin spec):
+//   completed-call KPI : explicit per-member override
+//                        → matching workday tier
+//                        → floor(fullDayCompletedCallTarget × workday%)
+//   scheduled KPI      : explicit per-member override
+//                        → round/floor/ceil(completedKpi × scheduledPct%)
+//   visit / outreach   : per-member split → global default; the rounding mode
+//                        rounds the visit target and outreach = completedKpi −
+//                        visit, so the two counts always sum to completedKpi.
+//
+// The completed-call KPI formula always floors so it never overstates daily
+// capacity; the configurable rounding mode applies to the scheduled KPI and
+// the visit-target split.
 
 export interface CallSettingsInputs {
   callWorkdayPercent: number;
-  visitPercent: number;
-  baseCompletedCallKpi: number;
-  scheduledKpiPercent: number;
+  visitPercent?: number | null;
+  outreachPercent?: number | null;
+  explicitCompletedCallKpi?: number | null;
+  explicitScheduledKpi?: number | null;
   maxDailyCapacity?: number | null;
 }
 
@@ -26,6 +38,8 @@ export interface CallTargets {
   visitTarget: number;
   outreachTarget: number;
   maxDailyCapacity: number;
+  effectiveVisitPercent: number;
+  effectiveOutreachPercent: number;
 }
 
 function clampPercent(n: number): number {
@@ -33,16 +47,59 @@ function clampPercent(n: number): number {
   return Math.max(0, Math.min(100, n));
 }
 
-export function computeCallTargets(input: CallSettingsInputs): CallTargets {
-  const workday = clampPercent(input.callWorkdayPercent);
-  const visitPct = clampPercent(input.visitPercent);
-  const scheduledPct = clampPercent(input.scheduledKpiPercent);
-  const base = Math.max(0, Math.floor(input.baseCompletedCallKpi || 0));
+function applyRounding(mode: RoundingMode, n: number): number {
+  if (mode === "floor") return Math.floor(n);
+  if (mode === "ceil") return Math.ceil(n);
+  return Math.round(n);
+}
 
-  const completedCallKpi = Math.floor((base * workday) / 100);
-  const scheduledKpi = Math.round((completedCallKpi * scheduledPct) / 100);
-  const visitTarget = Math.round((completedCallKpi * visitPct) / 100);
+function findTierKpi(tiers: WorkdayTier[], workdayPercent: number): number | null {
+  const match = tiers.find((t) => t.workdayPercent === workdayPercent);
+  return match ? Math.max(0, Math.floor(match.completedCallKpi)) : null;
+}
+
+export function computeCallTargets(
+  input: CallSettingsInputs,
+  config: EngagementCallConfig,
+): CallTargets {
+  const workday = clampPercent(input.callWorkdayPercent);
+  const round = (n: number) => applyRounding(config.roundingMode, n);
+
+  // Completed-call KPI: explicit override → tier match → floor(formula).
+  let completedCallKpi: number;
+  if (input.explicitCompletedCallKpi != null && input.explicitCompletedCallKpi >= 0) {
+    completedCallKpi = Math.floor(input.explicitCompletedCallKpi);
+  } else {
+    const tierKpi = findTierKpi(config.workdayTiers, workday);
+    completedCallKpi =
+      tierKpi != null
+        ? tierKpi
+        : Math.floor(
+            (Math.max(0, config.fullDayCompletedCallTarget) * workday) / 100,
+          );
+  }
+
+  // Scheduled KPI: explicit override → rounded(completedKpi × scheduledPct%).
+  let scheduledKpi: number;
+  if (input.explicitScheduledKpi != null && input.explicitScheduledKpi >= 0) {
+    scheduledKpi = Math.floor(input.explicitScheduledKpi);
+  } else {
+    scheduledKpi = round(
+      (completedCallKpi * clampPercent(config.scheduledPatientTargetPercent)) / 100,
+    );
+  }
+
+  // Visit / outreach: per-member split → global default; counts sum to KPI.
+  const effectiveVisitPercent = clampPercent(
+    input.visitPercent ?? config.defaultVisitCallPercent,
+  );
+  const effectiveOutreachPercent = 100 - effectiveVisitPercent;
+  const visitTarget = Math.min(
+    completedCallKpi,
+    Math.max(0, round((completedCallKpi * effectiveVisitPercent) / 100)),
+  );
   const outreachTarget = Math.max(0, completedCallKpi - visitTarget);
+
   const maxDailyCapacity =
     input.maxDailyCapacity != null && input.maxDailyCapacity >= 0
       ? input.maxDailyCapacity
@@ -54,6 +111,8 @@ export function computeCallTargets(input: CallSettingsInputs): CallTargets {
     visitTarget,
     outreachTarget,
     maxDailyCapacity,
+    effectiveVisitPercent,
+    effectiveOutreachPercent,
   };
 }
 

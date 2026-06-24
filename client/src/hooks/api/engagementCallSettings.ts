@@ -1,10 +1,18 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import type {
+  EngagementCallConfig,
+  CallConfigPatch,
+  RoundingMode,
+  WorkdayTier,
+} from "@shared/schema";
 
 export const ENGAGEMENT_CALL_SETTINGS_QK = ["/api/engagement/call-settings"];
 
 export type EngagementTeam = "PCS" | "ACS";
 export type CalendarStatus = "working" | "pto" | "unavailable";
+
+export type { EngagementCallConfig, CallConfigPatch, RoundingMode, WorkdayTier };
 
 export interface CallSettingsMember {
   schedulerId: number;
@@ -15,9 +23,11 @@ export interface CallSettingsMember {
   // persisted inputs
   team: EngagementTeam;
   callWorkdayPercent: number;
-  visitPercent: number;
-  baseCompletedCallKpi: number;
-  scheduledKpiPercent: number;
+  visitPercent: number | null;
+  outreachPercent: number | null;
+  explicitCompletedCallKpi: number | null;
+  explicitScheduledKpi: number | null;
+  facilitiesCovered: string[] | null;
   maxDailyCapacity: number | null;
   manualWorkingToday: boolean | null;
   active: boolean;
@@ -26,6 +36,8 @@ export interface CallSettingsMember {
   scheduledKpi: number;
   visitTarget: number;
   outreachTarget: number;
+  effectiveVisitPercent: number;
+  effectiveOutreachPercent: number;
   carryover: number;
   remainingCapacity: number;
   calendarWorkingToday: boolean | null;
@@ -36,6 +48,7 @@ export interface CallSettingsMember {
 }
 
 export interface CallSettingsResponse {
+  config: EngagementCallConfig;
   members: CallSettingsMember[];
   calendarAvailable: boolean;
   asOfDate: string;
@@ -44,9 +57,11 @@ export interface CallSettingsResponse {
 export interface CallSettingsPatch {
   team?: EngagementTeam;
   callWorkdayPercent?: number;
-  visitPercent?: number;
-  baseCompletedCallKpi?: number;
-  scheduledKpiPercent?: number;
+  visitPercent?: number | null;
+  outreachPercent?: number | null;
+  explicitCompletedCallKpi?: number | null;
+  explicitScheduledKpi?: number | null;
+  facilitiesCovered?: string[] | null;
   maxDailyCapacity?: number | null;
   manualWorkingToday?: boolean | null;
   active?: boolean;
@@ -77,6 +92,19 @@ export function useUpdateCallSettings() {
         `/api/engagement/call-settings/${vars.schedulerId}`,
         vars.patch,
       );
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ENGAGEMENT_CALL_SETTINGS_QK });
+    },
+  });
+}
+
+export function useUpdateCallConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (patch: CallConfigPatch) => {
+      const res = await apiRequest("PATCH", "/api/engagement/call-config", patch);
       return res.json();
     },
     onSuccess: () => {

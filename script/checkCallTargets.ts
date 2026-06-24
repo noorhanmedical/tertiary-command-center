@@ -15,6 +15,7 @@ import {
   resolveWorkingToday,
   deriveWorkingStatus,
 } from "../server/services/engagement/callSettingsService";
+import { DEFAULT_CALL_CONFIG, type EngagementCallConfig } from "../shared/schema";
 
 let failures = 0;
 
@@ -30,18 +31,18 @@ function assertEqual(label: string, actual: unknown, expected: unknown) {
   }
 }
 
-// ─── Completed-call KPI by workday %, base 30 (floor) ───────────────────────
+const cfg = DEFAULT_CALL_CONFIG;
+
+// ─── Completed-call KPI by workday %, default config (tier-driven) ──────────
 const base = {
-  baseCompletedCallKpi: 30,
-  visitPercent: 75,
-  scheduledKpiPercent: 50,
+  visitPercent: null,
   maxDailyCapacity: null,
 };
 
 assertEqual(
   "100% workday → 30 calls / 15 scheduled",
   (() => {
-    const t = computeCallTargets({ ...base, callWorkdayPercent: 100 });
+    const t = computeCallTargets({ ...base, callWorkdayPercent: 100 }, cfg);
     return [t.completedCallKpi, t.scheduledKpi];
   })(),
   [30, 15],
@@ -50,16 +51,16 @@ assertEqual(
 assertEqual(
   "50% workday → 15 calls / 8 scheduled",
   (() => {
-    const t = computeCallTargets({ ...base, callWorkdayPercent: 50 });
+    const t = computeCallTargets({ ...base, callWorkdayPercent: 50 }, cfg);
     return [t.completedCallKpi, t.scheduledKpi];
   })(),
   [15, 8],
 );
 
 assertEqual(
-  "25% workday → 7 calls / 3 scheduled (floor 7.5→7, round 3.5→4? 7*50%=3.5→4)",
+  "25% workday → 7 calls / 4 scheduled (tier 7, round 3.5→4)",
   (() => {
-    const t = computeCallTargets({ ...base, callWorkdayPercent: 25 });
+    const t = computeCallTargets({ ...base, callWorkdayPercent: 25 }, cfg);
     return [t.completedCallKpi, t.scheduledKpi];
   })(),
   [7, 4],
@@ -68,15 +69,111 @@ assertEqual(
 assertEqual(
   "0% workday → 0 / 0",
   (() => {
-    const t = computeCallTargets({ ...base, callWorkdayPercent: 0 });
+    const t = computeCallTargets({ ...base, callWorkdayPercent: 0 }, cfg);
     return [t.completedCallKpi, t.scheduledKpi];
   })(),
   [0, 0],
 );
 
+// ─── Non-tier workday % falls back to floor(full-day × workday%) ────────────
+assertEqual(
+  "33% workday (no tier) → floor(30 × 33%) = 9 calls",
+  computeCallTargets({ ...base, callWorkdayPercent: 33 }, cfg).completedCallKpi,
+  9,
+);
+
+// ─── Workday tier overrides the formula ─────────────────────────────────────
+assertEqual(
+  "tier match wins: 25% workday → tier KPI 7 (not floor(30×25%)=7 — same here, so test a custom tier)",
+  (() => {
+    const custom: EngagementCallConfig = {
+      ...cfg,
+      workdayTiers: [{ workdayPercent: 25, completedCallKpi: 12 }],
+    };
+    return computeCallTargets({ ...base, callWorkdayPercent: 25 }, custom)
+      .completedCallKpi;
+  })(),
+  12,
+);
+
+assertEqual(
+  "no tier match → floor formula (custom tiers only cover 100%)",
+  (() => {
+    const custom: EngagementCallConfig = {
+      ...cfg,
+      workdayTiers: [{ workdayPercent: 100, completedCallKpi: 40 }],
+    };
+    return computeCallTargets({ ...base, callWorkdayPercent: 50 }, custom)
+      .completedCallKpi;
+  })(),
+  15,
+);
+
+// ─── Rounding mode applies to scheduled KPI + visit split ───────────────────
+assertEqual(
+  "floor rounding: 25% workday → 7 calls / 3 scheduled (floor 3.5→3)",
+  (() => {
+    const floorCfg: EngagementCallConfig = { ...cfg, roundingMode: "floor" };
+    const t = computeCallTargets({ ...base, callWorkdayPercent: 25 }, floorCfg);
+    return [t.completedCallKpi, t.scheduledKpi];
+  })(),
+  [7, 3],
+);
+
+assertEqual(
+  "ceil rounding: 25% workday → 7 calls / 4 scheduled (ceil 3.5→4)",
+  (() => {
+    const ceilCfg: EngagementCallConfig = { ...cfg, roundingMode: "ceil" };
+    const t = computeCallTargets({ ...base, callWorkdayPercent: 25 }, ceilCfg);
+    return [t.completedCallKpi, t.scheduledKpi];
+  })(),
+  [7, 4],
+);
+
+// ─── Explicit per-member overrides win ──────────────────────────────────────
+assertEqual(
+  "explicit completed KPI overrides tier/formula",
+  computeCallTargets(
+    { ...base, callWorkdayPercent: 100, explicitCompletedCallKpi: 9 },
+    cfg,
+  ).completedCallKpi,
+  9,
+);
+
+assertEqual(
+  "explicit scheduled KPI overrides percentage calc",
+  computeCallTargets(
+    { ...base, callWorkdayPercent: 100, explicitScheduledKpi: 25 },
+    cfg,
+  ).scheduledKpi,
+  25,
+);
+
+// ─── Per-member visit % overrides the global default ────────────────────────
+assertEqual(
+  "per-member visit % overrides default (100% → all visit, 0 outreach)",
+  (() => {
+    const t = computeCallTargets(
+      { ...base, callWorkdayPercent: 100, visitPercent: 100 },
+      cfg,
+    );
+    return [t.visitTarget, t.outreachTarget, t.effectiveVisitPercent];
+  })(),
+  [30, 0, 100],
+);
+
+assertEqual(
+  "null visit % falls back to global default 75% (round 22.5→23 visit)",
+  (() => {
+    const t = computeCallTargets({ ...base, callWorkdayPercent: 100 }, cfg);
+    return [t.visitTarget, t.outreachTarget, t.effectiveVisitPercent];
+  })(),
+  [23, 7, 75],
+);
+
 // ─── Visit + outreach split always sums to completed-call KPI ───────────────
 for (const pct of [100, 50, 25, 0, 33, 67, 80]) {
-  const t = computeCallTargets({ ...base, callWorkdayPercent: pct });
+  const t = computeCallTargets({ ...base, callWorkdayPercent: pct }, cfg);
   assertEqual(
     `visit + outreach == completed KPI @ workday ${pct}%`,
     t.visitTarget + t.outreachTarget,
@@ -87,13 +184,15 @@ for (const pct of [100, 50, 25, 0, 33, 67, 80]) {
 // ─── maxDailyCapacity falls back to completed KPI when unset ─────────────────
 assertEqual(
   "maxDailyCapacity defaults to completed KPI when null",
-  computeCallTargets({ ...base, callWorkdayPercent: 100 }).maxDailyCapacity,
+  computeCallTargets({ ...base, callWorkdayPercent: 100 }, cfg).maxDailyCapacity,
   30,
 );
 assertEqual(
   "maxDailyCapacity honored when explicitly set",
-  computeCallTargets({ ...base, callWorkdayPercent: 100, maxDailyCapacity: 12 })
-    .maxDailyCapacity,
+  computeCallTargets(
+    { ...base, callWorkdayPercent: 100, maxDailyCapacity: 12 },
+    cfg,
+  ).maxDailyCapacity,
   12,
 );
 
