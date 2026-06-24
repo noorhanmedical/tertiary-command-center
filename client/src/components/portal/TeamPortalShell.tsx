@@ -17,7 +17,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { fetchPatientCommandCenter } from "@/lib/portal/commandCenterApi";
 import { SignaturePad } from "./SignaturePad";
 import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
@@ -63,7 +62,7 @@ import { SchedulingWorkspace } from "@/components/portal/SchedulingWorkspace";
 import { CaseOverview } from "@/components/portal/CaseOverview";
 import { SchedulePatientPlayground } from "@/components/portal/SchedulePatientPlayground";
 import { PatientMiniCalendar } from "@/components/portal/PatientMiniCalendar";
-import { PatientCommandCanvas } from "@/components/portal/PatientCommandCanvas";
+import { PortalPatientDirectory } from "@/components/portal/PortalPatientDirectory";
 import { PortalMyPatientsTab } from "@/components/portal/PortalMyPatientsTab";
 import { PortalPatientSearchTab } from "@/components/portal/PortalPatientSearchTab";
 import { PortalMarketingTab } from "@/components/portal/PortalMarketingTab";
@@ -1111,8 +1110,9 @@ export function TeamPortalShell({
     enabled: !!facility,
   });
 
-  // Warm the command-center cache for the top visible call-list patients so the
-  // first clicks open instantly instead of waiting on a cold fetch.
+  // Warm the patient-directory resolve cache (screening id -> roster key) for
+  // the top visible call-list patients so the first name clicks open the EMR
+  // chart instantly instead of waiting on a cold resolve.
   useEffect(() => {
     const top = (workspaceCallList as Array<{ patientScreeningId?: number | null }>)
       .filter((r) => typeof r.patientScreeningId === "number" && r.patientScreeningId! > 0)
@@ -1120,9 +1120,15 @@ export function TeamPortalShell({
     for (const r of top) {
       const id = r.patientScreeningId as number;
       queryClient.prefetchQuery({
-        queryKey: ["portal-command-center", id],
-        queryFn: () => fetchPatientCommandCenter(id),
-        staleTime: 30_000,
+        queryKey: ["/api/patients/database/resolve", String(id)],
+        queryFn: async () => {
+          const res = await fetch(`/api/patients/database/resolve/${id}`, {
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error("Failed to resolve patient");
+          return res.json();
+        },
+        staleTime: 60_000,
       });
     }
   }, [workspaceCallList]);
@@ -2130,27 +2136,11 @@ export function TeamPortalShell({
                   activeTab.patientId > 0
                 ) {
                   return (
-                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-patient-command-canvas">
-                      <PatientCommandCanvas
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-patient-directory">
+                      <PortalPatientDirectory
                         patientScreeningId={activeTab.patientId}
                         seedName={activeTab.patientName ?? activeTab.label}
-                        workspaceRole={workspaceRole}
-                        onSchedulePatient={(p) =>
-                          openSchedulePatientDialog({
-                            patientScreeningId: p.patientScreeningId,
-                            patientName: p.name,
-                            patientDob: p.dob,
-                            facilityId: p.facility,
-                            executionCaseId: p.executionCaseId,
-                            serviceType: null,
-                          })
-                        }
-                        onOpenMarketingForPatient={() =>
-                          openPortalTab("marketing")
-                        }
-                        onOpenTasksForPatient={() =>
-                          openPortalTab("plexusTasks")
-                        }
+                        onBack={() => activePortalTabId && closePortalTab(activePortalTabId)}
                       />
                     </div>
                   );
