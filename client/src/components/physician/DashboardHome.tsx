@@ -2,9 +2,7 @@ import { ReactNode } from "react";
 import { DollarSign, ClipboardList, PhoneCall, ArrowRight } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 import { usePortal, type ActivePage } from "./portalContext";
-import {
-  FINANCE_KPIS, NOTES, ORDERS, ENGAGEMENT_KPIS,
-} from "./mockData";
+import { usePortalData } from "./usePortalData";
 
 interface TileKpi { label: string; value: string }
 
@@ -56,14 +54,17 @@ function CommandTile({
 
 export function DashboardHome() {
   const { signedToday } = usePortal();
+  const { data } = usePortalData();
 
-  const notesNeedingSig = NOTES.filter((n) => n.status === "Needs Signature").length;
-  const ordersPending = ORDERS.filter((o) => o.status === "Pending Review").length;
+  const notesNeedingSig = (data?.notes ?? []).filter((n) => n.status === "Needs Signature").length;
+  const ordersPending = (data?.orders ?? []).filter((o) => o.status === "Pending Review").length;
+  const fin = data?.finance.kpis;
+  const eng = data?.engagement.kpis;
 
   const financeKpis: TileKpi[] = [
-    { label: "Ancillary Rev MTD", value: formatCurrency(FINANCE_KPIS.ancillaryRevenueMtd.value) },
-    { label: "Claims Paid", value: String(FINANCE_KPIS.claimsPaidMtd.value) },
-    { label: "Pending Claims", value: String(FINANCE_KPIS.pendingSubmittedClaims.value) },
+    { label: "Ancillary Rev MTD", value: formatCurrency(fin?.ancillaryRevenueMtd.value ?? 0) },
+    { label: "Claims Paid", value: String(fin?.claimsPaidMtd.value ?? 0) },
+    { label: "Pending Claims", value: String(fin?.pendingSubmittedClaims.value ?? 0) },
   ];
 
   const ordersKpis: TileKpi[] = [
@@ -73,9 +74,9 @@ export function DashboardHome() {
   ];
 
   const engagementKpis: TileKpi[] = [
-    { label: "Active Calls", value: String(ENGAGEMENT_KPIS.activeCallList) },
-    { label: "Calls Today", value: String(ENGAGEMENT_KPIS.callsCompletedToday) },
-    { label: "Scheduled", value: String(ENGAGEMENT_KPIS.scheduledToday) },
+    { label: "Active Calls", value: String(eng?.activeCallList ?? 0) },
+    { label: "Calls Today", value: String(eng?.callsCompletedToday ?? 0) },
+    { label: "Scheduled", value: String(eng?.scheduledToday ?? 0) },
   ];
 
   return (

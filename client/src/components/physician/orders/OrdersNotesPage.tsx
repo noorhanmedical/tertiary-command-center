@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pencil, PenLine, FileText, Send, History, Eye, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,9 +12,10 @@ import {
 } from "../ui/primitives";
 import { DataTable, type Column } from "../ui/DataTable";
 import {
-  ORDERS, NOTES, DOCUMENTS, AUDIT_EVENTS, patientById,
-  type EncounterNote, type Order, type NoteStatus, type LinkedDocument,
+  DOCUMENTS, AUDIT_EVENTS,
+  type EncounterNote, type Order, type NoteStatus, type LinkedDocument, type AuditEvent,
 } from "../mockData";
+import { usePortalData } from "../usePortalData";
 
 const NOTE_TONE: Record<NoteStatus, "amber" | "gray" | "green"> = {
   "Needs Signature": "amber", Draft: "gray", Signed: "green",
@@ -23,32 +24,39 @@ const NOTE_TONE: Record<NoteStatus, "amber" | "gray" | "green"> = {
 const TABS = ["All", "Needs Signature", "Draft", "Pending Order Review", "Completed Study", "Signed"] as const;
 type Tab = typeof TABS[number];
 
-function pname(id: string) { return patientById(id)?.name ?? "Unknown"; }
-function pmrn(id: string) { return patientById(id)?.mrn ?? "—"; }
-
 export function OrdersNotesPage() {
   const { incrementSignedToday } = usePortal();
-  const [notes, setNotes] = useState<EncounterNote[]>(NOTES);
-  const [audit, setAudit] = useState(AUDIT_EVENTS);
+  const { data, isLoading } = usePortalData();
+  const ORDERS = data?.orders ?? [];
+  const [notes, setNotes] = useState<EncounterNote[]>([]);
+  const [audit, setAudit] = useState<AuditEvent[]>(AUDIT_EVENTS);
   const [tab, setTab] = useState<Tab>("All");
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState<string>(NOTES[0].id);
+  const [selectedId, setSelectedId] = useState<string>("");
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
   const [attested, setAttested] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState<EncounterNote["soap"] | null>(null);
 
+  useEffect(() => {
+    if (data?.notes) setNotes(data.notes);
+  }, [data?.notes]);
+
+  useEffect(() => {
+    if (!selectedId && notes.length) setSelectedId(notes[0].id);
+  }, [notes, selectedId]);
+
   const selected = notes.find((n) => n.id === selectedId) ?? null;
 
-  const matchesSearch = (patientId: string, service: string) => {
+  const matchesSearch = (patientName: string, mrn: string, service: string) => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
-    return pname(patientId).toLowerCase().includes(q) || pmrn(patientId).toLowerCase().includes(q) || service.toLowerCase().includes(q);
+    return patientName.toLowerCase().includes(q) || mrn.toLowerCase().includes(q) || service.toLowerCase().includes(q);
   };
 
   const visibleNotes = useMemo(() => notes.filter((n) => {
-    if (!matchesSearch(n.patientId, n.service)) return false;
+    if (!matchesSearch(n.patientName, n.mrn, n.service)) return false;
     if (tab === "Needs Signature") return n.status === "Needs Signature";
     if (tab === "Draft") return n.status === "Draft";
     if (tab === "Signed") return n.status === "Signed";
@@ -57,12 +65,12 @@ export function OrdersNotesPage() {
   }), [notes, tab, search]);
 
   const visibleOrders = useMemo(() => ORDERS.filter((o) => {
-    if (!matchesSearch(o.patientId, o.service)) return false;
+    if (!matchesSearch(o.patientName, o.mrn, o.service)) return false;
     if (tab === "Pending Order Review") return o.status === "Pending Review";
     if (tab === "Completed Study") return o.status === "Completed Study";
     if (tab === "Needs Signature" || tab === "Draft" || tab === "Signed") return false;
     return true;
-  }), [tab, search]);
+  }), [ORDERS, tab, search]);
 
   function appendAudit(recordId: string, type: string, actor = "Dr. J. Taylor") {
     setAudit((prev) => [...prev, { id: `AUD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, recordId, type, actor, timestamp: nowStamp() }]);
@@ -115,7 +123,7 @@ export function OrdersNotesPage() {
   }
 
   const orderColumns: Column<Order>[] = [
-    { key: "patient", header: "Patient", render: (o) => <div><div>{pname(o.patientId)}</div><div className="text-xs text-finance-text-muted">{pmrn(o.patientId)}</div></div> },
+    { key: "patient", header: "Patient", render: (o) => <div><div>{o.patientName}</div><div className="text-xs text-finance-text-muted">{o.mrn}</div></div> },
     { key: "service", header: "Service", render: (o) => <ServiceChip service={o.service} /> },
     { key: "source", header: "Source", render: (o) => <span className="text-xs text-finance-text-secondary">{o.source}</span> },
     { key: "status", header: "Status", render: (o) => <StatusPill label={o.status} tone={o.status === "Completed Study" ? "green" : o.status === "Approved" ? "blue" : "amber"} /> },
@@ -180,7 +188,7 @@ export function OrdersNotesPage() {
             ) : (
               <DataTable
                 columns={[
-                  { key: "patient", header: "Patient", render: (n: EncounterNote) => <div><div className={n.id === selectedId ? "font-semibold" : ""}>{pname(n.patientId)}</div><div className="text-xs text-finance-text-muted">{pmrn(n.patientId)}</div></div> },
+                  { key: "patient", header: "Patient", render: (n: EncounterNote) => <div><div className={n.id === selectedId ? "font-semibold" : ""}>{n.patientName}</div><div className="text-xs text-finance-text-muted">{n.mrn}</div></div> },
                   { key: "service", header: "Service", render: (n) => <ServiceChip service={n.service} /> },
                   { key: "encounter", header: "Encounter", render: (n) => n.encounterDate },
                   { key: "author", header: "Author", render: (n) => <span className="text-xs">{n.author}</span> },
@@ -211,7 +219,7 @@ export function OrdersNotesPage() {
             onSendBack={() => selected && sendBack(selected.id)}
             onAmend={() => selected && createAmendment(selected.id)}
           />
-          {selected && <LinkedDocumentsPanel patientId={selected.patientId} />}
+          {selected && <LinkedDocumentsPanel patientName={selected.patientName} />}
           {selected && <AuditTimeline recordId={selected.id} events={audit} />}
         </div>
       </div>
@@ -226,7 +234,7 @@ export function OrdersNotesPage() {
               const n = notes.find((x) => x.id === id)!;
               return (
                 <div key={id} className="flex items-center justify-between rounded-md bg-white px-3 py-2 text-sm">
-                  <span>{pname(n.patientId)}</span>
+                  <span>{n.patientName}</span>
                   <ServiceChip service={n.service} />
                 </div>
               );
@@ -273,18 +281,17 @@ function NoteEditor({
     { key: "assessment", label: "Assessment" },
     { key: "plan", label: "Plan" },
   ];
-  const p = patientById(note.patientId);
 
   return (
     <PanelCard testId="panel-note-editor">
       <div className="flex items-start justify-between border-b border-finance-border px-4 py-3">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-finance-text">{p?.name}</h3>
+            <h3 className="text-base font-semibold text-finance-text">{note.patientName}</h3>
             <StatusPill label={note.status} tone={NOTE_TONE[note.status]} />
             {note.version > 1 && <span className="text-xs text-finance-text-muted">v{note.version}</span>}
           </div>
-          <div className="text-xs text-finance-text-muted">{p?.mrn} · {p?.age}{p?.gender} · Encounter {note.encounterDate}</div>
+          <div className="text-xs text-finance-text-muted">{note.mrn} · {note.age}{note.gender} · Encounter {note.encounterDate}</div>
         </div>
         <ServiceChip service={note.service} />
       </div>
@@ -347,8 +354,8 @@ function NoteEditor({
   );
 }
 
-function LinkedDocumentsPanel({ patientId }: { patientId: string }) {
-  const docs = DOCUMENTS.filter((d) => d.patientId === patientId);
+function LinkedDocumentsPanel({ patientName }: { patientName: string }) {
+  const docs = DOCUMENTS.filter((d) => d.patientName === patientName);
   return (
     <PanelCard testId="panel-linked-documents">
       <div className="border-b border-finance-border px-4 py-3 text-sm font-semibold text-finance-text">Linked Documents</div>

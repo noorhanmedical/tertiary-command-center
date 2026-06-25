@@ -60,6 +60,7 @@ import { registerAncillaryDocumentTemplateRoutes } from "./routes/ancillaryDocum
 import { registerOperationalQueueRoutes } from "./routes/operationalQueue";
 import { registerCallListAuditRoutes } from "./routes/callListAudit";
 import { registerHomeStatsRoutes } from "./routes/homeStats";
+import { registerClinicianPortalRoutes } from "./routes/clinicianPortal";
 import { registerMissionControlRoutes } from "./routes/missionControl";
 import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
 import { setupVite } from "./vite";
@@ -291,6 +292,7 @@ export async function registerRoutes(
   registerOperationalQueueRoutes(app);
   registerCallListAuditRoutes(app, requireRole);
   registerHomeStatsRoutes(app);
+  registerClinicianPortalRoutes(app);
   registerMissionControlRoutes(app, requireRole);
   registerPhysicianPortalRoutes(app);
 

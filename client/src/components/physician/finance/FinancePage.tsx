@@ -12,25 +12,18 @@ import {
 } from "../ui/primitives";
 import { DataTable, type Column } from "../ui/DataTable";
 import {
-  FINANCE_KPIS, REVENUE_SUMMARY, SERVICE_LINE_REVENUE, SERVICE_COLORS,
-  CLAIMS, PAID_CLAIMS, INVOICES, PIPELINE, PRACTICE_OVERVIEW, AR_BUCKETS, AR_ROWS,
-  PAYER_MIX, PROVIDER_FINANCIALS, patientById, serviceLineOf,
-  type Claim, type Invoice, type ClaimStatus,
+  SERVICE_COLORS, serviceLineOf,
+  type Claim, type Invoice, type ClaimStatus, type ProviderFinancial,
 } from "../mockData";
+import { usePortalData } from "../usePortalData";
 
 const CLAIM_TONE: Record<ClaimStatus, "green" | "amber" | "blue" | "gray"> = {
   Paid: "green", Pending: "amber", "In Review": "blue", Submitted: "gray",
 };
 
-function pname(id: string) {
-  return patientById(id)?.name ?? "Unknown";
-}
-function pmrn(id: string) {
-  return patientById(id)?.mrn ?? "—";
-}
-
 export function FinancePage() {
   const { role } = usePortal();
+  const { data, isLoading } = usePortalData();
   const [range, setRange] = useState("MTD");
   const [serviceFilter, setServiceFilter] = useState("all");
   const [providerFilter, setProviderFilter] = useState("all");
@@ -39,15 +32,29 @@ export function FinancePage() {
   const [activeInvoice, setActiveInvoice] = useState<Invoice | null>(null);
   const [arBucket, setArBucket] = useState<string | null>(null);
 
+  const fin = data?.finance;
+  const CLAIMS = fin?.claims ?? [];
+  const PAID_CLAIMS = fin?.paidClaims ?? [];
+  const INVOICES = fin?.invoices ?? [];
+  const PIPELINE = fin?.pipeline ?? [];
+  const PRACTICE_OVERVIEW = fin?.practiceOverview ?? [];
+  const AR_BUCKETS = fin?.arBuckets ?? [];
+  const AR_ROWS = fin?.arRows ?? [];
+  const PAYER_MIX = fin?.payerMix ?? [];
+  const PROVIDER_FINANCIALS = fin?.providerFinancials ?? [];
+  const REVENUE_SUMMARY = fin?.revenueSummary ?? [];
+  const SERVICE_LINE_REVENUE = fin?.serviceLineRevenue ?? [];
+  const FINANCE_KPIS = fin?.kpis;
+
   const filteredClaims = useMemo(() => {
     const q = claimSearch.trim().toLowerCase();
     return CLAIMS.filter((c) => {
       if (serviceFilter !== "all" && serviceLineOf(c.service) !== serviceFilter && c.service !== serviceFilter) return false;
       if (providerFilter !== "all" && c.provider !== providerFilter) return false;
-      if (q && !pname(c.patientId).toLowerCase().includes(q) && !c.id.toLowerCase().includes(q) && !c.service.toLowerCase().includes(q)) return false;
+      if (q && !c.patientName.toLowerCase().includes(q) && !c.id.toLowerCase().includes(q) && !c.service.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [claimSearch, serviceFilter, providerFilter]);
+  }, [CLAIMS, claimSearch, serviceFilter, providerFilter]);
 
   if (!hasFinanceAccess(role)) {
     return (
@@ -58,12 +65,21 @@ export function FinancePage() {
     );
   }
 
+  if (isLoading || !fin || !FINANCE_KPIS) {
+    return (
+      <div className="space-y-6">
+        <BackToDashboard />
+        <div className="py-20 text-center text-sm text-finance-text-muted" data-testid="text-finance-loading">Loading financials…</div>
+      </div>
+    );
+  }
+
   const arRows = arBucket ? AR_ROWS.filter((r) => r.bucket === arBucket) : AR_ROWS;
-  const maxLineRev = Math.max(...SERVICE_LINE_REVENUE.map((s) => s.revenue));
+  const maxLineRev = Math.max(1, ...SERVICE_LINE_REVENUE.map((s) => s.revenue));
 
   const claimColumns: Column<Claim>[] = [
     { key: "id", header: "Claim", render: (c) => <span className="font-medium">{c.id}</span> },
-    { key: "patient", header: "Patient", render: (c) => <div><div>{pname(c.patientId)}</div><div className="text-xs text-finance-text-muted">{pmrn(c.patientId)}</div></div> },
+    { key: "patient", header: "Patient", render: (c) => <div><div>{c.patientName}</div><div className="text-xs text-finance-text-muted">{c.mrn}</div></div> },
     { key: "service", header: "Service", render: (c) => <ServiceChip service={c.service} /> },
     { key: "payer", header: "Payer", render: (c) => c.payer },
     { key: "dos", header: "DOS", render: (c) => c.dos },
@@ -73,7 +89,7 @@ export function FinancePage() {
 
   const paidColumns: Column<typeof PAID_CLAIMS[number]>[] = [
     { key: "id", header: "Claim", render: (c) => <span className="font-medium">{c.id}</span> },
-    { key: "patient", header: "Patient", render: (c) => pname(c.patientId) },
+    { key: "patient", header: "Patient", render: (c) => c.patientName },
     { key: "service", header: "Service", render: (c) => <ServiceChip service={c.service} /> },
     { key: "payer", header: "Payer", render: (c) => c.payer },
     { key: "paidDate", header: "Paid", render: (c) => c.paidDate },
@@ -249,7 +265,7 @@ export function FinancePage() {
             <DataTable
               columns={[
                 { key: "id", header: "Claim", render: (c: Claim) => c.id },
-                { key: "patient", header: "Patient", render: (c: Claim) => pname(c.patientId) },
+                { key: "patient", header: "Patient", render: (c: Claim) => c.patientName },
                 { key: "amount", header: "Amount", align: "right", render: (c: Claim) => <span className="tabular-nums">{formatCurrency(c.amount)}</span> },
                 { key: "status", header: "Status", render: (c: Claim) => <StatusPill label={c.status} tone={CLAIM_TONE[c.status]} /> },
               ]}
@@ -261,8 +277,8 @@ export function FinancePage() {
             <h3 className="text-sm font-semibold text-finance-text">All-Practice Claims Paid</h3>
             <DataTable
               columns={[
-                { key: "id", header: "Claim", render: (c: typeof PAID_CLAIMS[number]) => c.id },
-                { key: "patient", header: "Patient", render: (c) => pname(c.patientId) },
+                { key: "id", header: "Claim", render: (c: Claim) => c.id },
+                { key: "patient", header: "Patient", render: (c) => c.patientName },
                 { key: "paid", header: "Paid", align: "right", render: (c) => <span className="tabular-nums text-emerald-600">{formatCurrency(c.paidAmount)}</span> },
                 { key: "date", header: "Date", render: (c) => c.paidDate },
               ]}
@@ -295,14 +311,14 @@ export function FinancePage() {
           <DataTable
             columns={[
               { key: "bucket", header: "Aging", render: (r) => AR_BUCKETS.find((b) => b.key === r.bucket)?.label ?? r.bucket },
-              { key: "patient", header: "Patient", render: (r) => pname(r.patientId) },
+              { key: "patient", header: "Patient", render: (r) => r.patientName },
               { key: "service", header: "Service", render: (r) => <ServiceChip service={r.service} /> },
               { key: "payer", header: "Payer", render: (r) => r.payer },
               { key: "dos", header: "DOS", render: (r) => r.dos },
               { key: "amount", header: "Outstanding", align: "right", render: (r) => <span className="tabular-nums">{formatCurrency(r.amount)}</span> },
             ]}
-            rows={arRows.map((r, i) => ({ ...r, id: `${r.bucket}-${r.patientId}-${i}` }))}
-            rowTestId={(r) => `row-ar-${r.patientId}-${r.bucket}`}
+            rows={arRows.map((r, i) => ({ ...r, id: `${r.bucket}-${r.mrn}-${i}` }))}
+            rowTestId={(r) => `row-ar-${r.mrn}-${r.bucket}`}
             emptyMessage="No outstanding A/R in this bucket."
           />
         </div>
@@ -328,7 +344,7 @@ export function FinancePage() {
         open={!!activeClaim}
         onOpenChange={(o) => !o && setActiveClaim(null)}
         title={activeClaim ? activeClaim.id : ""}
-        subtitle={activeClaim ? `${pname(activeClaim.patientId)} · ${pmrn(activeClaim.patientId)}` : ""}
+        subtitle={activeClaim ? `${activeClaim.patientName} · ${activeClaim.mrn}` : ""}
         testId="drawer-claim"
       >
         {activeClaim && (
@@ -409,12 +425,21 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export function PipelineFunnel() {
-  const max = PIPELINE[0].count;
+  const { data } = usePortalData();
+  const PIPELINE = data?.finance.pipeline ?? [];
+  if (PIPELINE.length === 0) {
+    return (
+      <PanelCard testId="panel-pipeline">
+        <div className="px-4 py-6 text-center text-sm text-finance-text-muted">No pipeline data yet.</div>
+      </PanelCard>
+    );
+  }
+  const max = Math.max(1, PIPELINE[0].count);
   return (
     <PanelCard testId="panel-pipeline">
       <div className="space-y-3 p-4">
         {PIPELINE.map((stage, i) => {
-          const conv = i === 0 ? 100 : Math.round((stage.count / PIPELINE[i - 1].count) * 100);
+          const conv = i === 0 ? 100 : PIPELINE[i - 1].count ? Math.round((stage.count / PIPELINE[i - 1].count) * 100) : 0;
           return (
             <div key={stage.key} data-testid={`pipeline-stage-${stage.key}`}>
               <div className="mb-1 flex items-center justify-between text-sm">

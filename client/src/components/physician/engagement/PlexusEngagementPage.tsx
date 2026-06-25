@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PhoneCall, AlertTriangle } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -12,10 +12,10 @@ import {
 import { DataTable, type Column } from "../ui/DataTable";
 import { PipelineFunnel } from "../finance/FinancePage";
 import {
-  CALL_TASKS, QUALIFICATIONS, ENGAGEMENT_ACTIVITY, SCHEDULE_ITEMS, ESCALATIONS,
-  ENGAGEMENT_KPIS, STAFF, patientById,
   type CallTask, type CallOutcome, type CallStatus, type ScheduleItem,
+  type Qualification, type EngagementActivity, type Escalation,
 } from "../mockData";
+import { usePortalData } from "../usePortalData";
 
 const CALL_OUTCOMES: CallOutcome[] = ["No Answer", "Left Voicemail", "Reached — Interested", "Reached — Callback", "Scheduled", "Declined"];
 
@@ -24,12 +24,17 @@ const STATUS_TONE: Record<CallStatus, "gray" | "amber" | "blue" | "green" | "red
 };
 const PRIORITY_TONE = { High: "red", Medium: "amber", Low: "gray" } as const;
 
-function pname(id: string) { return patientById(id)?.name ?? "Unknown"; }
-function pmrn(id: string) { return patientById(id)?.mrn ?? "—"; }
-
 export function PlexusEngagementPage() {
-  const [calls, setCalls] = useState<CallTask[]>(CALL_TASKS);
-  const [schedule, setSchedule] = useState<ScheduleItem[]>(SCHEDULE_ITEMS);
+  const { data } = usePortalData();
+  const eng = data?.engagement;
+  const QUALIFICATIONS: Qualification[] = eng?.qualifications ?? [];
+  const ENGAGEMENT_ACTIVITY: EngagementActivity[] = eng?.activity ?? [];
+  const ESCALATIONS: Escalation[] = eng?.escalations ?? [];
+  const STAFF = eng?.staff ?? [];
+  const ENGAGEMENT_KPIS = eng?.kpis;
+
+  const [calls, setCalls] = useState<CallTask[]>([]);
+  const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
 
@@ -38,6 +43,13 @@ export function PlexusEngagementPage() {
   const [staffFilter, setStaffFilter] = useState("all");
   const [outcomeFilter, setOutcomeFilter] = useState("all");
   const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    if (eng?.callTasks) setCalls(eng.callTasks);
+  }, [eng?.callTasks]);
+  useEffect(() => {
+    if (eng?.schedule) setSchedule(eng.schedule);
+  }, [eng?.schedule]);
 
   const active = calls.find((c) => c.id === activeId) ?? null;
 
@@ -51,7 +63,7 @@ export function PlexusEngagementPage() {
       if (serviceFilter !== "all" && !c.services.some((s) => s === serviceFilter || serviceLineMatches(s, serviceFilter))) return false;
       if (staffFilter !== "all" && c.assignedTo !== staffFilter) return false;
       if (outcomeFilter !== "all" && c.lastOutcome !== outcomeFilter) return false;
-      if (q && !pname(c.patientId).toLowerCase().includes(q) && !pmrn(c.patientId).toLowerCase().includes(q)) return false;
+      if (q && !c.patientName.toLowerCase().includes(q) && !c.mrn.toLowerCase().includes(q)) return false;
       return true;
     });
   }, [calls, serviceFilter, staffFilter, outcomeFilter, search]);
@@ -70,10 +82,10 @@ export function PlexusEngagementPage() {
     const call = calls.find((c) => c.id === id);
     if (!call) return;
     updateOutcome(id, "Scheduled");
-    if (!schedule.some((s) => s.patientId === call.patientId && s.service === call.services[0])) {
+    if (!schedule.some((s) => s.mrn === call.mrn && s.service === call.services[0])) {
       setSchedule((prev) => [...prev, {
-        id: `SCH-${Date.now()}`, time: "15:30", patientId: call.patientId, service: call.services[0],
-        technician: "R. Patel", status: "Scheduled", source: "Plexus Qualification",
+        id: `SCH-${Date.now()}`, time: "15:30", patientName: call.patientName, mrn: call.mrn, service: call.services[0],
+        technician: "—", status: "Scheduled", source: "Plexus Qualification",
       }]);
     }
   }
@@ -83,7 +95,7 @@ export function PlexusEngagementPage() {
   }
 
   const callColumns: Column<CallTask>[] = [
-    { key: "patient", header: "Patient", render: (c) => <div><div>{pname(c.patientId)}</div><div className="text-xs text-finance-text-muted">{pmrn(c.patientId)}</div></div> },
+    { key: "patient", header: "Patient", render: (c) => <div><div>{c.patientName}</div><div className="text-xs text-finance-text-muted">{c.mrn}</div></div> },
     { key: "qualified", header: "Qualified For", render: (c) => <div className="flex flex-wrap gap-1">{c.services.map((s) => <ServiceChip key={s} service={s} />)}</div> },
     { key: "priority", header: "Priority", render: (c) => <StatusPill label={c.priority} tone={PRIORITY_TONE[c.priority]} /> },
     { key: "assigned", header: "Assigned", render: (c) => <span className="text-xs">{c.assignedTo}</span> },
@@ -102,7 +114,7 @@ export function PlexusEngagementPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Active Call List" value={String(filteredCalls.length)} testId="ekpi-active" />
-        <StatCard label="Calls Today" value={String(ENGAGEMENT_KPIS.callsCompletedToday)} testId="ekpi-calls" />
+        <StatCard label="Calls Today" value={String(ENGAGEMENT_KPIS?.callsCompletedToday ?? 0)} testId="ekpi-calls" />
         <StatCard label="Scheduled Today" value={String(scheduledCount)} testId="ekpi-scheduled" />
         <StatCard label="Pending Callbacks" value={String(callbacks)} testId="ekpi-callbacks" />
       </div>
@@ -150,7 +162,7 @@ export function PlexusEngagementPage() {
         <Section title="Qualifications Completed" testId="section-qualifications">
           <DataTable
             columns={[
-              { key: "patient", header: "Patient", render: (q: typeof QUALIFICATIONS[number]) => pname(q.patientId) },
+              { key: "patient", header: "Patient", render: (q: Qualification) => q.patientName },
               { key: "services", header: "Services", render: (q) => <div className="flex flex-wrap gap-1">{q.services.map((s) => <ServiceChip key={s} service={s} />)}</div> },
               { key: "source", header: "Source", render: (q) => <span className="text-xs">{q.source}</span> },
               { key: "status", header: "Status", render: (q) => <StatusPill label={q.status} tone={q.status === "Completed" ? "green" : "amber"} /> },
@@ -164,10 +176,10 @@ export function PlexusEngagementPage() {
         <Section title="Today's Engagement Activity" testId="section-activity">
           <DataTable
             columns={[
-              { key: "time", header: "Time", render: (a: typeof ENGAGEMENT_ACTIVITY[number]) => <span className="tabular-nums">{a.time}</span> },
+              { key: "time", header: "Time", render: (a: EngagementActivity) => <span className="tabular-nums">{a.time}</span> },
               { key: "actor", header: "Staff", render: (a) => a.actor },
               { key: "action", header: "Activity", render: (a) => a.action },
-              { key: "patient", header: "Patient", render: (a) => a.patientId ? pname(a.patientId) : "—" },
+              { key: "patient", header: "Patient", render: (a) => a.patientName ?? "—" },
             ]}
             rows={ENGAGEMENT_ACTIVITY}
             rowTestId={(a) => `row-activity-${a.id}`}
@@ -179,7 +191,7 @@ export function PlexusEngagementPage() {
         <DataTable
           columns={[
             { key: "time", header: "Time", render: (s: ScheduleItem) => <span className="tabular-nums">{s.time}</span> },
-            { key: "patient", header: "Patient", render: (s) => pname(s.patientId) },
+            { key: "patient", header: "Patient", render: (s) => s.patientName },
             { key: "service", header: "Service", render: (s) => <ServiceChip service={s.service} /> },
             { key: "tech", header: "Technician", render: (s) => <span className="text-xs">{s.technician}</span> },
             { key: "status", header: "Status", render: (s) => <StatusPill label={s.status} tone={s.status === "Completed" ? "green" : s.status === "In Progress" ? "blue" : s.status === "Checked In" ? "violet" : "gray"} /> },
@@ -197,7 +209,7 @@ export function PlexusEngagementPage() {
       <Section title="Escalations" testId="section-escalations">
         <DataTable
           columns={[
-            { key: "patient", header: "Patient", render: (e: typeof ESCALATIONS[number]) => pname(e.patientId) },
+            { key: "patient", header: "Patient", render: (e: Escalation) => e.patientName },
             { key: "reason", header: "Reason", render: (e) => <span className="text-finance-text-secondary">{e.reason}</span> },
             { key: "service", header: "Service", render: (e) => <ServiceChip service={e.service} /> },
             { key: "assigned", header: "Assigned", render: (e) => <span className="text-xs">{e.assignedTo}</span> },
@@ -213,8 +225,8 @@ export function PlexusEngagementPage() {
       <SideDrawer
         open={!!active}
         onOpenChange={(o) => !o && setActiveId(null)}
-        title={active ? pname(active.patientId) : ""}
-        subtitle={active ? `${pmrn(active.patientId)} · ${patientById(active.patientId)?.age}${patientById(active.patientId)?.gender} · ${patientById(active.patientId)?.phone}` : ""}
+        title={active ? active.patientName : ""}
+        subtitle={active ? `${active.mrn} · ${active.age}${active.gender} · ${active.phone}` : ""}
         testId="drawer-call"
         footer={active && (
           <div className="flex flex-wrap gap-2">
