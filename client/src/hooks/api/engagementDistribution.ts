@@ -244,7 +244,9 @@ export interface MemberCasesResponse {
 export function useDistributionMemberCases(
   schedulerId: number | null,
   enabled = true,
+  refetchMs?: number,
 ) {
+  const active = enabled && schedulerId != null;
   return useQuery<MemberCasesResponse>({
     queryKey: ["/api/engagement/distribution/member", schedulerId, "cases"],
     queryFn: async () => {
@@ -260,8 +262,10 @@ export function useDistributionMemberCases(
       }
       return res.json();
     },
-    enabled: enabled && schedulerId != null,
+    enabled: active,
     staleTime: 10_000,
+    refetchInterval: active && refetchMs ? refetchMs : false,
+    refetchIntervalInBackground: false,
   });
 }
 

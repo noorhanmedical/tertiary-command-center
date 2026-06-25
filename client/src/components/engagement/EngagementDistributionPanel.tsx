@@ -210,7 +210,7 @@ function MemberCasesDrawer({
   schedulerId: number;
   enabled: boolean;
 }) {
-  const q = useDistributionMemberCases(schedulerId, enabled);
+  const q = useDistributionMemberCases(schedulerId, enabled, 15_000);
   const cases = q.data?.cases ?? [];
 
   if (q.isLoading) {
