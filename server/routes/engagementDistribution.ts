@@ -15,7 +15,9 @@ import {
   applyDistribution,
   getLiveProgress,
   getMemberCases,
+  ACTIVITY_EVENT_TYPES,
 } from "../services/engagement/distributionService";
+import { subscribeLiveActivity } from "../services/engagement/liveActivityBus";
 
 type RequireRole = (
   ...roles: string[]
@@ -105,6 +107,50 @@ export function registerEngagementDistributionRoutes(
               : "Failed to load member cases",
         });
       }
+    },
+  );
+
+  // Server-Sent Events stream that pushes a lightweight "refresh" signal the
+  // moment a feed-worthy journey event is written, so the client refetches
+  // /live within ~1s instead of waiting on its polling tick. The client falls
+  // back to polling automatically if this stream drops.
+  app.get(
+    "/api/engagement/distribution/stream",
+    requireRole("admin"),
+    (req: Request, res: Response) => {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders?.();
+
+      // Initial comment so the client's onopen fires promptly.
+      res.write(": connected\n\n");
+
+      const feedWorthy = new Set<string>(
+        ACTIVITY_EVENT_TYPES as unknown as string[],
+      );
+
+      const unsubscribe = subscribeLiveActivity((signal) => {
+        if (!feedWorthy.has(signal.eventType)) return;
+        res.write(
+          `event: activity\ndata: ${JSON.stringify({
+            eventType: signal.eventType,
+          })}\n\n`,
+        );
+      });
+
+      // Heartbeat keeps proxies from idling the connection closed.
+      const heartbeat = setInterval(() => {
+        res.write(": ping\n\n");
+      }, 25_000);
+
+      const cleanup = () => {
+        clearInterval(heartbeat);
+        unsubscribe();
+      };
+      req.on("close", cleanup);
+      res.on("close", cleanup);
     },
   );
 

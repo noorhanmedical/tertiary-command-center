@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -137,7 +138,61 @@ export const ENGAGEMENT_DISTRIBUTION_LIVE_QK = [
   "/api/engagement/distribution/live",
 ];
 
+// Push-first live progress.
+//
+// A Server-Sent Events stream nudges the client to refetch within ~1s of a
+// real assignment/outcome event. While the stream is healthy we keep only a
+// slow safety poll; if the stream drops we fall back to tight `refetchMs`
+// polling so the feed never goes stale.
 export function useDistributionLive(enabled = true, refetchMs = 15_000) {
+  const queryClient = useQueryClient();
+  const [streamConnected, setStreamConnected] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (
+      !enabled ||
+      typeof window === "undefined" ||
+      typeof EventSource === "undefined"
+    ) {
+      setStreamConnected(false);
+      return;
+    }
+
+    let cancelled = false;
+    const es = new EventSource("/api/engagement/distribution/stream", {
+      withCredentials: true,
+    });
+
+    es.onopen = () => {
+      if (!cancelled) setStreamConnected(true);
+    };
+
+    es.addEventListener("activity", () => {
+      // Debounce bursts (e.g. an apply that writes many events at once) into a
+      // single refetch.
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        void queryClient.invalidateQueries({
+          queryKey: ENGAGEMENT_DISTRIBUTION_LIVE_QK,
+        });
+      }, 250);
+    });
+
+    es.onerror = () => {
+      // EventSource auto-reconnects; flip to disconnected so polling resumes
+      // in the meantime.
+      if (!cancelled) setStreamConnected(false);
+    };
+
+    return () => {
+      cancelled = true;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      es.close();
+      setStreamConnected(false);
+    };
+  }, [enabled, queryClient]);
+
   return useQuery<LiveProgressResponse>({
     queryKey: ENGAGEMENT_DISTRIBUTION_LIVE_QK,
     queryFn: async () => {
@@ -153,7 +208,7 @@ export function useDistributionLive(enabled = true, refetchMs = 15_000) {
       return res.json();
     },
     enabled,
-    refetchInterval: enabled ? refetchMs : false,
+    refetchInterval: enabled ? (streamConnected ? 60_000 : refetchMs) : false,
     refetchIntervalInBackground: false,
   });
 }

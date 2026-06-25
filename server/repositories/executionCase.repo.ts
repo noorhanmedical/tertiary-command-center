@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { eq, and, desc, sql, inArray, notInArray } from "drizzle-orm";
+import { publishLiveActivity } from "../services/engagement/liveActivityBus";
 import {
   patientExecutionCases,
   patientJourneyEvents,
@@ -219,6 +220,9 @@ export async function appendPatientJourneyEvent(
     .insert(patientJourneyEvents)
     .values(event)
     .returning();
+  // Push a non-PHI signal so live SSE consumers (Engagement Live Team Activity)
+  // can refetch within ~1s instead of waiting on the polling tick.
+  publishLiveActivity(result.eventType);
   return result;
 }
 

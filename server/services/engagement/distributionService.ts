@@ -469,7 +469,7 @@ const COMPLETED_ENGAGEMENT_STATUSES = ["scheduled", "completed"] as const;
 
 // Journey-event kinds that belong on the team activity feed (assignment moves
 // and call/schedule outcomes). Pure-read filter — does not constrain writers.
-const ACTIVITY_EVENT_TYPES = [
+export const ACTIVITY_EVENT_TYPES = [
   "engagement_assigned",
   "engagement_assignment_changed",
   "engagement_assignment_cancelled",
