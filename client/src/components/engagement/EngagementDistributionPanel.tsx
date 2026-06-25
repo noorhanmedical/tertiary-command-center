@@ -6,13 +6,27 @@
 // preview can never over-assign.
 
 import { useState } from "react";
-import { Loader2, RefreshCw, Users, AlertTriangle, CheckCircle2 } from "lucide-react";
+import {
+  Loader2,
+  RefreshCw,
+  Users,
+  AlertTriangle,
+  CheckCircle2,
+  Activity,
+  CalendarCheck,
+  Phone,
+  UserPlus,
+  ArrowRightLeft,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import {
   useDistributionPreview,
   useApplyDistribution,
+  useDistributionLive,
   type MemberAllocationSummary,
+  type MemberLiveProgress,
+  type ActivityFeedEvent,
   type ProposedAssignment,
   type UnplacedCase,
 } from "@/hooks/api/engagementDistribution";
@@ -97,6 +111,224 @@ function UnplacedRow({ u }: { u: UnplacedCase }) {
           {u.facility ? <span className="ml-1 text-slate-400">· {u.facility}</span> : null}
         </div>
         <div className="text-amber-700 dark:text-amber-400">{u.reason}</div>
+      </div>
+    </div>
+  );
+}
+
+function ProgressBar({ done, total }: { done: number; total: number }) {
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  return (
+    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+      <div
+        className="h-full rounded-full bg-emerald-500 transition-all"
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
+function LiveMemberRow({ m }: { m: MemberLiveProgress }) {
+  const offline = !m.active || !m.workingToday;
+  return (
+    <div
+      className="rounded-lg border border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900"
+      data-testid={`live-member-${m.schedulerId}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-slate-900 dark:text-white">
+            {m.name}
+            {offline ? (
+              <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800">
+                {m.active ? "off today" : "inactive"}
+              </span>
+            ) : null}
+          </div>
+          {m.facility ? (
+            <div className="truncate text-[11px] text-slate-400">{m.facility}</div>
+          ) : null}
+        </div>
+        <div className="text-right">
+          <div
+            className="text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
+            data-testid={`live-member-completed-${m.schedulerId}`}
+          >
+            {m.completedToday}/{m.completedKpi}
+          </div>
+          <div className="text-[10px] text-slate-400">done today</div>
+        </div>
+      </div>
+      <ProgressBar done={m.completedToday} total={m.completedKpi} />
+      <div className="mt-1.5 flex items-center gap-3 text-[10px] text-slate-500 dark:text-slate-400">
+        <span data-testid={`live-member-remaining-${m.schedulerId}`}>
+          <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+            {m.remaining}
+          </span>{" "}
+          remaining
+        </span>
+        <span data-testid={`live-member-inprogress-${m.schedulerId}`}>
+          <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+            {m.inProgress}
+          </span>{" "}
+          in progress
+        </span>
+      </div>
+    </div>
+  );
+}
+
+const ACTIVITY_ICON: Record<
+  string,
+  { Icon: typeof Activity; className: string }
+> = {
+  call_result_logged: { Icon: Phone, className: "text-indigo-500" },
+  scheduled_ancillary: { Icon: CalendarCheck, className: "text-emerald-500" },
+  schedule_confirmed: { Icon: CalendarCheck, className: "text-emerald-500" },
+  schedule_rescheduled: { Icon: CalendarCheck, className: "text-amber-500" },
+  schedule_cancelled: { Icon: CalendarCheck, className: "text-rose-500" },
+  schedule_no_show: { Icon: CalendarCheck, className: "text-rose-500" },
+  engagement_assigned: { Icon: UserPlus, className: "text-sky-500" },
+  scheduler_assigned: { Icon: UserPlus, className: "text-sky-500" },
+  engagement_assignment_changed: {
+    Icon: ArrowRightLeft,
+    className: "text-sky-500",
+  },
+  engagement_assignment_cancelled: {
+    Icon: ArrowRightLeft,
+    className: "text-slate-400",
+  },
+};
+
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const diff = Date.now() - then;
+  const mins = Math.round(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+}
+
+function ActivityRow({ e }: { e: ActivityFeedEvent }) {
+  const meta = ACTIVITY_ICON[e.eventType] ?? {
+    Icon: Activity,
+    className: "text-slate-400",
+  };
+  const { Icon } = meta;
+  return (
+    <div
+      className="flex items-start gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-900"
+      data-testid={`activity-event-${e.id}`}
+    >
+      <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${meta.className}`} />
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium text-slate-800 dark:text-slate-200">
+          {e.patientName}
+        </div>
+        <div className="truncate text-slate-500 dark:text-slate-400">
+          {e.summary}
+        </div>
+        <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-400">
+          {e.actorName ? <span>{e.actorName}</span> : null}
+          {e.actorName ? <span>·</span> : null}
+          <span>{relativeTime(e.createdAt)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LiveProgressSection({ enabled }: { enabled: boolean }) {
+  const live = useDistributionLive(enabled);
+  const members = live.data?.members ?? [];
+  const activity = live.data?.activity ?? [];
+  const totals = live.data?.totals;
+
+  return (
+    <div className="space-y-4 border-t border-slate-200 pt-4 dark:border-slate-800" data-testid="distribution-live-section">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-1.5 text-base font-semibold text-slate-900 dark:text-white">
+            <Activity className="h-4 w-4 text-emerald-500" /> Live Team Activity
+          </h2>
+          <p className="text-xs text-slate-500">
+            Real-time progress on assigned work today. Updates automatically.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-[11px] text-slate-400">
+          {live.isFetching ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+          )}
+          {live.data?.asOf ? (
+            <span data-testid="live-asof">
+              updated {relativeTime(live.data.asOf)}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      {live.isError ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+          {live.error instanceof Error
+            ? live.error.message
+            : "Failed to load live progress."}
+        </div>
+      ) : null}
+
+      {totals ? (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Stat label="Completed Today" value={totals.completedToday} tone="emerald" />
+          <Stat label="In Progress" value={totals.inProgress} tone="indigo" />
+          <Stat label="Remaining" value={totals.remaining} tone="amber" />
+          <Stat label="Active Members" value={totals.activeMembers} tone="slate" />
+        </div>
+      ) : null}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <Users className="h-3.5 w-3.5" /> Progress per member
+          </div>
+          {live.isLoading ? (
+            <div className="flex items-center gap-2 py-6 text-xs text-slate-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading live
+              progress…
+            </div>
+          ) : members.length === 0 ? (
+            <div className="text-xs text-slate-400">
+              No team members configured.
+            </div>
+          ) : (
+            members.map((m) => <LiveMemberRow key={m.schedulerId} m={m} />)
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <Activity className="h-3.5 w-3.5" /> Recent activity
+          </div>
+          {live.isLoading ? (
+            <div className="flex items-center gap-2 py-6 text-xs text-slate-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading activity…
+            </div>
+          ) : activity.length === 0 ? (
+            <div className="text-xs text-slate-400">
+              No recent assignment or outcome activity yet.
+            </div>
+          ) : (
+            <div className="max-h-[28rem] space-y-1.5 overflow-y-auto pr-1">
+              {activity.map((e) => (
+                <ActivityRow key={e.id} e={e} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -238,6 +470,8 @@ export function EngagementDistributionPanel() {
           )}
         </div>
       </div>
+
+      <LiveProgressSection enabled={enabled} />
     </div>
   );
 }

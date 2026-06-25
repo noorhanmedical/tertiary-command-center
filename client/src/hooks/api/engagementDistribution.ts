@@ -100,6 +100,64 @@ export function useDistributionPreview(enabled = true) {
   });
 }
 
+export interface MemberLiveProgress {
+  schedulerId: number;
+  name: string;
+  facility: string | null;
+  active: boolean;
+  workingToday: boolean;
+  completedToday: number;
+  remaining: number;
+  inProgress: number;
+  completedKpi: number;
+}
+
+export interface ActivityFeedEvent {
+  id: number;
+  eventType: string;
+  patientName: string;
+  summary: string;
+  actorName: string | null;
+  createdAt: string;
+}
+
+export interface LiveProgressResponse {
+  members: MemberLiveProgress[];
+  activity: ActivityFeedEvent[];
+  totals: {
+    completedToday: number;
+    remaining: number;
+    inProgress: number;
+    activeMembers: number;
+  };
+  asOf: string;
+}
+
+export const ENGAGEMENT_DISTRIBUTION_LIVE_QK = [
+  "/api/engagement/distribution/live",
+];
+
+export function useDistributionLive(enabled = true, refetchMs = 15_000) {
+  return useQuery<LiveProgressResponse>({
+    queryKey: ENGAGEMENT_DISTRIBUTION_LIVE_QK,
+    queryFn: async () => {
+      const res = await fetch("/api/engagement/distribution/live", {
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body.error ?? `Failed to load live progress (${res.status})`,
+        );
+      }
+      return res.json();
+    },
+    enabled,
+    refetchInterval: enabled ? refetchMs : false,
+    refetchIntervalInBackground: false,
+  });
+}
+
 export function useApplyDistribution() {
   const queryClient = useQueryClient();
   return useMutation<ApplyDistributionResult, Error, void>({
@@ -109,6 +167,9 @@ export function useApplyDistribution() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ENGAGEMENT_DISTRIBUTION_QK });
+      queryClient.invalidateQueries({
+        queryKey: ENGAGEMENT_DISTRIBUTION_LIVE_QK,
+      });
       queryClient.invalidateQueries({
         queryKey: ["/api/engagement/assignment-board"],
       });

@@ -13,6 +13,7 @@ import { z } from "zod";
 import {
   previewDistribution,
   applyDistribution,
+  getLiveProgress,
 } from "../services/engagement/distributionService";
 
 type RequireRole = (
@@ -50,6 +51,28 @@ export function registerEngagementDistributionRoutes(
             error instanceof Error
               ? error.message
               : "Failed to build distribution preview",
+        });
+      }
+    },
+  );
+
+  app.get(
+    "/api/engagement/distribution/live",
+    requireRole("admin"),
+    async (_req: Request, res: Response) => {
+      try {
+        const result = await getLiveProgress();
+        return res.json(result);
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/distribution:live] error:",
+          error instanceof Error ? error.message : error,
+        );
+        return res.status(500).json({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to load live progress",
         });
       }
     },

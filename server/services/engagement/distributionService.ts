@@ -14,13 +14,15 @@
 // engine never re-derives the numbers differently from the Call Settings
 // surface.
 
-import { and, eq, inArray, isNull, isNotNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, isNotNull, ne, or, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { storage } from "../../storage";
 import {
   patientExecutionCases,
+  patientJourneyEvents,
   patientScreenings,
   screeningBatches,
+  users,
 } from "@shared/schema";
 import { engagementCallSettingsRepository } from "../../repositories/engagementCallSettings.repo";
 import { appendJourneyEvent } from "../journey/appendJourneyEvent";
@@ -454,6 +456,212 @@ export async function previewDistribution(): Promise<{
   ]);
   const plan = buildDistributionPlan(cases, members);
   return { plan, members, cases };
+}
+
+// ─── Live progress + activity feed (Phase 3) ────────────────────────────────
+//
+// After a distribution is applied, admins need to watch real-time execution:
+// how far each member is through their assigned work today, and a stream of the
+// most recent assignment/outcome events across the team. Both are pure reads.
+
+// Engagement statuses that mean the case has LEFT the active work queue today.
+const COMPLETED_ENGAGEMENT_STATUSES = ["scheduled", "completed"] as const;
+
+// Journey-event kinds that belong on the team activity feed (assignment moves
+// and call/schedule outcomes). Pure-read filter — does not constrain writers.
+const ACTIVITY_EVENT_TYPES = [
+  "engagement_assigned",
+  "engagement_assignment_changed",
+  "engagement_assignment_cancelled",
+  "scheduler_assigned",
+  "call_result_logged",
+  "scheduled_ancillary",
+  "schedule_cancelled",
+  "schedule_rescheduled",
+  "schedule_no_show",
+  "schedule_confirmed",
+] as const;
+
+export interface MemberLiveProgress {
+  schedulerId: number;
+  name: string;
+  facility: string | null;
+  active: boolean;
+  workingToday: boolean;
+  // Cases this member moved to scheduled/completed today.
+  completedToday: number;
+  // Active, non-terminal cases still assigned to this member (work left).
+  remaining: number;
+  // Active cases already touched (contacted / not reached) but not finished.
+  inProgress: number;
+  // Today's completed-call KPI, reused from Call Settings math.
+  completedKpi: number;
+}
+
+export interface ActivityFeedEvent {
+  id: number;
+  eventType: string;
+  patientName: string;
+  summary: string;
+  actorName: string | null;
+  createdAt: string;
+}
+
+export interface LiveProgressResult {
+  members: MemberLiveProgress[];
+  activity: ActivityFeedEvent[];
+  totals: {
+    completedToday: number;
+    remaining: number;
+    inProgress: number;
+    activeMembers: number;
+  };
+  asOf: string;
+}
+
+/** Read-only live execution snapshot: per-member completed/remaining counts for
+ *  today plus the most recent team activity events. No writes. */
+export async function getLiveProgress(
+  activityLimit = 30,
+): Promise<LiveProgressResult> {
+  const startOfToday = startOfTodayUtc();
+
+  const members = await gatherDistributionMembers();
+  const schedulerIds = members.map((m) => m.schedulerId);
+
+  const [completedRows, remainingRows, inProgressRows, activityRows] =
+    await Promise.all([
+      schedulerIds.length
+        ? db
+            .select({
+              schedulerId: patientExecutionCases.assignedTeamMemberId,
+              n: sql<number>`count(*)`,
+            })
+            .from(patientExecutionCases)
+            .where(
+              and(
+                inArray(patientExecutionCases.assignedTeamMemberId, schedulerIds),
+                inArray(
+                  patientExecutionCases.engagementStatus,
+                  COMPLETED_ENGAGEMENT_STATUSES as unknown as string[],
+                ),
+                sql`${patientExecutionCases.updatedAt} >= ${startOfToday}`,
+              ),
+            )
+            .groupBy(patientExecutionCases.assignedTeamMemberId)
+        : Promise.resolve([] as { schedulerId: number | null; n: number }[]),
+      schedulerIds.length
+        ? db
+            .select({
+              schedulerId: patientExecutionCases.assignedTeamMemberId,
+              n: sql<number>`count(*)`,
+            })
+            .from(patientExecutionCases)
+            .where(
+              and(
+                inArray(patientExecutionCases.assignedTeamMemberId, schedulerIds),
+                eq(patientExecutionCases.lifecycleStatus, "active"),
+                sql`${patientExecutionCases.engagementStatus} NOT IN ('scheduled','completed')`,
+              ),
+            )
+            .groupBy(patientExecutionCases.assignedTeamMemberId)
+        : Promise.resolve([] as { schedulerId: number | null; n: number }[]),
+      schedulerIds.length
+        ? db
+            .select({
+              schedulerId: patientExecutionCases.assignedTeamMemberId,
+              n: sql<number>`count(*)`,
+            })
+            .from(patientExecutionCases)
+            .where(
+              and(
+                inArray(patientExecutionCases.assignedTeamMemberId, schedulerIds),
+                eq(patientExecutionCases.lifecycleStatus, "active"),
+                sql`${patientExecutionCases.engagementStatus} IN ('contacted','not_reached','unable_to_reach')`,
+              ),
+            )
+            .groupBy(patientExecutionCases.assignedTeamMemberId)
+        : Promise.resolve([] as { schedulerId: number | null; n: number }[]),
+      db
+        .select()
+        .from(patientJourneyEvents)
+        .where(
+          inArray(
+            patientJourneyEvents.eventType,
+            ACTIVITY_EVENT_TYPES as unknown as string[],
+          ),
+        )
+        .orderBy(desc(patientJourneyEvents.createdAt))
+        .limit(activityLimit),
+    ]);
+
+  const completedById = new Map<number, number>();
+  for (const r of completedRows)
+    if (r.schedulerId != null) completedById.set(r.schedulerId, Number(r.n));
+  const remainingById = new Map<number, number>();
+  for (const r of remainingRows)
+    if (r.schedulerId != null) remainingById.set(r.schedulerId, Number(r.n));
+  const inProgressById = new Map<number, number>();
+  for (const r of inProgressRows)
+    if (r.schedulerId != null) inProgressById.set(r.schedulerId, Number(r.n));
+
+  const memberProgress: MemberLiveProgress[] = members.map((m) => ({
+    schedulerId: m.schedulerId,
+    name: m.name,
+    facility: m.facility,
+    active: m.active,
+    workingToday: m.workingToday,
+    completedToday: completedById.get(m.schedulerId) ?? 0,
+    remaining: remainingById.get(m.schedulerId) ?? 0,
+    inProgress: inProgressById.get(m.schedulerId) ?? 0,
+    completedKpi: m.visitTarget + m.outreachTarget,
+  }));
+
+  // Resolve actor display names (username) for the activity feed.
+  const actorIds = Array.from(
+    new Set(
+      activityRows
+        .map((e) => e.actorUserId)
+        .filter((id): id is string => !!id),
+    ),
+  );
+  const actorRows = actorIds.length
+    ? await db
+        .select({ id: users.id, username: users.username })
+        .from(users)
+        .where(inArray(users.id, actorIds))
+    : [];
+  const actorNameById = new Map(actorRows.map((u) => [u.id, u.username]));
+
+  const activity: ActivityFeedEvent[] = activityRows.map((e) => ({
+    id: e.id,
+    eventType: e.eventType,
+    patientName: e.patientName,
+    summary: e.summary,
+    actorName: e.actorUserId ? actorNameById.get(e.actorUserId) ?? null : null,
+    createdAt:
+      e.createdAt instanceof Date
+        ? e.createdAt.toISOString()
+        : new Date(e.createdAt as unknown as string).toISOString(),
+  }));
+
+  const totals = memberProgress.reduce(
+    (acc, m) => {
+      acc.completedToday += m.completedToday;
+      acc.remaining += m.remaining;
+      acc.inProgress += m.inProgress;
+      if (m.active && m.workingToday) acc.activeMembers += 1;
+      return acc;
+    },
+    { completedToday: 0, remaining: 0, inProgress: 0, activeMembers: 0 },
+  );
+
+  return {
+    members: memberProgress,
+    activity,
+    totals,
+    asOf: new Date().toISOString(),
+  };
 }
 
 // ─── Apply (atomic, re-validated at commit) ─────────────────────────────────
