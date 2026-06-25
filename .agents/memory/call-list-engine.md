@@ -53,6 +53,16 @@ All `outreach_schedulers.user_id` were NULL historically, so without an explicit
 link nobody sees their assigned work. Mapping suggestions (by name match) are
 never auto-applied; linking is admin-gated.
 
+## Recalling a worked case back onto the call list
+Re-surfacing a completed/dismissed/dormant case (recall, or manual add) MUST
+normalize `engagementBucket` into a scheduler/call-list bucket (visit / outreach
+/ scheduling_triage) when it isn't already one, AND set a non-terminal
+engagementStatus + lifecycleStatus + `nextActionAt=now`. The call-list feed only
+reads those buckets, so a recall that leaves an off-bucket value silently drops
+the case. Recall only works for patients that already have an execution case —
+no case ⇒ honest 404 (`case_not_found`); caller with no roster mapping for the
+facility ⇒ honest 409 (`no_roster_mapping`), never a silent no-op.
+
 ## next_action_at
 `server/services/callList/nextActionPolicy.ts` is the single policy for "when
 should this case next surface". The assignment path preserves an existing

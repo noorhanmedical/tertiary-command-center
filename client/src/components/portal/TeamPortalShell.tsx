@@ -5,7 +5,7 @@ import {
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
   Sparkles, Send, Minimize2, Maximize2, FileBarChart, FilePlus, User, Bell, Bot,
   Home, BookOpen, CalendarDays, Mail, ClipboardPen, Pill, History, ShieldCheck, Users, Search, Megaphone,
-  NotebookPen, ChevronDown, Wrench,
+  NotebookPen, ChevronDown, Wrench, PhoneCall,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,7 @@ import { useLocation } from "wouter";
 // Left-rail tool components — shared between PCS + ACS (identical
 // shell + layout).
 import { LeftRailToolsButton } from "@/components/portal/leftRail/LeftRailToolsButton";
+import { CallsRepositoryPanel } from "@/components/portal/CallsRepositoryPanel";
 import { LeftRailCompactCalendar } from "@/components/portal/leftRail/LeftRailCompactCalendar";
 import { PortalEmailComposerTab } from "@/components/portal/PortalEmailComposerTab";
 import { PortalTemplatesResourcesTab } from "@/components/portal/PortalTemplatesResourcesTab";
@@ -157,7 +158,10 @@ type PortalTabKind =
   // own tab that stays open alongside the others.
   | "call"
   | "caseSchedule"
-  | "caseOverview";
+  | "caseOverview"
+  // Left-rail Calls tool → center-canvas Calls Repository (worked-call
+  // archive + recall + manual add-to-call-list). Steps 6 & 7.
+  | "calls";
 type PortalTab = {
   id: string;
   kind: PortalTabKind;
@@ -256,6 +260,56 @@ function usePersistedBool(storageKey: string | null, defaultValue: boolean) {
   }, [storageKey, value]);
   return [value, setValue] as const;
 }
+
+// Like usePersistedBool but for a small string enum (e.g. rail size). Same
+// null-key / first-hydration-doesn't-clobber contract.
+function usePersistedString<T extends string>(
+  storageKey: string | null,
+  defaultValue: T,
+  allowed: readonly T[],
+) {
+  const [value, setValue] = useState<T>(defaultValue);
+  const skipPersistRef = useRef(false);
+  useEffect(() => {
+    if (!storageKey) return;
+    skipPersistRef.current = true;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      setValue(raw !== null && (allowed as readonly string[]).includes(raw) ? (raw as T) : defaultValue);
+    } catch {
+      setValue(defaultValue);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+  useEffect(() => {
+    if (!storageKey) return;
+    if (skipPersistRef.current) {
+      skipPersistRef.current = false;
+      return;
+    }
+    try {
+      localStorage.setItem(storageKey, value);
+    } catch {
+      /* ignore quota / unavailable storage */
+    }
+  }, [storageKey, value]);
+  return [value, setValue] as const;
+}
+
+// Side-rail size control, persisted per user/role alongside the collapsed state.
+// Two sizes only. The LEFT rail "small" is a compact ICON rail (labels hidden,
+// single column); the RIGHT rail "small" is just a thinner panel. "normal" is
+// the full-width panel for both. Clicking away from an open rail collapses it.
+type RailSize = "small" | "normal";
+const RAIL_SIZES: readonly RailSize[] = ["small", "normal"];
+const LEFT_RAIL_WIDTH: Record<RailSize, string> = {
+  small: "w-[84px]",
+  normal: "w-[320px]",
+};
+const RIGHT_RAIL_WIDTH: Record<RailSize, string> = {
+  small: "w-[220px]",
+  normal: "w-[340px]",
+};
 
 function MonthlyMiniCalendar({ facility, selectedDate, onSelect }: { facility: string; selectedDate: string; onSelect: (d: string) => void }) {
   const [cursor, setCursor] = useState(() => {
@@ -999,6 +1053,14 @@ export function TeamPortalShell({
   // DispositionSheet (posts /api/engagement-center/call-result). Holds the
   // selected call-list row so we can also offer Push-to-Playground.
   const [callDialogRow, setCallDialogRow] = useState<TeamWorkspaceCallListItem | null>(null);
+  // Step 3 — phone icon opens a pop-up dialer (CallWorkspace inside a Dialog)
+  // instead of navigating to a Playground tab. CallWorkspace owns the honest
+  // RingCentral boundary (manual-dial fallback when the provider is unwired).
+  const [callWorkspaceCtx, setCallWorkspaceCtx] = useState<CallCaseContext | null>(null);
+  // Step 5 — keys of call/ancillary rows mid-exit. We add a key here on a
+  // one-click complete, let the row animate up (max-h-0 + opacity-0), then
+  // refetch so the row disappears smoothly instead of popping out.
+  const [removingRowKeys, setRemovingRowKeys] = useState<Set<string>>(new Set());
   const [portalTabs, setPortalTabs] = useState<PortalTab[]>([]);
   const [activePortalTabId, setActivePortalTabId] = useState<string | null>(null);
   // Left-rail Marketing → Email handoff payloads. The Marketing tool
@@ -1035,6 +1097,48 @@ export function TeamPortalShell({
     railKeyScope ? `teamPortal:rightRailCollapsed:${railKeyScope}` : null,
     false,
   );
+  // Per-user/role persistence of the side-rail widths (step 2 — pill as size
+  // control). Independent of the collapsed flag so a rail can be narrow OR wide
+  // while open, and the width preference survives an open/close toggle.
+  const [leftRailSize, setLeftRailSize] = usePersistedString<RailSize>(
+    railKeyScope ? `teamPortal:leftRailSize:${railKeyScope}` : null,
+    "normal",
+    RAIL_SIZES,
+  );
+  const [rightRailSize, setRightRailSize] = usePersistedString<RailSize>(
+    railKeyScope ? `teamPortal:rightRailSize:${railKeyScope}` : null,
+    "normal",
+    RAIL_SIZES,
+  );
+  // Pill click = open the rail at the chosen size (two sizes, no arrows). The
+  // outer pill half (toward the screen edge) selects "small", the inner half
+  // "normal". Clicking anywhere outside an open rail collapses it.
+  const openLeftRail = (size: RailSize) => {
+    setLeftRailCollapsed(false);
+    setLeftRailSize(size);
+  };
+  const openRightRail = (size: RailSize) => {
+    setRightRailCollapsed(false);
+    setRightRailSize(size);
+  };
+  const leftRailRef = useRef<HTMLDivElement>(null);
+  const rightRailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function onDocPointerDown(e: PointerEvent) {
+      const t = e.target as HTMLElement | null;
+      if (!t) return;
+      // Ignore clicks inside modals / popovers so dialogs don't collapse rails.
+      if (t.closest('[role="dialog"], [data-radix-popper-content-wrapper]')) return;
+      if (!leftRailCollapsed && leftRailRef.current && !leftRailRef.current.contains(t)) {
+        setLeftRailCollapsed(true);
+      }
+      if (!rightRailCollapsed && rightRailRef.current && !rightRailRef.current.contains(t)) {
+        setRightRailCollapsed(true);
+      }
+    }
+    document.addEventListener("pointerdown", onDocPointerDown);
+    return () => document.removeEventListener("pointerdown", onDocPointerDown);
+  }, [leftRailCollapsed, rightRailCollapsed, setLeftRailCollapsed, setRightRailCollapsed]);
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiDraft, setAiDraft] = useState("");
@@ -1574,7 +1678,9 @@ export function TeamPortalShell({
                   ? "Plexus Tasks"
                   : kind === "marketing"
                     ? "Marketing"
-                    : "Documents";
+                    : kind === "calls"
+                      ? "Calls"
+                      : "Documents";
 
     const existing = portalTabs.find((t) => t.id === id);
     if (existing) {
@@ -2079,6 +2185,13 @@ export function TeamPortalShell({
                     </div>
                   );
                 }
+                if (activeTab?.kind === "calls") {
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-calls-repository">
+                      <CallsRepositoryPanel facility={facility} />
+                    </div>
+                  );
+                }
                 // Call-list Playground workflow tabs.
                 if (activeTab?.kind === "call" && activeTab.caseContext) {
                   const ctx = activeTab.caseContext;
@@ -2141,6 +2254,17 @@ export function TeamPortalShell({
                         patientScreeningId={activeTab.patientId}
                         seedName={activeTab.patientName ?? activeTab.label}
                         onBack={() => activePortalTabId && closePortalTab(activePortalTabId)}
+                        onSchedule={() =>
+                          openSchedulePatientDialog({
+                            patientName: activeTab.patientName ?? activeTab.label ?? null,
+                            patientDob: null,
+                            facilityId: facility ?? null,
+                            patientScreeningId:
+                              typeof activeTab.patientId === "number" ? activeTab.patientId : null,
+                            executionCaseId: null,
+                            serviceType: null,
+                          })
+                        }
                       />
                     </div>
                   );
@@ -2290,41 +2414,66 @@ export function TeamPortalShell({
         </div>
 
         <div
-          className="pointer-events-none absolute left-4 top-4 bottom-4 z-20 flex w-[320px] flex-col"
+          ref={leftRailRef}
+          className={`pointer-events-none absolute left-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ${LEFT_RAIL_WIDTH[leftRailSize]}`}
           data-testid="portal-left-rail"
         >
-          {/* Trigger bar — anchored at the top-left edge. Stays visible when
-              the panel below is collapsed, so only this slim bar shows. */}
-          <button
-            type="button"
-            onClick={() => setLeftRailCollapsed((v) => !v)}
-            className="pointer-events-auto inline-flex h-7 items-center gap-1.5 self-start rounded-full border border-white/15 border-t-white/30 bg-[rgba(72,99,160,0.85)] px-3 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl transition-colors hover:bg-[rgba(72,99,160,0.95)]"
-            data-testid="button-toggle-left-rail"
-          >
-            <Wrench className="h-3.5 w-3.5 text-white/75" />
-            <span className="text-[11px] font-semibold tracking-wide text-white/90">Tools</span>
-            <ChevronDown className={`h-3.5 w-3.5 text-white/80 transition-transform duration-300 ${leftRailCollapsed ? "" : "rotate-180"}`} />
-          </button>
-
-          {/* Body — drops down from the trigger with a transform + opacity
-              transition rather than expanding horizontally. */}
+          {/* Trigger pill — ONE click region, two sizes, no arrows. Clicking the
+              LEFT half (toward the screen edge) opens the THIN icon rail; the
+              RIGHT half opens the NORMAL panel. Clicking away collapses it. */}
           <div
-            className={`pointer-events-auto mt-2 min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/15 border-t-white/30 bg-[rgba(72,99,160,0.80)] text-white shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
+            className="pointer-events-auto relative inline-flex h-7 select-none items-center self-start overflow-hidden rounded-full border border-white/25 border-t-white/40 bg-[#4863A0]/70 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl"
+            data-testid="portal-left-rail-pill"
+          >
+            {/* Left half (outer edge) → thin */}
+            <button
+              type="button"
+              onClick={() => openLeftRail("small")}
+              className="absolute inset-y-0 left-0 z-10 w-1/2 cursor-pointer"
+              title="Thin Tools panel"
+              aria-label="Thin Tools panel"
+              data-testid="button-narrow-left-rail"
+            />
+            {/* Right half (inner) → normal */}
+            <button
+              type="button"
+              onClick={() => openLeftRail("normal")}
+              className="absolute inset-y-0 right-0 z-10 w-1/2 cursor-pointer"
+              title="Normal Tools panel"
+              aria-label="Normal Tools panel"
+              data-testid="button-widen-left-rail"
+            />
+            <div className="pointer-events-none relative flex h-full items-center gap-1.5 px-3">
+              <Wrench className="h-3.5 w-3.5 text-white/75" />
+              <span className="text-[11px] font-semibold tracking-wide text-white/90">Tools</span>
+            </div>
+          </div>
+
+          {/* Body — frosted-glass panel (step 1) that drops down from the
+              trigger with a transform + opacity transition. */}
+          <div
+            className={`pointer-events-auto mt-2 min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/30 bg-white/50 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
               leftRailCollapsed
                 ? "pointer-events-none -translate-y-3 scale-y-95 opacity-0"
                 : "translate-y-0 scale-y-100 opacity-100"
             }`}
           >
             <div className="flex h-full flex-col">
+            {/* Blue header band (step 1). */}
+            <div className="flex items-center gap-1.5 border-b border-white/20 bg-[#4863A0] px-3 py-2 text-white">
+              <Wrench className="h-3.5 w-3.5 text-white/80" />
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-white/90">Tools</span>
+            </div>
             {(() => {
               // Active center-canvas tab kind so we can highlight the
               // matching left-rail tool. Single source of truth.
               const activeKind = portalTabs.find((t) => t.id === activePortalTabId)?.kind ?? null;
               const taskCount =
                 (tasksData?.urgent?.length ?? 0) + (tasksData?.open?.length ?? 0);
+              const leftNarrow = leftRailSize === "small";
               return (
               <div
-                className="flex-1 overflow-y-auto p-3 space-y-3"
+                className={`flex-1 overflow-y-auto ${leftNarrow ? "p-2 space-y-2" : "p-3 space-y-3"}`}
                 data-testid="left-rail-tools-rail"
               >
                 {/* TEAM PORTAL LEFT TOOLS RAIL (Phase 1.6)
@@ -2336,13 +2485,14 @@ export function TeamPortalShell({
                     metrics dashboards, no outreach call-list queue
                     (that belongs to the right rail). */}
                 <div
-                  className="grid grid-cols-3 gap-2"
+                  className={leftNarrow ? "grid grid-cols-1 gap-2" : "grid grid-cols-3 gap-2"}
                   data-testid="left-rail-tools-icons"
                 >
                   <LeftRailToolsButton
                     label="Calendar"
                     icon={CalendarDays}
                     active={false}
+                    compact={leftNarrow}
                     onClick={() => {
                       // Promote the compact calendar into the center
                       // canvas via the existing centerMode pipeline so
@@ -2358,6 +2508,7 @@ export function TeamPortalShell({
                     label="Email"
                     icon={Mail}
                     active={activeKind === "email"}
+                    compact={leftNarrow}
                     onClick={() => openPortalTab("email")}
                     testId="left-rail-tool-email"
                   />
@@ -2365,6 +2516,7 @@ export function TeamPortalShell({
                     label="Marketing"
                     icon={Megaphone}
                     active={activeKind === "marketing"}
+                    compact={leftNarrow}
                     onClick={() => openPortalTab("marketing")}
                     testId="left-rail-tool-marketing"
                   />
@@ -2372,6 +2524,7 @@ export function TeamPortalShell({
                     label="Documents"
                     icon={FileText}
                     active={activeKind === "documentLibrary"}
+                    compact={leftNarrow}
                     onClick={() => openPortalTab("documentLibrary")}
                     testId="left-rail-tool-document-library"
                   />
@@ -2379,6 +2532,7 @@ export function TeamPortalShell({
                     label="Patient Search"
                     icon={Search}
                     active={activeKind === "patientSearch"}
+                    compact={leftNarrow}
                     onClick={() => openPortalTab("patientSearch")}
                     testId="left-rail-tool-patient-search"
                   />
@@ -2386,6 +2540,7 @@ export function TeamPortalShell({
                     label="Tasks"
                     icon={ClipboardList}
                     active={activeKind === "plexusTasks"}
+                    compact={leftNarrow}
                     onClick={() => openPortalTab("plexusTasks")}
                     badge={taskCount > 0 ? taskCount : undefined}
                     testId="left-rail-tool-tasks"
@@ -2394,6 +2549,7 @@ export function TeamPortalShell({
                     label="Templates"
                     icon={BookOpen}
                     active={activeKind === "resources"}
+                    compact={leftNarrow}
                     onClick={() => openPortalTab("resources")}
                     testId="left-rail-tool-resources"
                   />
@@ -2401,6 +2557,7 @@ export function TeamPortalShell({
                     label="Quick Note"
                     icon={NotebookPen}
                     active={activeKind === "quickNote"}
+                    compact={leftNarrow}
                     onClick={() => openPortalTab("quickNote")}
                     testId="left-rail-tool-quick-note"
                   />
@@ -2408,8 +2565,17 @@ export function TeamPortalShell({
                     label="Contacts"
                     icon={Phone}
                     active={activeKind === "internalContacts"}
+                    compact={leftNarrow}
                     onClick={() => openPortalTab("internalContacts")}
                     testId="left-rail-tool-internal-contacts"
+                  />
+                  <LeftRailToolsButton
+                    label="Calls"
+                    icon={PhoneCall}
+                    active={activeKind === "calls"}
+                    compact={leftNarrow}
+                    onClick={() => openPortalTab("calls")}
+                    testId="left-rail-tool-calls"
                   />
                 </div>
 
@@ -2417,15 +2583,18 @@ export function TeamPortalShell({
                     ISOLATED from the right-rail queue (Phase 1.7).
                     Selecting a date only updates globalCalendarDate;
                     the right-rail feeds + center-canvas patient
-                    context remain on their own selectedDate. */}
-                <LeftRailCompactCalendar
-                  selectedDate={globalCalendarDate}
-                  onSelectDate={(d) => setGlobalCalendarDate(d)}
-                  onExpandToCanvas={() => {
-                    setCenterMode("playground");
-                    setCenterTitle(`Calendar — ${globalCalendarDate}`);
-                  }}
-                />
+                    context remain on their own selectedDate. Hidden in
+                    the narrow icon rail (too wide to fit). */}
+                {!leftNarrow && (
+                  <LeftRailCompactCalendar
+                    selectedDate={globalCalendarDate}
+                    onSelectDate={(d) => setGlobalCalendarDate(d)}
+                    onExpandToCanvas={() => {
+                      setCenterMode("playground");
+                      setCenterTitle(`Calendar — ${globalCalendarDate}`);
+                    }}
+                  />
+                )}
               </div>
               );
             })()}
@@ -2434,25 +2603,44 @@ export function TeamPortalShell({
         </div>
 
         <div
-          className="pointer-events-none absolute right-4 top-4 bottom-4 z-20 flex w-[340px] flex-col"
+          ref={rightRailRef}
+          className={`pointer-events-none absolute right-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ${RIGHT_RAIL_WIDTH[rightRailSize]}`}
           data-testid="portal-right-rail"
         >
-          {/* Trigger bar — anchored at the top-right edge. Stays visible when
-              the work-queue panel below is collapsed. */}
-          <button
-            type="button"
-            onClick={() => setRightRailCollapsed((v) => !v)}
-            className="pointer-events-auto inline-flex h-7 items-center gap-1.5 self-end rounded-full border border-white/15 border-t-white/30 bg-[rgba(72,99,160,0.85)] px-3 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl transition-colors hover:bg-[rgba(72,99,160,0.95)]"
-            data-testid="button-toggle-right-rail"
-          >
-            <span className="text-[11px] font-semibold tracking-wide text-white/90">Work Queue</span>
-            <ChevronDown className={`h-3.5 w-3.5 text-white/80 transition-transform duration-300 ${rightRailCollapsed ? "" : "rotate-180"}`} />
-          </button>
-
-          {/* Body — drops down from the trigger with a transform + opacity
-              transition rather than expanding horizontally. */}
+          {/* Trigger pill — ONE click region, two sizes, no arrows. Clicking the
+              RIGHT half (toward the screen edge) opens the THIN panel; the LEFT
+              half opens the NORMAL panel. Clicking away collapses it. */}
           <div
-            className={`pointer-events-auto mt-2 min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/15 border-t-white/30 bg-[rgba(72,99,160,0.80)] text-white shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
+            className="pointer-events-auto relative inline-flex h-7 select-none items-center self-end overflow-hidden rounded-full border border-white/25 border-t-white/40 bg-[#4863A0]/70 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl"
+            data-testid="portal-right-rail-pill"
+          >
+            {/* Left half (inner) → normal */}
+            <button
+              type="button"
+              onClick={() => openRightRail("normal")}
+              className="absolute inset-y-0 left-0 z-10 w-1/2 cursor-pointer"
+              title="Normal Work Queue panel"
+              aria-label="Normal Work Queue panel"
+              data-testid="button-widen-right-rail"
+            />
+            {/* Right half (outer edge) → thin */}
+            <button
+              type="button"
+              onClick={() => openRightRail("small")}
+              className="absolute inset-y-0 right-0 z-10 w-1/2 cursor-pointer"
+              title="Thin Work Queue panel"
+              aria-label="Thin Work Queue panel"
+              data-testid="button-narrow-right-rail"
+            />
+            <div className="pointer-events-none relative flex h-full items-center gap-1.5 px-3">
+              <span className="text-[11px] font-semibold tracking-wide text-white/90">Work Queue</span>
+            </div>
+          </div>
+
+          {/* Body — frosted-glass panel (step 1) that drops down from the
+              trigger with a transform + opacity transition. */}
+          <div
+            className={`pointer-events-auto mt-2 min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/30 bg-white/50 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
               rightRailCollapsed
                 ? "pointer-events-none -translate-y-3 scale-y-95 opacity-0"
                 : "translate-y-0 scale-y-100 opacity-100"
@@ -2464,10 +2652,10 @@ export function TeamPortalShell({
                     the scroll region so it's reachable while the patient
                     list below scrolls. Selection is UI-only; the body
                     renders the same canonical content per mode. */}
-                <div className="sticky top-0 z-10 border-b border-white/10 bg-[rgba(64,90,150,0.92)] px-3 pb-2.5 pt-2.5 backdrop-blur-xl">
+                <div className="sticky top-0 z-10 border-b border-white/10 bg-[#4863A0] px-3 pb-2.5 pt-2.5 backdrop-blur-xl">
                   <div className="mb-1.5 flex items-center justify-between px-0.5">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-white/70">Work Queue</span>
-                    <span className="text-[10px] text-slate-200">{selectedDate === todayIso() ? "Today" : selectedDate}</span>
+                    <span className="text-[10px] text-white/70">{selectedDate === todayIso() ? "Today" : selectedDate}</span>
                   </div>
                   <WorkspaceModeSwitcher
                     activeMode={activeWorkspaceMode}
@@ -2497,7 +2685,7 @@ export function TeamPortalShell({
                   <Badge variant="outline" data-testid="badge-patient-count">{patients.length}</Badge>
                 </div>
                 {patients.length === 0 ? (
-                  <div className="text-xs text-slate-200 py-4 text-center">No patients scheduled.</div>
+                  <div className="text-xs text-slate-600 py-4 text-center">No patients scheduled.</div>
                 ) : (
                   <div className="space-y-2">
                     {patients.map((p) => {
@@ -2660,9 +2848,9 @@ export function TeamPortalShell({
                       onSelect={setCallListFilterTag}
                     />
                     {workspaceCallListLoading ? (
-                      <div className="text-xs text-slate-200 py-4 text-center">Loading call list…</div>
+                      <div className="text-xs text-slate-600 py-4 text-center">Loading call list…</div>
                     ) : workspaceCallList.length === 0 ? (
-                      <div className="text-xs text-slate-200 py-4 text-center">
+                      <div className="text-xs text-slate-600 py-4 text-center">
                         No calls for this facility/date.
                       </div>
                     ) : (
@@ -2672,7 +2860,7 @@ export function TeamPortalShell({
                         return (
                         <div
                           key={`${row.id ?? idx}`}
-                          className="rounded-xl border border-l-4 border-l-sky-400 bg-white px-2.5 py-2 text-slate-900 shadow-sm transition-colors hover:bg-slate-50"
+                          className="rounded-xl border border-white/40 border-l-4 border-l-sky-400/80 bg-white/80 px-2.5 py-2 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.12)] backdrop-blur-md transition-colors hover:bg-white/90"
                           data-testid={`workspace-call-${row.id ?? idx}`}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -2702,8 +2890,8 @@ export function TeamPortalShell({
                               row={row}
                               idx={row.id ?? idx}
                               canCall={canCall}
-                              onOpenCall={() => openCaseTab("call", callRowToCaseContext(row))}
-                              onOpenSchedule={() => openCaseTab("caseSchedule", callRowToCaseContext(row))}
+                              onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
+                              onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
                               onOpenCase={() => openCaseTab("caseOverview", callRowToCaseContext(row))}
                             />
                           </div>
@@ -2733,18 +2921,25 @@ export function TeamPortalShell({
                 {activeWorkspaceMode === "ancillarySchedule" && (
                   <div className="space-y-2" data-testid="workspace-mode-body-ancillarySchedule">
                     {workspaceAncillaryLoading ? (
-                      <div className="text-xs text-slate-200 py-4 text-center">Loading ancillary schedule…</div>
+                      <div className="text-xs text-slate-600 py-4 text-center">Loading ancillary schedule…</div>
                     ) : filteredAncillarySchedule.length === 0 ? (
-                      <div className="text-xs text-slate-200 py-4 text-center">
+                      <div className="text-xs text-slate-600 py-4 text-center">
                         {allowedServiceTypes.length > 0 && workspaceAncillarySchedule.length > 0
                           ? "No ancillary tests in your allowed service types for this facility/date."
                           : "No ancillary tests scheduled for this facility/date."}
                       </div>
                     ) : (
-                      filteredAncillarySchedule.map((row, idx) => (
+                      filteredAncillarySchedule.map((row, idx) => {
+                        const rowKey = `ancillary:${row.id ?? idx}`;
+                        const removing = removingRowKeys.has(rowKey);
+                        return (
                         <div
                           key={`${row.id ?? idx}`}
-                          className="rounded-xl border border-l-4 border-l-violet-400 bg-white px-2.5 py-2 text-slate-900 shadow-sm transition-colors hover:bg-slate-50"
+                          className={`overflow-hidden rounded-xl border border-white/40 border-l-4 border-l-violet-400/80 bg-white/80 px-2.5 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.12)] backdrop-blur-md transition-all duration-300 ${
+                            removing
+                              ? "max-h-0 -translate-y-2 border-transparent py-0 opacity-0"
+                              : "max-h-[400px] py-2 opacity-100 hover:bg-white/90"
+                          }`}
                           data-testid={`workspace-ancillary-${row.id ?? idx}`}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -2840,11 +3035,29 @@ export function TeamPortalShell({
                                   patientDob={row.patientDob ?? null}
                                   facilityId={row.facilityId ?? null}
                                   serviceType={row.serviceType}
+                                  onCompleted={() => {
+                                    // Slide the completed row up, then drop the
+                                    // animation key once the ancillary feed
+                                    // refetch has removed the underlying row.
+                                    setRemovingRowKeys((prev) => {
+                                      const next = new Set(prev);
+                                      next.add(rowKey);
+                                      return next;
+                                    });
+                                    window.setTimeout(() => {
+                                      setRemovingRowKeys((prev) => {
+                                        const next = new Set(prev);
+                                        next.delete(rowKey);
+                                        return next;
+                                      });
+                                    }, 350);
+                                  }}
                                 />
                               </div>
                             )}
                         </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 )}
@@ -2854,7 +3067,7 @@ export function TeamPortalShell({
                   workspaceClinicLoading &&
                   workspaceClinicSchedule.length === 0 &&
                   patients.length === 0 && (
-                    <div className="text-xs text-slate-200 py-2 text-center">
+                    <div className="text-xs text-slate-600 py-2 text-center">
                       Loading clinic schedule…
                     </div>
                   )}
@@ -3037,6 +3250,47 @@ export function TeamPortalShell({
             : undefined
         }
       />
+
+      {/* Step 3 — pop-up dialer. CallWorkspace fetches the patient phone and
+          starts a call through the existing RingCentral provider; when the
+          provider is unwired it degrades to a manual-dial card (honest
+          boundary, never a fake live call). z-[95] keeps it above the z-[80]
+          portal overlay. */}
+      <Dialog
+        open={!!callWorkspaceCtx}
+        onOpenChange={(o) => {
+          if (!o) setCallWorkspaceCtx(null);
+        }}
+      >
+        <DialogContent
+          className="z-[95] max-w-2xl gap-0 overflow-hidden p-0"
+          data-testid="dialog-quick-call"
+        >
+          {callWorkspaceCtx && (
+            <CallWorkspace
+              ctx={callWorkspaceCtx}
+              onScheduleCase={() => {
+                const ctx = callWorkspaceCtx;
+                setCallWorkspaceCtx(null);
+                openSchedulePatientDialog({
+                  patientName: ctx.patientName ?? null,
+                  patientDob: ctx.patientDob ?? null,
+                  facilityId: ctx.facilityId ?? null,
+                  patientScreeningId: ctx.patientScreeningId ?? null,
+                  executionCaseId: ctx.executionCaseId ?? null,
+                  serviceType: ctx.targetServices?.[0] ?? null,
+                });
+              }}
+              onOpenCase={() => {
+                const ctx = callWorkspaceCtx;
+                setCallWorkspaceCtx(null);
+                openCaseTab("caseOverview", ctx);
+              }}
+              onClose={() => setCallWorkspaceCtx(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Canonical calendar shared by PCS, ACS, Plexus IQ, and Dashboard. */}
       <CanonicalCommandCalendar

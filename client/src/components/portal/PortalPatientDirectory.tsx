@@ -18,10 +18,13 @@ export function PortalPatientDirectory({
   patientScreeningId,
   seedName,
   onBack,
+  onSchedule,
 }: {
   patientScreeningId: number;
   seedName?: string | null;
   onBack?: () => void;
+  /** Opens the in-portal scheduling dialog (calendar popup) for this patient. */
+  onSchedule?: () => void;
 }) {
   const resolveQuery = useQuery<ResolveResponse>({
     queryKey: ["/api/patients/database/resolve", String(patientScreeningId)],
@@ -65,6 +68,7 @@ export function PortalPatientDirectory({
       representativeScreeningId={patientScreeningId}
       seedName={name}
       onBack={onBack}
+      onSchedule={onSchedule}
     />
   );
 }

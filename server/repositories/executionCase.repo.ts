@@ -566,6 +566,86 @@ export async function assignEngagementCases(
   return { dryRun, targetRole: input.targetRole, count: cases.length, cases };
 }
 
+// ─── Call-list recall / manual-add ─────────────────────────────────────────
+
+export type RecallToCallListInput = {
+  executionCaseId?: number;
+  patientScreeningId?: number;
+  /** When provided, reassign ownership to this roster member (outreach_schedulers.id)
+   *  so the case surfaces on that member's scoped call list. */
+  assignedTeamMemberId?: number | null;
+  actorUserId?: string | null;
+  reason?: string;
+};
+
+/** Re-surface a completed / dismissed / dormant execution case onto the active
+ *  call list. Sets a non-terminal engagement status, reactivates the lifecycle,
+ *  and stamps nextActionAt=now so the case sorts to the top of the day window.
+ *  The engagement bucket is normalized into a scheduler/call-list bucket when it
+ *  is not already one, otherwise the call-list feed (which only reads
+ *  visit/outreach/scheduling_triage) would silently drop the recalled case.
+ *  Returns the updated row, or null when no matching case exists. */
+export async function recallExecutionCaseToCallList(
+  input: RecallToCallListInput,
+): Promise<PatientExecutionCase | null> {
+  let row: PatientExecutionCase | undefined;
+  if (input.executionCaseId != null) {
+    row = await getExecutionCaseById(input.executionCaseId);
+  } else if (input.patientScreeningId != null) {
+    row = await getExecutionCaseByScreeningId(input.patientScreeningId);
+  }
+  if (!row) return null;
+
+  const bucketIsCallList = (SCHEDULER_DEFAULT_BUCKETS as readonly string[]).includes(
+    row.engagementBucket ?? "",
+  );
+
+  const setFields: Record<string, unknown> = {
+    engagementStatus: "in_progress",
+    lifecycleStatus: "active",
+    nextActionAt: new Date(),
+    updatedAt: new Date(),
+  };
+  if (!bucketIsCallList) setFields.engagementBucket = "outreach";
+  if (input.assignedTeamMemberId != null) {
+    setFields.assignedTeamMemberId = input.assignedTeamMemberId;
+  }
+
+  const [updated] = await db
+    .update(patientExecutionCases)
+    .set(setFields)
+    .where(eq(patientExecutionCases.id, row.id))
+    .returning();
+  if (!updated) return null;
+
+  try {
+    await appendPatientJourneyEvent({
+      patientName: updated.patientName,
+      patientDob: updated.patientDob ?? undefined,
+      patientScreeningId: updated.patientScreeningId ?? undefined,
+      executionCaseId: updated.id,
+      eventType: "call_list_recall",
+      eventSource: "team_portal",
+      actorUserId: input.actorUserId ?? null,
+      summary: input.reason?.trim() || "Recalled to active call list",
+      metadata: {
+        previousEngagementStatus: row.engagementStatus,
+        previousLifecycleStatus: row.lifecycleStatus,
+        previousEngagementBucket: row.engagementBucket ?? null,
+        previousAssignedTeamMemberId: row.assignedTeamMemberId ?? null,
+        assignedTeamMemberId:
+          input.assignedTeamMemberId ?? row.assignedTeamMemberId ?? null,
+        reason: input.reason?.trim() || null,
+      },
+    });
+  } catch (err) {
+    // Journey logging is best-effort — never undo the recall over a logging miss.
+    console.error("[recallExecutionCaseToCallList] journey event append failed:", err);
+  }
+
+  return updated;
+}
+
 export type ListJourneyEventsFilters = {
   executionCaseId?: number;
   patientScreeningId?: number;

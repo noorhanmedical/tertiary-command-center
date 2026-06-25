@@ -13,6 +13,7 @@ import {
   listEngagementCenterCases,
   listSchedulerPortalCases,
   assignEngagementCases,
+  recallExecutionCaseToCallList,
 } from "../repositories/executionCase.repo";
 import { appendJourneyEvent } from "../services/journey/appendJourneyEvent";
 // PHASE-1 FACILITY SCOPE — Phase 1 Slice 1.2 wires /api/scheduler-
@@ -1015,6 +1016,92 @@ export function registerExecutionCaseRoutes(app: Express) {
       if (q.qualificationStatus) filters.qualificationStatus = q.qualificationStatus;
       const rows = await listSchedulerPortalCases(filters, limit);
       res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/scheduler-portal/call-list/recall
+  // Re-surface a completed / dismissed / dormant case back onto the active
+  // call list. Body: { executionCaseId? | patientScreeningId?, assignToMe?,
+  // facilityId?, reason? }. When assignToMe is true the case is reassigned to
+  // the caller's own roster id (resolveCallListAssignmentScope) so it lands on
+  // their scoped queue; if the caller has no roster mapping for the facility we
+  // surface an honest 409 instead of silently dropping the recall.
+  app.post("/api/scheduler-portal/call-list/recall", requirePortalRole, async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as {
+        executionCaseId?: unknown;
+        patientScreeningId?: unknown;
+        assignToMe?: unknown;
+        facilityId?: unknown;
+        reason?: unknown;
+      };
+      const executionCaseId =
+        typeof body.executionCaseId === "number" ? body.executionCaseId : undefined;
+      const patientScreeningId =
+        typeof body.patientScreeningId === "number" ? body.patientScreeningId : undefined;
+      if (executionCaseId == null && patientScreeningId == null) {
+        return res
+          .status(400)
+          .json({ error: "executionCaseId or patientScreeningId is required" });
+      }
+
+      // Resolve the target case FIRST so authorization is enforced against the
+      // case's own facility — never against the caller-supplied facilityId,
+      // which the client must not be trusted for. A portal user may only recall
+      // cases for facilities they're assigned to (admins: all facilities).
+      const targetCase =
+        executionCaseId != null
+          ? await getExecutionCaseById(executionCaseId)
+          : await getExecutionCaseByScreeningId(patientScreeningId!);
+      if (!targetCase) {
+        return res.status(404).json({
+          error:
+            "No execution case found for that patient. Only patients with an existing case can be added to the call list.",
+          code: "case_not_found",
+        });
+      }
+
+      const allowed = await allowedFacilities(req, {});
+      const caseFacility = targetCase.facilityId ?? null;
+      if (!allowed.all) {
+        if (!caseFacility || !allowed.facilities.has(caseFacility)) {
+          return res
+            .status(403)
+            .json({ error: "Forbidden — clinic not assigned to this user" });
+        }
+      }
+
+      let assignedTeamMemberId: number | null | undefined;
+      if (body.assignToMe === true) {
+        // Scope is resolved from the CASE's facility (authorization-trusted),
+        // not the client-supplied facilityId.
+        const scope = await resolveCallListAssignmentScope(req, caseFacility, null);
+        if (scope.schedulerId == null) {
+          return res.status(409).json({
+            error:
+              "You have no clinic-roster mapping for this facility, so the case can't be added to your call list. Ask an admin to add you to the roster.",
+            code: "no_roster_mapping",
+          });
+        }
+        assignedTeamMemberId = scope.schedulerId;
+      }
+
+      const updated = await recallExecutionCaseToCallList({
+        executionCaseId: targetCase.id,
+        assignedTeamMemberId,
+        actorUserId: req.session.userId ?? null,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+      });
+      if (!updated) {
+        return res.status(404).json({
+          error:
+            "No execution case found for that patient. Only patients with an existing case can be added to the call list.",
+          code: "case_not_found",
+        });
+      }
+      res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

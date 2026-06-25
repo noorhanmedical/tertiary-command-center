@@ -28,12 +28,15 @@ export function PatientProfileWorkspace({
   representativeScreeningId,
   seedName,
   onBack,
+  onSchedule,
 }: {
   encodedKey: string;
   representativeScreeningId: number | null;
   /** Name from the call-list/roster context, shown instantly in the shell. */
   seedName?: string | null;
   onBack?: () => void;
+  /** Opens the in-portal scheduling dialog (calendar popup) for this patient. */
+  onSchedule?: () => void;
 }) {
   // Heavy, cleanly-independent sections fetch only once scrolled into view.
   const [documentsWanted, setDocumentsWanted] = useState(false);
@@ -238,6 +241,7 @@ export function PatientProfileWorkspace({
     <PatientChart
       chart={chart}
       onBack={onBack}
+      onSchedule={onSchedule}
       loadingSections={loadingSections}
       onVisibleSectionsChange={handleVisible}
     />

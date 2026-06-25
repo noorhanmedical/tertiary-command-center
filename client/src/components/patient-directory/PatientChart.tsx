@@ -19,11 +19,15 @@ const TONE_PILL: Record<string, string> = {
 export function PatientChart({
   chart,
   onBack,
+  onSchedule,
   loadingSections,
   onVisibleSectionsChange,
 }: {
   chart: EmrChart;
   onBack?: () => void;
+  /** When provided, the Schedule button opens this in-portal calendar popup
+   *  instead of navigating to /appointments. */
+  onSchedule?: () => void;
   /** Section ids whose backing query is still loading → render a skeleton. */
   loadingSections?: Set<string>;
   /** Reports the section ids currently intersecting the scroll viewport so the
@@ -97,27 +101,27 @@ export function PatientChart({
   return (
     <div className="flex flex-col h-full" data-testid="patient-chart">
       {/* ── Sticky patient header ── */}
-      <header className="border-b border-slate-200/80 dark:border-border/60 bg-white/85 dark:bg-card/80 backdrop-blur px-5 py-4 shrink-0" data-testid="chart-header">
-        <div className="flex items-start gap-3">
+      <header className="border-b border-slate-200/80 dark:border-border/60 bg-white/85 dark:bg-card/80 backdrop-blur px-4 py-2.5 shrink-0" data-testid="chart-header">
+        <div className="flex items-center gap-2.5">
           {onBack && (
-            <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 lg:hidden" onClick={onBack} data-testid="button-chart-back">
+            <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 lg:hidden" onClick={onBack} data-testid="button-chart-back">
               <ChevronLeft className="w-4 h-4" />
             </Button>
           )}
-          <div className="w-12 h-12 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 flex items-center justify-center text-sm font-semibold shrink-0">
+          <div className="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 flex items-center justify-center text-xs font-semibold shrink-0">
             {initials(d.name || "?")}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <h1 className="text-xl font-bold leading-tight truncate" data-testid="text-chart-name">{d.name || "Unknown patient"}</h1>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${TONE_PILL[csTone]}`} data-testid="badge-case-status">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <h1 className="text-base font-bold leading-tight truncate" data-testid="text-chart-name">{d.name || "Unknown patient"}</h1>
+              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${TONE_PILL[csTone]}`} data-testid="badge-case-status">
                 {chart.caseStatus.label}
               </span>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${TONE_PILL[cdTone]}`} data-testid="badge-header-cooldown">
+              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${TONE_PILL[cdTone]}`} data-testid="badge-header-cooldown">
                 <Clock className="w-3 h-3" />{chart.cooldown.stateLabel}
               </span>
             </div>
-            <div className="mt-1 text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-0.5" data-testid="text-chart-demographics">
+            <div className="mt-0.5 text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-2.5 gap-y-0" data-testid="text-chart-demographics">
               <span>{d.mrn ? `MRN ${d.mrn}` : "MRN —"}</span>
               <span>{d.dob ? `DOB ${d.dob}` : "DOB —"}</span>
               <span>{[d.age ? `${d.age}yo` : null, d.gender].filter(Boolean).join(" · ") || "Age/Gender —"}</span>
@@ -127,14 +131,18 @@ export function PatientChart({
               {d.phoneNumber && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{d.phoneNumber}</span>}
             </div>
           </div>
-          <div className="hidden sm:flex items-center gap-2 shrink-0">
+          <div className="hidden sm:flex items-center gap-1.5 shrink-0">
             {phoneHref ? (
-              <a href={phoneHref} data-testid="button-chart-call"><Button size="sm" variant="outline" className="gap-1.5"><Phone className="w-3.5 h-3.5" />Call</Button></a>
+              <a href={phoneHref} data-testid="button-chart-call"><Button size="sm" variant="outline" className="h-7 gap-1.5"><Phone className="w-3.5 h-3.5" />Call</Button></a>
             ) : (
-              <Button size="sm" variant="outline" className="gap-1.5" disabled data-testid="button-chart-call"><Phone className="w-3.5 h-3.5" />Call</Button>
+              <Button size="sm" variant="outline" className="h-7 gap-1.5" disabled data-testid="button-chart-call"><Phone className="w-3.5 h-3.5" />Call</Button>
             )}
-            <Link href="/appointments" data-testid="button-chart-schedule"><Button size="sm" variant="outline" className="gap-1.5"><CalendarPlus className="w-3.5 h-3.5" />Schedule</Button></Link>
-            <Link href="/plexus-iq" data-testid="button-chart-plexus"><Button size="sm" className="gap-1.5"><Sparkles className="w-3.5 h-3.5" />Plexus IQ</Button></Link>
+            {onSchedule ? (
+              <Button size="sm" variant="outline" className="h-7 gap-1.5" onClick={onSchedule} data-testid="button-chart-schedule"><CalendarPlus className="w-3.5 h-3.5" />Schedule</Button>
+            ) : (
+              <Link href="/appointments" data-testid="button-chart-schedule"><Button size="sm" variant="outline" className="h-7 gap-1.5"><CalendarPlus className="w-3.5 h-3.5" />Schedule</Button></Link>
+            )}
+            <Link href="/plexus-iq" data-testid="button-chart-plexus"><Button size="sm" className="h-7 gap-1.5"><Sparkles className="w-3.5 h-3.5" />Plexus IQ</Button></Link>
           </div>
         </div>
       </header>
