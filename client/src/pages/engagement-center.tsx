@@ -40,6 +40,7 @@ import { EngagementFilterRail } from "@/components/engagement/EngagementFilterRa
 import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel";
 import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
+import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
 import {
   type BoardResponse,
   type BoardRow,
@@ -93,7 +94,7 @@ export default function EngagementCenterPage() {
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [smartFilter, setSmartFilter] = useState<SmartFilterKey>("all");
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
-  const [view, setView] = useState<"repository" | "distribution" | "callSettings">("repository");
+  const [view, setView] = useState<"repository" | "distribution" | "callSettings" | "liveMetrics">("repository");
 
   const board = useQuery<BoardResponse>({
     queryKey: ["/api/engagement/assignment-board", "command"],
@@ -316,6 +317,18 @@ export default function EngagementCenterPage() {
             >
               Call Settings
             </button>
+            <button
+              type="button"
+              onClick={() => setView("liveMetrics")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                view === "liveMetrics"
+                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+              data-testid="button-view-live-metrics"
+            >
+              Live Metrics
+            </button>
           </div>
 
           {/* Search */}
@@ -400,6 +413,12 @@ export default function EngagementCenterPage() {
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="mx-auto max-w-6xl">
             <EngagementDistributionPanel />
+          </div>
+        </main>
+      ) : view === "liveMetrics" ? (
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+          <div className="mx-auto max-w-6xl">
+            <EngagementTeamMetrics />
           </div>
         </main>
       ) : (

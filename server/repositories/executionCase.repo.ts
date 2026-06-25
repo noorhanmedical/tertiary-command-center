@@ -572,6 +572,10 @@ export type ListJourneyEventsFilters = {
   patientName?: string;
   patientDob?: string;
   eventType?: string;
+  eventTypes?: string[];
+  actorUserIds?: string[];
+  createdAfter?: Date;
+  createdBefore?: Date;
 };
 
 export async function listJourneyEvents(
@@ -585,6 +589,10 @@ export async function listJourneyEvents(
   if (filters.patientName) conditions.push(eq(patientJourneyEvents.patientName, filters.patientName));
   if (filters.patientDob) conditions.push(eq(patientJourneyEvents.patientDob, filters.patientDob));
   if (filters.eventType) conditions.push(eq(patientJourneyEvents.eventType, filters.eventType));
+  if (filters.eventTypes && filters.eventTypes.length > 0) conditions.push(inArray(patientJourneyEvents.eventType, filters.eventTypes));
+  if (filters.actorUserIds && filters.actorUserIds.length > 0) conditions.push(inArray(patientJourneyEvents.actorUserId, filters.actorUserIds));
+  if (filters.createdAfter) conditions.push(sql`${patientJourneyEvents.createdAt} >= ${filters.createdAfter}`);
+  if (filters.createdBefore) conditions.push(sql`${patientJourneyEvents.createdAt} < ${filters.createdBefore}`);
 
   const query = db.select().from(patientJourneyEvents)
     .$dynamic();
