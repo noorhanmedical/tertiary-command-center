@@ -1,36 +1,29 @@
 ---
-name: Admin Review source-edit regeneration gate
-description: Non-obvious invariants for the AdminReviewDialog gate that blocks Approve/PDF until clinical-source edits are regenerated.
+name: Admin Review source-edit regeneration gate (REMOVED)
+description: The AdminReviewDialog Approve/PDF blocking gate was intentionally removed; regenerate is now optional/non-blocking.
 ---
 
-# Admin Review source-edit regeneration gate
+# Admin Review source-edit regeneration gate — REMOVED
 
-In `AdminReviewDialog.tsx`, editing clinical source data (Hx/Dx/Rx) must block
-Admin Approve **and** the Documents/PDF action until the AI re-analysis is
-regenerated. The gate is `needsRegeneration = staleTargetIds.length > 0 ||
-sourceDataSaved`. Saving source data sets `sourceDataSaved = true`.
+The old behavior: editing clinical source (Hx/Dx/Rx) blocked Approve **and**
+Documents/PDF until an AI re-analysis ran (`needsRegeneration = staleTargetIds.length > 0 || sourceDataSaved`).
 
-Invariants future edits must preserve (each was a real bug caught in review):
+**This gate was deliberately removed** per an explicit user request ("get rid of
+blocking rules"). Current behavior in `AdminReviewDialog.tsx`:
 
-1. **Clear the block ONLY on a fully successful regenerate.** Never call
-   `setSourceDataSaved(false)` from the Edit-toggle / cancel path — re-opening
-   and cancelling edit mode would otherwise unlock approval without
-   regenerating. `regeneratePending()` clears it only when `failures.length === 0`;
-   any partial or total failure returns early keeping the block.
+- The "Blocking Rules" section (under-16 / missing-ICD / regeneration-required)
+  was deleted from the right rail.
+- Approve and the Documents trigger are **no longer disabled** by
+  `needsRegeneration`. Approve label is just "Approve" (or "Admin Override
+  Approve" when under 16).
+- `needsRegeneration` still exists, but now only controls whether the
+  **Regenerate** button is shown inside the Updates panel — regenerate is
+  available but optional, never blocking.
 
-**Why:** spec requires a failed regeneration to remain blocking (otherwise an
-admin could approve against source data the AI never re-analyzed).
+**Why:** the user wanted a frictionless, premium Admin Review with no
+hard blocks; approving against not-yet-regenerated source is now allowed by design.
 
-2. **Regenerate payloads must use the local mirrors `localDx/localRx/localHx`,
-   not `patient.diagnoses/medications/history`.** The local mirrors are set
-   synchronously on Save and resynced on `patient.id` change; the parent prop
-   may not have re-propagated by the time the user clicks Regenerate, so the
-   prop path can send stale source. Applies to BOTH the per-ancillary and
-   per-test regenerate mutations.
-
-3. **`recordAdminReviewUpdate()` merges into `lastWrittenReasoningRef.current`**
-   (not a rebuild from `patient.reasoning`), so an audit-log write cannot
-   clobber freshly written `assignedEvidence` / stale flags.
-
-**How to apply:** when touching the source-edit toggle, the regenerate
-callbacks, or the gating boolean, re-verify all three above before approving.
+**How to apply:** do NOT re-introduce a hard block on Approve/PDF tied to
+source edits unless the product owner reverses this decision. Keep regenerate
+as a voluntary action. The `regeneratePending()` success-only clear of
+`sourceDataSaved` is still fine to preserve for the Regenerate button's own state.

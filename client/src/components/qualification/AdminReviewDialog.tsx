@@ -2570,11 +2570,33 @@ export function AdminReviewDialog({
   // single Updates-panel Regenerate clears it.
   const needsRegeneration = staleTargetIds.length > 0 || sourceDataSaved;
 
+  // Presence of ancillaries already on the patient — drives the manual
+  // Add Ancillary menu so it never re-offers something already added.
+  const presentTestSet = new Set(
+    (patient.qualifyingTests ?? []).map((t) => String(t)),
+  );
+  const presentTestList = Array.from(presentTestSet);
+  const canAddBrainwave = !presentTestList.some(
+    (t) => getAncillaryCategory(t) === "brainwave",
+  );
+  const canAddVitalwave = !presentTestList.some(
+    (t) => getAncillaryCategory(t) === "vitalwave",
+  );
+  const canAddGenericUltrasound = !presentTestSet.has("Ultrasound Studies");
+  const availableUltrasoundSubtypes = ADD_ULTRASOUND_SUBTYPES.filter(
+    (t) => !presentTestSet.has(t),
+  );
+  const hasAnyAddableAncillary =
+    canAddBrainwave ||
+    canAddVitalwave ||
+    canAddGenericUltrasound ||
+    availableUltrasoundSubtypes.length > 0;
+
   const shellChildren = (
     <>
         {/* Smoke header — black at ~70% opacity per Team Portal spec. */}
         <DialogHeader
-          className="px-6 pt-5 pb-4 border-b border-slate-700 bg-slate-900 text-white"
+          className="px-6 pt-5 pb-4 border-b border-white/10 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white"
           data-testid="admin-review-smoke-header"
         >
           <div className="flex items-start justify-between gap-3">
@@ -2679,12 +2701,15 @@ export function AdminReviewDialog({
         {/* ─── Two-panel body: LEFT ancillaries playground · RIGHT action column ─── */}
         <div
           className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4"
-          style={{ background: "#F4F5F7" }}
+          style={{
+            background:
+              "radial-gradient(1200px 600px at 0% 0%, #e7eefb 0%, transparent 55%), radial-gradient(1000px 700px at 100% 100%, #eaf2fb 0%, transparent 50%), linear-gradient(135deg, #eef3fb 0%, #f6f9fd 100%)",
+          }}
           data-testid="admin-review-two-panel-body"
         >
           {/* ─── LEFT panel — Ancillaries playground ─── */}
           <main
-            className="flex min-h-0 flex-[1.35] flex-col overflow-hidden rounded-2xl border border-[#E6E8EF] bg-white"
+            className="flex min-h-0 flex-[1.35] flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/75 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
             data-testid="admin-review-ancillary-panel"
           >
               <ScrollArea className="flex-1 min-h-0 px-5 py-4">
@@ -2706,8 +2731,9 @@ export function AdminReviewDialog({
                     <button
                       type="button"
                       data-testid="admin-review-add-ancillary-trigger"
-                      disabled={addAncillaryMutation.isPending}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
+                      disabled={addAncillaryMutation.isPending || !hasAnyAddableAncillary}
+                      title={hasAnyAddableAncillary ? "Add an ancillary" : "All ancillaries already added"}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300/60 bg-gradient-to-b from-sky-50 to-sky-100/60 text-sky-800 hover:from-sky-100 hover:to-sky-100 shadow-sm px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {addAncillaryMutation.isPending ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -2732,51 +2758,69 @@ export function AdminReviewDialog({
                         data-testid="admin-review-add-ancillary-reason"
                       />
                       <div className="space-y-1">
-                        <button
-                          type="button"
-                          onClick={() => handleAddAncillary("brainwave", "BrainWave")}
-                          data-testid="admin-review-add-brainwave"
-                          className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-violet-50 text-violet-800 transition-colors"
-                        >
-                          Add BrainWave
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAddAncillary("vitalwave", "VitalWave")}
-                          data-testid="admin-review-add-vitalwave"
-                          className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-rose-50 text-rose-800 transition-colors"
-                        >
-                          Add VitalWave
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAddAncillary("ultrasound", "Ultrasound Studies")}
-                          data-testid="admin-review-add-ultrasound-generic"
-                          className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-emerald-50 text-emerald-800 transition-colors"
-                        >
-                          Add Ultrasound (generic)
-                        </button>
+                        {canAddBrainwave && (
+                          <button
+                            type="button"
+                            onClick={() => handleAddAncillary("brainwave", "BrainWave")}
+                            data-testid="admin-review-add-brainwave"
+                            className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-violet-50 text-violet-800 transition-colors"
+                          >
+                            Add BrainWave
+                          </button>
+                        )}
+                        {canAddVitalwave && (
+                          <button
+                            type="button"
+                            onClick={() => handleAddAncillary("vitalwave", "VitalWave")}
+                            data-testid="admin-review-add-vitalwave"
+                            className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-rose-50 text-rose-800 transition-colors"
+                          >
+                            Add VitalWave
+                          </button>
+                        )}
+                        {canAddGenericUltrasound && (
+                          <button
+                            type="button"
+                            onClick={() => handleAddAncillary("ultrasound", "Ultrasound Studies")}
+                            data-testid="admin-review-add-ultrasound-generic"
+                            className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-emerald-50 text-emerald-800 transition-colors"
+                          >
+                            Add Ultrasound (generic)
+                          </button>
+                        )}
                       </div>
-                      <Separator className="my-1" />
-                      <div className="px-1 text-[10px] uppercase tracking-wider text-slate-500">
-                        Ultrasound subtype
-                      </div>
-                      <ScrollArea className="max-h-44">
-                        <div className="space-y-0.5 pr-1">
-                          {ADD_ULTRASOUND_SUBTYPES.map((t) => (
-                            <button
-                              key={t}
-                              type="button"
-                              onClick={() => handleAddAncillary("ultrasound", t)}
-                              data-testid="admin-review-add-ultrasound-subtype"
-                              data-test-name={t}
-                              className="w-full text-left rounded-md px-2 py-1.5 text-[11px] hover:bg-emerald-50 text-emerald-900 transition-colors"
-                            >
-                              {t}
-                            </button>
-                          ))}
+                      {availableUltrasoundSubtypes.length > 0 && (
+                        <>
+                          <Separator className="my-1" />
+                          <div className="px-1 text-[10px] uppercase tracking-wider text-slate-500">
+                            Ultrasound subtype
+                          </div>
+                          <ScrollArea className="max-h-44">
+                            <div className="space-y-0.5 pr-1">
+                              {availableUltrasoundSubtypes.map((t) => (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  onClick={() => handleAddAncillary("ultrasound", t)}
+                                  data-testid="admin-review-add-ultrasound-subtype"
+                                  data-test-name={t}
+                                  className="w-full text-left rounded-md px-2 py-1.5 text-[11px] hover:bg-emerald-50 text-emerald-900 transition-colors"
+                                >
+                                  {t}
+                                </button>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        </>
+                      )}
+                      {!hasAnyAddableAncillary && (
+                        <div
+                          className="px-2 py-3 text-center text-[11px] text-slate-400 italic"
+                          data-testid="admin-review-add-ancillary-empty"
+                        >
+                          All ancillaries are already on this patient.
                         </div>
-                      </ScrollArea>
+                      )}
                     </div>
                   </PopoverContent>
                 </Popover>
@@ -3224,15 +3268,16 @@ export function AdminReviewDialog({
               </ScrollArea>
           </main>
 
-          {/* ─── RIGHT panel — slim action rail. Evidence sits at the top,
-              the decision is pinned at the bottom, and heavier surfaces
-              (documents, note, scheduler, reference, activity) collapse into
-              popovers so the column stays narrow. ─── */}
+          {/* ─── RIGHT panel — slim action rail. Reference + Actions sit in
+              the top scroll, the Updates premium glass panel takes the bottom
+              half, and a floating glass decision bar sits beneath it. Heavier
+              surfaces (documents, note, scheduler) collapse into popovers so
+              the column stays narrow. ─── */}
           <aside
-            className="flex min-h-0 w-[300px] flex-none flex-col overflow-hidden rounded-2xl border border-[#E6E8EF] bg-white"
+            className="flex min-h-0 w-[320px] flex-none flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/45 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
             data-testid="admin-review-action-panel"
           >
-            <ScrollArea className="min-h-0 flex-1">
+            <ScrollArea className="min-h-0 flex-1 basis-0">
               <div className="space-y-4 p-4">
                     {/* Reference surfaces — split into top-of-rail buttons */}
                     <div data-testid="admin-review-reference-buttons-group">
@@ -3728,133 +3773,6 @@ export function AdminReviewDialog({
                   </section>
                 </div>
 
-                    {/* Updates — grouped by ancillary; Regenerate lives here */}
-                    <div data-testid="admin-review-updates-group">
-          <div
-            className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3"
-            data-testid="admin-review-updates-made-box"
-            data-record-helper="admin-review-record-update"
-          >
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                Updates
-              </div>
-              {needsRegeneration ? (
-                <button
-                  type="button"
-                  onClick={() => void regeneratePending()}
-                  disabled={regenChangedInFlight}
-                  aria-label="Regenerate"
-                  title={sourceDataSaved
-                    ? "Regenerate all ancillaries with updated source data"
-                    : `Regenerate: ${staleTargetIds
-                        .map(ancillaryLabelForTargetId)
-                        .join(", ")}`}
-                  data-testid="admin-review-regenerate-changed"
-                  data-stale-count={staleTargetIds.length}
-                  className="inline-flex items-center gap-1 h-6 px-2.5 rounded-md bg-slate-800 hover:bg-slate-900 text-white text-[10px] font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {regenChangedInFlight ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-3 h-3" />
-                  )}
-                  Regenerate
-                </button>
-              ) : (
-                <span className="text-[10px] text-slate-400 tabular-nums">
-                  {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
-                </span>
-              )}
-            </div>
-            {(() => {
-              const groups = groupUpdatesByAncillary(updatesLog);
-              if (groups.length === 0) {
-                return (
-                  <div className="text-[11px] text-slate-400 italic">
-                    {sourceDataSaved
-                      ? "Source data edited — regenerate to apply across all ancillaries."
-                      : "Changes you make will appear here, grouped by ancillary."}
-                  </div>
-                );
-              }
-              return (
-                <ScrollArea className="max-h-[260px]">
-                  <div className="space-y-3 pr-2">
-                    {groups.map((group) => (
-                      <div
-                        key={group.ancillary}
-                        data-testid={`admin-review-updates-group-${group.ancillary}`}
-                      >
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${UPDATE_GROUP_DOT[group.ancillary]}`}
-                          />
-                          <span
-                            className={`text-[10px] font-bold uppercase tracking-wider ${UPDATE_GROUP_ACCENT[group.ancillary]}`}
-                          >
-                            {categoryLabels[group.ancillary]}
-                          </span>
-                        </div>
-                        <ul className="space-y-1 pl-3">
-                          {group.entries.map((entry) => (
-                            <li
-                              key={entry.id}
-                              className="flex items-start gap-2 text-[11px] text-slate-700 leading-snug"
-                              data-testid="admin-review-updates-made-item"
-                              data-update-type={entry.type}
-                            >
-                              <span className="font-mono text-[10px] text-slate-400 shrink-0 tabular-nums">
-                                {entry.at.slice(11, 16)}
-                              </span>
-                              <span className="min-w-0">{shortUpdateText(entry)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              );
-            })()}
-          </div>
-                        </div>
-                {/* Blocking rules */}
-                <div data-testid="admin-review-blocking-group">
-              <section className="space-y-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                  Blocking Rules
-                </div>
-                {isUnder16 && (
-                  <div
-                    className="rounded-md border border-rose-300 bg-rose-100 text-rose-900 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full"
-                    data-testid="admin-review-under-16-rule"
-                  >
-                    <AlertTriangle className="w-3 h-3 shrink-0" />
-                    Under 16 · Admin approval required
-                  </div>
-                )}
-                {totalMissingIcds > 0 && (
-                  <div className="rounded-md border border-amber-300 bg-amber-100 text-amber-900 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full">
-                    <AlertTriangle className="w-3 h-3 shrink-0" />
-                    Diagnosis missing ICD
-                  </div>
-                )}
-                {needsRegeneration && (
-                  <div
-                    className="rounded-md border border-slate-300 bg-slate-100 text-slate-800 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full"
-                    data-testid="admin-review-regeneration-required-rule"
-                  >
-                    <RefreshCw className="w-3 h-3 shrink-0" />
-                    Regeneration required · sources edited
-                  </div>
-                )}
-                {!isUnder16 && totalMissingIcds === 0 && !needsRegeneration && (
-                  <div className="text-[11px] text-slate-400 italic">No blocking rules.</div>
-                )}
-              </section>
-                </div>
-
                 {/* Actions — heavier surfaces collapsed into popovers */}
                 <div data-testid="admin-review-actions-group">
                   <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Actions</div>
@@ -3866,13 +3784,7 @@ export function AdminReviewDialog({
                         <button
                           type="button"
                           data-testid="admin-review-documents-trigger"
-                          disabled={needsRegeneration}
-                          title={
-                            needsRegeneration
-                              ? "Regenerate changed ancillaries before generating documents"
-                              : undefined
-                          }
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-50"
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/70 bg-white/70 text-slate-700 hover:bg-white shadow-sm px-3 py-2 text-xs font-semibold transition-colors"
                         >
                           <FileText className="w-3.5 h-3.5" />
                           Documents
@@ -3907,7 +3819,7 @@ export function AdminReviewDialog({
                           aria-label="Add admin note"
                           title={adminNote ? "Admin note recorded" : "Add admin note"}
                           data-testid="admin-review-admin-note-icon-button"
-                          className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${adminNote ? "border-[#3d4a6b]/30 bg-[#3d4a6b]/10 text-[#3d4a6b]" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"}`}
+                          className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold shadow-sm transition-colors ${adminNote ? "border-[#3d4a6b]/30 bg-[#3d4a6b]/10 text-[#3d4a6b]" : "border-white/70 bg-white/70 text-slate-700 hover:bg-white"}`}
                         >
                           <StickyNote className="w-3.5 h-3.5" />
                           Note
@@ -3953,7 +3865,7 @@ export function AdminReviewDialog({
                         <button
                           type="button"
                           data-testid="admin-review-scheduler-trigger"
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 px-3 py-2 text-xs font-semibold transition-colors"
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/70 bg-white/70 text-slate-700 hover:bg-white shadow-sm px-3 py-2 text-xs font-semibold transition-colors"
                         >
                           <ShieldCheck className="w-3.5 h-3.5" />
                           Scheduler
@@ -4033,68 +3945,153 @@ export function AdminReviewDialog({
               </div>
             </ScrollArea>
 
-            {/* Decision — pinned at the bottom of the action column */}
+            {/* Updates — premium glass panel occupying the bottom half */}
             <div
-              className="border-t border-slate-200 bg-white p-4"
+              className="mx-3 mb-2 flex min-h-0 flex-1 basis-0 flex-col overflow-hidden rounded-2xl border border-white/70 bg-gradient-to-b from-white/85 to-white/45 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl"
+              data-testid="admin-review-updates-group"
+            >
+              <div
+                className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-white/60 bg-white/40"
+                data-record-helper="admin-review-record-update"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
+                    Updates
+                  </span>
+                  <span className="text-[10px] text-slate-400 tabular-nums">
+                    {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
+                  </span>
+                </div>
+                {needsRegeneration && (
+                  <button
+                    type="button"
+                    onClick={() => void regeneratePending()}
+                    disabled={regenChangedInFlight}
+                    aria-label="Regenerate"
+                    title={sourceDataSaved
+                      ? "Regenerate all ancillaries with updated source data"
+                      : `Regenerate: ${staleTargetIds
+                          .map(ancillaryLabelForTargetId)
+                          .join(", ")}`}
+                    data-testid="admin-review-regenerate-changed"
+                    data-stale-count={staleTargetIds.length}
+                    className="inline-flex items-center gap-1 h-6 px-2.5 rounded-full bg-gradient-to-b from-slate-800 to-slate-900 hover:from-slate-700 hover:to-slate-900 text-white text-[10px] font-semibold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {regenChangedInFlight ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-3 h-3" />
+                    )}
+                    Regenerate
+                  </button>
+                )}
+              </div>
+              <ScrollArea className="min-h-0 flex-1">
+                <div className="px-4 py-3" data-testid="admin-review-updates-made-box">
+                  {(() => {
+                    const groups = groupUpdatesByAncillary(updatesLog);
+                    if (groups.length === 0) {
+                      return (
+                        <div className="text-[11px] text-slate-400 italic">
+                          {sourceDataSaved
+                            ? "Source data edited — regenerate to apply across all ancillaries."
+                            : "Changes you make will appear here, grouped by ancillary."}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="space-y-3 pr-1">
+                        {groups.map((group) => (
+                          <div
+                            key={group.ancillary}
+                            data-testid={`admin-review-updates-group-${group.ancillary}`}
+                          >
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${UPDATE_GROUP_DOT[group.ancillary]}`}
+                              />
+                              <span
+                                className={`text-[10px] font-bold uppercase tracking-wider ${UPDATE_GROUP_ACCENT[group.ancillary]}`}
+                              >
+                                {categoryLabels[group.ancillary]}
+                              </span>
+                            </div>
+                            <ul className="space-y-1 pl-3">
+                              {group.entries.map((entry) => (
+                                <li
+                                  key={entry.id}
+                                  className="flex items-start gap-2 text-[11px] text-slate-700 leading-snug"
+                                  data-testid="admin-review-updates-made-item"
+                                  data-update-type={entry.type}
+                                >
+                                  <span className="font-mono text-[10px] text-slate-400 shrink-0 tabular-nums">
+                                    {entry.at.slice(11, 16)}
+                                  </span>
+                                  <span className="min-w-0">{shortUpdateText(entry)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </ScrollArea>
+            </div>
+
+            {/* Decision — floating glass action bar */}
+            <div
+              className="mx-3 mb-3 rounded-2xl border border-white/70 bg-white/65 p-2.5 shadow-[0_16px_48px_rgba(15,23,42,0.14)] backdrop-blur-xl"
               data-testid="admin-review-decision-group"
             >
-              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Decision</div>
-                <div className="flex flex-col gap-2">
-                  <Button
-                    type="button"
-                    disabled={approvalMutation.isPending || needsRegeneration}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "approved" });
-                      recordAdminReviewUpdate("approval_approved", "Approved review");
-                    }}
-                    data-testid="admin-review-approve-button"
-                    data-bar-testid={`admin-review-button-approve-${patient.id}`}
-                    title={
-                      needsRegeneration
-                        ? "Regenerate changed ancillaries before approving"
-                        : undefined
-                    }
-                    className="bg-emerald-500 text-slate-800 hover:bg-emerald-600 w-full disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {approvalMutation.isPending ? (
-                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
-                    )}
-                    {needsRegeneration
-                      ? "Regenerate to Approve"
-                      : isUnder16
-                        ? "Admin Override Approve"
-                        : "Approve"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "needs_info" });
-                      recordAdminReviewUpdate("approval_pended", "Pended review");
-                    }}
-                    data-testid="admin-review-pend-button"
-                    data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
-                    className="w-full bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
-                  >
-                    Pend
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "rejected" });
-                      recordAdminReviewUpdate("approval_rejected", "Rejected review");
-                    }}
-                    data-testid={`admin-review-button-reject-${patient.id}`}
-                    className="w-full text-rose-700 border-rose-200 bg-rose-50 hover:bg-rose-100"
-                  >
-                    Reject
-                  </Button>
-                </div>
+              <Button
+                type="button"
+                disabled={approvalMutation.isPending}
+                onClick={() => {
+                  approvalMutation.mutate({ status: "approved" });
+                  recordAdminReviewUpdate("approval_approved", "Approved review");
+                }}
+                data-testid="admin-review-approve-button"
+                data-bar-testid={`admin-review-button-approve-${patient.id}`}
+                className="w-full h-10 rounded-xl bg-gradient-to-b from-emerald-400 to-emerald-500 text-white font-semibold shadow-[0_8px_20px_rgba(16,185,129,0.35)] hover:from-emerald-400 hover:to-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {approvalMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 mr-1.5" />
+                )}
+                {isUnder16 ? "Admin Override Approve" : "Approve"}
+              </Button>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={approvalMutation.isPending}
+                  onClick={() => {
+                    approvalMutation.mutate({ status: "needs_info" });
+                    recordAdminReviewUpdate("approval_pended", "Pended review");
+                  }}
+                  data-testid="admin-review-pend-button"
+                  data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
+                  className="h-8 rounded-lg text-amber-700 hover:bg-amber-100/70 hover:text-amber-800"
+                >
+                  Pend
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={approvalMutation.isPending}
+                  onClick={() => {
+                    approvalMutation.mutate({ status: "rejected" });
+                    recordAdminReviewUpdate("approval_rejected", "Rejected review");
+                  }}
+                  data-testid={`admin-review-button-reject-${patient.id}`}
+                  className="h-8 rounded-lg text-rose-600 hover:bg-rose-100/70 hover:text-rose-700"
+                >
+                  Reject
+                </Button>
+              </div>
             </div>
           </aside>
         </div>
@@ -4105,7 +4102,7 @@ export function AdminReviewDialog({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
-          className="flex flex-col w-[calc(100vw-3rem)] max-w-[1040px] h-[min(86vh,760px)] overflow-hidden p-0 gap-0 rounded-2xl border border-slate-200 shadow-2xl"
+          className="flex flex-col w-[calc(100vw-3rem)] max-w-[1040px] h-[min(86vh,760px)] overflow-hidden p-0 gap-0 rounded-3xl border border-white/40 shadow-[0_30px_90px_rgba(15,23,42,0.35)] ring-1 ring-black/5"
           overlayClassName="bg-slate-900/30 backdrop-blur-[2px]"
           hideClose
           data-testid={`dialog-admin-review-${patient.id}`}
