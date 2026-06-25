@@ -6,6 +6,7 @@
 // preview can never over-assign.
 
 import { useState } from "react";
+import { useLocation } from "wouter";
 import {
   Loader2,
   RefreshCw,
@@ -19,6 +20,7 @@ import {
   ArrowRightLeft,
   ChevronDown,
   ChevronRight,
+  ArrowUpRight,
   Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -171,19 +173,24 @@ function statusLabel(status: string | null): string {
 
 function MemberCaseRow({ c }: { c: MemberCaseItem }) {
   const meta = CASE_CATEGORY_META[c.category];
-  return (
-    <div
-      className="flex items-start gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs dark:border-slate-800 dark:bg-slate-900"
-      data-testid={`member-case-${c.executionCaseId}`}
-    >
+  const [, setLocation] = useLocation();
+  const canOpen = c.patientScreeningId != null;
+
+  const inner = (
+    <>
       <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${meta.dot}`} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
           <span className="truncate font-medium text-slate-800 dark:text-slate-200">
             {c.patientName}
           </span>
-          <span className="shrink-0 capitalize text-[10px] text-slate-400">
-            {statusLabel(c.engagementStatus)}
+          <span className="flex shrink-0 items-center gap-1">
+            <span className="capitalize text-[10px] text-slate-400">
+              {statusLabel(c.engagementStatus)}
+            </span>
+            {canOpen ? (
+              <ArrowUpRight className="h-3 w-3 text-slate-300 transition-colors group-hover:text-indigo-500 dark:text-slate-600 dark:group-hover:text-indigo-400" />
+            ) : null}
           </span>
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-400">
@@ -199,7 +206,32 @@ function MemberCaseRow({ c }: { c: MemberCaseItem }) {
           ) : null}
         </div>
       </div>
-    </div>
+    </>
+  );
+
+  if (!canOpen) {
+    return (
+      <div
+        className="flex items-start gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs dark:border-slate-800 dark:bg-slate-900"
+        data-testid={`member-case-${c.executionCaseId}`}
+      >
+        {inner}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        setLocation(`/patient-directory?patientId=${c.patientScreeningId}`)
+      }
+      title={`Open ${c.patientName}'s case`}
+      className="group flex w-full items-start gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-left text-xs transition-colors hover:border-indigo-300 hover:bg-indigo-50/50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/30"
+      data-testid={`member-case-${c.executionCaseId}`}
+    >
+      {inner}
+    </button>
   );
 }
 
