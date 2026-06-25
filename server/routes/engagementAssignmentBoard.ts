@@ -526,6 +526,76 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
     },
   );
 
+  // ─── Append a manager note to a case's journey timeline ───────────
+  // Lets a manager record free-text context directly onto the patient's
+  // call timeline without leaving the case panel. Writes a "note_added"
+  // journey event via the canonical writer so it appears inline with
+  // every other event-kind. Requires a logged-in user (the note is
+  // attributed to them).
+  app.post(
+    "/api/engagement/assignment-board/cases/:executionCaseId/journey",
+    async (req: Request, res: Response) => {
+      try {
+        const actorUserId = req.session.userId;
+        if (!actorUserId) {
+          return res
+            .status(401)
+            .json({ error: "Not authenticated", code: "unauthorized" });
+        }
+
+        const executionCaseId = Number(req.params.executionCaseId);
+        if (!Number.isInteger(executionCaseId) || executionCaseId <= 0) {
+          return res
+            .status(400)
+            .json({ error: "Invalid executionCaseId", code: "bad_request" });
+        }
+
+        const parsed = z
+          .object({ note: z.string().trim().min(1).max(2000) })
+          .safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({
+            error: "note is required (1–2000 characters)",
+            code: "bad_request",
+          });
+        }
+
+        const [execCase] = await db
+          .select()
+          .from(patientExecutionCases)
+          .where(eq(patientExecutionCases.id, executionCaseId))
+          .limit(1);
+        if (!execCase) {
+          return res
+            .status(404)
+            .json({ error: "Execution case not found", code: "not_found" });
+        }
+
+        const event = await appendJourneyEvent({
+          eventType: "note_added",
+          eventSource: "engagement_assignment_board",
+          patientName: execCase.patientName,
+          patientDob: execCase.patientDob,
+          patientScreeningId: execCase.patientScreeningId,
+          executionCaseId,
+          actorUserId,
+          summary: parsed.data.note,
+        });
+
+        return res.status(201).json({ event });
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/assignment-board:journey-note] error:",
+          error instanceof Error ? error.message : error,
+        );
+        return res.status(500).json({
+          error:
+            error instanceof Error ? error.message : "Failed to add note",
+        });
+      }
+    },
+  );
+
   // ─── Per-day assignment target (additive, admin-only) ─────────────
   // Sets outreach_schedulers.daily_target for one roster member. This
   // is a soft planning number surfaced in the workspace — it does not

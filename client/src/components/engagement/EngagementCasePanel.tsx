@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   User2,
   Phone,
@@ -12,8 +12,10 @@ import {
   ClipboardList,
   ShieldAlert,
   History,
+  Plus,
   X,
 } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -78,6 +80,7 @@ const JOURNEY_EVENT_TONE: Record<string, string> = {
   document_completed: "bg-cyan-500",
   billing_payment_updated: "bg-teal-500",
   added_to_invoice: "bg-teal-500",
+  note_added: "bg-amber-400",
 };
 
 // Human label for a journey event-type. Falls back to a humanized form of
@@ -102,6 +105,7 @@ function journeyEventLabel(eventType: string): string {
     document_completed: "Document completed",
     billing_payment_updated: "Payment updated",
     added_to_invoice: "Added to invoice",
+    note_added: "Note",
   };
   return (
     LABELS[eventType] ??
@@ -159,6 +163,8 @@ export function EngagementCasePanel({
   const [role, setRole] = useState<AssignedRole>("scheduler");
   const [notes, setNotes] = useState("");
   const [pdfBusy, setPdfBusy] = useState<"plexus" | "clinician" | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteOpen, setNoteOpen] = useState(false);
 
   const psid = row?.patientScreeningId ?? null;
 
@@ -169,6 +175,8 @@ export function EngagementCasePanel({
     );
     setRole((row?.assignedRole as AssignedRole) ?? "scheduler");
     setNotes("");
+    setNoteDraft("");
+    setNoteOpen(false);
   }, [row?.executionCaseId, row?.assignedTeamMemberId, row?.assignedRole]);
 
   const patientQuery = useQuery<PatientScreening>({
@@ -187,6 +195,37 @@ export function EngagementCasePanel({
     enabled: executionCaseId != null,
   });
   const journeyEvents = journeyQuery.data?.events ?? [];
+
+  const addNoteMutation = useMutation({
+    mutationFn: async (note: string) => {
+      if (executionCaseId == null) throw new Error("No case selected");
+      const res = await apiRequest(
+        "POST",
+        `/api/engagement/assignment-board/cases/${executionCaseId}/journey`,
+        { note },
+      );
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: [
+          "/api/engagement/assignment-board/cases",
+          executionCaseId,
+          "journey",
+        ],
+      });
+      setNoteDraft("");
+      setNoteOpen(false);
+      toast({ title: "Note added", description: "Saved to the timeline." });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: "Could not add note",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
 
   const reasoningEntries = useMemo(() => {
     const r = patient?.reasoning as
@@ -488,6 +527,63 @@ export function EngagementCasePanel({
             events for this patient (call outcomes, assignments/
             reassignments, notes, and every other journey-event kind). */}
         <Section icon={History} title="Journey timeline" testId="engagement-case-panel-timeline">
+          <div className="flex justify-end">
+            {noteOpen ? null : (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1 text-[11px]"
+                onClick={() => setNoteOpen(true)}
+                data-testid="engagement-case-panel-add-note"
+              >
+                <Plus className="h-3 w-3" />
+                Add note
+              </Button>
+            )}
+          </div>
+          {noteOpen && (
+            <div className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-2 dark:border-slate-800 dark:bg-slate-900/40">
+              <Textarea
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                placeholder="Add context to this patient's timeline…"
+                className="min-h-[56px] text-xs"
+                autoFocus
+                data-testid="engagement-case-panel-note-input"
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-[11px]"
+                  disabled={addNoteMutation.isPending}
+                  onClick={() => {
+                    setNoteOpen(false);
+                    setNoteDraft("");
+                  }}
+                  data-testid="engagement-case-panel-note-cancel"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-7 gap-1 text-[11px]"
+                  disabled={
+                    addNoteMutation.isPending || !noteDraft.trim()
+                  }
+                  onClick={() => addNoteMutation.mutate(noteDraft.trim())}
+                  data-testid="engagement-case-panel-note-save"
+                >
+                  {addNoteMutation.isPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Plus className="h-3 w-3" />
+                  )}
+                  Save note
+                </Button>
+              </div>
+            </div>
+          )}
           {journeyQuery.isLoading ? (
             <p className="flex items-center gap-1.5 text-xs italic text-slate-400">
               <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading history…
