@@ -19,5 +19,6 @@
 - [Team Portal rail pill](team-portal-rail-pill.md) — pills: 2 sizes, NO arrows, half-toward-edge=small/inner=normal, click-away collapses; small left=icon rail, sticker-glass cards.
 - [Consolidating pages into tabs](page-consolidation-tabs.md) — embedding whole pages as Radix Tabs panels surfaces latent runtime crashes (esp. `<SelectItem value="">`); tsc/HMR miss them, so e2e-click every tab + sub-tab.
 - [Secret deletion is a no-op](secret-deletion-noop.md) — deleteEnvVars reports success for secret keys but doesn't remove secrets; verify with viewEnvVars, else have the user delete in the Secrets UI.
+- [PTO team-visibility privacy shaping](pto-team-visibility.md) — cross-team PTO endpoints must return name+dates+status DTO server-side; hiding notes only in UI still leaks them over the API.
 - [Mission Control gap-fill](mission-control-gapfill.md) — header facility scope recomputes spine from lanes client-side; access preview gated on /api/auth/me success (never assume admin); patient search needs custom queryFn (default fetcher joins key with "/").
 - [Clinician Portal persistence](clinician-portal-persistence.md) — portal pages render the live aggregator (/api/clinician-portal) and persist actions as overlays keyed by aggregator id (NOTE-/CALL-/mrn+service); server owns note version + call status; audit via audit_log.

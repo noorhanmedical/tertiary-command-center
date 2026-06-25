@@ -19,6 +19,7 @@ import {
   PortalChatPanel,
   PortalPatientSearchPanel,
   PortalPlexusIQPanel,
+  PortalTeamOpsPanel,
 } from "@/components/navigation/portal/PortalDockPanels";
 
 function DockCalendarPanel({ onClose }: { onClose: () => void }) {
@@ -269,6 +270,10 @@ export function GlobalFloatingDock() {
           <PortalPlexusIQPanel
             open={openPanel === "portal-plexus-iq"}
             onOpenChange={(open) => setOpenPanel(open ? "portal-plexus-iq" : null)}
+          />
+          <PortalTeamOpsPanel
+            open={openPanel === "portal-team-ops"}
+            onOpenChange={(open) => setOpenPanel(open ? "portal-team-ops" : null)}
           />
         </>
       )}

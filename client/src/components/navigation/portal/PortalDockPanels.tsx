@@ -1,15 +1,26 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
+  CalendarClock,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
   Loader2,
   Mic,
+  Plane,
+  Plus,
   Search,
   Send,
   Sparkles,
   Stethoscope,
+  Trash2,
   User,
+  Users,
+  XCircle,
 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Sheet,
   SheetContent,
@@ -34,7 +45,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 // ── Chat AI panel ────────────────────────────────────────────────────────────
@@ -553,6 +564,534 @@ export function PortalPlexusIQPanel({
             </div>
           )}
         </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ── My Team Ops panel ─────────────────────────────────────────────────────────
+// A team-member-private operations panel: request PTO, see today's coverage,
+// and view a staffing calendar. Privacy: a member only ever sees their OWN PTO
+// requests (and notes). For the rest of the team, only on/off availability and
+// the coverage roster are visible — never other people's notes/reasons.
+
+type PtoRow = {
+  id: number;
+  userId: string;
+  startDate: string;
+  endDate: string;
+  note: string | null;
+  status: "pending" | "approved" | "denied";
+  userName?: string | null;
+};
+
+type SchedulerRow = {
+  id: number;
+  name: string;
+  facility: string;
+  capacityPercent: number;
+  facilitiesCovered?: string[];
+};
+
+const PTO_STATUS_STYLES: Record<string, string> = {
+  approved: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  pending: "bg-amber-50 text-amber-700 border-amber-200",
+  denied: "bg-rose-50 text-rose-700 border-rose-200",
+};
+
+function isoToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+}
+
+function ptoCoversDate(p: PtoRow, dateKey: string): boolean {
+  return p.startDate <= dateKey && p.endDate >= dateKey;
+}
+
+function formatRange(start: string, end: string): string {
+  if (start === end) return start;
+  return `${start} → ${end}`;
+}
+
+function addMonthKey(monthKey: string, delta: number): string {
+  const [y, m] = monthKey.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthLabel(monthKey: string): string {
+  const [y, m] = monthKey.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+export function PortalTeamOpsPanel({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { toast } = useToast();
+
+  const { data: myPto = [], isLoading: myLoading } = useQuery<PtoRow[]>({
+    queryKey: ["/api/pto-requests", "scope=mine"],
+    queryFn: async () => {
+      const res = await fetch("/api/pto-requests?scope=mine", { credentials: "include" });
+      if (!res.ok) throw new Error(`Failed to load your PTO (${res.status})`);
+      return res.json();
+    },
+    enabled: open,
+    staleTime: 15_000,
+  });
+
+  const { data: teamPto = [] } = useQuery<PtoRow[]>({
+    queryKey: ["/api/pto-requests", "scope=approved-team"],
+    queryFn: async () => {
+      const res = await fetch("/api/pto-requests?scope=approved-team", {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Failed to load team availability (${res.status})`);
+      return res.json();
+    },
+    enabled: open,
+    staleTime: 15_000,
+  });
+
+  const { data: schedulers = [] } = useQuery<SchedulerRow[]>({
+    queryKey: ["/api/outreach/schedulers"],
+    queryFn: async () => {
+      const res = await fetch("/api/outreach/schedulers", { credentials: "include" });
+      if (!res.ok) throw new Error(`Failed to load coverage (${res.status})`);
+      return res.json();
+    },
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  // ── PTO request form ────────────────────────────────────────────────────
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submitPto() {
+    if (!startDate || !endDate || submitting) return;
+    if (endDate < startDate) {
+      toast({
+        title: "Invalid dates",
+        description: "The end date must be on or after the start date.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await apiRequest("POST", "/api/pto-requests", {
+        startDate,
+        endDate,
+        note: note.trim() || undefined,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["/api/pto-requests"] });
+      setStartDate("");
+      setEndDate("");
+      setNote("");
+      toast({ title: "Request submitted", description: "Your PTO request is pending approval." });
+    } catch (err) {
+      toast({
+        title: "Could not submit",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function withdrawPto(id: number) {
+    try {
+      await apiRequest("DELETE", `/api/pto-requests/${id}`);
+      await queryClient.invalidateQueries({ queryKey: ["/api/pto-requests"] });
+      toast({ title: "Request withdrawn" });
+    } catch (err) {
+      toast({
+        title: "Could not withdraw",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  }
+
+  // ── Coverage / who's off ────────────────────────────────────────────────
+  const [coverageDate, setCoverageDate] = useState(isoToday());
+
+  const offOnCoverageDate = useMemo(
+    () =>
+      teamPto
+        .filter((p) => p.status === "approved" && ptoCoversDate(p, coverageDate))
+        .map((p) => p.userName || "Team member"),
+    [teamPto, coverageDate],
+  );
+
+  // ── Calendar ────────────────────────────────────────────────────────────
+  const [monthKey, setMonthKey] = useState(isoToday().slice(0, 7));
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+
+  const calendarCells = useMemo(() => {
+    const [y, m] = monthKey.split("-").map(Number);
+    const firstWeekday = new Date(y, m - 1, 1).getDay();
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const cells: (string | null)[] = [];
+    for (let i = 0; i < firstWeekday; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      cells.push(`${monthKey}-${String(d).padStart(2, "0")}`);
+    }
+    return cells;
+  }, [monthKey]);
+
+  const selectedDayOff = useMemo(() => {
+    if (!selectedDay) return [];
+    return teamPto
+      .filter((p) => p.status === "approved" && ptoCoversDate(p, selectedDay))
+      .map((p) => p.userName || "Team member");
+  }, [teamPto, selectedDay]);
+
+  const today = isoToday();
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-md flex flex-col overflow-hidden p-0">
+        <SheetHeader className="shrink-0 px-6 pt-6 pb-3 border-b">
+          <SheetTitle className="flex items-center gap-2">
+            <CalendarClock className="w-4 h-4 text-sky-500" />
+            My Team Ops
+          </SheetTitle>
+          <SheetDescription>
+            Request time off, check coverage, and view the staffing calendar.
+          </SheetDescription>
+        </SheetHeader>
+
+        <Tabs defaultValue="pto" className="flex-1 flex flex-col overflow-hidden">
+          <TabsList className="mx-6 mt-3 grid grid-cols-3 shrink-0">
+            <TabsTrigger value="pto" data-testid="tab-team-ops-pto">
+              Time Off
+            </TabsTrigger>
+            <TabsTrigger value="coverage" data-testid="tab-team-ops-coverage">
+              Coverage
+            </TabsTrigger>
+            <TabsTrigger value="calendar" data-testid="tab-team-ops-calendar">
+              Calendar
+            </TabsTrigger>
+          </TabsList>
+
+          {/* ── Time Off tab ── */}
+          <TabsContent value="pto" className="flex-1 overflow-y-auto px-6 py-4 space-y-5 mt-0">
+            <div className="rounded-xl border border-slate-200 p-4 space-y-3">
+              <p className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+                <Plane className="w-4 h-4 text-sky-500" /> Request time off
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="pto-start">Start</Label>
+                  <Input
+                    id="pto-start"
+                    type="date"
+                    value={startDate}
+                    min={today}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    data-testid="input-team-ops-pto-start"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="pto-end">End</Label>
+                  <Input
+                    id="pto-end"
+                    type="date"
+                    value={endDate}
+                    min={startDate || today}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    data-testid="input-team-ops-pto-end"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="pto-note">Note (optional)</Label>
+                <Textarea
+                  id="pto-note"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={2}
+                  placeholder="e.g. Family trip"
+                  data-testid="input-team-ops-pto-note"
+                />
+              </div>
+              <Button
+                type="button"
+                onClick={submitPto}
+                disabled={submitting || !startDate || !endDate}
+                className="w-full"
+                data-testid="button-team-ops-pto-submit"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Submitting…
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4 mr-2" /> Submit request
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                My requests
+              </p>
+              {myLoading ? (
+                <div className="flex items-center gap-2 text-sm text-slate-500 py-3">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                </div>
+              ) : myPto.length === 0 ? (
+                <p className="text-sm text-slate-400 py-3">You have no PTO requests yet.</p>
+              ) : (
+                <ul className="space-y-2" data-testid="list-team-ops-my-pto">
+                  {[...myPto]
+                    .sort((a, b) => b.startDate.localeCompare(a.startDate))
+                    .map((p) => (
+                      <li
+                        key={p.id}
+                        className="rounded-lg border border-slate-200 p-3"
+                        data-testid={`row-team-ops-pto-${p.id}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-slate-900">
+                            {formatRange(p.startDate, p.endDate)}
+                          </span>
+                          <span
+                            className={`inline-flex items-center gap-1 text-[11px] font-medium rounded-full border px-2 py-0.5 ${
+                              PTO_STATUS_STYLES[p.status] ?? ""
+                            }`}
+                          >
+                            {p.status === "approved" ? (
+                              <CheckCircle2 className="w-3 h-3" />
+                            ) : p.status === "denied" ? (
+                              <XCircle className="w-3 h-3" />
+                            ) : (
+                              <Clock className="w-3 h-3" />
+                            )}
+                            {p.status}
+                          </span>
+                        </div>
+                        {p.note && (
+                          <p className="text-xs text-slate-500 mt-1.5">{p.note}</p>
+                        )}
+                        {p.status === "pending" && (
+                          <button
+                            type="button"
+                            onClick={() => withdrawPto(p.id)}
+                            className="mt-2 inline-flex items-center gap-1 text-xs text-rose-600 hover:text-rose-700"
+                            data-testid={`button-team-ops-withdraw-${p.id}`}
+                          >
+                            <Trash2 className="w-3 h-3" /> Withdraw
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* ── Coverage tab ── */}
+          <TabsContent value="coverage" className="flex-1 overflow-y-auto px-6 py-4 space-y-5 mt-0">
+            <div className="space-y-1.5">
+              <Label htmlFor="coverage-date">Availability on</Label>
+              <Input
+                id="coverage-date"
+                type="date"
+                value={coverageDate}
+                onChange={(e) => setCoverageDate(e.target.value)}
+                data-testid="input-team-ops-coverage-date"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Off this day
+              </p>
+              {offOnCoverageDate.length === 0 ? (
+                <p className="text-sm text-emerald-600 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4" /> Everyone is available.
+                </p>
+              ) : (
+                <ul className="space-y-1.5" data-testid="list-team-ops-off">
+                  {offOnCoverageDate.map((name, i) => (
+                    <li
+                      key={`${name}-${i}`}
+                      className="flex items-center gap-2 text-sm text-slate-700"
+                    >
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-50 text-amber-600 shrink-0">
+                        <Plane className="w-3.5 h-3.5" />
+                      </span>
+                      {name}
+                      <span className="text-[11px] text-amber-600 font-medium">PTO</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5" /> Team coverage
+              </p>
+              {schedulers.length === 0 ? (
+                <p className="text-sm text-slate-400">No coverage configured.</p>
+              ) : (
+                <ul className="space-y-1.5" data-testid="list-team-ops-coverage">
+                  {schedulers.map((s) => {
+                    const facilities =
+                      s.facilitiesCovered && s.facilitiesCovered.length > 0
+                        ? s.facilitiesCovered
+                        : [s.facility];
+                    return (
+                      <li
+                        key={s.id}
+                        className="rounded-lg border border-slate-200 p-2.5"
+                        data-testid={`row-team-ops-coverage-${s.id}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-slate-900">{s.name}</span>
+                          <span className="text-[11px] text-slate-500">{s.capacityPercent}%</span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5 truncate">
+                          {facilities.filter(Boolean).join(", ") || "—"}
+                        </p>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* ── Calendar tab ── */}
+          <TabsContent value="calendar" className="flex-1 overflow-y-auto px-6 py-4 space-y-4 mt-0">
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  setMonthKey((k) => addMonthKey(k, -1));
+                  setSelectedDay(null);
+                }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100"
+                aria-label="Previous month"
+                data-testid="button-team-ops-cal-prev"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-sm font-semibold text-slate-900" data-testid="text-team-ops-cal-month">
+                {monthLabel(monthKey)}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setMonthKey((k) => addMonthKey(k, 1));
+                  setSelectedDay(null);
+                }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100"
+                aria-label="Next month"
+                data-testid="button-team-ops-cal-next"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-7 gap-1 text-center">
+              {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+                <span key={i} className="text-[10px] font-medium text-slate-400 py-1">
+                  {d}
+                </span>
+              ))}
+              {calendarCells.map((cell, i) => {
+                if (!cell) return <span key={`empty-${i}`} />;
+                const mine = myPto.find((p) => ptoCoversDate(p, cell));
+                const teamOff = teamPto.filter(
+                  (p) => p.status === "approved" && ptoCoversDate(p, cell),
+                ).length;
+                const dayNum = Number(cell.slice(-2));
+                const isToday = cell === today;
+                const isSelected = cell === selectedDay;
+                const mineClass =
+                  mine?.status === "approved"
+                    ? "bg-emerald-500 text-white"
+                    : mine?.status === "pending"
+                      ? "bg-amber-100 text-amber-800 border border-amber-300"
+                      : "";
+                return (
+                  <button
+                    key={cell}
+                    type="button"
+                    onClick={() => setSelectedDay(cell)}
+                    className={`relative aspect-square rounded-lg text-xs flex flex-col items-center justify-center transition-colors ${
+                      mineClass || "hover:bg-slate-100"
+                    } ${isSelected ? "ring-2 ring-sky-400" : ""} ${
+                      isToday && !mineClass ? "border border-sky-300" : ""
+                    }`}
+                    data-testid={`button-team-ops-cal-day-${cell}`}
+                  >
+                    <span>{dayNum}</span>
+                    {teamOff > 0 && (
+                      <span
+                        className={`absolute bottom-1 inline-block h-1 w-1 rounded-full ${
+                          mineClass ? "bg-white/80" : "bg-amber-400"
+                        }`}
+                      />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center gap-3 text-[11px] text-slate-500">
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-2.5 w-2.5 rounded bg-emerald-500" /> My PTO
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-2.5 w-2.5 rounded border border-amber-300 bg-amber-100" />{" "}
+                Pending
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" /> Team off
+              </span>
+            </div>
+
+            {selectedDay && (
+              <div className="rounded-xl border border-slate-200 p-3" data-testid="team-ops-cal-detail">
+                <p className="text-sm font-semibold text-slate-900">{selectedDay}</p>
+                {selectedDayOff.length === 0 ? (
+                  <p className="text-sm text-emerald-600 mt-1 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" /> Everyone is available.
+                  </p>
+                ) : (
+                  <ul className="mt-1.5 space-y-1">
+                    {selectedDayOff.map((name, i) => (
+                      <li key={`${name}-${i}`} className="text-sm text-slate-700 flex items-center gap-2">
+                        <Plane className="w-3.5 h-3.5 text-amber-500" /> {name}
+                        <span className="text-[11px] text-amber-600 font-medium">PTO</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       </SheetContent>
     </Sheet>
   );

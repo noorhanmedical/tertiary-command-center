@@ -26,16 +26,43 @@ export function registerPtoRoutes(app: Express) {
       //                              (needed for staffing visibility on the
       //                              Dashboard and Staffing Calendar)
       //   - default               -> their own requests only
+      // Whether this response will contain other people's rows. When true we
+      // must NOT leak private fields (note/reason, reviewer metadata, raw
+      // userId) — only name + on/off status is shared for staffing visibility.
+      let teamScope = false;
       if (role === "admin") {
         if (scope === "mine") filters.userId = userId;
       } else if (scope === "approved-team") {
         filters.status = "approved";
+        teamScope = true;
       } else {
         filters.userId = userId;
       }
 
       const rows = await storage.getPtoRequests(filters);
-      res.json(rows);
+      // Enrich with the requester's display name so portal surfaces (which
+      // cannot call the admin-only users list) can show "who is off" by name.
+      const users = await storage.getAllUsers();
+      const nameById = new Map(users.map((u) => [u.id, u.username]));
+
+      if (teamScope) {
+        // Privacy-shaped DTO for cross-team staffing visibility: name + dates +
+        // status ONLY. Never include note, reviewer info, or raw userId.
+        const shaped = rows.map((r) => ({
+          id: r.id,
+          userName: nameById.get(r.userId) ?? null,
+          startDate: r.startDate,
+          endDate: r.endDate,
+          status: r.status,
+        }));
+        return res.json(shaped);
+      }
+
+      const enriched = rows.map((r) => ({
+        ...r,
+        userName: nameById.get(r.userId) ?? null,
+      }));
+      res.json(enriched);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

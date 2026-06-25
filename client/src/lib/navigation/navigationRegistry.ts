@@ -7,6 +7,7 @@ import {
   Phone,
   TrendingUp,
   Search,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 
@@ -118,6 +119,14 @@ export const PORTAL_DOCK_ITEMS: DockItem[] = [
     kind: "panel",
     panelId: "portal-plexus-iq",
     testId: "global-floating-dock-portal-plexus-iq",
+  },
+  {
+    id: "portal-team-ops",
+    label: "Team Ops",
+    Icon: CalendarClock,
+    kind: "panel",
+    panelId: "portal-team-ops",
+    testId: "global-floating-dock-portal-team-ops",
   },
 ];
 
