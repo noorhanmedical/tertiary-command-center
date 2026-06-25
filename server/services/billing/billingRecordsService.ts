@@ -56,12 +56,6 @@
 import type { BillingRecord } from "@shared/schema";
 import { storage } from "../../storage";
 
-export type BackgroundSyncBilling = () => void | Promise<void>;
-
-export interface ListBillingRecordsWithAutoCreateDeps {
-  backgroundSyncBilling: BackgroundSyncBilling;
-}
-
 /**
  * Run the GET /api/billing-records scan: discover screened patients that
  * lack billing records for their qualifying tests, auto-create missing
@@ -72,11 +66,7 @@ export interface ListBillingRecordsWithAutoCreateDeps {
  * step-for-step. The caller (the route) is responsible for HTTP framing
  * only (parse req, JSON serialize, 500 envelope on throw).
  */
-export async function listBillingRecordsWithAutoCreate(
-  deps: ListBillingRecordsWithAutoCreateDeps,
-): Promise<BillingRecord[]> {
-  const { backgroundSyncBilling } = deps;
-
+export async function listBillingRecordsWithAutoCreate(): Promise<BillingRecord[]> {
   const batches = await storage.getAllScreeningBatches();
   const allScreenedPatients: any[] = [];
   for (const batch of batches) {
@@ -108,10 +98,6 @@ export async function listBillingRecordsWithAutoCreate(
         billingAutoCreated++;
       }
     }
-  }
-
-  if (billingAutoCreated > 0) {
-    void backgroundSyncBilling();
   }
 
   return await storage.getAllBillingRecords();

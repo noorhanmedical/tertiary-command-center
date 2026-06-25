@@ -488,7 +488,7 @@ export function HomeDashboard({
                   icon={<Phone className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
 
-                {/* Row 2: Team Member Portals | Team Ops | Plexus Tasks | Plexus Drive */}
+                {/* Row 2: Team Member Portals | Team Ops | Plexus Tasks */}
                 <SecondaryTile
                   href="/team-member-portals"
                   testId="tile-team-member-portals"
@@ -507,13 +507,6 @@ export function HomeDashboard({
                   label="Plexus Tasks"
                   icon={<CheckSquare className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
                 />
-                <SecondaryTile
-                  href="/drive"
-                  testId="tile-plexus-drive"
-                  label="Plexus Drive"
-                  icon={<FolderOpen className="w-9 h-9 text-indigo-900" strokeWidth={1.5} />}
-                />
-
                 {/* Row 3: Imaging Central | Document Upload | Ancillary Documents */}
                 <SecondaryTile
                   href="/imaging-central"

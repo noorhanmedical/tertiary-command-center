@@ -56,7 +56,6 @@ const NAV_ITEMS: NavItemDef[] = [
   // removed. The /patient-directory/live URL still redirects to
   // /patient-directory for back-compat with existing bookmarks.
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
-  { href: "/drive",            label: "Plexus Drive",     Icon: FolderOpen,   roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },
   { href: "/clinician-portal", label: "Clinician Portal", Icon: Stethoscope,    roles: ["admin", "clinician"] },
   { href: "/technician-portal", label: "Technician Portal", Icon: Stethoscope,    roles: ["admin", "technician", "liaison"] },

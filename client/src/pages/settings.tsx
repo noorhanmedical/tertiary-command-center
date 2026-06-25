@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   Database,
   Settings as SettingsIcon,
-  Sheet,
   Users2,
   Plus,
   Pencil,
@@ -13,7 +12,6 @@ import {
   Check,
   X,
   Lock,
-  HardDrive,
   BellRing,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -673,100 +671,6 @@ export function SchedulerTeamSection() {
   );
 }
 
-export function ClinicConnectionsCard() {
-  const { data } = useQuery<SettingsSnapshot>({
-    queryKey: ["/api/settings/platform"],
-    queryFn: async () => {
-      const res = await fetch("/api/settings/platform");
-      if (!res.ok) throw new Error("Failed to load settings");
-      return res.json();
-    },
-  });
-
-  return (
-        <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-          <div className="mb-4 flex items-center gap-2">
-            <Sheet className="h-5 w-5 text-green-700" />
-            <h2 className="text-lg font-semibold text-slate-900">Clinic Spreadsheet Connections</h2>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            {(data?.clinicSpreadsheetConnections || []).map((conn) => (
-              <div key={conn.clinicKey} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-slate-900">{conn.clinicLabel}</p>
-                  <Badge variant="outline" className="rounded-full border-slate-200 bg-white text-slate-700">
-                    {conn.clinicKey}
-                  </Badge>
-                </div>
-                <div className="mt-3 space-y-1 text-sm text-slate-600">
-                  <p>Spreadsheet ID: {conn.spreadsheetId || "Not configured"}</p>
-                  <p>Patient tab: {conn.patientTabName}</p>
-                  <p>Calendar tab: {conn.calendarTabName}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-            Shared calendar spreadsheet ID: {data?.sharedCalendarSpreadsheetId || "Not configured"}
-          </div>
-        </Card>
-  );
-}
-
-export function StorageProviderCard() {
-  const { data } = useQuery<SettingsSnapshot>({
-    queryKey: ["/api/settings/platform"],
-    queryFn: async () => {
-      const res = await fetch("/api/settings/platform");
-      if (!res.ok) throw new Error("Failed to load settings");
-      return res.json();
-    },
-  });
-
-  return (
-        <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-          <div className="mb-4 flex items-center gap-2">
-            <HardDrive className="h-5 w-5 text-indigo-600" />
-            <h2 className="text-lg font-semibold text-slate-900">File Storage Provider</h2>
-          </div>
-          <div className="flex items-center gap-3">
-            {data?.storageProvider === "s3" ? (
-              <>
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100">
-                  <HardDrive className="h-5 w-5 text-orange-600" />
-                </div>
-                <div>
-                  <p className="font-semibold text-slate-900">AWS S3</p>
-                  <p className="text-sm text-slate-500">Clinical documents and reports stored in Amazon S3</p>
-                </div>
-                <Badge variant="outline" className="ml-auto rounded-full border-orange-200 bg-orange-50 text-orange-700" data-testid="badge-storage-provider">
-                  S3
-                </Badge>
-              </>
-            ) : (
-              <>
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100">
-                  <HardDrive className="h-5 w-5 text-blue-600" />
-                </div>
-                <div>
-                  <p className="font-semibold text-slate-900">Google Drive</p>
-                  <p className="text-sm text-slate-500">Clinical documents and reports stored in Google Drive</p>
-                </div>
-                <Badge variant="outline" className="ml-auto rounded-full border-blue-200 bg-blue-50 text-blue-700" data-testid="badge-storage-provider">
-                  Google Drive
-                </Badge>
-              </>
-            )}
-          </div>
-          <p className="mt-3 text-xs text-slate-500">
-            Storage provider is configured via the <code className="rounded bg-slate-100 px-1 py-0.5 font-mono">STORAGE_PROVIDER</code> environment variable
-            (<code className="rounded bg-slate-100 px-1 py-0.5 font-mono">google_drive</code> or <code className="rounded bg-slate-100 px-1 py-0.5 font-mono">s3</code>).
-          </p>
-        </Card>
-  );
-}
-
 export function OperationalRuleSections() {
   return (
           <div className="mt-8 grid gap-6">
@@ -1137,14 +1041,12 @@ export default function SettingsPage() {
           eyebrow="PLEXUS ANCILLARY · SETTINGS"
           icon={SettingsIcon}
           title="Settings"
-          subtitle="Team members, patient databases, and clinic spreadsheet connections."
+          subtitle="Team members and patient databases."
         />
         <SchedulerTeamSection />
         <CallListDistributionCard />
         <InvoiceReminderSettingsCard />
         <ChangePasswordCard />
-        <ClinicConnectionsCard />
-        <StorageProviderCard />
         <OperationalRuleSections />
       </div>
     </div>

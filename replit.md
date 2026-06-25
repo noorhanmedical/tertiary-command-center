@@ -1,7 +1,7 @@
 # Ancillary Patient Screening System
 
 ## Overview
-This project is an AI-powered patient screening application designed to analyze clinical data to qualify patients for diagnostic tests. It aims to aggressively qualify patients for a predefined set of tests based on AI model justifications. The system automates screening, generates clinical notes, and integrates with Google Workspace for data synchronization and document management, streamlining medical practice workflows and improving patient care efficiency. The business vision is to enhance patient care and operational efficiency in medical practices by automating and intelligently streamlining the diagnostic test qualification process.
+This project is an AI-powered patient screening application designed to analyze clinical data to qualify patients for diagnostic tests. It aims to aggressively qualify patients for a predefined set of tests based on AI model justifications. The system automates screening, generates clinical notes, and manages clinical documents, streamlining medical practice workflows and improving patient care efficiency. The business vision is to enhance patient care and operational efficiency in medical practices by automating and intelligently streamlining the diagnostic test qualification process.
 
 ## User Preferences
 - Always put questions/decisions to the user inside a copyable code box (so they can paste into ChatGPT)
@@ -29,7 +29,7 @@ The application features a React, Vite, Tailwind CSS, and Shadcn UI frontend, pr
 
 The system employs a 3-step draft workflow: build schedule, edit clinical data, and analyze for ancillaries. Core features include tab-based navigation for schedules, a collapsible sidebar for schedule history, and an expandable patient result card view. A service layer encapsulates AI client interactions, data ingestion, and screening logic. Operational robustness is ensured through health checks, graceful shutdown mechanisms, and schema management via Drizzle migrations. Documents are generated client-side and can be exported.
 
-A pluggable file storage layer (`IFileStorage` interface) supports both Google Drive and AWS S3, allowing for flexible clinical document uploads. The system includes robust analysis job durability with status polling, ensuring long-running analysis processes are resilient to interruptions and provide real-time feedback. Database pool and transaction safety are prioritized for data integrity during bulk operations and critical state changes.
+A pluggable file storage layer (`IFileStorage` interface) uses AWS S3 as the only external file-storage provider for clinical document uploads. Document bytes are always persisted locally (`blobStore`) and in the `documentBlobs` table; S3 is an optional external mirror. (Google Drive support has been fully removed.) The system includes robust analysis job durability with status polling, ensuring long-running analysis processes are resilient to interruptions and provide real-time feedback. Database pool and transaction safety are prioritized for data integrity during bulk operations and critical state changes.
 
 **Plexus Tasks** is the canonical task and project management system built into the platform. It consists of 6 DB tables (`plexus_projects`, `plexus_tasks`, `plexus_task_collaborators`, `plexus_task_messages`, `plexus_task_events`, `plexus_task_reads`), a full CRUD storage layer, RESTful API routes at `/api/plexus/*`, and a `/plexus-tasks` frontend page with My Work / Projects / Sent views plus a persistent Urgent Panel. All state changes produce immutable audit log events. A GlobalNav tile shows the unread task message count as a badge.
 
@@ -45,7 +45,7 @@ Authentication and session management are implemented using per-user login sessi
 
 Frontend component structure has been modularized, breaking down a monolithic `home.tsx` into focused, reusable components like `PatientCard.tsx`, `ClinicalDataEditor.tsx`, and `ResultsView.tsx`, improving maintainability and development efficiency.
 
-**Background-service lifecycle**: Recurring in-process work (`absenceWatcher`, `morningRebuildScheduler`) is started from `server/lifecycle.ts` (`startBackgroundServices()`) after the HTTP server binds, and stopped from the SIGTERM handler via `stopBackgroundServices()`. Each tick acquires a Postgres advisory lock (`server/lib/advisoryLock.ts`) so multiple ECS tasks running in parallel never double-fire. Sheets sync (`runPatientsSyncWithLock`, `runBillingSyncWithLock`, `runExportNotesWithLock`) and the morning call-list rebuild use the same lock pattern.
+**Background-service lifecycle**: Recurring in-process work (`absenceWatcher`, `morningRebuildScheduler`) is started from `server/lifecycle.ts` (`startBackgroundServices()`) after the HTTP server binds, and stopped from the SIGTERM handler via `stopBackgroundServices()`. Each tick acquires a Postgres advisory lock (`server/lib/advisoryLock.ts`) so multiple ECS tasks running in parallel never double-fire. The morning call-list rebuild uses the same lock pattern. (All Google Sheets sync jobs have been removed.)
 
 **API conventions**: Error responses use `{ error: string, code?: string }` (see `server/middleware/errorHandler.ts`). Auth and user-management routes are zod-validated. The Document Library is mounted only at `/api/documents-library` (the legacy `/api/document-library` alias was removed). Frontend formatters (`formatDate`, `formatTime12`, `formatDateHeader`, `formatCurrency`, `formatPatientNameShort`, `getInitials`) live in `client/src/lib/format.ts`; existing callers will be migrated incrementally.
 
@@ -62,11 +62,10 @@ Frontend component structure has been modularized, breaking down a monolithic `h
 
 *Remaining work tracked as follow-ups (#316/#317/#318):* finish extracting the rest of the repositories from `server/storage.ts`, build a `client/src/hooks/api/<domain>.ts` layer to canonicalize fetch/cache logic, and decompose god-components like the 3,100-line `outreach-scheduler-portal.tsx`.
 
-**Server directory structure** is organized into distinct layers: `server/integrations/` holds external system adapters (Google Drive, Google Sheets, S3, file storage factory); `server/middleware/` holds cross-cutting concerns (error handler, OpenAI concurrency rate limiter — capped at `OPENAI_MAX_CONCURRENT`, default 10); `server/parsers/` holds file-format-specific parsers (`excel.ts`, `csv.ts`, `pdf.ts`, `plainText.ts`, `types.ts`). `server/services/ingest.ts` is the orchestrator/dispatcher — it exports `parseFileBuffer(buffer, filename, mimetype?)` for single-call file dispatch by extension, plus re-exports all individual parser APIs for backward compatibility with existing call sites in routes.
+**Server directory structure** is organized into distinct layers: `server/integrations/` holds external system adapters (S3, file storage factory); `server/middleware/` holds cross-cutting concerns (error handler, OpenAI concurrency rate limiter — capped at `OPENAI_MAX_CONCURRENT`, default 10); `server/parsers/` holds file-format-specific parsers (`excel.ts`, `csv.ts`, `pdf.ts`, `plainText.ts`, `types.ts`). `server/services/ingest.ts` is the orchestrator/dispatcher — it exports `parseFileBuffer(buffer, filename, mimetype?)` for single-call file dispatch by extension, plus re-exports all individual parser APIs for backward compatibility with existing call sites in routes.
 
 ## External Dependencies
 - **OpenAI GPT-5.2**: For AI-powered patient qualification and clinical note generation.
-- **Google Workspace (Google Sheets, Google Drive)**: For synchronizing patient and billing data, and exporting clinical notes as Google Docs.
 - **AWS S3**: Optional cloud storage for clinical documents via a pluggable adapter.
 - **xlsx**: For parsing Excel files.
 - **csv-parse**: For parsing CSV files.

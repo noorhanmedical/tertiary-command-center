@@ -12,7 +12,7 @@ import {
 } from "@shared/schema";
 import { and, eq, ilike, inArray, or } from "drizzle-orm";
 import { saveBlob, deleteTestBlobs } from "../services/blobStore";
-import { enqueueDriveFile, enqueueSheetSync, deleteTestOutboxItems, drainOutbox } from "../services/outbox";
+import { enqueueDriveFile, deleteTestOutboxItems, drainOutbox } from "../services/outbox";
 
 // Canonical TestGuy identity — must match script/seedTestGuyFlow.ts and
 // script/reconcileTestGuy.ts so every generator points at the same patient
@@ -184,11 +184,7 @@ export function registerTestFixtureRoutes(app: Express) {
       });
       enqueued.push(udItem);
 
-      // 8) Enqueue sheet syncs (coalesced)
-      const sheetBilling = await enqueueSheetSync("sheet_billing", true);
-      const sheetPatients = await enqueueSheetSync("sheet_patients", true);
-
-      // 9) Optional auto-upload — restricted to test items only.
+      // 8) Optional auto-upload — restricted to test items only.
       let drainResult: import("../services/outbox").DrainResult | null = null;
       if (autoUpload) {
         drainResult = await drainOutbox({ isTest: true });
@@ -202,10 +198,8 @@ export function registerTestFixtureRoutes(app: Express) {
         noteIds: notes.map((n) => n.id),
         uploadedDocumentId: ud.id,
         enqueuedItems: enqueued,
-        sheetBillingItem: sheetBilling,
-        sheetPatientsItem: sheetPatients,
         drainResult,
-        message: `TestGuy Robot fixture ready. ${enqueued.length} Drive items + 2 Sheet syncs enqueued.${autoUpload ? " Auto-upload completed." : " Click 'Upload All' in the Outbox to verify Drive/Sheets."}`,
+        message: `TestGuy Robot fixture ready. ${enqueued.length} document items enqueued.${autoUpload ? " Auto-upload completed." : " Click 'Upload All' in the Outbox to verify uploads."}`,
       });
     } catch (e: any) {
       console.error("Test fixture run error:", e);

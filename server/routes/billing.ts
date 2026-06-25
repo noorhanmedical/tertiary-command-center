@@ -7,8 +7,6 @@ import { eq, and, or, ilike, desc } from "drizzle-orm";
 import type { InsertBillingRecord } from "../../shared/schema";
 import { logAudit } from "../services/auditService";
 
-type BackgroundSyncBilling = () => void | Promise<void>;
-
 const updateBillingRecordSchema = z.object({
   dateOfService: z.string().nullable().optional(),
   patientName: z.string().min(1).optional(),
@@ -60,9 +58,7 @@ const requireBillerOrAdmin = (req: Request, res: Response, next: NextFunction) =
 
 export function registerBillingRoutes(
   app: Express,
-  deps: { backgroundSyncBilling: BackgroundSyncBilling }
 ) {
-  const { backgroundSyncBilling } = deps;
 
   // GET /api/billing-records is the auto-create scan: missing billing
   // rows for completed patients with qualifying tests are inserted on
@@ -78,9 +74,7 @@ export function registerBillingRoutes(
       const { listBillingRecordsWithAutoCreate } = await import(
         "../services/billing/billingRecordsService"
       );
-      const records = await listBillingRecordsWithAutoCreate({
-        backgroundSyncBilling,
-      });
+      const records = await listBillingRecordsWithAutoCreate();
       res.json(records);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -163,7 +157,6 @@ export function registerBillingRoutes(
       });
       void logAudit(req, "create", "billing_record", record.id, { patientName, service });
       res.status(201).json(record);
-      void backgroundSyncBilling();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -181,7 +174,6 @@ export function registerBillingRoutes(
       if (!record) return res.status(404).json({ error: "Billing record not found" });
       void logAudit(req, "update", "billing_record", id, updates);
       res.json(record);
-      void backgroundSyncBilling();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -193,136 +185,9 @@ export function registerBillingRoutes(
       await storage.deleteBillingRecord(id);
       void logAudit(req, "delete", "billing_record", id, null);
       res.status(204).send();
-      void backgroundSyncBilling();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post("/api/billing-records/import-from-sheet", async (_req, res) => {
-    try {
-      const { readSheetData } = await import("../integrations/googleSheets");
-      const { getSetting } = await import("../dbSettings");
-
-      const COL_MAP: Record<number, keyof InsertBillingRecord> = {
-        0: "dateOfService",
-        1: "service",
-        2: "patientName",
-        3: "dob",
-        4: "mrn",
-        5: "clinician",
-        6: "insuranceInfo",
-        12: "paidAmount",
-        13: "insurancePaidAmount",
-        14: "secondaryPaidAmount",
-        15: "patientResponsibility",
-        16: "billingStatus",
-        17: "lastBillerUpdate",
-        18: "nextAction",
-        19: "billingNotes",
-      };
-
-      const spreadsheetId = (await getSetting("BILLING_SPREADSHEET_ID")) ||
-        (await getSetting("GOOGLE_SHEETS_BILLING_ID")) ||
-        process.env.GOOGLE_SHEETS_BILLING_ID || null;
-
-      if (!spreadsheetId) {
-        return res.json({ success: true, created: 0, updated: 0, skipped: 0, total: 0, message: "No billing spreadsheet configured." });
-      }
-
-      let rows: string[][];
-      try {
-        rows = await readSheetData(spreadsheetId, "Billing Records");
-      } catch (e) {
-        return res.status(500).json({ error: `Could not read billing sheet: ${(e as Error).message}` });
-      }
-
-      if (rows.length < 2) {
-        return res.json({ success: true, created: 0, updated: 0, skipped: 0, total: 0, message: "Sheet has no data rows." });
-      }
-
-      const existingRecords = await storage.getAllBillingRecords();
-      const seenKeys = new Set<string>(
-        existingRecords.map((r) =>
-          `${r.patientName.toLowerCase()}|${r.dateOfService ?? ""}|${r.service}`
-        )
-      );
-      let created = 0;
-      let updated = 0;
-      let skipped = 0;
-
-      type BillingCreateOp = InsertBillingRecord;
-      type BillingUpdateOp = { id: number; updates: Partial<InsertBillingRecord> };
-      const createOps: BillingCreateOp[] = [];
-      const updateOps: BillingUpdateOp[] = [];
-
-      const dataRows = rows.slice(1);
-
-      for (const row of dataRows) {
-        const patientName = row[2]?.trim() || "";
-        const service = row[1]?.trim() || "";
-        if (!patientName || !service) { skipped++; continue; }
-
-        const dateOfService = row[0]?.trim() || null;
-        const rowKey = `${patientName.toLowerCase()}|${dateOfService ?? ""}|${service}`;
-
-        const existing = existingRecords.find((r) =>
-          r.patientName.toLowerCase() === patientName.toLowerCase() &&
-          (r.dateOfService ?? "") === (dateOfService ?? "") &&
-          r.service === service
-        );
-
-        const updates: Partial<InsertBillingRecord> = {};
-        for (const [colStr, field] of Object.entries(COL_MAP)) {
-          const val = row[parseInt(colStr)]?.trim() || null;
-          (updates as Record<string, string | null>)[field as string] = val;
-        }
-
-        if (existing) {
-          updateOps.push({ id: existing.id, updates });
-          updated++;
-        } else if (!seenKeys.has(rowKey)) {
-          seenKeys.add(rowKey);
-          createOps.push({
-            patientId: null,
-            batchId: null,
-            patientName,
-            service,
-            dateOfService: updates.dateOfService ?? null,
-            dob: updates.dob ?? null,
-            mrn: updates.mrn ?? null,
-            clinician: updates.clinician ?? null,
-            insuranceInfo: updates.insuranceInfo ?? null,
-            billingStatus: updates.billingStatus ?? null,
-            paidAmount: updates.paidAmount ?? null,
-            insurancePaidAmount: updates.insurancePaidAmount ?? null,
-            secondaryPaidAmount: updates.secondaryPaidAmount ?? null,
-            patientResponsibility: updates.patientResponsibility ?? null,
-            lastBillerUpdate: updates.lastBillerUpdate ?? null,
-            nextAction: updates.nextAction ?? null,
-            billingNotes: updates.billingNotes ?? null,
-          });
-          created++;
-        } else {
-          skipped++;
-        }
-      }
-
-      if (createOps.length > 0 || updateOps.length > 0) {
-        await db.transaction(async (tx) => {
-          if (createOps.length > 0) {
-            await tx.insert(billingRecords).values(createOps);
-          }
-          for (const { id, updates } of updateOps) {
-            await tx.update(billingRecords).set(updates).where(eq(billingRecords.id, id));
-          }
-        });
-      }
-
-      res.json({ success: true, created, updated, skipped, total: created + updated });
-    } catch (error: any) {
-      console.error("Import from sheet error:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
 }

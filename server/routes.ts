@@ -5,7 +5,6 @@ import { db, pool } from "./db";
 import { registerTestHistoryRoutes } from "./routes/testHistory";
 import { registerPatientReferenceRoutes } from "./routes/patientReferences";
 import { registerGeneratedNotesRoutes } from "./routes/generatedNotes";
-import { registerGoogleRoutes } from "./routes/google";
 import { registerPlexusTasksRoutes } from "./routes/plexusTasks";
 import { registerBatchRoutes } from "./routes/batches";
 import { registerPatientRoutes } from "./routes/patients";
@@ -65,10 +64,6 @@ import { registerMissionControlRoutes } from "./routes/missionControl";
 import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
-import {
-  backgroundSyncPatients,
-  backgroundSyncBilling,
-} from "./services/syncService";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -228,9 +223,8 @@ export async function registerRoutes(
   });
 
   // ─── Domain route registrations ────────────────────────────────────────────
-  registerGoogleRoutes(app);
-  registerTestHistoryRoutes(app, { backgroundSyncPatients });
-  registerPatientReferenceRoutes(app, { backgroundSyncPatients });
+  registerTestHistoryRoutes(app);
+  registerPatientReferenceRoutes(app);
   registerGeneratedNotesRoutes(app);
   registerPlexusTasksRoutes(app);
   registerBatchRoutes(app);
@@ -238,7 +232,7 @@ export async function registerRoutes(
   // the static `/api/patients/database*` paths take precedence over the
   // `/api/patients/:id` parameterised handler.
   registerPatientDatabaseRoutes(app);
-  registerPatientRoutes(app, { backgroundSyncPatients });
+  registerPatientRoutes(app);
   // Patient Directory routes: gated on USE_PATIENT_DIRECTORY_ACTIVATION.
   // Default OFF — no endpoints registered until Ali flips the flag and
   // applies migrations 0027-0029 from the blockers doc.
@@ -248,7 +242,7 @@ export async function registerRoutes(
   registerEngagementCallSettingsRoutes(app, requireRole);
   registerEngagementDistributionRoutes(app, requireRole);
   registerEngagementTeamMetricsRoutes(app, requireRole);
-  registerBillingRoutes(app, { backgroundSyncBilling });
+  registerBillingRoutes(app);
   registerInvoiceRoutes(app);
   registerOutreachRoutes(app);
   registerEmailRoutes(app);

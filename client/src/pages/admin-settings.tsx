@@ -38,8 +38,6 @@ import {
   CallListDistributionCard,
   ChangePasswordCard,
   InvoiceReminderSettingsCard,
-  ClinicConnectionsCard,
-  StorageProviderCard,
   OperationalRuleSections,
 } from "@/pages/settings";
 
@@ -142,8 +140,6 @@ export default function AdminSettingsPage() {
               <QualificationModeSettings />
             </Card>
 
-            <ClinicConnectionsCard />
-            <StorageProviderCard />
             <OperationalRuleSections />
             <TestFixtureCard />
           </TabsContent>

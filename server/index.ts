@@ -160,19 +160,6 @@ process.on("uncaughtException", (err) => {
       // Each job acquires a Postgres advisory lock per tick so multiple ECS
       // tasks never double-fire.
       startBackgroundServices();
-      import("./integrations/fileStorage").then(({ getStorageProvider }) => {
-        if (getStorageProvider() !== "google_drive") {
-          log(`Storage provider: ${getStorageProvider()} — skipping Google Drive folder tree initialization`, "startup");
-          return;
-        }
-        import("./integrations/googleDrive").then(({ validateDriveCredentials, initializeDriveFolderTree }) => {
-          try {
-            validateDriveCredentials();
-          } catch {
-          }
-          initializeDriveFolderTree();
-        }).catch(() => {});
-      }).catch(() => {});
     },
   );
 

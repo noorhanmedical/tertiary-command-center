@@ -17,7 +17,6 @@ import {
 import {
   Upload, FileText, Loader2, Search, RefreshCw, ClipboardList, Calendar, Trash2, Plus, Users, ExternalLink,
 } from "lucide-react";
-import { SiGooglesheets } from "react-icons/si";
 import type { PatientTestHistory } from "@shared/schema";
 import { ANCILLARY_TESTS } from "@shared/plexus";
 
@@ -63,42 +62,7 @@ export function PatientDirectoryView({ testHistory, historyLoading, dirPasteText
   const [addRecordDos, setAddRecordDos] = useState<Date | undefined>(new Date());
   const [addRecordInsurance, setAddRecordInsurance] = useState<"ppo" | "medicare">("ppo");
 
-  const [patientsSyncedAt, setPatientsSyncedAt] = useState<string | null>(null);
-  const [patientsSheetUrl, setPatientsSheetUrl] = useState<string | null>(null);
 
-  const { data: googleStatus } = useQuery<{
-    sheets: {
-      connected: boolean;
-      lastSyncedPatients: string | null;
-      patientsSpreadsheetUrl: string | null;
-    };
-    drive: { connected: boolean; email: string | null };
-  }>({ queryKey: ["/api/google/status"], refetchInterval: 30000 });
-
-  useEffect(() => {
-    if (!googleStatus?.sheets) return;
-    setPatientsSyncedAt(googleStatus.sheets.lastSyncedPatients ?? null);
-    setPatientsSheetUrl(googleStatus.sheets.patientsSpreadsheetUrl ?? null);
-  }, [googleStatus]);
-
-  const syncPatientsMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/google/sync/patients");
-      return res.json();
-    },
-    onSuccess: (data) => {
-      if (data.syncedAt) {
-        setPatientsSyncedAt(data.syncedAt);
-        if (data.spreadsheetUrl) setPatientsSheetUrl(data.spreadsheetUrl);
-        toast({ title: "Synced to Google Sheets", description: `${data.patientCount} patients, ${data.testHistoryCount} test records pushed` });
-      } else {
-        toast({ title: "Sync queued", description: "Another sync is in progress; your changes will be included" });
-      }
-    },
-    onError: (err: Error) => {
-      toast({ title: "Sync failed", description: err.message, variant: "destructive" });
-    },
-  });
 
   const addRecordMutation = useMutation({
     mutationFn: async () => {
@@ -232,38 +196,6 @@ export function PatientDirectoryView({ testHistory, historyLoading, dirPasteText
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => syncPatientsMutation.mutate()}
-                disabled={syncPatientsMutation.isPending}
-                className="gap-1.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
-                data-testid="button-sync-patients-sheets"
-              >
-                {syncPatientsMutation.isPending ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <SiGooglesheets className="w-3.5 h-3.5" />
-                )}
-                Sync to Sheets
-              </Button>
-              {patientsSyncedAt && (
-                <span className="text-[10px] text-slate-400 whitespace-nowrap">
-                  Synced {new Date(patientsSyncedAt).toLocaleTimeString()}
-                  {patientsSheetUrl && (
-                    <a href={patientsSheetUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-emerald-600 hover:underline inline-flex items-center gap-0.5">
-                      <ExternalLink className="w-2.5 h-2.5" />Open
-                    </a>
-                  )}
-                </span>
-              )}
-              {googleStatus?.drive?.email && (
-                <span className="text-[10px] text-slate-400 whitespace-nowrap" data-testid="text-drive-email-patients">
-                  Drive: {googleStatus.drive.email}
-                </span>
-              )}
-            </div>
             <Button
               size="sm"
               variant="outline"

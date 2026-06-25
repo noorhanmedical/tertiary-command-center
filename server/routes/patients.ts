@@ -21,13 +21,9 @@ import {
   ensureCanonicalSpineForScreening,
 } from "../services/patientCommitService";
 
-type BackgroundSyncPatients = () => void | Promise<void>;
-
 export function registerPatientRoutes(
   app: Express,
-  deps: { backgroundSyncPatients: BackgroundSyncPatients }
 ) {
-  const { backgroundSyncPatients } = deps;
 
   // Recently soft-deleted patients within the restore window. Used by
   // the Plexus IQ Recently Deleted card. Expired rows (delete_expires_at
@@ -158,7 +154,6 @@ export function registerPatientRoutes(
             }));
             await storage.bulkInsertTestHistoryIfNotExists(records);
             invalidatePatientDatabase();
-            void backgroundSyncPatients();
           }
         } catch (e) {
           console.error("Auto test history capture on completion failed:", e);

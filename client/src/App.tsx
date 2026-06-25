@@ -33,7 +33,6 @@ import BillingReportsPage from "@/pages/billing-reports";
 import ScheduleDashboardPage from "@/pages/schedule-dashboard";
 import TeamOpsPage from "@/pages/team-ops";
 import PlexusTasksPage from "@/pages/plexus-tasks";
-import DrivePage from "@/pages/drive";
 import DocumentLibraryPage from "@/pages/document-library";
 import LoginPage from "@/pages/login";
 import { GlobalNav } from "@/components/GlobalNav";
@@ -234,7 +233,6 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <Redirect to="/plexus-tasks" />
                 </Route>
                 <Route path="/plexus-tasks" component={PlexusTasksPage} />
-                <Route path="/drive" component={DrivePage} />
                 <Route path="/document-library">
                   <AdminGuard user={user}><DocumentLibraryPage /></AdminGuard>
                 </Route>

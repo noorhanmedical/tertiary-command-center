@@ -14,7 +14,6 @@ import {
   AlertCircle,
   Trash2,
   FileText,
-  Sheet as SheetIcon,
   Loader2,
 } from "lucide-react";
 
@@ -93,11 +92,6 @@ export default function AdminOutboxPage({ embedded = false }: { embedded?: boole
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/outbox"] }),
   });
 
-  const enqueueSheets = useMutation({
-    mutationFn: async () => apiRequest("POST", "/api/outbox/enqueue-sheets", {}),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/outbox"] }); toast({ title: "Sheet syncs queued" }); },
-  });
-
   const items = data?.items ?? [];
   const filtered = filter === "all" ? items : items.filter((i) => i.status === filter);
   const summary = data?.summary ?? { pending: 0, failed: 0, uploading: 0, completed: 0, total: 0 };
@@ -139,9 +133,6 @@ export default function AdminOutboxPage({ embedded = false }: { embedded?: boole
           <Button variant="outline" size="sm" onClick={() => drainFailed.mutate()} disabled={summary.failed === 0}>
             <RefreshCcw className="h-3.5 w-3.5 mr-2" />Retry Failed
           </Button>
-          <Button variant="outline" size="sm" onClick={() => enqueueSheets.mutate()} data-testid="button-queue-sheets">
-            <SheetIcon className="h-3.5 w-3.5 mr-2" />Queue Sheet Sync
-          </Button>
           <Button variant="ghost" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/outbox"] })}>
             <RefreshCcw className="h-3.5 w-3.5 mr-2" />Refresh
           </Button>
@@ -172,7 +163,7 @@ export default function AdminOutboxPage({ embedded = false }: { embedded?: boole
                   <tr key={item.id} className="border-t border-slate-100" data-testid={`outbox-row-${item.id}`}>
                     <td className="p-3">
                       <div className="flex items-center gap-2">
-                        {item.kind === "drive_file" ? <FileText className="h-4 w-4 text-slate-400" /> : <SheetIcon className="h-4 w-4 text-slate-400" />}
+                        <FileText className="h-4 w-4 text-slate-400" />
                         <div>
                           <div className="font-medium text-slate-900 truncate max-w-[280px]">{item.filename ?? `${item.kind} #${item.id}`}</div>
                           {item.isTest && <Badge variant="secondary" className="text-[10px] mt-0.5">TEST</Badge>}
@@ -244,7 +235,7 @@ export default function AdminOutboxPage({ embedded = false }: { embedded?: boole
           icon={Inbox}
           iconAccent="bg-blue-100 text-blue-700"
           title="Admin Outbox"
-          subtitle="All Drive uploads and Sheet syncs are queued here. Files are saved locally first, then uploaded with one click."
+          subtitle="Document uploads are queued here. Files are saved locally first, then uploaded with one click."
         />
         {body}
       </div>
