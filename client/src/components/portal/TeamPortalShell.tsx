@@ -1482,6 +1482,8 @@ export function TeamPortalShell({
         row.executionCaseId ??
         (typeof row.id === "number" ? row.id : null),
       serviceType: row.selectedServices?.[0] ?? null,
+      callReason: deriveCallReason(row),
+      nextActionAt: row.nextActionAt ?? null,
     };
   }
 
@@ -2067,6 +2069,12 @@ export function TeamPortalShell({
               ) : schedulePatientPlaygroundContext ? (
                 <div className="h-full" data-testid="playground-schedule-patient">
                   <SchedulePatientPlayground
+                    key={`sp-pg-${
+                      schedulePatientPlaygroundContext.patient.patientScreeningId ??
+                      schedulePatientPlaygroundContext.patient.executionCaseId ??
+                      schedulePatientPlaygroundContext.patient.patientName ??
+                      "patient"
+                    }-${schedulePatientPlaygroundContext.selectedDate}`}
                     patient={schedulePatientPlaygroundContext.patient}
                     selectedDate={schedulePatientPlaygroundContext.selectedDate}
                     onClose={() => setSchedulePatientPlaygroundContext(null)}

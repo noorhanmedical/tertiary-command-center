@@ -1,0 +1,343 @@
+TEAM MEMBER PORTAL — DYNAMIC SCHEDULING EXPERIENCE
+
+Current problem:
+In the Team Member Portal, clicking Schedule or Calendar does not open a prominent calendar that fits the screen. The user has to scroll, and the scheduling experience does not feel fast, easy, or premium.
+
+Scheduling is one of the core jobs of ACS/PCS. It must be immediately accessible and easy to use.
+
+Goal:
+Create two scheduling experiences depending on where the user clicks Calendar:
+
+1. Right-panel Work Queue calendar icon:
+   Opens a quick popup scheduler so the user can schedule without leaving their current Playground context.
+
+2. Playground patient workspace calendar action:
+   Opens a full-blown, prominent, screen-fitting scheduling workspace inside the Playground.
+
+Both must be tied to the selected patient and execution case.
+
+CORE RULE
+
+The Calendar/Schedule action must always be easy to find.
+
+Every patient workspace should have a persistent calendar action in the patient action bar.
+
+The user should not need to scroll or hunt through tabs to schedule a patient.
+
+RIGHT PANEL CALENDAR ICON BEHAVIOR
+
+When the user clicks the calendar icon from the right Work Queue panel:
+
+- Open a popup calendar / scheduling modal.
+- Do not replace the current Playground view.
+- Do not navigate away.
+- Do not destroy whatever the user is currently viewing.
+- Allow the user to multitask while still viewing the patient chart, Patient Directory profile, PDFs, or other Playground content.
+
+The popup scheduler should include:
+
+- patient name
+- phone number if available
+- call reason
+- target ancillary/test
+- clinic/facility
+- insurance if available
+- current next action if available
+- compact calendar/date picker
+- available slots if available
+- appointment type
+- location
+- notes
+- confirm schedule button
+- option to open full scheduler in Playground
+
+The popup should feel premium and fast.
+
+It should be large enough to be useful, but it should remain a modal/popup, not take over the whole screen.
+
+Expected behavior:
+
+Right Work Queue calendar icon
+    ↓
+Quick Schedule Popup
+    ↓
+Schedule patient or open full scheduler
+    ↓
+Current Playground content remains intact
+
+PLAYGROUND CALENDAR ACTION BEHAVIOR
+
+When the user clicks Schedule/Calendar from the patient workspace inside the Playground:
+
+- Open or focus the patient’s Schedule section.
+- Display a full-blown calendar that fits the available Playground screen.
+- Do not create a small cramped card that requires scrolling just to see the calendar.
+- The calendar should be the main visual focus.
+- The scheduling workspace should feel like a premium Zocdoc-style scheduler.
+
+The full scheduler should use the available Playground area.
+
+Preferred layout:
+
+Left side:
+- large calendar
+- day/week style view
+- visible time slots
+- selected date/time
+- appointment blocks if available
+- available/unavailable slot states
+
+Right side:
+- patient summary
+- call reason
+- target test/procedure
+- phone number
+- clinic/facility
+- insurance
+- Clinician PDF
+- Plexus PDF
+- appointment type
+- selected date/time
+- location
+- notes
+- confirm schedule button
+- follow-up action if needed
+
+The user should be able to schedule without scrolling through a long page.
+
+If vertical space is limited:
+- use sticky header/action bar
+- make the calendar area fixed-height and internally scrollable if needed
+- keep the confirm schedule action visible
+- do not push the calendar below the fold
+
+PATIENT ACTION BAR
+
+Every active patient workspace in the Playground should have a persistent action bar with:
+
+- Call
+- Schedule
+- PDFs
+- Notes
+- Complete & Submit
+
+The Schedule action must be visually prominent.
+
+Clicking Schedule from this action bar should open the full Playground scheduler.
+
+The right-panel calendar icon should open the popup scheduler.
+
+These are two different entry points with two different UI behaviors.
+
+SCHEDULING MODE SUMMARY
+
+Mode 1:
+Right Panel Calendar Icon
+
+Purpose:
+Quick scheduling while multitasking.
+
+Behavior:
+Popup modal scheduler.
+
+Do not:
+- replace Playground
+- navigate away
+- require full-page transition
+- make user lose current context
+
+Mode 2:
+Playground Calendar / Schedule Action
+
+Purpose:
+Full scheduling workflow.
+
+Behavior:
+Full-size scheduling workspace inside the selected patient’s Playground tab.
+
+Do not:
+- show tiny calendar
+- force page scroll to find the calendar
+- bury scheduling under multiple tabs
+- use a cramped modal as the primary full scheduler
+
+PATIENT-CENTERED TAB MODEL
+
+Scheduling must respect the patient-centered tab model.
+
+Outer Playground tabs = patients.
+
+Inside each patient tab:
+- Overview
+- Call
+- Schedule
+- PDFs
+- Timeline
+- Notes
+
+If user clicks calendar for Patient A:
+- focus Patient A tab
+- select Schedule section
+- preserve Patient A context
+
+If user clicks calendar for Patient B:
+- open/focus Patient B tab
+- select Schedule section
+- preserve Patient B context
+
+Do not mix scheduling state between patients.
+
+DATA CONTEXT TO PRESERVE
+
+Every scheduling action must preserve:
+
+- patientId
+- executionCaseId
+- patient name
+- callReason
+- target ancillary/test
+- sourcePortal: ACS or PCS
+- assigned team member
+- clinic/facility
+- phone number
+- PDFs/proof status if available
+- cooldown/outreach state if available
+
+CALL LIST / RIGHT PANEL CONTEXT
+
+The Work Queue should keep the patient tile available.
+
+If a user schedules from the popup:
+- update the patient tile status immediately
+- show scheduled/next action state
+- do not require page refresh
+- do not lose the Work Queue panel state
+
+COMPLETE & SUBMIT
+
+Scheduling alone should not be ambiguous.
+
+After scheduling or logging call activity, the selected patient should have a clear:
+
+Complete & Submit
+
+button on the right patient bar or persistent patient action bar.
+
+This button should be obvious.
+
+When clicked, it should submit the completed patient work and persist:
+
+- scheduling result
+- call result if present
+- notes
+- follow-up date/time
+- next action
+- case status
+- activity/journey event
+
+The user should clearly know that the work for that patient has been submitted.
+
+BUTTONS MUST WORK
+
+All visible scheduling buttons must work.
+
+Do not leave dead buttons or placeholder buttons without clear disabled states.
+
+Required button behavior:
+- Calendar icon in right panel opens popup scheduler.
+- Schedule button in Playground opens full scheduler.
+- Confirm Schedule persists or clearly reports if scheduling persistence is not wired.
+- Open Full Scheduler from popup focuses the full Playground scheduler.
+- Complete & Submit submits the patient work.
+- Cancel/Close returns the user to the prior state without losing data.
+
+If true schedule persistence is not fully wired yet:
+- show a clear integration boundary
+- do not fake success
+- do not silently discard the selected date/time
+
+VISUAL REQUIREMENTS
+
+Make scheduling feel:
+
+- premium
+- bright
+- bold
+- iOS-like
+- fast
+- obvious
+- easy to use
+- spacious
+- not scroll-heavy
+
+Use:
+- large calendar surface
+- clean white panels
+- soft gray background
+- clear appointment form
+- sticky patient action bar
+- large primary confirm button
+- visible schedule status
+
+Avoid:
+- tiny date picker as the only scheduler
+- long scroll page
+- buried calendar
+- cramped schedule cards
+- hidden submit buttons
+- dead buttons
+- random navigation away from the patient
+- losing the current Playground context
+
+VALIDATION SCENARIOS
+
+Scenario A:
+User clicks calendar icon from right Work Queue.
+Expected:
+Quick scheduling popup opens.
+Current Playground view remains visible behind it.
+
+Scenario B:
+User clicks Schedule inside Playground patient action bar.
+Expected:
+Full-size scheduling workspace opens in the selected patient tab.
+
+Scenario C:
+User opens Patient A, then clicks Patient A calendar.
+Expected:
+Patient A tab remains active and Schedule section opens.
+
+Scenario D:
+User opens Patient B from right panel calendar.
+Expected:
+Patient B tab opens/focuses and quick popup or full scheduler uses Patient B context only.
+
+Scenario E:
+User schedules a patient from popup.
+Expected:
+Queue tile updates with schedule/next action without full page refresh.
+
+Scenario F:
+User schedules from full Playground scheduler.
+Expected:
+Calendar is prominent and does not require scrolling to find.
+
+Scenario G:
+User clicks Complete & Submit.
+Expected:
+Patient work is submitted and status updates clearly.
+
+Scenario H:
+All buttons visibly work or are honestly disabled with a reason.
+
+DO NOT:
+- Do not use Google Calendar.
+- Do not navigate to old scheduler pages.
+- Do not use old Outreach Center.
+- Do not use scheduler cards.
+- Do not use /api/scheduler-assignments for Engagement Center-assigned call work.
+- Do not create fake schedule success.
+- Do not mix patients between tabs.
+- Do not make scheduling hard to find.
+- Do not make the full scheduler a tiny modal.
+- Do not make the quick popup replace the Playground.

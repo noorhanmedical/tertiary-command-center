@@ -9,6 +9,7 @@ import {
   Mail,
   FileText,
   CalendarDays,
+  CalendarPlus,
   ClipboardList,
   Megaphone,
   FileSignature,
@@ -667,12 +668,12 @@ export function PatientCommandCanvas({
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
             size="sm"
-            variant="outline"
             onClick={() => onSchedulePatient?.(patient)}
-            className="gap-1.5"
+            className="gap-1.5 text-white shadow-sm hover:opacity-95"
+            style={{ backgroundColor: "#4863A0" }}
             data-testid="action-schedule-patient"
           >
-            <CalendarDays className="h-3.5 w-3.5" />
+            <CalendarPlus className="h-4 w-4" />
             Schedule
           </Button>
           <Button

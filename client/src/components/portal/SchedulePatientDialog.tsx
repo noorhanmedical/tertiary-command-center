@@ -4,15 +4,28 @@ import {
   Dialog,
   DialogContent,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Maximize2 } from "lucide-react";
+import {
+  Loader2,
+  Maximize2,
+  CalendarPlus,
+  Clock,
+  Stethoscope,
+  Phone,
+  Building2,
+  ShieldCheck,
+  Bell,
+  CheckCircle2,
+  MapPin,
+  X,
+} from "lucide-react";
 import {
   fetchPatientScheduleDayContext,
   schedulePatientAncillary,
@@ -20,10 +33,39 @@ import {
 } from "@/lib/workflow/teamMemberWorkspaceApi";
 import { invalidateTeamPortalScheduleQueries } from "@/lib/portal/scheduleInvalidations";
 
-// Patient-specific scheduling popup opened from right-panel patient cards.
-// Separate from Plexus IQ calendar — this surface only writes to
+// Patient-specific scheduling popup opened from right-panel work-queue
+// rows. Separate from Plexus IQ calendar — this surface only writes to
 // global_schedule_events through the canonical
 // /api/global-schedule-events/schedule-ancillary route.
+//
+// Mode 1 of the two scheduling experiences: a fast, premium popup that
+// keeps the current Playground content intact behind it.
+
+const ACCENT = "#4863A0";
+
+export const SERVICE_OPTIONS = [
+  "BrainWave",
+  "VitalWave",
+  "Bilateral Carotid Duplex (93880)",
+  "Echocardiogram TTE (93306)",
+  "Renal Artery Doppler (93975)",
+  "Lower Extremity Arterial Doppler (93925)",
+  "Abdominal Aortic Aneurysm Duplex (93978)",
+  "Lower Extremity Venous Duplex (93971)",
+];
+
+export const APPOINTMENT_TYPES = ["In-clinic", "Mobile unit", "Telehealth"];
+
+// 8:00 AM – 4:30 PM in 30-minute steps.
+export const TIME_SLOTS: string[] = (() => {
+  const out: string[] = [];
+  for (let h = 8; h <= 16; h++) {
+    for (const m of [0, 30]) {
+      out.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+    }
+  }
+  return out;
+})();
 
 export type SchedulePatientDialogPatient = {
   patientName?: string | null;
@@ -32,6 +74,12 @@ export type SchedulePatientDialogPatient = {
   patientScreeningId?: number | null;
   executionCaseId?: number | null;
   serviceType?: string | null;
+  // Enriched read-only context (shown when available; the call list does
+  // not carry phone/insurance, so those stay null from that entry point).
+  patientPhone?: string | null;
+  insurance?: string | null;
+  callReason?: string | null;
+  nextActionAt?: string | null;
 };
 
 export type SchedulePatientDialogProps = {
@@ -45,9 +93,26 @@ export type SchedulePatientDialogProps = {
   }) => void;
 };
 
-function todayIso(): string {
+export function todayIso(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export function prettyTime(time: string): string {
+  if (!/^(\d{1,2}):(\d{2})$/.test(time)) return time;
+  const d = new Date(`2000-01-01T${time.padStart(5, "0")}:00`);
+  if (Number.isNaN(d.getTime())) return time;
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+export function prettyDateLong(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
 }
 
 function fmtTime(iso: string | null | undefined): string {
@@ -57,12 +122,81 @@ function fmtTime(iso: string | null | undefined): string {
   return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
+function fmtNextAction(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function evtRowLabel(evt: unknown): { title: string; sub: string } {
-  const e = evt as { patientName?: string | null; serviceType?: string | null; startsAt?: string | null; status?: string | null };
+  const e = evt as {
+    patientName?: string | null;
+    serviceType?: string | null;
+    startsAt?: string | null;
+    status?: string | null;
+  };
   return {
     title: e.patientName ?? e.serviceType ?? "Event",
-    sub: [fmtTime(e.startsAt ?? null), e.serviceType ?? "", e.status ?? ""].filter(Boolean).join(" · "),
+    sub: [fmtTime(e.startsAt ?? null), e.serviceType ?? "", e.status ?? ""]
+      .filter(Boolean)
+      .join(" · "),
   };
+}
+
+export function combineLocalDateAndTimeToIso(
+  date: string,
+  time: string,
+): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const t = /^(\d{1,2}):(\d{2})$/.exec(time);
+  if (!t) return null;
+  const local = new Date(`${date}T${time.padStart(5, "0")}:00`);
+  if (Number.isNaN(local.getTime())) return null;
+  return local.toISOString();
+}
+
+// Build the canonical note + metadata for a scheduling write so the
+// appointment type and location persist (the schedule-ancillary route
+// stores note + metadata alongside the event).
+export function buildScheduleNote(
+  note: string,
+  appointmentType: string,
+  location: string,
+): string | null {
+  const parts: string[] = [];
+  if (appointmentType.trim()) parts.push(`Type: ${appointmentType.trim()}`);
+  if (location.trim()) parts.push(`Location: ${location.trim()}`);
+  if (note.trim()) parts.push(note.trim());
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function ContextChip({
+  icon,
+  label,
+  value,
+  testId,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  testId: string;
+}) {
+  return (
+    <div
+      className="flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-xs font-medium text-white"
+      title={`${label}: ${value}`}
+      data-testid={testId}
+    >
+      <span className="text-white/70">{icon}</span>
+      <span className="truncate max-w-[180px]">{value}</span>
+    </div>
+  );
 }
 
 function EventList({
@@ -79,42 +213,42 @@ function EventList({
   return (
     <div className="space-y-1" data-testid={testId}>
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-        {label} {rows.length > 0 && <span className="ml-1 text-slate-400">{rows.length}</span>}
+        {label}{" "}
+        {rows.length > 0 && (
+          <span className="ml-1 text-slate-400">{rows.length}</span>
+        )}
       </div>
       {rows.length === 0 ? (
         <div className="text-[11px] text-slate-400 italic">{emptyText}</div>
       ) : (
         <ul className="space-y-1">
-          {rows.slice(0, 8).map((evt, idx) => {
+          {rows.slice(0, 6).map((evt, idx) => {
             const r = evtRowLabel(evt);
             return (
               <li
                 key={idx}
                 className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700"
               >
-                <div className="font-medium text-slate-900 truncate">{r.title}</div>
-                {r.sub && <div className="text-[10px] text-slate-500 truncate">{r.sub}</div>}
+                <div className="font-medium text-slate-900 truncate">
+                  {r.title}
+                </div>
+                {r.sub && (
+                  <div className="text-[10px] text-slate-500 truncate">
+                    {r.sub}
+                  </div>
+                )}
               </li>
             );
           })}
-          {rows.length > 8 && (
+          {rows.length > 6 && (
             <li className="text-[10px] text-slate-400 italic">
-              and {rows.length - 8} more…
+              and {rows.length - 6} more…
             </li>
           )}
         </ul>
       )}
     </div>
   );
-}
-
-function combineLocalDateAndTimeToIso(date: string, time: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-  const t = /^(\d{1,2}):(\d{2})$/.exec(time);
-  if (!t) return null;
-  const local = new Date(`${date}T${time.padStart(5, "0")}:00`);
-  if (Number.isNaN(local.getTime())) return null;
-  return local.toISOString();
 }
 
 export function SchedulePatientDialog({
@@ -131,7 +265,13 @@ export function SchedulePatientDialog({
       ? defaultDate.slice(0, 10)
       : todayIso();
   const [selectedDate, setSelectedDate] = useState<string>(initialDate);
-  const [serviceType, setServiceType] = useState<string>(patient?.serviceType ?? "");
+  const [serviceType, setServiceType] = useState<string>(
+    patient?.serviceType ?? "",
+  );
+  const [appointmentType, setAppointmentType] = useState<string>(
+    APPOINTMENT_TYPES[0],
+  );
+  const [location, setLocation] = useState<string>("");
   const [time, setTime] = useState<string>("");
   const [note, setNote] = useState<string>("");
 
@@ -140,29 +280,32 @@ export function SchedulePatientDialog({
     if (open) {
       setSelectedDate(initialDate);
       setServiceType(patient?.serviceType ?? "");
+      setAppointmentType(APPOINTMENT_TYPES[0]);
+      setLocation(patient?.facilityId ?? "");
       setTime("");
       setNote("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, patient?.patientScreeningId, patient?.executionCaseId]);
 
-  const { data: dayContext, isLoading: contextLoading } = useQuery<PatientScheduleDayContext>({
-    queryKey: [
-      "schedule-patient-day-context",
-      patient?.facilityId ?? null,
-      patient?.patientScreeningId ?? null,
-      patient?.executionCaseId ?? null,
-      selectedDate,
-    ],
-    queryFn: () =>
-      fetchPatientScheduleDayContext({
-        facilityId: patient?.facilityId ?? null,
-        patientScreeningId: patient?.patientScreeningId ?? null,
-        executionCaseId: patient?.executionCaseId ?? null,
+  const { data: dayContext, isLoading: contextLoading } =
+    useQuery<PatientScheduleDayContext>({
+      queryKey: [
+        "schedule-patient-day-context",
+        patient?.facilityId ?? null,
+        patient?.patientScreeningId ?? null,
+        patient?.executionCaseId ?? null,
         selectedDate,
-      }),
-    enabled: open && !!patient,
-  });
+      ],
+      queryFn: () =>
+        fetchPatientScheduleDayContext({
+          facilityId: patient?.facilityId ?? null,
+          patientScreeningId: patient?.patientScreeningId ?? null,
+          executionCaseId: patient?.executionCaseId ?? null,
+          selectedDate,
+        }),
+      enabled: open && !!patient,
+    });
 
   const canSubmit = useMemo(() => {
     if (!patient) return false;
@@ -182,8 +325,12 @@ export function SchedulePatientDialog({
         serviceType: serviceType.trim(),
         startsAt,
         facilityId: patient.facilityId ?? null,
-        note: note.trim() || null,
-        metadata: { source: "schedule_patient_dialog" },
+        note: buildScheduleNote(note, appointmentType, location),
+        metadata: {
+          source: "schedule_patient_dialog",
+          appointmentType: appointmentType.trim() || null,
+          location: location.trim() || null,
+        },
       });
     },
     onSuccess: () => {
@@ -201,11 +348,20 @@ export function SchedulePatientDialog({
     onError: (err: unknown) => {
       toast({
         title: "Could not schedule",
-        description: err instanceof Error ? err.message : "Schedule write failed.",
+        description:
+          err instanceof Error ? err.message : "Schedule write failed.",
         variant: "destructive",
       });
     },
   });
+
+  const initials = (patient?.patientName ?? "P")
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase() ?? "")
+    .join("");
+
+  const nextAction = fmtNextAction(patient?.nextActionAt);
 
   return (
     <Dialog
@@ -215,41 +371,133 @@ export function SchedulePatientDialog({
       }}
     >
       <DialogContent
-        className="max-w-3xl"
+        className="max-w-3xl gap-0 overflow-hidden p-0"
         data-testid="dialog-schedule-patient"
       >
-        <DialogHeader>
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <DialogTitle>Schedule Patient</DialogTitle>
-              <div className="text-xs text-slate-500 mt-1">
-                {patient?.patientName ?? "Patient"}
-                {patient?.patientDob ? ` · DOB ${patient.patientDob}` : ""}
-                {patient?.facilityId ? ` · ${patient.facilityId}` : ""}
+        <DialogTitle className="sr-only">
+          Schedule {patient?.patientName ?? "patient"}
+        </DialogTitle>
+        <DialogDescription className="sr-only">
+          Quick-schedule an ancillary appointment for this patient.
+        </DialogDescription>
+        {/* Premium gradient header with patient + context chips */}
+        <div
+          className="relative px-6 py-5 text-white"
+          style={{ backgroundImage: `linear-gradient(135deg, ${ACCENT}, #2f4673)` }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3.5">
+              <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-base font-bold backdrop-blur">
+                {initials || <CalendarPlus className="h-5 w-5" />}
+              </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/70">
+                  <CalendarPlus className="h-3 w-3" />
+                  Quick Schedule
+                </div>
+                <div className="truncate text-xl font-bold leading-tight">
+                  {patient?.patientName ?? "Patient"}
+                </div>
+                <div className="mt-0.5 text-xs text-white/75">
+                  {patient?.patientDob ? `DOB ${patient.patientDob}` : ""}
+                </div>
               </div>
             </div>
-            {patient && onOpenInPlayground && (
+            <div className="flex items-center gap-1.5">
+              {patient && onOpenInPlayground && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenInPlayground({ patient, selectedDate });
+                    onOpenChange(false);
+                  }}
+                  aria-label="Open full scheduler"
+                  title="Open full scheduler in Playground"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20"
+                  data-testid="button-schedule-patient-open-in-playground"
+                >
+                  <Maximize2 className="h-3.5 w-3.5" />
+                  Full scheduler
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => {
-                  onOpenInPlayground({ patient, selectedDate });
-                  onOpenChange(false);
-                }}
-                aria-label="Open in Playground"
-                title="Open in Playground"
-                className="inline-flex items-center justify-center h-8 w-8 rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                data-testid="button-schedule-patient-open-in-playground"
+                onClick={() => onOpenChange(false)}
+                aria-label="Close"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white"
+                data-testid="button-schedule-patient-close"
               >
-                <Maximize2 className="h-3.5 w-3.5" />
+                <X className="h-4 w-4" />
               </button>
-            )}
+            </div>
           </div>
-        </DialogHeader>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {(patient?.callReason ||
+            patient?.serviceType ||
+            patient?.patientPhone ||
+            patient?.facilityId ||
+            patient?.insurance ||
+            nextAction) && (
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              {patient?.callReason && (
+                <ContextChip
+                  icon={<Bell className="h-3 w-3" />}
+                  label="Call reason"
+                  value={patient.callReason}
+                  testId="schedule-patient-chip-reason"
+                />
+              )}
+              {patient?.serviceType && (
+                <ContextChip
+                  icon={<Stethoscope className="h-3 w-3" />}
+                  label="Target test"
+                  value={patient.serviceType}
+                  testId="schedule-patient-chip-service"
+                />
+              )}
+              {patient?.patientPhone && (
+                <ContextChip
+                  icon={<Phone className="h-3 w-3" />}
+                  label="Phone"
+                  value={patient.patientPhone}
+                  testId="schedule-patient-chip-phone"
+                />
+              )}
+              {patient?.facilityId && (
+                <ContextChip
+                  icon={<Building2 className="h-3 w-3" />}
+                  label="Clinic"
+                  value={patient.facilityId}
+                  testId="schedule-patient-chip-clinic"
+                />
+              )}
+              {patient?.insurance && (
+                <ContextChip
+                  icon={<ShieldCheck className="h-3 w-3" />}
+                  label="Insurance"
+                  value={patient.insurance}
+                  testId="schedule-patient-chip-insurance"
+                />
+              )}
+              {nextAction && (
+                <ContextChip
+                  icon={<Clock className="h-3 w-3" />}
+                  label="Next action"
+                  value={nextAction}
+                  testId="schedule-patient-chip-next-action"
+                />
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 p-6 md:grid-cols-2">
           <div className="space-y-3">
             <div>
-              <Label htmlFor="schedule-patient-date" className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              <Label
+                htmlFor="schedule-patient-date"
+                className="text-[10px] font-semibold uppercase tracking-wider text-slate-500"
+              >
                 Date
               </Label>
               <Input
@@ -257,57 +505,144 @@ export function SchedulePatientDialog({
                 type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                className="mt-1"
+                className="mt-1 rounded-xl"
                 data-testid="input-schedule-patient-date"
               />
+              <div className="mt-1 text-[11px] text-slate-400">
+                {prettyDateLong(selectedDate)}
+              </div>
             </div>
+
             <div>
-              <Label htmlFor="schedule-patient-time" className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                Time
-              </Label>
+              <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                <Clock className="h-3 w-3" />
+                Available slots
+              </div>
+              <div className="grid max-h-32 grid-cols-3 gap-1.5 overflow-auto pr-0.5">
+                {TIME_SLOTS.map((slot) => {
+                  const active = slot === time;
+                  return (
+                    <button
+                      key={slot}
+                      type="button"
+                      onClick={() => setTime(slot)}
+                      className={`rounded-lg border px-2 py-1.5 text-[11px] font-medium transition-colors ${
+                        active
+                          ? "border-transparent text-white shadow-sm"
+                          : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                      }`}
+                      style={active ? { backgroundColor: ACCENT } : undefined}
+                      data-testid={`schedule-patient-slot-${slot}`}
+                    >
+                      {prettyTime(slot)}
+                    </button>
+                  );
+                })}
+              </div>
               <Input
                 id="schedule-patient-time"
                 type="time"
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
-                className="mt-1"
+                className="mt-2 rounded-xl"
                 data-testid="input-schedule-patient-time"
               />
             </div>
+
             <div>
-              <Label htmlFor="schedule-patient-service" className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              <Label
+                htmlFor="schedule-patient-service"
+                className="text-[10px] font-semibold uppercase tracking-wider text-slate-500"
+              >
                 Service type
               </Label>
-              <Input
+              <select
                 id="schedule-patient-service"
                 value={serviceType}
                 onChange={(e) => setServiceType(e.target.value)}
-                placeholder="e.g. BrainWave"
-                className="mt-1"
-                data-testid="input-schedule-patient-service-type"
-              />
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2"
+                style={{ ["--tw-ring-color" as string]: ACCENT }}
+                data-testid="select-schedule-patient-service-type"
+              >
+                <option value="">— Select service —</option>
+                {(serviceType && !SERVICE_OPTIONS.includes(serviceType)
+                  ? [serviceType, ...SERVICE_OPTIONS]
+                  : SERVICE_OPTIONS
+                ).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
             </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label
+                  htmlFor="schedule-patient-appt-type"
+                  className="text-[10px] font-semibold uppercase tracking-wider text-slate-500"
+                >
+                  Appointment type
+                </Label>
+                <select
+                  id="schedule-patient-appt-type"
+                  value={appointmentType}
+                  onChange={(e) => setAppointmentType(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2"
+                  style={{ ["--tw-ring-color" as string]: ACCENT }}
+                  data-testid="select-schedule-patient-appt-type"
+                >
+                  {APPOINTMENT_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label
+                  htmlFor="schedule-patient-location"
+                  className="text-[10px] font-semibold uppercase tracking-wider text-slate-500"
+                >
+                  Location
+                </Label>
+                <Input
+                  id="schedule-patient-location"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="Room / site"
+                  className="mt-1 rounded-xl"
+                  data-testid="input-schedule-patient-location"
+                />
+              </div>
+            </div>
+
             <div>
-              <Label htmlFor="schedule-patient-note" className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              <Label
+                htmlFor="schedule-patient-note"
+                className="text-[10px] font-semibold uppercase tracking-wider text-slate-500"
+              >
                 Note (optional)
               </Label>
               <Textarea
                 id="schedule-patient-note"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                className="mt-1 min-h-[80px]"
+                className="mt-1 min-h-[72px] rounded-xl"
                 placeholder="Anything the technician/scheduler should know"
                 data-testid="textarea-schedule-patient-note"
               />
             </div>
           </div>
 
-          <div className="space-y-3 rounded-xl border border-slate-100 bg-slate-50/40 p-3">
+          <div className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50/50 p-3.5">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Day at a glance · {selectedDate}
+              Day at a glance · {prettyDateLong(selectedDate)}
             </div>
             {contextLoading ? (
-              <div className="text-xs text-slate-500 italic py-2">Loading day context…</div>
+              <div className="text-xs text-slate-500 italic py-2">
+                Loading day context…
+              </div>
             ) : (
               <div className="space-y-3">
                 <EventList
@@ -339,7 +674,7 @@ export function SchedulePatientDialog({
           </div>
         </div>
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="gap-2 border-t border-slate-100 bg-slate-50/40 px-6 py-4">
           <Button
             type="button"
             variant="outline"
@@ -352,11 +687,16 @@ export function SchedulePatientDialog({
             type="button"
             disabled={!canSubmit || scheduleMutation.isPending}
             onClick={() => scheduleMutation.mutate()}
-            className="gap-1.5"
+            className="gap-1.5 text-white"
+            style={{ backgroundColor: ACCENT }}
             data-testid="button-schedule-patient-submit"
           >
-            {scheduleMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            Schedule
+            {scheduleMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
+            {time ? `Confirm ${prettyTime(time)}` : "Confirm schedule"}
           </Button>
         </DialogFooter>
       </DialogContent>
