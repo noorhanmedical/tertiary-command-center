@@ -2872,14 +2872,6 @@ export function AdminReviewDialog({
                       </div>
                     ) : (
                     <div className="space-y-2">
-                      <Textarea
-                        value={addReason}
-                        onChange={(e) => setAddReason(e.target.value)}
-                        placeholder="Optional qualification reason / notes"
-                        rows={2}
-                        className="text-xs resize-none"
-                        data-testid="admin-review-add-ancillary-reason"
-                      />
                       <div className="space-y-1">
                         {canAddBrainwave && (
                           <button
