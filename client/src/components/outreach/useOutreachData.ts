@@ -69,8 +69,6 @@ export function useOutreachData(schedulerId: string) {
     [myWorkTasks],
   );
 
-  const { data: todayCalls = [] } = useOutreachCallsToday(currentUser?.id);
-
   const patientIds = useMemo(() => (card?.callList ?? []).map((p) => p.patientId), [card]);
 
   const { data: assignmentRows = [] } = useSchedulerAssignments() as {
@@ -83,10 +81,23 @@ export function useOutreachData(schedulerId: string) {
   }, [assignmentRows]);
 
   const { data: allSchedulerCards = [] } =
-    useOutreachSchedulers<{ id: number; name: string; facility: string }>();
+    useOutreachSchedulers<{
+      id: number;
+      name: string;
+      facility: string;
+      userId: string | null;
+    }>();
   const schedulerNameById = useMemo(() => {
     const m = new Map<number, string>();
     for (const sc of allSchedulerCards) m.set(sc.id, sc.name);
+    return m;
+  }, [allSchedulerCards]);
+
+  const userIdBySchedulerId = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const sc of allSchedulerCards) {
+      if (sc.userId) m.set(sc.id, sc.userId);
+    }
     return m;
   }, [allSchedulerCards]);
 
@@ -134,6 +145,22 @@ export function useOutreachData(schedulerId: string) {
   const { data: opQueue } = useMyOperationalQueue(
     isAdmin ? viewedSchedulerId : null,
   );
+
+  // Daily progress (calls/scheduled done today) must reflect the VIEWED member,
+  // not the logged-in user. Calls are keyed by the scheduler's linked user id.
+  // For an admin viewing another member's card, scope today's calls to that
+  // scheduler row's user id; everyone else reads their own calls. If the viewed
+  // scheduler isn't linked to a user, the query stays disabled and progress is
+  // honestly empty rather than showing the admin's own numbers.
+  const viewedSchedulerUserId =
+    isAdmin && viewedSchedulerId != null
+      ? userIdBySchedulerId.get(viewedSchedulerId) ?? null
+      : null;
+  const callsScopeUserId =
+    isAdmin && viewedSchedulerId != null
+      ? viewedSchedulerUserId
+      : currentUser?.id;
+  const { data: todayCalls = [] } = useOutreachCallsToday(callsScopeUserId);
 
   // /me can return engagement cases for every scheduler row the user is mapped
   // to (potentially across facilities/cards). Scope to the currently selected
