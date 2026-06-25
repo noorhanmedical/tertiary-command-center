@@ -985,7 +985,9 @@ export function EngagementCallSettings() {
 
       <GlobalDefaultsPanel config={config} tiers={tiers} canEdit={canEdit} />
 
-      {members.length > 0 ? <CoverageSummary members={members} /> : null}
+      {members.length > 0 ? (
+        <CoverageSummary members={members} canEdit={canEdit} />
+      ) : null}
 
       {!data?.calendarAvailable ? (
         <div
