@@ -53,6 +53,12 @@ import {
   ALL_ULTRASOUND_SUBTYPES,
   type AdminEvidenceChip,
 } from "@shared/plexus-iq/adminReviewEvidence";
+import {
+  parsePreviousTests,
+  canonicalAncillaryKey,
+  cooldownDaysForInsurance,
+  checkRecommendedTests,
+} from "@shared/priorAncillaryHistory";
 
 export type AdminReviewAncillaryId = "brainwave" | "vitalwave" | "ultrasound";
 
@@ -77,8 +83,13 @@ export type AddAdminReviewAncillaryOutcome =
       qualified: false;
       ancillaryId: AdminReviewAncillaryId;
       requestedTestName: string;
-      state: "no_evidence" | "needs_reason" | "already_present";
+      state: "no_evidence" | "needs_reason" | "already_present" | "in_cooldown";
       candidates: string[];
+      cooldown?: {
+        previousDate: string | null;
+        intervalDays: number | null;
+        message: string;
+      };
     }
   | { ok: false; error: AddAdminReviewAncillaryFailure };
 
@@ -172,6 +183,49 @@ export async function addAdminReviewAncillary(
     ? patient.qualifyingTests
     : [];
 
+  // ─── Prior-history cooldown gate ────────────────────────────────────
+  // Parse the patient's free-text previousTests into structured entries and
+  // compute the insurance-derived window (6mo PPO / 12mo Medicare, falling
+  // back to the per-test defaults). A test blocked by a within-window prior
+  // must not be hand-added — this guards a direct API call that bypasses the
+  // UI menu.
+  const priorEntries = parsePreviousTests(
+    patient.previousTests,
+    patient.previousTestsDate,
+  );
+  const cooldownOverrideDays = cooldownDaysForInsurance(patient.insurance);
+  const cooldownWarningFor = (uiTestName: string) => {
+    if (priorEntries.length === 0) return null;
+    const key = canonicalAncillaryKey(uiTestName);
+    const warnings = checkRecommendedTests(
+      [key],
+      priorEntries,
+      new Date(),
+      cooldownOverrideDays,
+    );
+    return warnings.find((w) => w.reason === "duplicate_in_window") ?? null;
+  };
+
+  // Concrete (non-generic) request blocked by a within-window prior.
+  if (!isGenericUltrasound) {
+    const w = cooldownWarningFor(requestedTestName);
+    if (w) {
+      return {
+        ok: true,
+        qualified: false,
+        ancillaryId,
+        requestedTestName,
+        state: "in_cooldown",
+        candidates: [requestedTestName],
+        cooldown: {
+          previousDate: w.previousDate,
+          intervalDays: w.intervalDays,
+          message: w.message,
+        },
+      };
+    }
+  }
+
   // Early dedupe for a concrete (non-generic) requested test that is already
   // present — preserve the existing focus-the-entry behavior.
   if (!isGenericUltrasound && allTests.includes(requestedTestName)) {
@@ -223,6 +277,12 @@ export async function addAdminReviewAncillary(
 
   const supportByTest: Record<string, AdminEvidenceChip[]> = {};
   let qualifiedTests: string[] = [];
+  // For generic ultrasound: capture the subtypes that qualified clinically
+  // before the cooldown filter so we can distinguish a true "no evidence"
+  // result from one where every qualifying study was excluded by cooldown.
+  let genericCooldownBlocked: NonNullable<
+    ReturnType<typeof cooldownWarningFor>
+  >[] = [];
 
   if (ancillaryId === "brainwave" || ancillaryId === "vitalwave") {
     const candidate = evidence.candidates.find(
@@ -237,10 +297,14 @@ export async function addAdminReviewAncillary(
     }
   } else if (isGenericUltrasound) {
     // Fan a generic ultrasound out to the qualifying AI ultrasound sub-tests
-    // that aren't already present.
-    const subtypes = qualifyingUltrasoundSubtests(evidence.evidence).filter(
-      (t) => !allTests.includes(t),
-    );
+    // that aren't already present AND aren't within a prior-history cooldown.
+    const clinicallyQualifying = qualifyingUltrasoundSubtests(
+      evidence.evidence,
+    ).filter((t) => !allTests.includes(t));
+    genericCooldownBlocked = clinicallyQualifying
+      .map((t) => cooldownWarningFor(t))
+      .filter((w): w is NonNullable<typeof w> => w !== null);
+    const subtypes = clinicallyQualifying.filter((t) => !cooldownWarningFor(t));
     for (const t of subtypes) {
       supportByTest[t] = evidenceForUltrasoundTest(t, evidence.evidence);
     }
@@ -258,6 +322,30 @@ export async function addAdminReviewAncillary(
         evidence.evidence,
       );
     }
+  }
+
+  // ─── Generic ultrasound where every qualifying study is cooldown-blocked ───
+  // Honest cooldown semantics: do NOT fall through to the override path, so a
+  // direct API call cannot force-add "Ultrasound Studies" past the cooldown.
+  if (
+    qualifiedTests.length === 0 &&
+    isGenericUltrasound &&
+    genericCooldownBlocked.length > 0
+  ) {
+    const w = genericCooldownBlocked[0];
+    return {
+      ok: true,
+      qualified: false,
+      ancillaryId,
+      requestedTestName,
+      state: "in_cooldown",
+      candidates: genericCooldownBlocked.map((c) => c.testName),
+      cooldown: {
+        previousDate: w.previousDate,
+        intervalDays: w.intervalDays,
+        message: w.message,
+      },
+    };
   }
 
   // ─── Nothing qualifies: honest empty state + explicit override path ───

@@ -70,6 +70,10 @@ import {
   evidenceForUltrasoundTest,
   ALL_ULTRASOUND_SUBTYPES,
 } from "@shared/plexus-iq/adminReviewEvidence";
+import {
+  blockedAncillariesFromHistory,
+  type AncillaryWarning,
+} from "@shared/priorAncillaryHistory";
 
 export type AdminReviewDialogProps = {
   open: boolean;
@@ -2024,8 +2028,13 @@ export function AdminReviewDialog({
       narrativeGenerated?: boolean;
       // qualified: false branch
       requestedTestName?: string;
-      state?: "no_evidence" | "needs_reason" | "already_present";
+      state?: "no_evidence" | "needs_reason" | "already_present" | "in_cooldown";
       candidates?: string[];
+      cooldown?: {
+        previousDate: string | null;
+        intervalDays: number | null;
+        message: string;
+      };
     },
     Error,
     {
@@ -2064,6 +2073,24 @@ export function AdminReviewDialog({
           toast({
             title: "All ultrasound tests already added",
             description: "Every ultrasound study is already on this patient.",
+          });
+          return;
+        }
+        if (data.state === "in_cooldown") {
+          // Blocked by a within-window prior in the patient's history. No
+          // override affordance — surface an honest cooldown message.
+          setOverrideTarget(null);
+          setAddReason("");
+          setAddOpen(false);
+          const testLabel = data.requestedTestName ?? vars.testName;
+          const last = data.cooldown?.previousDate;
+          toast({
+            title: `${testLabel} is in cooldown`,
+            description: last
+              ? `Last performed ${last} — within the cooldown window.`
+              : data.cooldown?.message ??
+                "A recent prior test is on file within the cooldown window.",
+            variant: "destructive",
           });
           return;
         }
@@ -2631,14 +2658,47 @@ export function AdminReviewDialog({
     (patient.qualifyingTests ?? []).map((t) => String(t)),
   );
   const presentTestList = Array.from(presentTestSet);
-  const canAddBrainwave = !presentTestList.some(
-    (t) => getAncillaryCategory(t) === "brainwave",
-  );
-  const canAddVitalwave = !presentTestList.some(
-    (t) => getAncillaryCategory(t) === "vitalwave",
-  );
+
+  // Prior-history cooldown gate. Tests that already appear in the
+  // patient's free-text previousTests within the cooldown window
+  // (6mo PPO / 12mo Medicare, falling back to per-test defaults) are
+  // blocked from being offered as something to add. Tests in history
+  // but outside the window remain addable.
+  const blockedByHistory: Map<string, AncillaryWarning> =
+    blockedAncillariesFromHistory(
+      ["BrainWave", "VitalWave", ...ADD_ULTRASOUND_SUBTYPES],
+      (patient as { previousTests?: string }).previousTests ?? "",
+      (patient as { previousTestsDate?: string }).previousTestsDate ?? "",
+      (patient as { insurance?: string }).insurance ?? "",
+    );
+  const cooldownTooltip = (testName: string): string => {
+    const w = blockedByHistory.get(testName);
+    if (!w) return "";
+    return w.previousDate
+      ? `In cooldown — last done ${w.previousDate}`
+      : "In cooldown — recent prior on file";
+  };
+
+  const canAddBrainwave =
+    !presentTestList.some((t) => getAncillaryCategory(t) === "brainwave") &&
+    !blockedByHistory.has("BrainWave");
+  const canAddVitalwave =
+    !presentTestList.some((t) => getAncillaryCategory(t) === "vitalwave") &&
+    !blockedByHistory.has("VitalWave");
+  const brainwaveBlockedByCooldown =
+    !presentTestList.some((t) => getAncillaryCategory(t) === "brainwave") &&
+    blockedByHistory.has("BrainWave");
+  const vitalwaveBlockedByCooldown =
+    !presentTestList.some((t) => getAncillaryCategory(t) === "vitalwave") &&
+    blockedByHistory.has("VitalWave");
   const availableUltrasoundSubtypes = ADD_ULTRASOUND_SUBTYPES.filter(
-    (t) => !presentTestSet.has(t),
+    (t) => !presentTestSet.has(t) && !blockedByHistory.has(t),
+  );
+  // Ultrasound subtypes that are absent from the patient but blocked by a
+  // within-window prior — rendered disabled with a cooldown tooltip so the
+  // operator can see why they can't be added.
+  const cooldownBlockedUltrasoundSubtypes = ADD_ULTRASOUND_SUBTYPES.filter(
+    (t) => !presentTestSet.has(t) && blockedByHistory.has(t),
   );
   // Generic ultrasound is only addable when there is at least one sub-test
   // still missing. If every sub-test (or the generic sentinel) is already on
@@ -2651,6 +2711,13 @@ export function AdminReviewDialog({
     canAddVitalwave ||
     canAddGenericUltrasound ||
     availableUltrasoundSubtypes.length > 0;
+  // Items that aren't addable purely because of a cooldown — surfaced as
+  // disabled rows so the operator can still open the menu to see why.
+  const hasAnyCooldownBlocked =
+    brainwaveBlockedByCooldown ||
+    vitalwaveBlockedByCooldown ||
+    cooldownBlockedUltrasoundSubtypes.length > 0;
+  const canOpenAddMenu = hasAnyAddableAncillary || hasAnyCooldownBlocked;
 
   const shellChildren = (
     <>
@@ -2800,8 +2867,14 @@ export function AdminReviewDialog({
                     <button
                       type="button"
                       data-testid="admin-review-add-ancillary-trigger"
-                      disabled={addAncillaryMutation.isPending || !hasAnyAddableAncillary}
-                      title={hasAnyAddableAncillary ? "Add an ancillary" : "All ancillaries already added"}
+                      disabled={addAncillaryMutation.isPending || !canOpenAddMenu}
+                      title={
+                        hasAnyAddableAncillary
+                          ? "Add an ancillary"
+                          : hasAnyCooldownBlocked
+                            ? "Remaining ancillaries are in cooldown"
+                            : "All ancillaries already added"
+                      }
                       className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300/60 bg-gradient-to-b from-sky-50 to-sky-100/60 text-sky-800 hover:from-sky-100 hover:to-sky-100 shadow-sm px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {addAncillaryMutation.isPending ? (
@@ -2883,6 +2956,20 @@ export function AdminReviewDialog({
                             Add BrainWave
                           </button>
                         )}
+                        {brainwaveBlockedByCooldown && (
+                          <button
+                            type="button"
+                            disabled
+                            title={cooldownTooltip("BrainWave")}
+                            data-testid="admin-review-add-brainwave-cooldown"
+                            className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium text-slate-400 cursor-not-allowed flex items-center justify-between gap-2"
+                          >
+                            <span>Add BrainWave</span>
+                            <span className="text-[10px] uppercase tracking-wider text-amber-600">
+                              Cooldown
+                            </span>
+                          </button>
+                        )}
                         {canAddVitalwave && (
                           <button
                             type="button"
@@ -2891,6 +2978,20 @@ export function AdminReviewDialog({
                             className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium hover:bg-rose-50 text-rose-800 transition-colors"
                           >
                             Add VitalWave
+                          </button>
+                        )}
+                        {vitalwaveBlockedByCooldown && (
+                          <button
+                            type="button"
+                            disabled
+                            title={cooldownTooltip("VitalWave")}
+                            data-testid="admin-review-add-vitalwave-cooldown"
+                            className="w-full text-left rounded-md px-2 py-1.5 text-xs font-medium text-slate-400 cursor-not-allowed flex items-center justify-between gap-2"
+                          >
+                            <span>Add VitalWave</span>
+                            <span className="text-[10px] uppercase tracking-wider text-amber-600">
+                              Cooldown
+                            </span>
                           </button>
                         )}
                         {canAddGenericUltrasound && (
@@ -2904,7 +3005,8 @@ export function AdminReviewDialog({
                           </button>
                         )}
                       </div>
-                      {availableUltrasoundSubtypes.length > 0 && (
+                      {(availableUltrasoundSubtypes.length > 0 ||
+                        cooldownBlockedUltrasoundSubtypes.length > 0) && (
                         <>
                           <Separator className="my-1" />
                           <div className="px-1 text-[10px] uppercase tracking-wider text-slate-500">
@@ -2924,16 +3026,40 @@ export function AdminReviewDialog({
                                   {t}
                                 </button>
                               ))}
+                              {cooldownBlockedUltrasoundSubtypes.map((t) => (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  disabled
+                                  title={cooldownTooltip(t)}
+                                  data-testid="admin-review-add-ultrasound-subtype-cooldown"
+                                  data-test-name={t}
+                                  className="w-full text-left rounded-md px-2 py-1.5 text-[11px] text-slate-400 cursor-not-allowed flex items-center justify-between gap-2"
+                                >
+                                  <span>{t}</span>
+                                  <span className="text-[9px] uppercase tracking-wider text-amber-600 shrink-0">
+                                    Cooldown
+                                  </span>
+                                </button>
+                              ))}
                             </div>
                           </ScrollArea>
                         </>
                       )}
-                      {!hasAnyAddableAncillary && (
+                      {!hasAnyAddableAncillary && !hasAnyCooldownBlocked && (
                         <div
                           className="px-2 py-3 text-center text-[11px] text-slate-400 italic"
                           data-testid="admin-review-add-ancillary-empty"
                         >
                           All ancillaries are already on this patient.
+                        </div>
+                      )}
+                      {!hasAnyAddableAncillary && hasAnyCooldownBlocked && (
+                        <div
+                          className="px-2 py-3 text-center text-[11px] text-amber-600 italic"
+                          data-testid="admin-review-add-ancillary-all-cooldown"
+                        >
+                          Remaining ancillaries are within their cooldown window.
                         </div>
                       )}
                     </div>
