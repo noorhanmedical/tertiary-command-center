@@ -86,6 +86,7 @@ export function registerPatientRoutes(
       if (data.phoneNumber !== undefined) updates.phoneNumber = data.phoneNumber || null;
       if (data.insurance !== undefined) updates.insurance = data.insurance || null;
       if (data.diagnoses !== undefined) updates.diagnoses = data.diagnoses || null;
+      if (data.reasoning !== undefined) updates.reasoning = data.reasoning;
       if (data.history !== undefined) updates.history = data.history || null;
       if (data.medications !== undefined) updates.medications = data.medications || null;
       if (data.previousTests !== undefined) updates.previousTests = data.previousTests || null;
@@ -99,6 +100,12 @@ export function registerPatientRoutes(
       if (data.qualifyingTests !== undefined) updates.qualifyingTests = data.qualifyingTests;
       if (data.appointmentStatus !== undefined) updates.appointmentStatus = data.appointmentStatus || "pending";
       if (data.patientType !== undefined) updates.patientType = data.patientType || "visit";
+
+      if (Object.keys(updates).length === 0) {
+        const current = await storage.getPatientScreening(id);
+        if (!current) return res.status(404).json({ error: "Patient not found" });
+        return res.json(current);
+      }
 
       const patient = await storage.updatePatientScreening(id, updates);
       if (!patient) return res.status(404).json({ error: "Patient not found" });
