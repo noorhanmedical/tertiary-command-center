@@ -121,82 +121,94 @@ function Pill({ tone, children, testId }: { tone: keyof typeof TONE_PILL; childr
   );
 }
 
+// Bucket colours are kept as a subtle left-border accent only (no full card
+// fill) so the profile reads as the Plexus IQ navy/white palette.
 const BUCKET_STYLES: Record<string, string> = {
-  brainwave: "border-purple-200 bg-purple-50 dark:bg-purple-900/20 dark:border-purple-800",
-  vitalwave: "border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800",
-  ultrasound: "border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20 dark:border-emerald-800",
+  brainwave: "border-l-4 border-l-purple-400 dark:border-l-purple-500",
+  vitalwave: "border-l-4 border-l-red-400 dark:border-l-red-500",
+  ultrasound: "border-l-4 border-l-emerald-400 dark:border-l-emerald-500",
 };
 const BUCKET_DOT: Record<string, string> = {
   brainwave: "bg-purple-500", vitalwave: "bg-red-500", ultrasound: "bg-emerald-500",
 };
+const BUCKET_LABEL: Record<string, string> = {
+  brainwave: "BrainWave", vitalwave: "VitalWave", ultrasound: "Ultrasound",
+};
+const BUCKET_ORDER: Array<"brainwave" | "vitalwave" | "ultrasound"> = ["brainwave", "vitalwave", "ultrasound"];
+
+function firstLine(text?: string | null): string | null {
+  if (!text) return null;
+  const line = text.split(/\n+/).map((s) => s.trim()).find(Boolean);
+  return line ?? null;
+}
 
 type SectionProps = { chart: EmrChart };
 
 // ── 1. Overview ───────────────────────────────────────────────────────────
+// Care-specialist summary: how many ancillary tests the patient qualifies for,
+// each test grouped under its bucket with a one-line reason, plus the clinical
+// context (identity + active diagnoses). No outreach workflow status chips.
 function OverviewSection({ chart }: SectionProps) {
   const d = chart.demographics;
-  const ov = chart.overview;
-  const recent = ov.recentCalls ?? [];
-  const billingReady = ov.billingReadyCount >= ov.billingTotalCount && ov.billingTotalCount > 0;
+  const tests = chart.plexusIq.qualifyingTests ?? [];
+  const total = tests.length;
+  const grouped = BUCKET_ORDER
+    .map((bucket) => ({ bucket, items: tests.filter((t) => t.bucket === bucket) }))
+    .filter((g) => g.items.length > 0);
+  const dx = chart.diagnoses ?? [];
   return (
     <SectionCard
       id="overview"
       title="Overview"
       icon={<User className="w-4 h-4" />}
-      action={<Pill tone={ov.contactability.tone} testId="badge-overview-contactability">
-        {ov.contactability.canContact ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-        {ov.contactability.label}
-      </Pill>}
     >
-      {/* Why we are calling / decision summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-        <div className="rounded-xl border border-indigo-200/70 dark:border-indigo-900/50 bg-indigo-50/60 dark:bg-indigo-900/20 px-4 py-3" data-testid="panel-why-call">
-          <div className="text-[11px] uppercase tracking-wider text-indigo-700/80 dark:text-indigo-300/80 font-semibold">Why we're calling</div>
-          <div className="text-sm font-semibold mt-1" data-testid="text-why-call">{ov.whyCall}</div>
-          {ov.tiedTest && (
-            <div className="text-xs text-muted-foreground mt-1.5">
-              <span className="font-medium text-slate-700 dark:text-slate-200">Tied to:</span> {ov.tiedTest}
-            </div>
-          )}
-          {ov.proof && (
-            <div className="text-xs text-muted-foreground mt-1" data-testid="text-overview-proof">
-              <span className="font-medium text-slate-700 dark:text-slate-200">Proof:</span> {ov.proof}
-            </div>
-          )}
+      {/* Qualifying-test headline + grouped list */}
+      <div className="rounded-xl border border-slate-200/80 dark:border-border/60 bg-plexus-navy-950/[0.02] dark:bg-plexus-navy-950/30 px-4 py-4 mb-4" data-testid="panel-qualifying-summary">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-plexus-blue-600 dark:text-plexus-blue-300 shrink-0" />
+          <h3 className="text-lg font-bold tracking-tight" data-testid="text-qualifying-headline">
+            {total > 0
+              ? `Qualifies for ${total} ancillary test${total === 1 ? "" : "s"}`
+              : "No qualifying ancillary tests yet"}
+          </h3>
         </div>
-        <div className="rounded-xl border border-slate-200/70 dark:border-border/50 bg-slate-50/60 dark:bg-muted/30 px-4 py-3" data-testid="panel-next-action">
-          <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Next action</div>
-          <div className="text-sm font-semibold mt-1" data-testid="text-next-action">{ov.nextAction || "—"}</div>
-          <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-            <Pill tone={COOLDOWN_STATE_TONES[chart.cooldown.state ?? "clear"]} testId="badge-overview-cooldown">{chart.cooldown.stateLabel}</Pill>
-            <Pill tone={chart.caseStatus.tone ?? "slate"} testId="badge-overview-case-status">{chart.caseStatus.label}</Pill>
-            <Pill tone={billingReady ? "green" : "amber"} testId="badge-overview-billing">
-              <Receipt className="w-3 h-3" />{ov.billingReadyCount}/{ov.billingTotalCount} billing-ready
-            </Pill>
-          </div>
-        </div>
-      </div>
-
-      {/* Recent calls + open tasks snippet */}
-      <div className="mb-4" data-testid="panel-recent-calls">
-        <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold mb-1.5">Recent calls</div>
-        {recent.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No call history from connected sources yet.</p>
+        {total === 0 ? (
+          <p className="text-xs text-muted-foreground mt-2">
+            Run this patient through Plexus IQ to surface qualifying ancillary opportunities.
+          </p>
         ) : (
-          <ul className="space-y-1">
-            {recent.map((c, i) => (
-              <li key={c.id ?? i} className="flex items-center gap-2 text-xs" data-testid={`overview-call-${c.id ?? i}`}>
-                <Phone className="w-3 h-3 text-muted-foreground shrink-0" />
-                <span className="text-muted-foreground">{fmtDate((c.occurredAt || "").slice(0, 10) || null)}</span>
-                <Badge variant="outline" className="text-[10px]">{c.outcome || "logged"}</Badge>
-                {c.notes && <span className="truncate text-muted-foreground">{c.notes}</span>}
-              </li>
+          <div className="mt-3 space-y-3">
+            {grouped.map((g) => (
+              <div key={g.bucket} data-testid={`overview-bucket-${g.bucket}`}>
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <span className={`w-2 h-2 rounded-full ${BUCKET_DOT[g.bucket]}`} />
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    {BUCKET_LABEL[g.bucket]}
+                  </span>
+                  <span className="text-[11px] font-semibold text-muted-foreground tabular-nums">{g.items.length}</span>
+                </div>
+                <div className="space-y-1.5">
+                  {g.items.map((t) => {
+                    const reason = firstLine(t.clinicianUnderstanding) ?? firstLine(t.patientTalkingPoints);
+                    return (
+                      <div
+                        key={t.testName}
+                        className={`rounded-lg bg-white dark:bg-card border border-slate-200/70 dark:border-border/50 px-3 py-2 ${BUCKET_STYLES[t.bucket]}`}
+                        data-testid={`overview-qualifying-${t.testName}`}
+                      >
+                        <div className="text-sm font-semibold">{t.testName}</div>
+                        {reason && <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{reason}</p>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
       </div>
 
-      {/* Identity strip */}
+      {/* Clinical context: identity + active problems */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
         <div>
           <KV label="Name" value={d.name || "—"} />
@@ -211,58 +223,69 @@ function OverviewSection({ chart }: SectionProps) {
           <KV label="Phone" value={d.phoneNumber || "—"} />
         </div>
       </div>
+
+      {dx.length > 0 && (
+        <div className="mt-4" data-testid="panel-overview-diagnoses">
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold mb-1.5">Active diagnoses</div>
+          <div className="flex flex-wrap gap-1.5">
+            {dx.slice(0, 12).map((x, i) => (
+              <Badge key={i} variant="secondary" className="text-[11px]">{x.icd10 ? `${x.icd10} · ` : ""}{x.description}</Badge>
+            ))}
+          </div>
+        </div>
+      )}
     </SectionCard>
   );
 }
 
-// ── 2. Cooldown & Outreach Eligibility ─────────────────────────────────────
+// ── 2. Cooldown Eligibility ────────────────────────────────────────────────
+// Clean per-test eligibility table: which test was performed, when, and the
+// date the patient becomes re-eligible. Rows still in cooldown are highlighted.
 function CooldownSection({ chart }: SectionProps) {
   const cd = chart.cooldown;
   const tests = cd.testCooldowns ?? [];
+  const inCooldownCount = tests.filter((c) => !c.cleared).length;
   return (
     <SectionCard
       id="cooldown"
-      title="Cooldown & Outreach Eligibility"
+      title="Cooldown Eligibility"
       icon={<Clock className="w-4 h-4" />}
-      action={<Pill tone={COOLDOWN_STATE_TONES[cd.state ?? "clear"]} testId="badge-cooldown-state">{cd.stateLabel}</Pill>}
+      action={
+        tests.length > 0
+          ? <Pill tone={inCooldownCount > 0 ? "amber" : "green"} testId="badge-cooldown-state">
+              {inCooldownCount > 0 ? `${inCooldownCount} in cooldown` : "All re-eligible"}
+            </Pill>
+          : undefined
+      }
     >
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 mb-4">
-        <KV label="Last call outcome" value={cd.lastCallOutcome || "—"} />
-        <KV label="Last attempt" value={cd.lastAttemptAt ? fmtDate(cd.lastAttemptAt.slice(0, 10)) : "—"} />
-        <KV label="Next action" value={cd.nextActionAt ? fmtDate(cd.nextActionAt.slice(0, 10)) : "—"} />
-      </div>
       {tests.length === 0 ? (
         <EmptyState icon={<Clock className="w-8 h-8" />} title="No prior tests on file" hint="Cooldown windows appear here once test history is imported." testId="empty-cooldown" />
       ) : (
-        <Table head={<><Th>Test</Th><Th>Last service</Th><Th>Window</Th><Th>Status</Th></>}>
-          {tests.map((c, i) => (
-            <tr key={`${c.testName}-${i}`} className="border-b border-slate-100 dark:border-border/40 last:border-0" data-testid={`row-cooldown-test-${i}`}>
-              <Td className="font-medium">{c.testName}</Td>
-              <Td>{c.lastDate || "—"}<span className="text-[11px] text-muted-foreground ml-1">{(c.insuranceType || "").toUpperCase()}</span></Td>
-              <Td>{c.cooldownMonths != null ? `${c.cooldownMonths}mo` : "—"}</Td>
-              <Td>
-                {c.cleared ? (
-                  <Pill tone="green"><CheckCircle2 className="w-3 h-3" />Eligible</Pill>
-                ) : (
-                  <Pill tone={(c.daysUntilClear ?? 0) <= 1 ? "red" : (c.daysUntilClear ?? 0) <= 7 ? "amber" : "slate"}>Clears {fmtDate(c.clearsAt)}</Pill>
-                )}
-              </Td>
-            </tr>
-          ))}
+        <Table head={<><Th>Test</Th><Th>Last performed</Th><Th>Re-eligible</Th><Th>Status</Th></>}>
+          {tests.map((c, i) => {
+            const inCooldown = !c.cleared;
+            return (
+              <tr
+                key={`${c.testName}-${i}`}
+                className={`border-b last:border-0 ${inCooldown ? "bg-amber-50/70 dark:bg-amber-900/15 border-amber-100 dark:border-amber-900/30" : "border-slate-100 dark:border-border/40"}`}
+                data-testid={`row-cooldown-test-${i}`}
+              >
+                <Td className="font-medium">{c.testName}</Td>
+                <Td>{c.lastDate ? fmtDate(c.lastDate) : "—"}</Td>
+                <Td>{inCooldown ? fmtDate(c.clearsAt) : <span className="text-emerald-700 dark:text-emerald-400">Now</span>}</Td>
+                <Td>
+                  {c.cleared ? (
+                    <Pill tone="green"><CheckCircle2 className="w-3 h-3" />Eligible</Pill>
+                  ) : (
+                    <Pill tone={(c.daysUntilClear ?? 0) <= 7 ? "red" : "amber"}>
+                      <Clock className="w-3 h-3" />In cooldown
+                    </Pill>
+                  )}
+                </Td>
+              </tr>
+            );
+          })}
         </Table>
-      )}
-      {(cd.records ?? []).length > 0 && (
-        <div className="mt-4">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Cooldown records</div>
-          <div className="space-y-1.5">
-            {cd.records!.map((r, i) => (
-              <div key={i} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-slate-50 dark:bg-muted/40 text-sm" data-testid={`row-cooldown-record-${i}`}>
-                <span className="font-medium truncate">{r.serviceType || "—"}</span>
-                <span className="text-[11px] text-muted-foreground">{r.cooldownStatus || "—"}{r.cooldownEndDate ? ` · until ${fmtDate(r.cooldownEndDate.slice(0, 10))}` : ""}</span>
-              </div>
-            ))}
-          </div>
-        </div>
       )}
     </SectionCard>
   );
@@ -317,12 +340,13 @@ function PlexusIqSection({ chart }: SectionProps) {
   return (
     <SectionCard
       id="plexus-iq"
-      title="Plexus IQ"
+      title="Qualifying Tests"
       icon={<Sparkles className="w-4 h-4" />}
+      count={tests.length || null}
       action={
         <div className="flex items-center gap-2">
           {iq.adminApprovalStatus && <Pill tone={iq.adminApprovalStatus === "approved" ? "green" : iq.adminApprovalStatus === "rejected" ? "red" : "amber"} testId="badge-admin-approval">{iq.adminApprovalStatus}</Pill>}
-          <Link href="/plexus-iq"><Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-xs" data-testid="button-open-plexus-iq"><ExternalLink className="w-3 h-3" />Open</Button></Link>
+          <Link href="/plexus-iq"><Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-xs" data-testid="button-open-plexus-iq"><Sparkles className="w-3 h-3" />Plexus IQ</Button></Link>
         </div>
       }
     >
@@ -331,7 +355,7 @@ function PlexusIqSection({ chart }: SectionProps) {
       ) : (
         <div className="space-y-3">
           {tests.map((t) => (
-            <div key={t.testName} className={`rounded-xl border px-4 py-3 ${BUCKET_STYLES[t.bucket]}`} data-testid={`row-qualifying-${t.testName}`}>
+            <div key={t.testName} className={`rounded-xl border border-slate-200/80 dark:border-border/60 bg-white dark:bg-card px-4 py-3 ${BUCKET_STYLES[t.bucket]}`} data-testid={`row-qualifying-${t.testName}`}>
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${BUCKET_DOT[t.bucket]}`} />
                 <span className="text-sm font-semibold">{t.testName}</span>
@@ -840,25 +864,32 @@ export type ChartSectionDef = {
   Component: (props: SectionProps) => JSX.Element;
 };
 
+// Section order reflects an ancillary care-specialist workflow:
+// Overview → Qualifying Tests → Cooldown Eligibility → Clinical →
+// Calls → Scheduling → Documents → Billing Readiness, with the
+// outreach-automation surfaces kept at the end.
 export const CHART_SECTIONS: ChartSectionDef[] = [
   { id: "overview", label: "Overview", icon: <User className="w-4 h-4" />, Component: OverviewSection },
-  { id: "cooldown", label: "Cooldown & Eligibility", icon: <Clock className="w-4 h-4" />, Component: CooldownSection },
-  { id: "ad-automation", label: "Ad Automation", icon: <Megaphone className="w-4 h-4" />, Component: AdAutomationSection },
-  { id: "plexus-iq", label: "Plexus IQ", icon: <Sparkles className="w-4 h-4" />, Component: PlexusIqSection },
-  { id: "execution-cases", label: "Execution Cases", icon: <ClipboardList className="w-4 h-4" />, Component: ExecutionCasesSection },
-  { id: "calls", label: "Calls & Comms", icon: <Phone className="w-4 h-4" />, Component: CallsSection },
-  { id: "scheduling", label: "Scheduling", icon: <CalendarClock className="w-4 h-4" />, Component: SchedulingSection },
-  { id: "documents", label: "Documents", icon: <FileText className="w-4 h-4" />, Component: DocumentsSection },
-  { id: "demographics", label: "Demographics", icon: <User className="w-4 h-4" />, Component: DemographicsSection },
-  { id: "insurance", label: "Insurance & Eligibility", icon: <ShieldCheck className="w-4 h-4" />, Component: InsuranceSection },
-  { id: "providers", label: "Providers", icon: <UserCog className="w-4 h-4" />, Component: ProvidersSection },
+  { id: "plexus-iq", label: "Qualifying Tests", icon: <Sparkles className="w-4 h-4" />, Component: PlexusIqSection },
+  { id: "cooldown", label: "Cooldown Eligibility", icon: <Clock className="w-4 h-4" />, Component: CooldownSection },
+  // Clinical block
   { id: "diagnoses", label: "Diagnoses", icon: <Stethoscope className="w-4 h-4" />, Component: DiagnosesSection },
   { id: "medications", label: "Medications", icon: <PillIcon className="w-4 h-4" />, Component: MedicationsSection },
   { id: "allergies", label: "Allergies", icon: <AlertTriangle className="w-4 h-4" />, Component: AllergiesSection },
+  { id: "demographics", label: "Demographics", icon: <User className="w-4 h-4" />, Component: DemographicsSection },
+  { id: "insurance", label: "Insurance & Eligibility", icon: <ShieldCheck className="w-4 h-4" />, Component: InsuranceSection },
+  { id: "providers", label: "Providers", icon: <UserCog className="w-4 h-4" />, Component: ProvidersSection },
   { id: "labs", label: "Labs", icon: <FlaskConical className="w-4 h-4" />, Component: LabsSection },
   { id: "imaging", label: "Imaging", icon: <Scan className="w-4 h-4" />, Component: ImagingSection },
   { id: "vitals", label: "Vitals", icon: <Activity className="w-4 h-4" />, Component: VitalsSection },
   { id: "encounters", label: "Encounters / Notes", icon: <FileText className="w-4 h-4" />, Component: EncountersSection },
+  // Workflow block
+  { id: "calls", label: "Calls & Comms", icon: <Phone className="w-4 h-4" />, Component: CallsSection },
+  { id: "scheduling", label: "Scheduling", icon: <CalendarClock className="w-4 h-4" />, Component: SchedulingSection },
+  { id: "documents", label: "Documents", icon: <FileText className="w-4 h-4" />, Component: DocumentsSection },
   { id: "billing", label: "Billing / Readiness", icon: <Receipt className="w-4 h-4" />, Component: BillingSection },
+  // Outreach automation (de-prioritised for the care-specialist view)
+  { id: "ad-automation", label: "Ad Automation", icon: <Megaphone className="w-4 h-4" />, Component: AdAutomationSection },
+  { id: "execution-cases", label: "Execution Cases", icon: <ClipboardList className="w-4 h-4" />, Component: ExecutionCasesSection },
   { id: "timeline", label: "Activity Timeline", icon: <History className="w-4 h-4" />, Component: TimelineSection },
 ];

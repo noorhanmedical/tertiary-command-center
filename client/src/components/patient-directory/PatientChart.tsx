@@ -3,10 +3,13 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import {
   Phone, CalendarPlus, Sparkles, Building2, ShieldCheck, ChevronLeft, Clock, Stethoscope,
+  PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 import { initials } from "./profileTypes";
 import { CHART_SECTIONS, SectionSkeleton } from "./PatientChartSections";
 import { type EmrChart, COOLDOWN_STATE_TONES } from "@/types/emr";
+
+const NAV_COLLAPSE_KEY = "pd-chart-nav-collapsed";
 
 const TONE_PILL: Record<string, string> = {
   green: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
@@ -36,6 +39,17 @@ export function PatientChart({
 }) {
   const d = chart.demographics;
   const [activeSection, setActiveSection] = useState<string>(CHART_SECTIONS[0].id);
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(NAV_COLLAPSE_KEY) === "1";
+  });
+  const toggleNav = useCallback(() => {
+    setNavCollapsed((prev) => {
+      const next = !prev;
+      try { window.localStorage.setItem(NAV_COLLAPSE_KEY, next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const manualScrollUntil = useRef<number>(0);
   const visibleSignature = useRef<string>("");
@@ -108,7 +122,7 @@ export function PatientChart({
               <ChevronLeft className="w-4 h-4" />
             </Button>
           )}
-          <div className="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 flex items-center justify-center text-xs font-semibold shrink-0">
+          <div className="w-9 h-9 rounded-full bg-plexus-navy-800 text-white dark:bg-plexus-blue-500/30 dark:text-plexus-blue-200 flex items-center justify-center text-xs font-semibold shrink-0">
             {initials(d.name || "?")}
           </div>
           <div className="min-w-0 flex-1">
@@ -149,18 +163,31 @@ export function PatientChart({
 
       <div className="flex flex-1 min-h-0">
         {/* ── Left-rail section nav ── */}
-        <nav className="hidden xl:flex flex-col w-56 shrink-0 border-r border-slate-200/70 dark:border-border/50 overflow-y-auto py-3 px-2 bg-white/40 dark:bg-card/30" data-testid="chart-section-nav">
+        <nav
+          className={`hidden xl:flex flex-col shrink-0 border-r border-slate-200/70 dark:border-border/50 overflow-y-auto py-3 px-2 bg-plexus-navy-950/[0.03] dark:bg-plexus-navy-950/40 transition-[width] duration-200 ${navCollapsed ? "w-14 items-center" : "w-56"}`}
+          data-testid="chart-section-nav"
+        >
+          <button
+            onClick={toggleNav}
+            className="flex items-center justify-center h-8 w-8 mb-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-plexus-navy-800/10 dark:hover:bg-white/5 transition-colors self-end"
+            title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+            aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+            data-testid="button-toggle-nav"
+          >
+            {navCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+          </button>
           {CHART_SECTIONS.map((s) => {
             const active = activeSection === s.id;
             return (
               <button
                 key={s.id}
                 onClick={() => scrollToSection(s.id)}
-                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-[13px] transition-colors ${active ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-200 font-semibold" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-muted/50"}`}
+                title={navCollapsed ? s.label : undefined}
+                className={`flex items-center gap-2.5 rounded-lg text-left text-[13px] transition-colors ${navCollapsed ? "justify-center w-10 h-10 px-0 py-0" : "px-3 py-2"} ${active ? "bg-plexus-navy-800/[0.10] dark:bg-plexus-blue-500/20 text-plexus-navy-800 dark:text-plexus-blue-300 font-semibold" : "text-slate-600 dark:text-slate-300 hover:bg-plexus-navy-800/[0.06] dark:hover:bg-white/5"}`}
                 data-testid={`nav-section-${s.id}`}
               >
-                <span className={active ? "text-indigo-600 dark:text-indigo-300" : "text-slate-400"}>{s.icon}</span>
-                <span className="truncate">{s.label}</span>
+                <span className={active ? "text-plexus-blue-600 dark:text-plexus-blue-300" : "text-slate-400"}>{s.icon}</span>
+                {!navCollapsed && <span className="truncate">{s.label}</span>}
               </button>
             );
           })}
@@ -177,7 +204,7 @@ export function PatientChart({
                   <button
                     key={s.id}
                     onClick={() => scrollToSection(s.id)}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors ${active ? "bg-slate-900 text-white" : "bg-slate-100 dark:bg-muted text-slate-600 dark:text-slate-300"}`}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors ${active ? "bg-plexus-navy-800 text-white" : "bg-slate-100 dark:bg-muted text-slate-600 dark:text-slate-300"}`}
                     data-testid={`nav-pill-${s.id}`}
                   >
                     {s.label}
@@ -187,7 +214,7 @@ export function PatientChart({
             </div>
           </div>
 
-          <div className="max-w-4xl mx-auto px-4 sm:px-6 py-5 space-y-5">
+          <div className={`mx-auto px-4 sm:px-6 py-5 space-y-5 transition-[max-width] duration-200 ${navCollapsed ? "max-w-6xl" : "max-w-4xl"}`}>
             {CHART_SECTIONS.map((s) => {
               if (loadingSections?.has(s.id)) {
                 return <SectionSkeleton key={s.id} id={s.id} title={s.label} icon={s.icon} />;
@@ -216,7 +243,7 @@ export function PatientChartSkeleton({ seedName, onBack }: { seedName?: string |
               <ChevronLeft className="w-4 h-4" />
             </Button>
           )}
-          <div className="w-12 h-12 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 flex items-center justify-center text-sm font-semibold shrink-0">
+          <div className="w-12 h-12 rounded-full bg-plexus-navy-800 text-white dark:bg-plexus-blue-500/30 dark:text-plexus-blue-200 flex items-center justify-center text-sm font-semibold shrink-0">
             {initials(seedName || "?")}
           </div>
           <div className="min-w-0 flex-1">
@@ -233,7 +260,7 @@ export function PatientChartSkeleton({ seedName, onBack }: { seedName?: string |
       </header>
 
       <div className="flex flex-1 min-h-0">
-        <nav className="hidden xl:flex flex-col w-56 shrink-0 border-r border-slate-200/70 dark:border-border/50 overflow-y-auto py-3 px-2 bg-white/40 dark:bg-card/30">
+        <nav className="hidden xl:flex flex-col w-56 shrink-0 border-r border-slate-200/70 dark:border-border/50 overflow-y-auto py-3 px-2 bg-plexus-navy-950/[0.03] dark:bg-plexus-navy-950/40">
           {CHART_SECTIONS.map((s) => (
             <div key={s.id} className="flex items-center gap-2.5 px-3 py-2 text-[13px] text-slate-500 dark:text-slate-400">
               <span className="text-slate-400">{s.icon}</span>
