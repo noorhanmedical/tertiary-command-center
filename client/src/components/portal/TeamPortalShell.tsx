@@ -26,11 +26,6 @@ import {
   type TeamMemberWorkspaceMode,
 } from "@/components/portal/WorkspaceModeSwitcher";
 import {
-  QueueFilterTabs,
-  applyTagFilter,
-} from "@/components/portal/QueueFilterTabs";
-import type { FollowUpFilterTag } from "@/lib/portal/followUpQueueClassifier";
-import {
   fetchWorkspaceCallList,
   fetchWorkspaceClinicSchedule,
   fetchWorkspaceAncillarySchedule,
@@ -102,7 +97,7 @@ type WorkspaceRole =
 // New code should NOT extend this; use `WorkspaceRole` /
 // `PublicWorkspaceRole` and let the capability resolver drive gating.
 type Role = "technician" | "liaison";
-type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart";
+type CenterMode = "playground" | "patient" | "scheduleDay" | "plexusPdf" | "clinicianPdf" | "consent" | "patientChart" | "calendar";
 
 type PortalTask = {
   id: number;
@@ -809,9 +804,6 @@ export function TeamPortalShell({
   // selection.
   const [activeWorkspaceMode, setActiveWorkspaceMode] =
     useState<TeamMemberWorkspaceMode>(defaultMode ?? "clinicSchedule");
-  // PR 2.3 — operational queue filter tag for the call-list mode.
-  const [callListFilterTag, setCallListFilterTag] =
-    useState<FollowUpFilterTag | null>(null);
 
   // Capability gating per the team-member-workspace spec:
   //   - Both PCS and ACS can call and schedule (call list, scheduling
@@ -956,50 +948,6 @@ export function TeamPortalShell({
   workspaceCanPrimaryConsentScreening = portalCapabilities.canPrimaryConsentScreening;
   workspaceCanUploadProcedureReport = portalCapabilities.canUploadProcedureReport;
   const allowedServiceTypes = workspaceProfile?.allowedServiceTypes ?? [];
-  // No-facility-assigned hint surfaced inside the right-panel body when
-  // the profile restricts to a closed set but lists nothing.
-  const noFacilityAssigned =
-    !!workspaceProfile &&
-    !profileViewAllFacilities &&
-    profileAssignedFacilities.length === 0;
-
-  // No-facility "Message Admin" — opens a Plexus task addressed to an admin
-  // so the member can self-serve a fix without leaving the portal. We look
-  // up an admin to assign to; if none is found the task is left unassigned
-  // with urgent priority so it still surfaces in the admin urgent panel.
-  const messageAdminMutation = useMutation({
-    mutationFn: async () => {
-      let adminId: string | null = null;
-      try {
-        const res = await fetch("/api/plexus/users", { credentials: "include" });
-        if (res.ok) {
-          const users = (await res.json()) as Array<{ id: string; role?: string | null }>;
-          adminId = users.find((u) => u.role === "admin")?.id ?? null;
-        }
-      } catch {
-        adminId = null;
-      }
-      const memberName = currentUser?.username ?? "A team member";
-      await apiRequest("POST", "/api/plexus/tasks", {
-        title: `Facility access needed — ${memberName}`,
-        description:
-          `${memberName} has no clinic/facility assigned on their Team Member ` +
-          `Profile and cannot see any work queue. Please assign at least one ` +
-          `facility (or grant view-all access) so they can begin working.`,
-        urgency: "urgent",
-        priority: "high",
-        assignedToUserId: adminId,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/plexus/tasks/urgent"] });
-      toast({ title: "Message sent", description: "An admin has been notified to assign you a facility." });
-    },
-    onError: (e: any) => {
-      toast({ title: "Couldn't send message", description: e?.message ?? "Please try again.", variant: "destructive" });
-    },
-  });
-
   // Apply assigned-facility allow-list when the profile has any. The
   // backend /api/portal/my-facilities is the underlying source of truth;
   // we narrow client-side so unassigned facilities don't appear in the
@@ -1159,10 +1107,12 @@ export function TeamPortalShell({
   const openLeftRail = (size: RailSize) => {
     setLeftRailCollapsed(false);
     setLeftRailSize(size);
+    setLeftRailPeek(true);
   };
   const openRightRail = (size: RailSize) => {
     setRightRailCollapsed(false);
     setRightRailSize(size);
+    setRightRailPeek(true);
   };
   // Patient-opens-center slide-away. When a patient profile is loaded into
   // the center canvas (centerMode === "patient"), both side rails animate
@@ -2061,7 +2011,20 @@ export function TeamPortalShell({
             )}
 
             <div className="flex-1 min-h-0 overflow-y-auto">
-              {centerMode === "consent" && selected ? (
+              {centerMode === "calendar" ? (
+                <div
+                  className="h-full rounded-[28px] bg-white p-4 shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto"
+                  data-testid="playground-calendar"
+                >
+                  <CanonicalCommandCalendar
+                    mode="inline"
+                    profileId={teamPortalCalendarProfileId}
+                    title="Calendar"
+                    cells={teamPortalCalendarCells}
+                    onSelectDate={(d) => setSelectedDate(d)}
+                  />
+                </div>
+              ) : centerMode === "consent" && selected ? (
                 <div className="h-full rounded-[28px] bg-white p-6 shadow-[0_20px_70px_rgba(15,23,42,0.12)] overflow-y-auto" data-testid="expanded-consent">
                   <div className="flex items-start justify-between">
                     <div>
@@ -2471,29 +2434,16 @@ export function TeamPortalShell({
           </div>
         </div>
 
-        {/* Left screen-edge peek strip — re-shows the rail on hover while a
-            patient profile occupies the center canvas. */}
-        {centerPatientOpen && (
-          <div
-            className="pointer-events-auto absolute left-0 top-0 bottom-0 z-30 w-2"
-            onMouseEnter={() => setLeftRailPeek(true)}
-            data-testid="left-rail-peek-edge"
-          />
-        )}
-
         <div
           ref={leftRailRef}
-          onMouseEnter={centerPatientOpen ? () => setLeftRailPeek(true) : undefined}
-          onMouseLeave={centerPatientOpen ? () => setLeftRailPeek(false) : undefined}
-          className={`absolute left-4 top-4 bottom-4 z-20 flex flex-col transition-[width,transform] duration-300 ease-out ${LEFT_RAIL_WIDTH[leftRailSize]} ${
-            centerPatientOpen ? "pointer-events-auto" : "pointer-events-none"
-          } ${centerPatientOpen && !leftRailPeek ? "-translate-x-[140%]" : "translate-x-0"}`}
+          className={`pointer-events-none absolute left-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ease-out ${LEFT_RAIL_WIDTH[leftRailSize]}`}
           data-testid="portal-left-rail"
         >
           {/* Trigger pill — ONE click region, two sizes, no arrows. Clicking the
               LEFT half (toward the screen edge) opens the THIN icon rail; the
               RIGHT half opens the NORMAL panel. Clicking away collapses it. */}
           <div
+            onMouseEnter={centerPatientOpen ? () => setLeftRailPeek(true) : undefined}
             className="pointer-events-auto relative inline-flex h-7 select-none items-center self-start overflow-hidden rounded-full border border-white/25 border-t-white/40 bg-[#4863A0]/70 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl"
             data-testid="portal-left-rail-pill"
           >
@@ -2524,10 +2474,14 @@ export function TeamPortalShell({
           {/* Body — frosted-glass panel (step 1) that drops down from the
               trigger with a transform + opacity transition. */}
           <div
+            onMouseEnter={centerPatientOpen ? () => setLeftRailPeek(true) : undefined}
+            onMouseLeave={centerPatientOpen ? () => setLeftRailPeek(false) : undefined}
             className={`pointer-events-auto mt-2 min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/30 bg-white/50 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
               leftRailCollapsed
                 ? "pointer-events-none -translate-y-3 scale-y-95 opacity-0"
-                : "translate-y-0 scale-y-100 opacity-100"
+                : centerPatientOpen && !leftRailPeek
+                  ? "-translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
+                  : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
             }`}
           >
             <div className="flex h-full flex-col">
@@ -2566,12 +2520,10 @@ export function TeamPortalShell({
                     active={false}
                     compact={leftNarrow}
                     onClick={() => {
-                      // Promote the compact calendar into the center
-                      // canvas via the existing centerMode pipeline so
-                      // operators get the full month / day view. Uses
-                      // globalCalendarDate (NOT selectedDate) so the
-                      // right-rail queue is untouched.
-                      setCenterMode("playground");
+                      // Pull the full canonical scheduling calendar into
+                      // the center canvas via the "calendar" centerMode so
+                      // operators get the full month view + scheduling.
+                      setCenterMode("calendar");
                       setCenterTitle(`Calendar — ${globalCalendarDate}`);
                     }}
                     testId="left-rail-tool-calendar"
@@ -2662,7 +2614,7 @@ export function TeamPortalShell({
                     selectedDate={globalCalendarDate}
                     onSelectDate={(d) => setGlobalCalendarDate(d)}
                     onExpandToCanvas={() => {
-                      setCenterMode("playground");
+                      setCenterMode("calendar");
                       setCenterTitle(`Calendar — ${globalCalendarDate}`);
                     }}
                   />
@@ -2674,29 +2626,16 @@ export function TeamPortalShell({
           </div>
         </div>
 
-        {/* Right screen-edge peek strip — re-shows the rail on hover while a
-            patient profile occupies the center canvas. */}
-        {centerPatientOpen && (
-          <div
-            className="pointer-events-auto absolute right-0 top-0 bottom-0 z-30 w-2"
-            onMouseEnter={() => setRightRailPeek(true)}
-            data-testid="right-rail-peek-edge"
-          />
-        )}
-
         <div
           ref={rightRailRef}
-          onMouseEnter={centerPatientOpen ? () => setRightRailPeek(true) : undefined}
-          onMouseLeave={centerPatientOpen ? () => setRightRailPeek(false) : undefined}
-          className={`absolute right-4 top-4 bottom-4 z-20 flex flex-col transition-[width,transform] duration-300 ease-out ${RIGHT_RAIL_WIDTH[rightRailSize]} ${
-            centerPatientOpen ? "pointer-events-auto" : "pointer-events-none"
-          } ${centerPatientOpen && !rightRailPeek ? "translate-x-[140%]" : "translate-x-0"}`}
+          className={`pointer-events-none absolute right-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ease-out ${RIGHT_RAIL_WIDTH[rightRailSize]}`}
           data-testid="portal-right-rail"
         >
           {/* Trigger pill — ONE click region, two sizes, no arrows. Clicking the
               RIGHT half (toward the screen edge) opens the THIN panel; the LEFT
               half opens the NORMAL panel. Clicking away collapses it. */}
           <div
+            onMouseEnter={centerPatientOpen ? () => setRightRailPeek(true) : undefined}
             className="pointer-events-auto relative inline-flex h-7 select-none items-center self-end overflow-hidden rounded-full border border-white/25 border-t-white/40 bg-[#4863A0]/70 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl"
             data-testid="portal-right-rail-pill"
           >
@@ -2726,10 +2665,14 @@ export function TeamPortalShell({
           {/* Body — canonical .glass-tile panel (step 3) that drops down from
               the trigger with a transform + opacity transition. */}
           <div
+            onMouseEnter={centerPatientOpen ? () => setRightRailPeek(true) : undefined}
+            onMouseLeave={centerPatientOpen ? () => setRightRailPeek(false) : undefined}
             className={`glass-tile pointer-events-auto mt-2 min-h-0 flex-1 origin-top !rounded-[24px] text-slate-900 transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
               rightRailCollapsed
                 ? "pointer-events-none -translate-y-3 scale-y-95 opacity-0"
-                : "translate-y-0 scale-y-100 opacity-100"
+                : centerPatientOpen && !rightRailPeek
+                  ? "translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
+                  : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
             }`}
           >
             <div className="flex h-full flex-col">
@@ -2746,6 +2689,7 @@ export function TeamPortalShell({
                   <WorkspaceModeSwitcher
                     activeMode={activeWorkspaceMode}
                     onModeChange={setActiveWorkspaceMode}
+                    compact={rightRailSize === "small"}
                     counts={{
                       callList: workspaceCallList.length,
                       clinicSchedule:
@@ -2757,36 +2701,6 @@ export function TeamPortalShell({
                   />
                 </div>
                 <div className="p-3">
-                {noFacilityAssigned && (
-                  <div
-                    className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-amber-900"
-                    data-testid="workspace-no-facility-card"
-                  >
-                    <div className="flex items-start gap-2">
-                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                      <div className="min-w-0">
-                        <div className="text-[12px] font-semibold" data-testid="text-no-facility-member">
-                          {currentUser?.username ?? "Welcome"} — no facility assigned yet
-                        </div>
-                        <p className="mt-1 text-[11px] leading-snug text-amber-800">
-                          Your Team Member Profile doesn't have a clinic/facility assigned,
-                          so there's no work queue to show. The rest of the portal still works —
-                          message an admin to get set up.
-                        </p>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => messageAdminMutation.mutate()}
-                          disabled={messageAdminMutation.isPending}
-                          className="mt-2 h-7 bg-amber-600 px-2.5 text-[11px] text-white hover:bg-amber-700"
-                          data-testid="button-message-admin"
-                        >
-                          {messageAdminMutation.isPending ? "Sending…" : "Message Admin"}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                )}
                 {activeWorkspaceMode === "clinicSchedule" && (
                 <>
                 <div className="mb-3 flex items-center justify-between">
@@ -2953,21 +2867,6 @@ export function TeamPortalShell({
 
                 {activeWorkspaceMode === "callList" && (
                   <div className="space-y-2" data-testid="workspace-mode-body-callList">
-                    {/* PR 2.3 — operational queue filter tabs. The
-                        tabs live inside portal-right-rail (right
-                        panel = work queue contract) and only narrow
-                        the visible rows — they never mutate them. */}
-                    <QueueFilterTabs
-                      rows={workspaceCallList as unknown as Array<{
-                        engagementStatus?: string | null;
-                        lifecycleStatus?: string | null;
-                        qualificationStatus?: string | null;
-                        nextActionAt?: string | Date | null;
-                        lastCallOutcome?: string | null;
-                      }>}
-                      activeTag={callListFilterTag}
-                      onSelect={setCallListFilterTag}
-                    />
                     {workspaceCallListLoading ? (
                       <div className="text-xs text-slate-600 py-4 text-center">Loading call list…</div>
                     ) : workspaceCallList.length === 0 ? (
@@ -2975,7 +2874,7 @@ export function TeamPortalShell({
                         No calls for this facility/date.
                       </div>
                     ) : (
-                      (applyTagFilter(workspaceCallList as any, callListFilterTag) as typeof workspaceCallList).map((row, idx) => {
+                      workspaceCallList.map((row, idx) => {
                         const callReason = deriveCallReason(row);
                         const canCall = row.patientScreeningId != null;
                         if (rightRailSize === "small") {

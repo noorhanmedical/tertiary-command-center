@@ -84,12 +84,17 @@ export type WorkspaceModeSwitcherProps = {
   activeMode: TeamMemberWorkspaceMode;
   onModeChange: (mode: TeamMemberWorkspaceMode) => void;
   counts?: Partial<Record<TeamMemberWorkspaceMode, number>>;
+  // Compact = the thin (small) right rail. Same layout as normal mode
+  // (icon + label on every tab) just rendered a touch smaller so it
+  // stays visually consistent rather than collapsing to icon-only.
+  compact?: boolean;
 };
 
 export function WorkspaceModeSwitcher({
   activeMode,
   onModeChange,
   counts,
+  compact = false,
 }: WorkspaceModeSwitcherProps) {
   const activeMeta = MODE_META[activeMode];
   return (
@@ -113,21 +118,25 @@ export function WorkspaceModeSwitcher({
               aria-selected={isActive}
               title={`${label} — ${meta.subtitle}`}
               onClick={() => onModeChange(mode)}
-              className={`group flex items-center justify-center gap-1.5 rounded-lg border-l-2 px-2 py-1.5 transition-all duration-200 ${
+              className={`group flex flex-1 items-center justify-center gap-1.5 rounded-lg border-l-2 ${
+                compact ? "px-1.5 py-1" : "px-2 py-1.5"
+              } transition-all duration-200 ${
                 isActive
-                  ? `flex-1 ${meta.activeBg} ${meta.accentBorder} text-white shadow-sm`
-                  : "shrink-0 border-transparent text-white/55 hover:bg-white/5 hover:text-white/85"
+                  ? `${meta.activeBg} ${meta.accentBorder} text-white shadow-sm`
+                  : "border-transparent text-white/55 hover:bg-white/5 hover:text-white/85"
               }`}
               data-testid={`workspace-mode-switcher-${mode}`}
             >
               <Icon
-                className={`h-4 w-4 shrink-0 ${isActive ? meta.accentIcon : ""}`}
+                className={`h-4 w-4 shrink-0 ${isActive ? meta.accentIcon : "text-white/60"}`}
               />
-              {isActive && (
-                <span className="truncate text-[11px] font-semibold leading-tight">
-                  {meta.shortLabel}
-                </span>
-              )}
+              <span
+                className={`truncate font-semibold leading-tight ${
+                  compact ? "text-[10px]" : "text-[11px]"
+                }`}
+              >
+                {meta.shortLabel}
+              </span>
               {count != null && (
                 <span
                   className={`inline-flex h-4 min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums ${
