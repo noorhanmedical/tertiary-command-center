@@ -80,7 +80,7 @@ export default function CallListAuditPage({ embedded = false }: { embedded?: boo
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8" data-testid="page-call-list-audit">
+    <div className={embedded ? "flex h-full w-full flex-col overflow-y-auto p-6" : "mx-auto max-w-6xl px-6 py-8"} data-testid="page-call-list-audit">
       <div className="mb-6 flex items-center justify-between">
         <div>
           {!embedded && <h1 className="text-2xl font-semibold text-slate-900">Call List Audit</h1>}
