@@ -30,6 +30,7 @@ import { registerTestFixtureRoutes } from "./routes/testFixture";
 import { registerMarketingMaterialRoutes } from "./routes/marketingMaterials";
 import { registerDocumentLibraryRoutes } from "./routes/documentLibrary";
 import { registerPortalRoutes } from "./routes/portal";
+import { registerPortalAssistantRoutes } from "./routes/portalAssistant";
 import { registerExecutionCaseRoutes } from "./routes/executionCases";
 import { registerGlobalScheduleRoutes } from "./routes/globalSchedule";
 import { registerAcsWorkflowRoutes } from "./routes/acsWorkflow";
@@ -257,6 +258,7 @@ export async function registerRoutes(
   registerMarketingMaterialRoutes(app);
   registerDocumentLibraryRoutes(app);
   registerPortalRoutes(app);
+  registerPortalAssistantRoutes(app, requireRole);
   registerExecutionCaseRoutes(app);
   registerAcsWorkflowRoutes(app);
   registerPatientNotesRoutes(app);

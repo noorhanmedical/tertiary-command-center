@@ -8,8 +8,18 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import { DOCK_ITEMS, type DockItem } from "@/lib/navigation/navigationRegistry";
+import {
+  DOCK_ITEMS,
+  PORTAL_DOCK_ITEMS,
+  PORTAL_DOCK_ROLES,
+  type DockItem,
+} from "@/lib/navigation/navigationRegistry";
 import { PlexusIQCalendar, type CalendarSummaryRow } from "@/components/plexus-iq/PlexusIQCalendar";
+import {
+  PortalChatPanel,
+  PortalPatientSearchPanel,
+  PortalPlexusIQPanel,
+} from "@/components/navigation/portal/PortalDockPanels";
 
 function DockCalendarPanel({ onClose }: { onClose: () => void }) {
   const [, navigate] = useLocation();
@@ -127,12 +137,30 @@ function DockButton({
   );
 }
 
+type AuthMe = { id: string; username: string; role: string } | null;
+
 export function GlobalFloatingDock() {
   const [location] = useLocation();
   const [hovered, setHovered] = useState(false);
   const [tapToggled, setTapToggled] = useState(false);
   const [openPanel, setOpenPanel] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // Read the current user's role to decide which dock to render. Portal
+  // users (scheduler / clinician) get the simplified 4-item dock; everyone
+  // else (admin / biller) keeps the full dock unchanged. The query is
+  // already cached by AppShell, so this is a cheap cache read.
+  const { data: me } = useQuery<AuthMe>({
+    queryKey: ["/api/auth/me"],
+    queryFn: async () => {
+      const res = await fetch("/api/auth/me", { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const isPortalUser = !!me && PORTAL_DOCK_ROLES.has(me.role);
+  const dockItems = isPortalUser ? PORTAL_DOCK_ITEMS : DOCK_ITEMS;
 
   const expanded = hovered || tapToggled;
 
@@ -195,7 +223,7 @@ export function GlobalFloatingDock() {
             className="flex items-end gap-1"
             aria-label="Global navigation dock"
           >
-            {DOCK_ITEMS.map((item) => {
+            {dockItems.map((item) => {
               const active = !!item.href && (location === item.href || location.startsWith(item.href + "/"));
               return (
                 <DockButton
@@ -227,6 +255,23 @@ export function GlobalFloatingDock() {
           </div>
         </SheetContent>
       </Sheet>
+
+      {isPortalUser && (
+        <>
+          <PortalChatPanel
+            open={openPanel === "portal-chat"}
+            onOpenChange={(open) => setOpenPanel(open ? "portal-chat" : null)}
+          />
+          <PortalPatientSearchPanel
+            open={openPanel === "portal-search"}
+            onOpenChange={(open) => setOpenPanel(open ? "portal-search" : null)}
+          />
+          <PortalPlexusIQPanel
+            open={openPanel === "portal-plexus-iq"}
+            onOpenChange={(open) => setOpenPanel(open ? "portal-plexus-iq" : null)}
+          />
+        </>
+      )}
     </>
   );
 }

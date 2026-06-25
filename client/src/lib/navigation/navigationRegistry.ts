@@ -6,6 +6,7 @@ import {
   CalendarDays,
   Phone,
   TrendingUp,
+  Search,
   type LucideIcon,
 } from "lucide-react";
 
@@ -81,6 +82,47 @@ export const DOCK_ITEMS: DockItem[] = [
     testId: "global-floating-dock-communications",
   },
 ];
+
+// Simplified dock shown to portal users (scheduler / clinician). Four
+// focused items, all opening inline panels so the user never loses their
+// place. Admin / biller keep the full DOCK_ITEMS dock above.
+export const PORTAL_DOCK_ITEMS: DockItem[] = [
+  {
+    id: "portal-home",
+    label: "Home",
+    Icon: HomeIcon,
+    kind: "link",
+    href: "/home",
+    testId: "global-floating-dock-portal-home",
+  },
+  {
+    id: "portal-chat",
+    label: "Chat",
+    Icon: MessageSquare,
+    kind: "panel",
+    panelId: "portal-chat",
+    testId: "global-floating-dock-portal-chat",
+  },
+  {
+    id: "portal-search",
+    label: "Patient Search",
+    Icon: Search,
+    kind: "panel",
+    panelId: "portal-search",
+    testId: "global-floating-dock-portal-search",
+  },
+  {
+    id: "portal-plexus-iq",
+    label: "Plexus IQ",
+    Icon: Sparkles,
+    kind: "panel",
+    panelId: "portal-plexus-iq",
+    testId: "global-floating-dock-portal-plexus-iq",
+  },
+];
+
+// Roles that get the simplified 4-item portal dock.
+export const PORTAL_DOCK_ROLES = new Set(["scheduler", "clinician"]);
 
 export const GLOBAL_NAV_ROUTES: string[] = ["/home", "/clinician-portal"];
 
