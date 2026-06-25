@@ -1,6 +1,10 @@
 import type { Express, Request, Response, NextFunction } from "express";
+import { z } from "zod";
 import { storage } from "../storage";
 import { canonicalDay } from "../services/scheduleDashboardService";
+import { clinicianPortalRepository } from "../repositories/clinicianPortal.repo";
+import { auditRepository } from "../repositories/audit.repo";
+import { logAudit } from "../services/auditService";
 import type {
   PatientScreening,
   BillingRecord,
@@ -9,11 +13,20 @@ import type {
 } from "@shared/schema";
 
 // ---------------------------------------------------------------------------
-// Clinician Portal aggregator. Computes every tile in the redesigned
-// /clinician-portal command center (Finance, Orders & Notes, Plexus
-// Engagement) from live records instead of synthetic demo data. Mirrors the
-// homeStats.ts pattern: a single endpoint does the rollups server-side where
-// the data lives, and the client renders the shaped payload directly.
+// Clinician Portal.
+//
+// Two concerns live here:
+//   1. The aggregator (Task #567): GET /api/clinician-portal computes every
+//      tile in the redesigned command center (Finance, Orders & Notes, Plexus
+//      Engagement) from live records. A single endpoint does the rollups
+//      server-side where the data lives; the client renders the payload.
+//   2. Action persistence (Task #568): the portal pages let a clinician sign/
+//      amend/draft notes, record call outcomes, and add studies to the live
+//      schedule. Those actions are persisted as overlays keyed by the
+//      aggregator record id (NOTE-… / CALL-… / mrn+service) so they survive a
+//      refresh and update KPIs from the server. The immutable audit trail
+//      lives in audit_log (entityType "clinician_portal_note" /
+//      "clinician_portal_call").
 // ---------------------------------------------------------------------------
 
 type ServiceLine = "BrainWave" | "VitalWave" | "Ultrasound";
@@ -133,6 +146,46 @@ function requireClinicianOrAdmin(req: Request, res: Response, next: NextFunction
   }
   return next();
 }
+
+// ─── Action-persistence helpers (Task #568) ─────────────────────────────────
+
+const NOTE_AUDIT_ENTITY = "clinician_portal_note";
+const CALL_AUDIT_ENTITY = "clinician_portal_call";
+
+const CALL_OUTCOMES = [
+  "No Answer", "Left Voicemail", "Reached — Interested",
+  "Reached — Callback", "Scheduled", "Declined",
+] as const;
+
+type CallOutcome = typeof CALL_OUTCOMES[number];
+
+function actorName(req: Request): string {
+  return req.session?.username ?? "Clinician";
+}
+
+// Mirrors the client-side outcome → status mapping so the server is the
+// authority on call status regardless of which surface recorded the outcome.
+function statusForOutcome(outcome: CallOutcome): string {
+  if (outcome === "Scheduled") return "Scheduled";
+  if (outcome.startsWith("Reached")) return "Reached";
+  if (outcome === "Declined") return "Do Not Contact";
+  return "Attempted";
+}
+
+function nowStamp(): string {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  const date = now.toISOString().slice(0, 10);
+  return `${date} ${hh}:${mm}`;
+}
+
+const soapSchema = z.object({
+  subjective: z.string(),
+  objective: z.string(),
+  assessment: z.string(),
+  plan: z.string(),
+});
 
 export function registerClinicianPortalRoutes(app: Express) {
   app.get("/api/clinician-portal", requireClinicianOrAdmin, async (_req, res) => {
@@ -424,7 +477,7 @@ export function registerClinicianPortalRoutes(app: Express) {
       // Notes — built from committed/qualified screenings. SOAP is sourced
       // from the real clinical fields; no synthetic vitals are invented.
       const noteScreenings = qualifyingScreenings.filter((s) => s.commitStatus !== "Draft").slice(0, 60);
-      const notes = noteScreenings.map((s) => {
+      const baseNotes = noteScreenings.map((s) => {
         const tests = (s.qualifyingTests ?? []).filter(Boolean) as string[];
         const status: "Draft" | "Needs Signature" | "Signed" =
           s.adminApprovalStatus === "approved" ? "Signed"
@@ -451,13 +504,29 @@ export function registerClinicianPortalRoutes(app: Express) {
         };
       });
 
+      // Overlay persisted note actions (sign/amend/draft/send-back) onto the
+      // computed base so signed/amended states survive a refresh and reflect
+      // in the single aggregator payload.
+      const noteStates = await clinicianPortalRepository.listNoteStates();
+      const noteOverlay = new Map(noteStates.map((n) => [n.noteId, n]));
+      const notes = baseNotes.map((n) => {
+        const o = noteOverlay.get(n.id);
+        if (!o) return n;
+        return {
+          ...n,
+          status: (o.status as typeof n.status) ?? n.status,
+          version: o.version ?? n.version,
+          soap: o.soap ?? n.soap,
+        };
+      });
+
       // =====================================================================
       // PLEXUS ENGAGEMENT
       // =====================================================================
       const openCallScreenings = qualifyingScreenings
         .filter((s) => s.commitStatus !== "Completed" && s.appointmentStatus !== "completed")
         .slice(0, 60);
-      const callTasks = openCallScreenings.map((s) => {
+      const baseCallTasks = openCallScreenings.map((s) => {
         const history = callsByPatient.get(s.id) ?? [];
         const last = history[history.length - 1];
         const lastOutcomeRaw = last?.outcome ?? null;
@@ -480,6 +549,20 @@ export function registerClinicianPortalRoutes(app: Express) {
           reason: s.diagnoses || "Qualified for ancillary studies.",
           lastAppointment: s.previousTestsDate || "—",
           history: history.map((c) => ({ label: "Call attempt", outcome: outcomeLabel(c.outcome), date: new Date(c.startedAt).toISOString().slice(0, 16).replace("T", " ") })),
+        };
+      });
+
+      // Overlay persisted call outcomes/DNC onto the computed call list.
+      const callStates = await clinicianPortalRepository.listCallStates();
+      const callOverlay = new Map(callStates.map((c) => [c.callId, c]));
+      const callTasks = baseCallTasks.map((c) => {
+        const o = callOverlay.get(c.id);
+        if (!o) return c;
+        return {
+          ...c,
+          status: (o.status as typeof c.status) ?? c.status,
+          lastOutcome: (o.lastOutcome as typeof c.lastOutcome) ?? c.lastOutcome,
+          history: [...c.history, ...(o.history ?? [])],
         };
       });
 
@@ -512,7 +595,7 @@ export function registerClinicianPortalRoutes(app: Express) {
           };
         });
 
-      const schedule = upcomingAppts.slice(0, 30).map((a) => ({
+      const baseSchedule = upcomingAppts.slice(0, 30).map((a) => ({
         id: `SCH-${a.id}`,
         time: a.scheduledTime,
         patientName: a.patientName,
@@ -522,6 +605,23 @@ export function registerClinicianPortalRoutes(app: Express) {
         status: a.status === "completed" ? "Completed" : a.status === "cancelled" ? "Scheduled" : "Scheduled",
         source: "Plexus Qualification",
       }));
+
+      // Append persisted schedule additions (patients booked from a call),
+      // de-duped against the live upcoming appointments by mrn+service.
+      const scheduleRows = await clinicianPortalRepository.listScheduleItems();
+      const persistedSchedule = scheduleRows
+        .filter((r) => !baseSchedule.some((b) => b.mrn === r.patientId && b.service === r.service))
+        .map((r) => ({
+          id: `CPSCH-${r.id}`,
+          time: r.time,
+          patientName: r.patientName,
+          mrn: r.patientId,
+          service: r.service,
+          technician: r.technician,
+          status: r.status,
+          source: r.source,
+        }));
+      const schedule = [...baseSchedule, ...persistedSchedule];
 
       // Escalations — patients with 3+ logged calls and still no appointment.
       const escalations = openCallScreenings
@@ -538,12 +638,18 @@ export function registerClinicianPortalRoutes(app: Express) {
           ageDays: Math.max(1, Math.floor((todayMs - +new Date(calls[0].startedAt)) / 86400000)),
         }));
 
-      const callsToday = outreachCalls.filter((c) => canonicalDay(new Date(c.startedAt).toISOString()) === today);
+      const callsTodayList = outreachCalls.filter((c) => canonicalDay(new Date(c.startedAt).toISOString()) === today);
+      // Manually-logged outcomes recorded today via the portal action endpoints.
+      const callsLoggedToday = (await auditRepository.list({
+        entityType: CALL_AUDIT_ENTITY,
+        fromDate: startOfToday(),
+        limit: 1000,
+      })).length;
       const engagementKpis = {
         activeCallList: callTasks.length,
         qualificationsToday: qualifications.filter((q) => q.completedAt.slice(0, 10) === today).length,
-        callsCompletedToday: callsToday.length,
-        patientsReached: new Set(callsToday.filter((c) => ["reached", "scheduled", "callback"].includes(c.outcome)).map((c) => c.patientScreeningId)).size,
+        callsCompletedToday: callsTodayList.length + callsLoggedToday,
+        patientsReached: new Set(callsTodayList.filter((c) => ["reached", "scheduled", "callback"].includes(c.outcome)).map((c) => c.patientScreeningId)).size,
         scheduledToday: upcomingAppts.filter((a) => a.scheduledDate === today).length,
         pendingCallbacks: outreachCalls.filter((c) => c.callbackAt && +new Date(c.callbackAt) >= todayMs).length,
         escalations: escalations.length,
@@ -582,6 +688,294 @@ export function registerClinicianPortalRoutes(app: Express) {
     } catch (error: any) {
       console.error("[clinician-portal] failed:", error);
       res.status(500).json({ error: error.message || "Failed to load clinician portal data" });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ACTION PERSISTENCE (Task #568)
+  //
+  // The aggregator above already overlays persisted state into its payload, so
+  // a full refetch of /api/clinician-portal reflects every action. The
+  // dedicated GET endpoints below let the pages hydrate just the overlay slice
+  // (and the audit trail) without recomputing the whole aggregator.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ─── Orders & Notes ──────────────────────────────────────────────────────
+
+  // Hydrate the Orders & Notes page: persisted note overlays + audit trail.
+  app.get("/api/clinician-portal/notes", requireClinicianOrAdmin, async (_req, res) => {
+    try {
+      const [states, auditRows] = await Promise.all([
+        clinicianPortalRepository.listNoteStates(),
+        auditRepository.list({ entityType: NOTE_AUDIT_ENTITY, limit: 500 }),
+      ]);
+      const overlays: Record<string, { status: string; version: number; soap: unknown }> = {};
+      for (const s of states) {
+        overlays[s.noteId] = { status: s.status, version: s.version, soap: s.soap };
+      }
+      const audit = auditRows
+        .map((a) => ({
+          id: `AUD-DB-${a.id}`,
+          recordId: a.entityId ?? "",
+          type: a.action,
+          actor: a.username ?? "Clinician",
+          timestamp: a.createdAt instanceof Date
+            ? a.createdAt.toISOString().slice(0, 16).replace("T", " ")
+            : String(a.createdAt),
+        }))
+        // Oldest first so the timeline reads top→bottom chronologically.
+        .reverse();
+      res.json({ overlays, audit });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to load notes state" });
+    }
+  });
+
+  const noteActionSchema = z.object({
+    baseVersion: z.number().int().min(1).default(1),
+  });
+
+  app.post("/api/clinician-portal/notes/:id/sign", requireClinicianOrAdmin, async (req, res) => {
+    try {
+      const { baseVersion } = noteActionSchema.parse(req.body ?? {});
+      const noteId = String(req.params.id);
+      const existing = await clinicianPortalRepository.getNoteState(noteId);
+      const version = existing?.version ?? baseVersion;
+      const row = await clinicianPortalRepository.upsertNoteState(noteId, {
+        status: "Signed",
+        version,
+        signedByName: actorName(req),
+        signedAt: new Date(),
+      });
+      void logAudit(req, "Note signed", NOTE_AUDIT_ENTITY, noteId, { status: "Signed" });
+      res.json({ overlay: { status: row.status, version: row.version, soap: row.soap } });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: error.message || "Failed to sign note" });
+    }
+  });
+
+  app.post("/api/clinician-portal/notes/:id/send-back", requireClinicianOrAdmin, async (req, res) => {
+    try {
+      const { baseVersion } = noteActionSchema.parse(req.body ?? {});
+      const noteId = String(req.params.id);
+      const existing = await clinicianPortalRepository.getNoteState(noteId);
+      const version = existing?.version ?? baseVersion;
+      const row = await clinicianPortalRepository.upsertNoteState(noteId, {
+        status: "Draft",
+        version,
+        signedAt: null,
+        signedByName: null,
+      });
+      void logAudit(req, "Sent back", NOTE_AUDIT_ENTITY, noteId, { status: "Draft" });
+      res.json({ overlay: { status: row.status, version: row.version, soap: row.soap } });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: error.message || "Failed to send note back" });
+    }
+  });
+
+  app.post("/api/clinician-portal/notes/:id/amend", requireClinicianOrAdmin, async (req, res) => {
+    try {
+      const { baseVersion } = noteActionSchema.parse(req.body ?? {});
+      const noteId = String(req.params.id);
+      const existing = await clinicianPortalRepository.getNoteState(noteId);
+      const version = (existing?.version ?? baseVersion) + 1;
+      const row = await clinicianPortalRepository.upsertNoteState(noteId, {
+        status: "Needs Signature",
+        version,
+        signedAt: null,
+        signedByName: null,
+      });
+      void logAudit(req, "Amendment created", NOTE_AUDIT_ENTITY, noteId, { version });
+      res.json({ overlay: { status: row.status, version: row.version, soap: row.soap } });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: error.message || "Failed to amend note" });
+    }
+  });
+
+  const draftSchema = z.object({
+    baseVersion: z.number().int().min(1).default(1),
+    soap: soapSchema,
+  });
+
+  app.post("/api/clinician-portal/notes/:id/draft", requireClinicianOrAdmin, async (req, res) => {
+    try {
+      const { baseVersion, soap } = draftSchema.parse(req.body ?? {});
+      const noteId = String(req.params.id);
+      const existing = await clinicianPortalRepository.getNoteState(noteId);
+      const version = existing?.version ?? baseVersion;
+      const status = existing?.status ?? "Draft";
+      const row = await clinicianPortalRepository.upsertNoteState(noteId, {
+        status,
+        version,
+        soap,
+      });
+      void logAudit(req, "Note drafted", NOTE_AUDIT_ENTITY, noteId, null);
+      res.json({ overlay: { status: row.status, version: row.version, soap: row.soap } });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: error.message || "Failed to save draft" });
+    }
+  });
+
+  const bulkSignSchema = z.object({
+    attested: z.literal(true),
+    notes: z.array(z.object({
+      noteId: z.string(),
+      baseVersion: z.number().int().min(1).default(1),
+    })).min(1),
+  });
+
+  app.post("/api/clinician-portal/notes/bulk-sign", requireClinicianOrAdmin, async (req, res) => {
+    try {
+      const { notes } = bulkSignSchema.parse(req.body ?? {});
+      const overlays: Record<string, { status: string; version: number; soap: unknown }> = {};
+      for (const { noteId, baseVersion } of notes) {
+        const existing = await clinicianPortalRepository.getNoteState(noteId);
+        const version = existing?.version ?? baseVersion;
+        const row = await clinicianPortalRepository.upsertNoteState(noteId, {
+          status: "Signed",
+          version,
+          signedByName: actorName(req),
+          signedAt: new Date(),
+        });
+        void logAudit(req, "Bulk sign", NOTE_AUDIT_ENTITY, noteId, { status: "Signed" });
+        overlays[noteId] = { status: row.status, version: row.version, soap: row.soap };
+      }
+      res.json({ overlays, signed: notes.length });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: error.message || "Failed to bulk sign notes" });
+    }
+  });
+
+  // ─── Plexus Engagement ───────────────────────────────────────────────────
+
+  function startOfToday(): Date {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  async function buildKpis() {
+    const callAudit = await auditRepository.list({
+      entityType: CALL_AUDIT_ENTITY,
+      fromDate: startOfToday(),
+      limit: 1000,
+    });
+    return { callsLoggedToday: callAudit.length };
+  }
+
+  // Hydrate the Engagement page: call overlays + schedule additions + KPIs.
+  app.get("/api/clinician-portal/engagement", requireClinicianOrAdmin, async (_req, res) => {
+    try {
+      const [callStates, scheduleRows, kpis] = await Promise.all([
+        clinicianPortalRepository.listCallStates(),
+        clinicianPortalRepository.listScheduleItems(),
+        buildKpis(),
+      ]);
+      const calls: Record<string, { status: string; lastOutcome: string | null; history: unknown[] }> = {};
+      for (const c of callStates) {
+        calls[c.callId] = { status: c.status, lastOutcome: c.lastOutcome, history: c.history };
+      }
+      const schedule = scheduleRows.map((s) => ({
+        id: `CPSCH-${s.id}`,
+        time: s.time,
+        patientName: s.patientName,
+        mrn: s.patientId,
+        service: s.service,
+        technician: s.technician,
+        status: s.status,
+        source: s.source,
+      }));
+      res.json({ calls, schedule, kpis });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to load engagement state" });
+    }
+  });
+
+  const outcomeSchema = z.object({
+    outcome: z.enum(CALL_OUTCOMES),
+  });
+
+  app.post("/api/clinician-portal/calls/:id/outcome", requireClinicianOrAdmin, async (req, res) => {
+    try {
+      const { outcome } = outcomeSchema.parse(req.body ?? {});
+      const callId = String(req.params.id);
+      const existing = await clinicianPortalRepository.getCallState(callId);
+      const status = statusForOutcome(outcome);
+      const history = [
+        ...(existing?.history ?? []),
+        { label: "Outcome updated", outcome, date: nowStamp() },
+      ];
+      const row = await clinicianPortalRepository.upsertCallState(callId, {
+        status, lastOutcome: outcome, history,
+      });
+      void logAudit(req, `Outcome: ${outcome}`, CALL_AUDIT_ENTITY, callId, { status });
+      const kpis = await buildKpis();
+      res.json({ overlay: { status: row.status, lastOutcome: row.lastOutcome, history: row.history }, kpis });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: error.message || "Failed to record outcome" });
+    }
+  });
+
+  const scheduleSchema = z.object({
+    mrn: z.string(),
+    patientName: z.string().default(""),
+    service: z.string(),
+  });
+
+  app.post("/api/clinician-portal/calls/:id/schedule", requireClinicianOrAdmin, async (req, res) => {
+    try {
+      const { mrn, patientName, service } = scheduleSchema.parse(req.body ?? {});
+      const callId = String(req.params.id);
+      const existing = await clinicianPortalRepository.getCallState(callId);
+      const history = [
+        ...(existing?.history ?? []),
+        { label: "Scheduled", outcome: "Scheduled", date: nowStamp() },
+      ];
+      const call = await clinicianPortalRepository.upsertCallState(callId, {
+        status: "Scheduled", lastOutcome: "Scheduled", history,
+      });
+      const item = await clinicianPortalRepository.addScheduleItem({
+        patientId: mrn, patientName, service, time: "15:30", technician: "R. Patel",
+        status: "Scheduled", source: "Plexus Qualification",
+      });
+      void logAudit(req, "Added to schedule", CALL_AUDIT_ENTITY, callId, { mrn, service });
+      const kpis = await buildKpis();
+      res.json({
+        overlay: { status: call.status, lastOutcome: call.lastOutcome, history: call.history },
+        scheduleItem: {
+          id: `CPSCH-${item.id}`, time: item.time, patientName: item.patientName, mrn: item.patientId,
+          service: item.service, technician: item.technician, status: item.status, source: item.source,
+        },
+        kpis,
+      });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: error.message || "Failed to add to schedule" });
+    }
+  });
+
+  app.post("/api/clinician-portal/calls/:id/dnc", requireClinicianOrAdmin, async (req, res) => {
+    try {
+      const callId = String(req.params.id);
+      const existing = await clinicianPortalRepository.getCallState(callId);
+      const history = [
+        ...(existing?.history ?? []),
+        { label: "Outcome updated", outcome: "Declined", date: nowStamp() },
+      ];
+      const row = await clinicianPortalRepository.upsertCallState(callId, {
+        status: "Do Not Contact", lastOutcome: "Declined", history,
+      });
+      void logAudit(req, "Do Not Contact", CALL_AUDIT_ENTITY, callId, { status: "Do Not Contact" });
+      const kpis = await buildKpis();
+      res.json({ overlay: { status: row.status, lastOutcome: row.lastOutcome, history: row.history }, kpis });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to update call" });
     }
   });
 }

@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { PhoneCall, AlertTriangle } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { BackToDashboard } from "../ClinicianPortalShell";
 import {
   StatCard, ServiceChip, StatusPill, SideDrawer, FilterBar, SearchInput, Section, EmptyState,
@@ -16,6 +19,16 @@ import {
   type Qualification, type EngagementActivity, type Escalation,
 } from "../mockData";
 import { usePortalData } from "../usePortalData";
+
+type CallOverlay = { status: CallStatus; lastOutcome: CallOutcome | "—"; history: CallTask["history"] };
+type EngagementStateResponse = {
+  calls: Record<string, CallOverlay>;
+  schedule: ScheduleItem[];
+  kpis: { callsLoggedToday: number };
+};
+
+const ENGAGEMENT_QUERY_KEY = ["/api/clinician-portal/engagement"] as const;
+const PORTAL_QUERY_KEY = ["/api/clinician-portal"] as const;
 
 const CALL_OUTCOMES: CallOutcome[] = ["No Answer", "Left Voicemail", "Reached — Interested", "Reached — Callback", "Scheduled", "Declined"];
 
@@ -33,8 +46,7 @@ export function PlexusEngagementPage() {
   const STAFF = eng?.staff ?? [];
   const ENGAGEMENT_KPIS = eng?.kpis;
 
-  const [calls, setCalls] = useState<CallTask[]>([]);
-  const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
+  const { toast } = useToast();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
 
@@ -44,18 +56,40 @@ export function PlexusEngagementPage() {
   const [outcomeFilter, setOutcomeFilter] = useState("all");
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    if (eng?.callTasks) setCalls(eng.callTasks);
-  }, [eng?.callTasks]);
-  useEffect(() => {
-    if (eng?.schedule) setSchedule(eng.schedule);
-  }, [eng?.schedule]);
+  // Persisted call overlays + schedule additions + server KPIs.
+  const { data: state } = useQuery<EngagementStateResponse>({ queryKey: ENGAGEMENT_QUERY_KEY });
+  const callOverlays = state?.calls ?? {};
+
+  // Merge persisted overlays onto the live aggregator call list; persisted
+  // history is appended on top of the aggregator baseline history so a refresh
+  // keeps recorded outcomes even before the aggregator refetches.
+  const calls = useMemo<CallTask[]>(() => (eng?.callTasks ?? []).map((c) => {
+    const o = callOverlays[c.id];
+    if (!o) return c;
+    return {
+      ...c,
+      status: o.status ?? c.status,
+      lastOutcome: o.lastOutcome ?? c.lastOutcome,
+      history: [...c.history, ...(o.history ?? [])],
+    };
+  }), [eng?.callTasks, callOverlays]);
+
+  // Live aggregator schedule + persisted additions, de-duped by mrn+service so
+  // a patient booked from a call doesn't appear twice once the aggregator
+  // also surfaces the appointment.
+  const schedule = useMemo<ScheduleItem[]>(() => {
+    const base = eng?.schedule ?? [];
+    const extras = (state?.schedule ?? []).filter(
+      (s) => !base.some((b) => b.mrn === s.mrn && b.service === s.service),
+    );
+    return [...base, ...extras];
+  }, [eng?.schedule, state?.schedule]);
 
   const active = calls.find((c) => c.id === activeId) ?? null;
 
   const scheduledCount = calls.filter((c) => c.status === "Scheduled").length;
-  const reachedCount = calls.filter((c) => c.status === "Reached").length;
   const callbacks = calls.filter((c) => c.lastOutcome === "Reached — Callback").length;
+  const callsToday = (ENGAGEMENT_KPIS?.callsCompletedToday ?? 0) + (state?.kpis?.callsLoggedToday ?? 0);
 
   const filteredCalls = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -68,30 +102,44 @@ export function PlexusEngagementPage() {
     });
   }, [calls, serviceFilter, staffFilter, outcomeFilter, search]);
 
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ENGAGEMENT_QUERY_KEY });
+    queryClient.invalidateQueries({ queryKey: PORTAL_QUERY_KEY });
+  };
+  const onError = (e: unknown) =>
+    toast({ title: "Action failed", description: e instanceof Error ? e.message : "Please try again.", variant: "destructive" });
+
+  const outcomeMutation = useMutation({
+    mutationFn: ({ id, outcome }: { id: string; outcome: CallOutcome }) =>
+      apiRequest("POST", `/api/clinician-portal/calls/${id}/outcome`, { outcome }),
+    onSuccess: invalidate,
+    onError,
+  });
+  const scheduleMutation = useMutation({
+    mutationFn: ({ id, mrn, patientName, service }: { id: string; mrn: string; patientName: string; service: string }) =>
+      apiRequest("POST", `/api/clinician-portal/calls/${id}/schedule`, { mrn, patientName, service }),
+    onSuccess: invalidate,
+    onError,
+  });
+  const dncMutation = useMutation({
+    mutationFn: ({ id }: { id: string }) =>
+      apiRequest("POST", `/api/clinician-portal/calls/${id}/dnc`, {}),
+    onSuccess: invalidate,
+    onError,
+  });
+
   function updateOutcome(id: string, outcome: CallOutcome) {
-    setCalls((prev) => prev.map((c) => {
-      if (c.id !== id) return c;
-      const status: CallStatus = outcome === "Scheduled" ? "Scheduled"
-        : outcome.startsWith("Reached") ? "Reached"
-        : outcome === "Declined" ? "Do Not Contact" : "Attempted";
-      return { ...c, lastOutcome: outcome, status, history: [...c.history, { label: "Outcome updated", outcome, date: nowStamp() }] };
-    }));
+    outcomeMutation.mutate({ id, outcome });
   }
 
   function markScheduled(id: string) {
     const call = calls.find((c) => c.id === id);
     if (!call) return;
-    updateOutcome(id, "Scheduled");
-    if (!schedule.some((s) => s.mrn === call.mrn && s.service === call.services[0])) {
-      setSchedule((prev) => [...prev, {
-        id: `SCH-${Date.now()}`, time: "15:30", patientName: call.patientName, mrn: call.mrn, service: call.services[0],
-        technician: "—", status: "Scheduled", source: "Plexus Qualification",
-      }]);
-    }
+    scheduleMutation.mutate({ id, mrn: call.mrn, patientName: call.patientName, service: call.services[0] });
   }
 
   function setDoNotContact(id: string) {
-    setCalls((prev) => prev.map((c) => (c.id === id ? { ...c, status: "Do Not Contact", lastOutcome: "Declined" } : c)));
+    dncMutation.mutate({ id });
   }
 
   const callColumns: Column<CallTask>[] = [
@@ -114,7 +162,7 @@ export function PlexusEngagementPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Active Call List" value={String(filteredCalls.length)} testId="ekpi-active" />
-        <StatCard label="Calls Today" value={String(ENGAGEMENT_KPIS?.callsCompletedToday ?? 0)} testId="ekpi-calls" />
+        <StatCard label="Calls Today" value={String(callsToday)} testId="ekpi-calls" />
         <StatCard label="Scheduled Today" value={String(scheduledCount)} testId="ekpi-scheduled" />
         <StatCard label="Pending Callbacks" value={String(callbacks)} testId="ekpi-callbacks" />
       </div>
@@ -293,8 +341,4 @@ function serviceLineMatches(service: string, line: string): boolean {
   if (line === "VitalWave") return service === "VitalWave";
   if (line === "Ultrasound") return service !== "BrainWave" && service !== "VitalWave";
   return false;
-}
-
-function nowStamp() {
-  return "2026-06-25 " + new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
 }

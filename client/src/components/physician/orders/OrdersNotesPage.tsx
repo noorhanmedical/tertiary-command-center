@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Pencil, PenLine, FileText, Send, History, Eye, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { usePortal } from "../portalContext";
 import { BackToDashboard } from "../ClinicianPortalShell";
 import {
@@ -17,6 +20,13 @@ import {
 } from "../mockData";
 import { usePortalData } from "../usePortalData";
 
+type NoteOverlay = { status: NoteStatus; version: number; soap: EncounterNote["soap"] | null };
+type PersistedAudit = { id: string; recordId: string; type: string; actor: string; timestamp: string };
+type NotesStateResponse = { overlays: Record<string, NoteOverlay>; audit: PersistedAudit[] };
+
+const NOTES_QUERY_KEY = ["/api/clinician-portal/notes"] as const;
+const PORTAL_QUERY_KEY = ["/api/clinician-portal"] as const;
+
 const NOTE_TONE: Record<NoteStatus, "amber" | "gray" | "green"> = {
   "Needs Signature": "amber", Draft: "gray", Signed: "green",
 };
@@ -26,10 +36,9 @@ type Tab = typeof TABS[number];
 
 export function OrdersNotesPage() {
   const { incrementSignedToday } = usePortal();
+  const { toast } = useToast();
   const { data, isLoading } = usePortalData();
   const ORDERS = data?.orders ?? [];
-  const [notes, setNotes] = useState<EncounterNote[]>([]);
-  const [audit, setAudit] = useState<AuditEvent[]>(AUDIT_EVENTS);
   const [tab, setTab] = useState<Tab>("All");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string>("");
@@ -39,13 +48,76 @@ export function OrdersNotesPage() {
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState<EncounterNote["soap"] | null>(null);
 
-  useEffect(() => {
-    if (data?.notes) setNotes(data.notes);
-  }, [data?.notes]);
+  // Persisted note overlays + audit trail from the backend. Merged on top of
+  // the live aggregator notes so signed/amended/drafted states survive a
+  // refresh even before the aggregator refetches.
+  const { data: state } = useQuery<NotesStateResponse>({ queryKey: NOTES_QUERY_KEY });
+  const overlays = state?.overlays ?? {};
+
+  const notes = useMemo<EncounterNote[]>(() => (data?.notes ?? []).map((n) => {
+    const o = overlays[n.id];
+    if (!o) return n;
+    return {
+      ...n,
+      status: o.status ?? n.status,
+      version: o.version ?? n.version,
+      soap: o.soap ?? n.soap,
+    };
+  }), [data?.notes, overlays]);
+
+  // Seed audit (empty fallback) + persisted backend events.
+  const audit = useMemo<AuditEvent[]>(
+    () => [...AUDIT_EVENTS, ...(state?.audit ?? [])],
+    [state?.audit],
+  );
 
   useEffect(() => {
     if (!selectedId && notes.length) setSelectedId(notes[0].id);
   }, [notes, selectedId]);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: NOTES_QUERY_KEY });
+    queryClient.invalidateQueries({ queryKey: PORTAL_QUERY_KEY });
+  };
+  const onError = (e: unknown) =>
+    toast({ title: "Action failed", description: e instanceof Error ? e.message : "Please try again.", variant: "destructive" });
+
+  const signMutation = useMutation({
+    mutationFn: ({ id, baseVersion }: { id: string; baseVersion: number }) =>
+      apiRequest("POST", `/api/clinician-portal/notes/${id}/sign`, { baseVersion }),
+    onSuccess: () => { incrementSignedToday(1); invalidate(); },
+    onError,
+  });
+  const sendBackMutation = useMutation({
+    mutationFn: ({ id, baseVersion }: { id: string; baseVersion: number }) =>
+      apiRequest("POST", `/api/clinician-portal/notes/${id}/send-back`, { baseVersion }),
+    onSuccess: invalidate,
+    onError,
+  });
+  const amendMutation = useMutation({
+    mutationFn: ({ id, baseVersion }: { id: string; baseVersion: number }) =>
+      apiRequest("POST", `/api/clinician-portal/notes/${id}/amend`, { baseVersion }),
+    onSuccess: invalidate,
+    onError,
+  });
+  const draftMutation = useMutation({
+    mutationFn: ({ id, baseVersion, soap }: { id: string; baseVersion: number; soap: EncounterNote["soap"] }) =>
+      apiRequest("POST", `/api/clinician-portal/notes/${id}/draft`, { baseVersion, soap }),
+    onSuccess: () => { setEditing(false); invalidate(); },
+    onError,
+  });
+  const bulkSignMutation = useMutation({
+    mutationFn: (payload: { attested: true; notes: { noteId: string; baseVersion: number }[] }) =>
+      apiRequest("POST", `/api/clinician-portal/notes/bulk-sign`, payload),
+    onSuccess: (_res, vars) => {
+      incrementSignedToday(vars.notes.length);
+      setChecked(new Set());
+      setBulkOpen(false);
+      setAttested(false);
+      invalidate();
+    },
+    onError,
+  });
 
   const selected = notes.find((n) => n.id === selectedId) ?? null;
 
@@ -72,34 +144,29 @@ export function OrdersNotesPage() {
     return true;
   }), [ORDERS, tab, search]);
 
-  function appendAudit(recordId: string, type: string, actor = "Dr. J. Taylor") {
-    setAudit((prev) => [...prev, { id: `AUD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, recordId, type, actor, timestamp: nowStamp() }]);
+  function noteVersion(id: string) {
+    return notes.find((n) => n.id === id)?.version ?? 1;
   }
 
   function signNote(id: string) {
-    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, status: "Signed" } : n)));
-    appendAudit(id, "Note signed");
-    incrementSignedToday(1);
+    signMutation.mutate({ id, baseVersion: noteVersion(id) });
   }
 
   function sendBack(id: string) {
-    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, status: "Draft" } : n)));
-    appendAudit(id, "Sent back");
+    sendBackMutation.mutate({ id, baseVersion: noteVersion(id) });
   }
 
   function createAmendment(id: string) {
-    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, status: "Needs Signature", version: n.version + 1 } : n)));
-    appendAudit(id, "Amendment created");
+    amendMutation.mutate({ id, baseVersion: noteVersion(id) });
   }
 
   function confirmBulkSign() {
-    const ids = Array.from(checked);
-    setNotes((prev) => prev.map((n) => (checked.has(n.id) ? { ...n, status: "Signed" } : n)));
-    ids.forEach((id) => appendAudit(id, "Bulk sign"));
-    incrementSignedToday(ids.length);
-    setChecked(new Set());
-    setBulkOpen(false);
-    setAttested(false);
+    const payload = {
+      attested: true as const,
+      notes: Array.from(checked).map((id) => ({ noteId: id, baseVersion: noteVersion(id) })),
+    };
+    if (payload.notes.length === 0) return;
+    bulkSignMutation.mutate(payload);
   }
 
   function toggle(id: string) {
@@ -117,9 +184,7 @@ export function OrdersNotesPage() {
   }
   function saveDraft() {
     if (!selected || !editDraft) return;
-    setNotes((prev) => prev.map((n) => (n.id === selected.id ? { ...n, soap: editDraft } : n)));
-    appendAudit(selected.id, "Note drafted");
-    setEditing(false);
+    draftMutation.mutate({ id: selected.id, baseVersion: selected.version, soap: editDraft });
   }
 
   const orderColumns: Column<Order>[] = [
@@ -163,7 +228,7 @@ export function OrdersNotesPage() {
 
           <Section title="Orders Queue" testId="section-orders-queue">
             {visibleOrders.length === 0 ? (
-              <EmptyState message="No orders in this view." testId="empty-orders" />
+              <EmptyState message={isLoading ? "Loading orders…" : "No orders in this view."} testId="empty-orders" />
             ) : (
               <DataTable columns={orderColumns} rows={visibleOrders} rowTestId={(o) => `row-order-${o.id}`} />
             )}
@@ -184,7 +249,7 @@ export function OrdersNotesPage() {
             testId="section-notes-queue"
           >
             {visibleNotes.length === 0 ? (
-              <EmptyState message="No notes in this view." testId="empty-notes" />
+              <EmptyState message={isLoading ? "Loading notes…" : "No notes in this view."} testId="empty-notes" />
             ) : (
               <DataTable
                 columns={[
@@ -385,7 +450,7 @@ function LinkedDocumentsPanel({ patientName }: { patientName: string }) {
   );
 }
 
-function AuditTimeline({ recordId, events }: { recordId: string; events: typeof AUDIT_EVENTS }) {
+function AuditTimeline({ recordId, events }: { recordId: string; events: AuditEvent[] }) {
   const items = events.filter((e) => e.recordId === recordId);
   return (
     <PanelCard testId="panel-audit-timeline">
