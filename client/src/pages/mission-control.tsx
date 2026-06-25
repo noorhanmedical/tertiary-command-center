@@ -12,6 +12,7 @@
 
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   Radar,
   Users,
@@ -35,6 +36,11 @@ import {
   AlertTriangle,
   PhoneOff,
   ExternalLink,
+  Building2,
+  ShieldCheck,
+  MessageSquare,
+  BadgeCheck,
+  Lock,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -61,6 +67,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -73,6 +84,7 @@ import {
   type MissionPriority,
   type Wrapped,
 } from "@/hooks/api/missionControl";
+import { qk } from "@/hooks/api/keys";
 import { formatCurrency } from "@/lib/format";
 
 /* ───────────────────────── Style maps ───────────────────────── */
@@ -151,6 +163,32 @@ function SourceMissingNote() {
   return <span className="text-[11px] text-slate-400 italic">No source connected yet</span>;
 }
 
+/* ───────────────────────── Access preview ───────────────────────── */
+// Role → capability preview. Derived from the live session role returned by
+// GET /api/auth/me — never hard-coded to a specific user. Mission Control's
+// spine endpoint is admin-gated, so in practice this renders the admin set,
+// but the mapping reflects the documented RBAC tiers so the preview stays
+// honest if access ever widens.
+
+const CAPABILITIES = [
+  "view",
+  "edit",
+  "approve",
+  "upload",
+  "generate",
+  "finalize",
+  "export",
+] as const;
+type Capability = (typeof CAPABILITIES)[number];
+
+const ROLE_CAPS: Record<string, Capability[]> = {
+  admin: ["view", "edit", "approve", "upload", "generate", "finalize", "export"],
+  manager: ["view", "edit", "approve", "upload", "generate"],
+  clinician: ["view", "edit", "approve", "upload", "generate"],
+  scheduler: ["view", "edit", "upload"],
+  biller: ["view", "generate", "finalize", "export"],
+};
+
 /* ───────────────────────── Component ───────────────────────── */
 
 export default function MissionControlPage() {
@@ -158,31 +196,67 @@ export default function MissionControlPage() {
   const { data, isLoading, isError, refetch, isFetching } = useMissionControlSpine();
 
   const [search, setSearch] = useState("");
-  const [clinicFilter, setClinicFilter] = useState<string>("all");
+  const [facilityScope, setFacilityScope] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [ownerFilter, setOwnerFilter] = useState<string>("all");
   const [activeQueue, setActiveQueue] = useState<MissionLaneKey | "all">("all");
   const [selected, setSelected] = useState<MissionLaneRow | null>(null);
 
+  // Header surfaces: access preview, global patient search, Plexus Chat.
+  const [patientSearchOpen, setPatientSearchOpen] = useState(false);
+  const [patientQuery, setPatientQuery] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
+
+  const meQuery = useQuery<{ id: string; username: string; role: string }>({
+    queryKey: qk.auth.me(),
+  });
+  // Only expose the access preview once the real role resolves — never assume
+  // admin while loading, or the preview would misrepresent permissions.
+  const role = meQuery.isSuccess ? meQuery.data.role : undefined;
+  const caps = role ? (ROLE_CAPS[role] ?? null) : null;
+
+  const patientResults = useQuery<
+    { id: number; name: string; dob: string | null; insurance: string | null }[]
+  >({
+    queryKey: ["/api/plexus/patients/search", patientQuery],
+    queryFn: async () => {
+      const r = await fetch(
+        `/api/plexus/patients/search?q=${encodeURIComponent(patientQuery.trim())}`,
+        { credentials: "include" },
+      );
+      if (!r.ok) throw new Error("Patient search failed");
+      return r.json();
+    },
+    enabled: patientSearchOpen && patientQuery.trim().length >= 2,
+    staleTime: 10_000,
+  });
+
   const lanes = data?.lanes ?? [];
+
+  // Facility scope is the top-level lens for the case-derived spine: lanes,
+  // spine counts, role queues and patient services all reflect it. Metrics
+  // sourced from non-case tables (calls, finance) stay account-wide and are
+  // labelled as such.
+  const lanesForScope = useMemo(
+    () => (facilityScope === "all" ? lanes : lanes.filter((l) => l.clinic === facilityScope)),
+    [lanes, facilityScope],
+  );
 
   const filteredLanes = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return lanes.filter((l) => {
+    return lanesForScope.filter((l) => {
       if (activeQueue !== "all" && l.lane !== activeQueue) return false;
-      if (clinicFilter !== "all" && l.clinic !== clinicFilter) return false;
       if (statusFilter !== "all" && l.status !== statusFilter) return false;
       if (priorityFilter !== "all" && l.priority !== priorityFilter) return false;
       if (ownerFilter !== "all" && l.owner !== ownerFilter) return false;
       if (q && !(`${l.patient} ${l.clinic} ${l.service} ${l.owner}`.toLowerCase().includes(q))) return false;
       return true;
     });
-  }, [lanes, activeQueue, clinicFilter, statusFilter, priorityFilter, ownerFilter, search]);
+  }, [lanesForScope, activeQueue, statusFilter, priorityFilter, ownerFilter, search]);
 
   const resetFilters = () => {
     setSearch("");
-    setClinicFilter("all");
     setStatusFilter("all");
     setPriorityFilter("all");
     setOwnerFilter("all");
@@ -231,7 +305,18 @@ export default function MissionControlPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader onRefresh={refetch} isFetching={isFetching} generatedAt={data.generatedAt} />
+      <PageHeader
+        onRefresh={refetch}
+        isFetching={isFetching}
+        generatedAt={data.generatedAt}
+        clinics={clinics}
+        facilityScope={facilityScope}
+        onFacilityChange={setFacilityScope}
+        role={role}
+        caps={caps ?? undefined}
+        onOpenSearch={() => setPatientSearchOpen(true)}
+        onOpenChat={() => setChatOpen(true)}
+      />
 
       <main className="flex-1 overflow-auto bg-slate-50/40 px-6 py-6 space-y-6">
         {/* 1. Execution spine summary */}
@@ -246,7 +331,15 @@ export default function MissionControlPage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4" data-testid="mission-control-spine">
             {SPINE_CARDS.map((c) => {
-              const w = spine[c.spineKey];
+              const serverW = spine[c.spineKey];
+              // When a facility is selected, lane-derived cards recompute from
+              // the scoped lanes (honest: same case rows). Cards with no source
+              // (sourceMissing) stay N/A; the non-lane "tasks" card stays
+              // account-wide as the server reports it.
+              const w: Wrapped<number> =
+                facilityScope !== "all" && c.laneKey && !serverW.sourceMissing
+                  ? { value: lanesForScope.filter((l) => l.lane === c.laneKey).length, sourceMissing: false }
+                  : serverW;
               const clickable = !!c.laneKey;
               const isActive = c.laneKey && activeQueue === c.laneKey;
               return (
@@ -288,13 +381,6 @@ export default function MissionControlPage() {
                 data-testid="input-search-lanes"
               />
             </div>
-            <Select value={clinicFilter} onValueChange={setClinicFilter}>
-              <SelectTrigger className="h-9 w-[190px]" data-testid="select-filter-clinic"><SelectValue placeholder="Clinic" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All clinics</SelectItem>
-                {clinics.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-              </SelectContent>
-            </Select>
             <Select value={ownerFilter} onValueChange={setOwnerFilter}>
               <SelectTrigger className="h-9 w-[170px]" data-testid="select-filter-owner"><SelectValue placeholder="Owner" /></SelectTrigger>
               <SelectContent>
@@ -462,11 +548,22 @@ export default function MissionControlPage() {
               ]} />
             {/* RingCentral integration */}
             <Card className="rounded-xl border-slate-200 p-4" data-testid="section-ringcentral">
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-100 text-slate-700">
-                  <PhoneOff className="w-4 h-4" />
-                </span>
-                <span className="text-sm font-semibold text-slate-800">RingCentral Telephony</span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg ${ringCentral.connected ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-700"}`}>
+                    {ringCentral.connected ? <PhoneCall className="w-4 h-4" /> : <PhoneOff className="w-4 h-4" />}
+                  </span>
+                  <span className="text-sm font-semibold text-slate-800">RingCentral Telephony</span>
+                </div>
+                {ringCentral.connected ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[11px] font-medium" data-testid="badge-ringcentral-live">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Live
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-500 border border-slate-200 px-2 py-0.5 text-[11px] font-medium" data-testid="badge-ringcentral-offline">
+                    Offline
+                  </span>
+                )}
               </div>
               {!ringCentral.connected && (
                 <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-center" data-testid="status-ringcentral-disconnected">
@@ -475,6 +572,15 @@ export default function MissionControlPage() {
                   <p className="text-xs text-slate-400 mt-1">Connect RingCentral to surface live call activity and dialer controls here.</p>
                 </div>
               )}
+              <a
+                href="https://developers.ringcentral.com/api-reference"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                data-testid="link-ringcentral-docs"
+              >
+                <ExternalLink className="w-3.5 h-3.5" /> RingCentral API docs
+              </a>
             </Card>
           </div>
         </section>
@@ -545,13 +651,120 @@ export default function MissionControlPage() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Global patient search */}
+      <Sheet open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" data-testid="patient-search-overlay">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <Search className="w-4 h-4" /> Find patient
+            </SheetTitle>
+            <SheetDescription>Search the patient directory by name, then open the record.</SheetDescription>
+          </SheetHeader>
+          <div className="mt-5 space-y-4">
+            <Input
+              autoFocus
+              value={patientQuery}
+              onChange={(e) => setPatientQuery(e.target.value)}
+              placeholder="Type at least 2 characters…"
+              className="h-9"
+              data-testid="input-patient-search"
+            />
+            <div className="space-y-1.5">
+              {patientQuery.trim().length < 2 && (
+                <p className="text-xs text-slate-400" data-testid="text-patient-search-hint">
+                  Enter a patient name to search.
+                </p>
+              )}
+              {patientQuery.trim().length >= 2 && patientResults.isLoading && (
+                <div className="space-y-2" data-testid="status-patient-search-loading">
+                  {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}
+                </div>
+              )}
+              {patientQuery.trim().length >= 2 && patientResults.isError && (
+                <p className="text-xs text-red-500" data-testid="status-patient-search-error">
+                  Search is temporarily unavailable. Please try again.
+                </p>
+              )}
+              {patientQuery.trim().length >= 2 && !patientResults.isLoading && !patientResults.isError && (patientResults.data?.length ?? 0) === 0 && (
+                <p className="text-xs text-slate-400" data-testid="status-patient-search-empty">
+                  No patients match “{patientQuery.trim()}”.
+                </p>
+              )}
+              {patientResults.data?.map((p) => (
+                <Link key={p.id} href={`/patient-directory?patientId=${p.id}`}>
+                  <button
+                    type="button"
+                    onClick={() => setPatientSearchOpen(false)}
+                    className="w-full text-left rounded-lg border border-slate-200 bg-white p-3 hover-elevate active-elevate-2"
+                    data-testid={`patient-search-result-${p.id}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-slate-800 truncate">{p.name}</span>
+                      <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      {p.dob ? `DOB ${p.dob}` : "DOB —"}{p.insurance ? ` · ${p.insurance}` : ""}
+                    </div>
+                  </button>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Plexus Chat overlay — honest boundary: no assistant backend wired yet,
+          so this is an entry point, not fabricated responses. */}
+      <Sheet open={chatOpen} onOpenChange={setChatOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" data-testid="plexus-chat-overlay">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <MessageSquare className="w-4 h-4" /> Plexus Chat
+            </SheetTitle>
+            <SheetDescription>Operations assistant overlay.</SheetDescription>
+          </SheetHeader>
+          <div className="mt-6 flex flex-col items-center justify-center text-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8" data-testid="status-chat-not-connected">
+            <MessageSquare className="w-7 h-7 text-slate-300 mb-3" />
+            <div className="text-sm font-medium text-slate-600">Assistant not connected yet</div>
+            <p className="text-xs text-slate-400 mt-1">
+              Plexus Chat will let you ask questions about the operations spine once an assistant backend is wired. No responses are generated until then.
+            </p>
+          </div>
+          <div className="mt-4">
+            <Input disabled placeholder="Ask Plexus… (coming soon)" className="h-9" data-testid="input-chat-disabled" />
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
 
 /* ───────────────────────── Sub-components ───────────────────────── */
 
-function PageHeader({ onRefresh, isFetching, generatedAt }: { onRefresh: () => void; isFetching: boolean; generatedAt?: string }) {
+function PageHeader({
+  onRefresh,
+  isFetching,
+  generatedAt,
+  clinics,
+  facilityScope,
+  onFacilityChange,
+  role,
+  caps,
+  onOpenSearch,
+  onOpenChat,
+}: {
+  onRefresh: () => void;
+  isFetching: boolean;
+  generatedAt?: string;
+  clinics?: string[];
+  facilityScope?: string;
+  onFacilityChange?: (v: string) => void;
+  role?: string;
+  caps?: readonly Capability[];
+  onOpenSearch?: () => void;
+  onOpenChat?: () => void;
+}) {
   return (
     <header className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-200 px-6 py-4">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -569,9 +782,74 @@ function PageHeader({ onRefresh, isFetching, generatedAt }: { onRefresh: () => v
             </p>
           </div>
         </div>
-        <Button variant="outline" size="sm" className="h-9" onClick={onRefresh} disabled={isFetching} data-testid="button-refresh">
-          <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? "animate-spin" : ""}`} /> Refresh
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {onOpenSearch && (
+            <Button variant="outline" size="sm" className="h-9" onClick={onOpenSearch} data-testid="button-open-patient-search">
+              <Search className="w-4 h-4 mr-2" /> Find patient
+            </Button>
+          )}
+          {clinics && onFacilityChange && (
+            <Select value={facilityScope ?? "all"} onValueChange={onFacilityChange}>
+              <SelectTrigger className="h-9 w-[200px]" data-testid="select-facility-scope">
+                <span className="flex items-center gap-2 truncate">
+                  <Building2 className="w-4 h-4 text-slate-500 shrink-0" />
+                  <SelectValue placeholder="Facility" />
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All facilities</SelectItem>
+                {clinics.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+          {role && caps && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="h-9" data-testid="button-access-preview">
+                  <ShieldCheck className="w-4 h-4 mr-2 text-emerald-600" />
+                  Access
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72" data-testid="popover-access-preview">
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">Access preview</div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Role-based capabilities for your session — <span className="font-medium capitalize">{role}</span>.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-1.5">
+                    {CAPABILITIES.map((cap) => {
+                      const allowed = caps.includes(cap);
+                      return (
+                        <div key={cap} className="flex items-center justify-between text-xs" data-testid={`access-cap-${cap}`}>
+                          <span className="capitalize text-slate-600">{cap}</span>
+                          {allowed ? (
+                            <span className="inline-flex items-center gap-1 text-emerald-600 font-medium">
+                              <BadgeCheck className="w-3.5 h-3.5" /> Allowed
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-slate-400">
+                              <Lock className="w-3.5 h-3.5" /> Restricted
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
+          {onOpenChat && (
+            <Button variant="outline" size="sm" className="h-9" onClick={onOpenChat} data-testid="button-open-chat">
+              <MessageSquare className="w-4 h-4 mr-2" /> Plexus Chat
+            </Button>
+          )}
+          <Button variant="outline" size="sm" className="h-9" onClick={onRefresh} disabled={isFetching} data-testid="button-refresh">
+            <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? "animate-spin" : ""}`} /> Refresh
+          </Button>
+        </div>
       </div>
     </header>
   );

@@ -18,3 +18,4 @@
 - [applyDistribution post-commit audit flush](engagement-distribution-apply-deadlock.md) — distribution apply must flush journey events AFTER commit: in-tx cross-connection FK insert vs FOR UPDATE row lock deadlocks undetectably.
 - [Team Portal rail pill](team-portal-rail-pill.md) — pills: 2 sizes, NO arrows, half-toward-edge=small/inner=normal, click-away collapses; small left=icon rail, sticker-glass cards.
 - [Consolidating pages into tabs](page-consolidation-tabs.md) — embedding whole pages as Radix Tabs panels surfaces latent runtime crashes (esp. `<SelectItem value="">`); tsc/HMR miss them, so e2e-click every tab + sub-tab.
+- [Mission Control gap-fill](mission-control-gapfill.md) — header facility scope recomputes spine from lanes client-side; access preview gated on /api/auth/me success (never assume admin); patient search needs custom queryFn (default fetcher joins key with "/").
