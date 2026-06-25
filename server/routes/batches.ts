@@ -43,7 +43,6 @@ import {
   findSchedulerForBatch,
   createAssignmentTask,
 } from "../services/schedulerAssignmentService";
-import { commitPatient } from "../services/patientCommitService";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -468,14 +467,9 @@ export function registerBatchRoutes(app: Express) {
                 status: "completed",
               });
             }
-            // Auto-commit on successful batch analysis: any Draft patients
-            // whose AI analysis just finished move to Ready so the assigned
-            // scheduler can immediately see and call them.
-            try {
-              await commitPatient(patient.id, req.session.userId ?? null, { auto: true });
-            } catch (commitErr) {
-              console.error(`Auto-commit after batch analyze failed for patient ${patient.id}:`, commitErr);
-            }
+            // Patients remain in Draft after AI analysis. They only move to
+            // Ready (and into the engagement queue) when an admin explicitly
+            // approves them via the Admin Review flow.
           } catch (err: any) {
             console.error(`Failed to analyze patient ${patient.name}:`, err.message);
             await storage.updatePatientScreening(patient.id, {

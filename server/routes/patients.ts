@@ -711,6 +711,13 @@ export function registerPatientRoutes(
         let commitFailed = false;
         let commitError: string | null = null;
         if (isApproved) {
+          // Record which facility→scheduler mapping *exists* (for the audit
+          // trail / debugging) but do NOT treat its mere existence as a real
+          // assignment. A facility having a default scheduler does not mean
+          // this patient was routed to that person — only an actual auto-assign
+          // (or batch-level Smart Scheduler Assignment) counts. Naming the
+          // facility default here is what caused the toast to falsely claim
+          // "Routed to scheduler: X" while the patient sat unassigned.
           const { lookupSchedulerFromSettings } = await import(
             "../services/schedulerSettings"
           );
@@ -718,17 +725,20 @@ export function registerPatientRoutes(
             patient.facility ?? null,
           );
           routedSchedulerSettingsSource = settingsLookup.source;
-          if (settingsLookup.scheduler) {
-            routedSchedulerName = settingsLookup.scheduler.name;
-            routedByScheduledSettings = true;
-          }
           if (updated.commitStatus === "Draft") {
             try {
               const result = await commitPatient(id, userId, { auto: true });
               if (result.ok) {
                 routedToEngagement = true;
-                routedSchedulerName =
-                  routedSchedulerName ?? result.data.schedulerName ?? null;
+                // Only surface a scheduler name when the commit confirms an
+                // actual assignment. Otherwise the patient landed in the
+                // unassigned engagement queue.
+                if (result.data.autoAssigned && result.data.schedulerName) {
+                  routedSchedulerName = result.data.schedulerName;
+                  routedByScheduledSettings =
+                    settingsLookup.scheduler != null &&
+                    settingsLookup.scheduler.name === result.data.schedulerName;
+                }
               } else {
                 // commitPatient returned a structured failure; surface
                 // it without throwing. CommitError is a discriminated

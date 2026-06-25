@@ -4,7 +4,6 @@ import { eq } from "drizzle-orm";
 import { patientScreenings, screeningBatches, type PatientScreening } from "@shared/schema";
 import { batchProcess } from "../replit_integrations/batch";
 import { screenSinglePatientWithAI } from "./screening";
-import { commitPatient } from "./patientCommitService";
 import { getQualificationMode } from "../routes/helpers";
 import { invalidatePatientDatabase } from "../routes/patientDatabase";
 import { classifyPlexusIqPreCheck } from "./plexusIqPreCheck";
@@ -742,14 +741,6 @@ async function runAnalysisLoop(
             });
           }
           counters.processed += 1;
-          try {
-            await commitPatient(patient.id, userId ?? null, { auto: true });
-          } catch (commitErr) {
-            console.error(
-              `[batchAnalysisRunner:${batchId}] auto-commit failed for patient ${patient.id}:`,
-              commitErr,
-            );
-          }
           if (isDev) {
             console.log(
               `[batchAnalysisRunner:${batchId}] completed patient ${patient.id} ${patient.name}`,

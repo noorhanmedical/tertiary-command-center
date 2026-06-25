@@ -2595,7 +2595,7 @@ export function AdminReviewDialog({
             ? bySettings
               ? `Routed to scheduler: ${schedulerName} · Scheduler Settings`
               : `Routed to scheduler: ${schedulerName}`
-            : "Routed to Engagement Queue (unassigned)"
+            : "Sent to Engagement Queue"
           : data.patient?.name ?? "",
       });
       // SOURCE MARKER: Admin Review navigation does not refetch full workspace
