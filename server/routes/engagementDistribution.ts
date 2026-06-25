@@ -14,6 +14,7 @@ import {
   previewDistribution,
   applyDistribution,
   getLiveProgress,
+  getMemberCases,
 } from "../services/engagement/distributionService";
 
 type RequireRole = (
@@ -73,6 +74,35 @@ export function registerEngagementDistributionRoutes(
             error instanceof Error
               ? error.message
               : "Failed to load live progress",
+        });
+      }
+    },
+  );
+
+  app.get(
+    "/api/engagement/distribution/member/:id/cases",
+    requireRole("admin"),
+    async (req: Request, res: Response) => {
+      const schedulerId = Number(req.params.id);
+      if (!Number.isInteger(schedulerId) || schedulerId <= 0) {
+        return res.status(400).json({
+          error: "Invalid team member id",
+          code: "bad_request",
+        });
+      }
+      try {
+        const result = await getMemberCases(schedulerId);
+        return res.json(result);
+      } catch (error: unknown) {
+        console.error(
+          "[engagement/distribution:member-cases] error:",
+          error instanceof Error ? error.message : error,
+        );
+        return res.status(500).json({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to load member cases",
         });
       }
     },

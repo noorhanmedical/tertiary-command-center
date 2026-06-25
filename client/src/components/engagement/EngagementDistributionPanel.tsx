@@ -17,6 +17,9 @@ import {
   Phone,
   UserPlus,
   ArrowRightLeft,
+  ChevronDown,
+  ChevronRight,
+  Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -24,11 +27,14 @@ import {
   useDistributionPreview,
   useApplyDistribution,
   useDistributionLive,
+  useDistributionMemberCases,
   type MemberAllocationSummary,
   type MemberLiveProgress,
   type ActivityFeedEvent,
   type ProposedAssignment,
   type UnplacedCase,
+  type MemberCaseItem,
+  type MemberCaseCategory,
 } from "@/hooks/api/engagementDistribution";
 
 function Stat({ label, value, tone = "slate" }: { label: string; value: number; tone?: "slate" | "indigo" | "amber" | "emerald" }) {
@@ -128,52 +134,211 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
   );
 }
 
-function LiveMemberRow({ m }: { m: MemberLiveProgress }) {
-  const offline = !m.active || !m.workingToday;
+const CASE_CATEGORY_META: Record<
+  MemberCaseCategory,
+  { label: string; dot: string; badge: string }
+> = {
+  remaining: {
+    label: "Remaining",
+    dot: "bg-amber-500",
+    badge:
+      "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+  },
+  in_progress: {
+    label: "In progress",
+    dot: "bg-indigo-500",
+    badge:
+      "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300",
+  },
+  completed_today: {
+    label: "Completed today",
+    dot: "bg-emerald-500",
+    badge:
+      "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
+  },
+};
+
+const CASE_CATEGORY_ORDER: MemberCaseCategory[] = [
+  "in_progress",
+  "remaining",
+  "completed_today",
+];
+
+function statusLabel(status: string | null): string {
+  if (!status) return "new";
+  return status.replace(/_/g, " ");
+}
+
+function MemberCaseRow({ c }: { c: MemberCaseItem }) {
+  const meta = CASE_CATEGORY_META[c.category];
   return (
     <div
-      className="rounded-lg border border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900"
-      data-testid={`live-member-${m.schedulerId}`}
+      className="flex items-start gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs dark:border-slate-800 dark:bg-slate-900"
+      data-testid={`member-case-${c.executionCaseId}`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-slate-900 dark:text-white">
-            {m.name}
-            {offline ? (
-              <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800">
-                {m.active ? "off today" : "inactive"}
-              </span>
-            ) : null}
-          </div>
-          {m.facility ? (
-            <div className="truncate text-[11px] text-slate-400">{m.facility}</div>
+      <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${meta.dot}`} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate font-medium text-slate-800 dark:text-slate-200">
+            {c.patientName}
+          </span>
+          <span className="shrink-0 capitalize text-[10px] text-slate-400">
+            {statusLabel(c.engagementStatus)}
+          </span>
+        </div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-400">
+          {c.facility ? <span className="truncate">{c.facility}</span> : null}
+          <span className="inline-flex items-center gap-0.5">
+            <Clock className="h-2.5 w-2.5" />
+            {c.lastAttemptAt
+              ? `last attempt ${relativeTime(c.lastAttemptAt)}`
+              : "no attempts yet"}
+          </span>
+          {c.callAttemptCount > 0 ? (
+            <span>{c.callAttemptCount} call{c.callAttemptCount === 1 ? "" : "s"}</span>
           ) : null}
         </div>
-        <div className="text-right">
-          <div
-            className="text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
-            data-testid={`live-member-completed-${m.schedulerId}`}
-          >
-            {m.completedToday}/{m.completedKpi}
+      </div>
+    </div>
+  );
+}
+
+function MemberCasesDrawer({
+  schedulerId,
+  enabled,
+}: {
+  schedulerId: number;
+  enabled: boolean;
+}) {
+  const q = useDistributionMemberCases(schedulerId, enabled);
+  const cases = q.data?.cases ?? [];
+
+  if (q.isLoading) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-3 text-[11px] text-slate-400">
+        <Loader2 className="h-3 w-3 animate-spin" /> Loading cases…
+      </div>
+    );
+  }
+  if (q.isError) {
+    return (
+      <div className="px-3 py-2 text-[11px] text-rose-600 dark:text-rose-400">
+        {q.error instanceof Error ? q.error.message : "Failed to load cases."}
+      </div>
+    );
+  }
+  if (cases.length === 0) {
+    return (
+      <div className="px-3 py-3 text-[11px] text-slate-400">
+        No active or completed-today cases for this member.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2.5 px-3 pb-3 pt-1" data-testid={`member-cases-${schedulerId}`}>
+      {CASE_CATEGORY_ORDER.map((cat) => {
+        const group = cases.filter((c) => c.category === cat);
+        if (group.length === 0) return null;
+        const meta = CASE_CATEGORY_META[cat];
+        return (
+          <div key={cat} className="space-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                {meta.label}
+              </span>
+              <span
+                className={`rounded px-1 py-0.5 text-[9px] font-semibold tabular-nums ${meta.badge}`}
+              >
+                {group.length}
+              </span>
+            </div>
+            <div className="space-y-1">
+              {group.map((c) => (
+                <MemberCaseRow key={c.executionCaseId} c={c} />
+              ))}
+            </div>
           </div>
-          <div className="text-[10px] text-slate-400">done today</div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LiveMemberRow({ m }: { m: MemberLiveProgress }) {
+  const offline = !m.active || !m.workingToday;
+  const [open, setOpen] = useState(false);
+  const hasCases = m.remaining > 0 || m.inProgress > 0 || m.completedToday > 0;
+  return (
+    <div
+      className="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
+      data-testid={`live-member-${m.schedulerId}`}
+    >
+      <button
+        type="button"
+        onClick={() => hasCases && setOpen((v) => !v)}
+        disabled={!hasCases}
+        className="w-full px-3 py-2 text-left disabled:cursor-default"
+        aria-expanded={open}
+        data-testid={`live-member-toggle-${m.schedulerId}`}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            {hasCases ? (
+              open ? (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+              )
+            ) : (
+              <span className="h-3.5 w-3.5 shrink-0" />
+            )}
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium text-slate-900 dark:text-white">
+                {m.name}
+                {offline ? (
+                  <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800">
+                    {m.active ? "off today" : "inactive"}
+                  </span>
+                ) : null}
+              </div>
+              {m.facility ? (
+                <div className="truncate text-[11px] text-slate-400">{m.facility}</div>
+              ) : null}
+            </div>
+          </div>
+          <div className="text-right">
+            <div
+              className="text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
+              data-testid={`live-member-completed-${m.schedulerId}`}
+            >
+              {m.completedToday}/{m.completedKpi}
+            </div>
+            <div className="text-[10px] text-slate-400">done today</div>
+          </div>
         </div>
-      </div>
-      <ProgressBar done={m.completedToday} total={m.completedKpi} />
-      <div className="mt-1.5 flex items-center gap-3 text-[10px] text-slate-500 dark:text-slate-400">
-        <span data-testid={`live-member-remaining-${m.schedulerId}`}>
-          <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
-            {m.remaining}
-          </span>{" "}
-          remaining
-        </span>
-        <span data-testid={`live-member-inprogress-${m.schedulerId}`}>
-          <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
-            {m.inProgress}
-          </span>{" "}
-          in progress
-        </span>
-      </div>
+        <ProgressBar done={m.completedToday} total={m.completedKpi} />
+        <div className="mt-1.5 flex items-center gap-3 text-[10px] text-slate-500 dark:text-slate-400">
+          <span data-testid={`live-member-remaining-${m.schedulerId}`}>
+            <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+              {m.remaining}
+            </span>{" "}
+            remaining
+          </span>
+          <span data-testid={`live-member-inprogress-${m.schedulerId}`}>
+            <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+              {m.inProgress}
+            </span>{" "}
+            in progress
+          </span>
+        </div>
+      </button>
+      {open && hasCases ? (
+        <div className="border-t border-slate-100 dark:border-slate-800">
+          <MemberCasesDrawer schedulerId={m.schedulerId} enabled={open} />
+        </div>
+      ) : null}
     </div>
   );
 }

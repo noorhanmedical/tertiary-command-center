@@ -664,6 +664,190 @@ export async function getLiveProgress(
   };
 }
 
+// ─── Per-member case drill-down (Phase 3) ───────────────────────────────────
+//
+// Admins watching the Live Team Activity list want to click a member and see
+// the actual named cases behind their remaining / in-progress / completed-today
+// counts, so they can spot stuck work. Pure read — no writes.
+
+// Active, touched-but-not-finished statuses (mirrors getLiveProgress).
+const IN_PROGRESS_ENGAGEMENT_STATUSES = [
+  "contacted",
+  "not_reached",
+  "unable_to_reach",
+] as const;
+
+export type MemberCaseCategory =
+  | "remaining"
+  | "in_progress"
+  | "completed_today";
+
+export interface MemberCaseItem {
+  executionCaseId: number;
+  patientScreeningId: number | null;
+  patientName: string;
+  facility: string | null;
+  engagementStatus: string | null;
+  engagementBucket: string | null;
+  category: MemberCaseCategory;
+  lastAttemptAt: string | null;
+  lastCallOutcome: string | null;
+  callAttemptCount: number;
+  nextActionAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface MemberCasesResult {
+  schedulerId: number;
+  name: string | null;
+  counts: { remaining: number; inProgress: number; completedToday: number };
+  cases: MemberCaseItem[];
+  asOf: string;
+}
+
+function categorizeMemberCase(
+  row: typeof patientExecutionCases.$inferSelect,
+  startOfToday: Date,
+): MemberCaseCategory | null {
+  const status = row.engagementStatus ?? "";
+  const updatedAt =
+    row.updatedAt instanceof Date
+      ? row.updatedAt
+      : row.updatedAt
+        ? new Date(row.updatedAt as unknown as string)
+        : null;
+  const completedToday =
+    (COMPLETED_ENGAGEMENT_STATUSES as readonly string[]).includes(status) &&
+    updatedAt != null &&
+    updatedAt >= startOfToday;
+  if (completedToday) return "completed_today";
+
+  const isActive = (row.lifecycleStatus ?? "active") === "active";
+  if (!isActive) return null;
+  if ((COMPLETED_ENGAGEMENT_STATUSES as readonly string[]).includes(status)) {
+    // Scheduled/completed but not updated today — not part of today's work.
+    return null;
+  }
+  if ((IN_PROGRESS_ENGAGEMENT_STATUSES as readonly string[]).includes(status)) {
+    return "in_progress";
+  }
+  return "remaining";
+}
+
+function toIso(v: Date | string | null | undefined): string | null {
+  if (v == null) return null;
+  const d = v instanceof Date ? v : new Date(v as string);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/** Read-only list of a single member's active + completed-today cases, each
+ *  tagged remaining / in_progress / completed_today, enriched with facility
+ *  from the screening/batch spine. No writes. */
+export async function getMemberCases(
+  schedulerId: number,
+): Promise<MemberCasesResult> {
+  const startOfToday = startOfTodayUtc();
+
+  const schedulers = await storage.getOutreachSchedulers();
+  const scheduler = schedulers.find((s) => s.id === schedulerId);
+
+  const rows = await db
+    .select()
+    .from(patientExecutionCases)
+    .where(
+      and(
+        eq(patientExecutionCases.assignedTeamMemberId, schedulerId),
+        or(
+          // active, not yet finished
+          and(
+            eq(patientExecutionCases.lifecycleStatus, "active"),
+            sql`${patientExecutionCases.engagementStatus} NOT IN ('scheduled','completed')`,
+          ),
+          // finished today
+          and(
+            inArray(
+              patientExecutionCases.engagementStatus,
+              COMPLETED_ENGAGEMENT_STATUSES as unknown as string[],
+            ),
+            sql`${patientExecutionCases.updatedAt} >= ${startOfToday}`,
+          ),
+        ),
+      ),
+    )
+    .orderBy(desc(patientExecutionCases.lastAttemptAt));
+
+  // Enrich facility via screening → batch (mirrors gatherEligibleCases).
+  const screeningIds = Array.from(
+    new Set(
+      rows
+        .map((c) => c.patientScreeningId)
+        .filter((id): id is number => id != null),
+    ),
+  );
+  const screenings = screeningIds.length
+    ? await db
+        .select()
+        .from(patientScreenings)
+        .where(inArray(patientScreenings.id, screeningIds))
+    : [];
+  const screeningById = new Map(screenings.map((s) => [s.id, s]));
+  const batchIds = Array.from(
+    new Set(
+      screenings.map((s) => s.batchId).filter((id): id is number => id != null),
+    ),
+  );
+  const batches = batchIds.length
+    ? await db
+        .select()
+        .from(screeningBatches)
+        .where(inArray(screeningBatches.id, batchIds))
+    : [];
+  const batchById = new Map(batches.map((b) => [b.id, b]));
+
+  const counts = { remaining: 0, inProgress: 0, completedToday: 0 };
+  const cases: MemberCaseItem[] = [];
+
+  for (const row of rows) {
+    const category = categorizeMemberCase(row, startOfToday);
+    if (!category) continue;
+    if (category === "remaining") counts.remaining += 1;
+    else if (category === "in_progress") counts.inProgress += 1;
+    else counts.completedToday += 1;
+
+    const screening =
+      row.patientScreeningId != null
+        ? screeningById.get(row.patientScreeningId)
+        : undefined;
+    const batch =
+      screening?.batchId != null ? batchById.get(screening.batchId) : undefined;
+    const facility =
+      screening?.facility ?? batch?.facility ?? row.facilityId ?? null;
+
+    cases.push({
+      executionCaseId: row.id,
+      patientScreeningId: row.patientScreeningId ?? null,
+      patientName: row.patientName ?? screening?.name ?? "Unnamed",
+      facility,
+      engagementStatus: row.engagementStatus ?? null,
+      engagementBucket: row.engagementBucket ?? null,
+      category,
+      lastAttemptAt: toIso(row.lastAttemptAt),
+      lastCallOutcome: row.lastCallOutcome ?? null,
+      callAttemptCount: row.callAttemptCount ?? 0,
+      nextActionAt: toIso(row.nextActionAt),
+      updatedAt: toIso(row.updatedAt),
+    });
+  }
+
+  return {
+    schedulerId,
+    name: scheduler?.name ?? null,
+    counts,
+    cases,
+    asOf: new Date().toISOString(),
+  };
+}
+
 // ─── Apply (atomic, re-validated at commit) ─────────────────────────────────
 
 export interface AppliedAssignment {

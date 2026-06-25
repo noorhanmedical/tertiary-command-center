@@ -158,6 +158,58 @@ export function useDistributionLive(enabled = true, refetchMs = 15_000) {
   });
 }
 
+export type MemberCaseCategory =
+  | "remaining"
+  | "in_progress"
+  | "completed_today";
+
+export interface MemberCaseItem {
+  executionCaseId: number;
+  patientScreeningId: number | null;
+  patientName: string;
+  facility: string | null;
+  engagementStatus: string | null;
+  engagementBucket: string | null;
+  category: MemberCaseCategory;
+  lastAttemptAt: string | null;
+  lastCallOutcome: string | null;
+  callAttemptCount: number;
+  nextActionAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface MemberCasesResponse {
+  schedulerId: number;
+  name: string | null;
+  counts: { remaining: number; inProgress: number; completedToday: number };
+  cases: MemberCaseItem[];
+  asOf: string;
+}
+
+export function useDistributionMemberCases(
+  schedulerId: number | null,
+  enabled = true,
+) {
+  return useQuery<MemberCasesResponse>({
+    queryKey: ["/api/engagement/distribution/member", schedulerId, "cases"],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/engagement/distribution/member/${schedulerId}/cases`,
+        { credentials: "include" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body.error ?? `Failed to load member cases (${res.status})`,
+        );
+      }
+      return res.json();
+    },
+    enabled: enabled && schedulerId != null,
+    staleTime: 10_000,
+  });
+}
+
 export function useApplyDistribution() {
   const queryClient = useQueryClient();
   return useMutation<ApplyDistributionResult, Error, void>({
