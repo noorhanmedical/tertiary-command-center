@@ -6,6 +6,18 @@ import { billingRecords } from "@shared/schema";
 import { eq, and, or, ilike, desc } from "drizzle-orm";
 import type { InsertBillingRecord } from "../../shared/schema";
 import { logAudit } from "../services/auditService";
+import { evaluateCaseReadinessGate } from "../services/ancillary/ancillaryReadinessSummary";
+
+// Billing statuses that represent a record being put forward for billing.
+// Setting any of these transitions the record past "Not Billed" and is gated
+// on document readiness.
+const SUBMITTED_BILLING_STATUSES = new Set([
+  "submitted",
+  "accepted",
+  "pending",
+  "denied",
+  "rejected",
+]);
 
 const updateBillingRecordSchema = z.object({
   dateOfService: z.string().nullable().optional(),
@@ -143,6 +155,23 @@ export function registerBillingRoutes(
         }
       }
 
+      // Document-readiness gate: block billing creation when the case's
+      // required readiness items are incomplete. Only evaluated when the
+      // record links to a patient screening (so a case is resolvable).
+      if (patientId != null) {
+        const gate = await evaluateCaseReadinessGate({
+          patientScreeningId: patientId,
+          serviceType: service,
+        });
+        if (!gate.ok) {
+          return res.status(400).json({
+            error: "Document readiness incomplete",
+            code: "READINESS_GATE",
+            missing: gate.missing,
+          });
+        }
+      }
+
       const record = await storage.createBillingRecord({
         patientId: patientId ?? null,
         batchId: batchId ?? null,
@@ -170,6 +199,34 @@ export function registerBillingRoutes(
       const updates: Partial<InsertBillingRecord> = Object.fromEntries(
         Object.entries(parsed.data).filter(([, v]) => v !== undefined)
       ) as Partial<InsertBillingRecord>;
+
+      // Document-readiness gate on submission: when the billing status is
+      // transitioning to a "submitted" state, the case's required readiness
+      // items must be complete first.
+      if (
+        typeof updates.billingStatus === "string" &&
+        SUBMITTED_BILLING_STATUSES.has(updates.billingStatus.trim().toLowerCase())
+      ) {
+        const [existing] = await db
+          .select({ patientId: billingRecords.patientId, service: billingRecords.service })
+          .from(billingRecords)
+          .where(eq(billingRecords.id, id))
+          .limit(1);
+        if (existing?.patientId != null) {
+          const gate = await evaluateCaseReadinessGate({
+            patientScreeningId: existing.patientId,
+            serviceType: updates.service ?? existing.service,
+          });
+          if (!gate.ok) {
+            return res.status(400).json({
+              error: "Document readiness incomplete",
+              code: "READINESS_GATE",
+              missing: gate.missing,
+            });
+          }
+        }
+      }
+
       const record = await storage.updateBillingRecord(id, updates);
       if (!record) return res.status(404).json({ error: "Billing record not found" });
       void logAudit(req, "update", "billing_record", id, updates);

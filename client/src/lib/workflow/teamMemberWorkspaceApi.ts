@@ -27,6 +27,16 @@ export type TeamWorkspaceClinicVisit = {
   executionCaseId?: number | null;
 };
 
+export type AncillaryReadinessItemState = "complete" | "missing" | "not_required";
+
+export type AncillaryReadinessSummary = {
+  informedConsent: AncillaryReadinessItemState;
+  screeningForm: AncillaryReadinessItemState;
+  brainwavePdf: AncillaryReadinessItemState;
+  informedConsentDocId: number | null;
+  screeningFormDocId: number | null;
+};
+
 export type TeamWorkspaceAncillaryAppointment = {
   id: string | number;
   patientName?: string | null;
@@ -39,6 +49,7 @@ export type TeamWorkspaceAncillaryAppointment = {
   assignedUserId?: string | null;
   patientScreeningId?: number | null;
   executionCaseId?: number | null;
+  readiness?: AncillaryReadinessSummary | null;
 };
 
 export type TeamWorkspaceCallListItem = {

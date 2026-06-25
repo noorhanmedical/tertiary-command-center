@@ -186,7 +186,22 @@ export function registerGlobalScheduleRoutes(app: Express) {
         if (!isNaN(d.getTime())) filters.endDate = d;
       }
       const rows = await listTechnicianLiaisonAncillarySchedule(filters, limit);
-      res.json(rows);
+      const { buildAncillaryReadinessSummaries } = await import(
+        "../services/ancillary/ancillaryReadinessSummary"
+      );
+      const readinessByRow = await buildAncillaryReadinessSummaries(
+        rows.map((r) => ({
+          id: r.id,
+          executionCaseId: r.executionCaseId ?? null,
+          patientScreeningId: r.patientScreeningId ?? null,
+          serviceType: r.serviceType ?? null,
+        })),
+      );
+      const enriched = rows.map((r) => ({
+        ...r,
+        readiness: readinessByRow.get(String(r.id)) ?? null,
+      }));
+      res.json(enriched);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

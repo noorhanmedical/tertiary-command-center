@@ -20,6 +20,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SignaturePad } from "./SignaturePad";
 import PortalWorkflowPanel from "@/components/workflow/PortalWorkflowPanel";
 import { ProcedureCompleteButton } from "@/components/patient/ProcedureCompleteButton";
+import { AncillaryReadinessRow } from "@/components/portal/AncillaryReadinessRow";
 import {
   WorkspaceModeSwitcher,
   type TeamMemberWorkspaceMode,
@@ -3218,6 +3219,18 @@ export function TeamPortalShell({
                                 />
                               </div>
                             )}
+                          <AncillaryReadinessRow
+                            rowId={String(row.id ?? idx)}
+                            executionCaseId={row.executionCaseId ?? null}
+                            serviceType={row.serviceType ?? null}
+                            patientName={row.patientName ?? null}
+                            readiness={row.readiness ?? null}
+                            onChanged={() =>
+                              queryClient.invalidateQueries({
+                                queryKey: ["team-workspace-ancillary-schedule"],
+                              })
+                            }
+                          />
                         </div>
                         );
                       })

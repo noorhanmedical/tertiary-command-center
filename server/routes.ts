@@ -49,6 +49,7 @@ import { registerInsuranceEligibilityRoutes } from "./routes/insuranceEligibilit
 import { registerCooldownRoutes } from "./routes/cooldown";
 import { registerAdminSettingsRoutes } from "./routes/adminSettings";
 import { registerDocumentReadinessRoutes } from "./routes/documentReadiness";
+import { registerPortalCaseReadinessRoutes } from "./routes/portalCaseReadiness";
 import { registerProcedureEventRoutes } from "./routes/procedureEvents";
 import { registerBillingReadinessRoutes } from "./routes/billingReadiness";
 import { registerBillingDocumentRoutes } from "./routes/billingDocuments";
@@ -277,6 +278,7 @@ export async function registerRoutes(
   registerCooldownRoutes(app);
   registerAdminSettingsRoutes(app);
   registerDocumentReadinessRoutes(app);
+  registerPortalCaseReadinessRoutes(app);
   registerProcedureEventRoutes(app);
   registerBillingReadinessRoutes(app);
   registerBillingDocumentRoutes(app);

@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, or, inArray, desc } from "drizzle-orm";
 import {
   documentRequirements,
   caseDocumentReadiness,
@@ -133,6 +133,28 @@ export async function listCaseDocumentReadiness(
   return conditions.length > 0
     ? query.where(and(...conditions)).orderBy(desc(caseDocumentReadiness.createdAt)).limit(safeLimit)
     : query.orderBy(desc(caseDocumentReadiness.createdAt)).limit(safeLimit);
+}
+
+/** Batch-fetch readiness rows for many cases at once. Matches rows whose
+ *  executionCaseId OR patientScreeningId is in the supplied id sets. Used by
+ *  the ancillary-schedule readiness summary so we avoid N per-row queries. */
+export async function listCaseDocumentReadinessForCases(params: {
+  executionCaseIds?: number[];
+  patientScreeningIds?: number[];
+}): Promise<CaseDocumentReadiness[]> {
+  const ecIds = Array.from(new Set((params.executionCaseIds ?? []).filter((v) => v != null)));
+  const psIds = Array.from(new Set((params.patientScreeningIds ?? []).filter((v) => v != null)));
+  if (ecIds.length === 0 && psIds.length === 0) return [];
+
+  const orConds = [];
+  if (ecIds.length > 0) orConds.push(inArray(caseDocumentReadiness.executionCaseId, ecIds));
+  if (psIds.length > 0) orConds.push(inArray(caseDocumentReadiness.patientScreeningId, psIds));
+
+  return db
+    .select()
+    .from(caseDocumentReadiness)
+    .where(orConds.length === 1 ? orConds[0] : or(...orConds))
+    .orderBy(desc(caseDocumentReadiness.createdAt));
 }
 
 // documentType → { documentStatus, blocksBilling } defaults on procedure complete
