@@ -63,11 +63,108 @@ export function PortalChatPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
+  const [listening, setListening] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
+  const draftBeforeSpeechRef = useRef("");
+
+  const speechSupported =
+    typeof window !== "undefined" &&
+    (("SpeechRecognition" in window) || ("webkitSpeechRecognition" in window));
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, pending]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
+
+  // Stop listening if the panel is closed.
+  useEffect(() => {
+    if (!open && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+    }
+  }, [open]);
+
+  function toggleListening() {
+    if (listening) {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    const SpeechRecognitionImpl =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionImpl) {
+      toast({
+        title: "Voice input unavailable",
+        description: "Your browser doesn't support speech recognition. Try Chrome or Edge.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const recognition = new SpeechRecognitionImpl();
+    recognition.lang = navigator.language || "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognitionRef.current = recognition;
+    draftBeforeSpeechRef.current = draft ? draft.replace(/\s*$/, "") + " " : "";
+
+    recognition.onstart = () => setListening(true);
+
+    recognition.onresult = (event: any) => {
+      let transcript = "";
+      for (let i = 0; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      setDraft(draftBeforeSpeechRef.current + transcript);
+    };
+
+    recognition.onerror = (event: any) => {
+      setListening(false);
+      recognitionRef.current = null;
+      if (event?.error === "not-allowed" || event?.error === "service-not-allowed") {
+        toast({
+          title: "Microphone blocked",
+          description: "Allow microphone access in your browser to use voice input.",
+          variant: "destructive",
+        });
+      } else if (event?.error && event.error !== "aborted" && event.error !== "no-speech") {
+        toast({
+          title: "Voice input error",
+          description: "Speech recognition stopped unexpectedly. Please try again.",
+          variant: "destructive",
+        });
+      }
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+
+    try {
+      recognition.start();
+    } catch {
+      setListening(false);
+      recognitionRef.current = null;
+    }
+  }
 
   async function send() {
     const text = draft.trim();
@@ -150,15 +247,27 @@ export function PortalChatPanel({
                 type="button"
                 size="icon"
                 variant="ghost"
-                disabled
-                className="shrink-0 text-slate-400"
+                disabled={!speechSupported || pending}
+                onClick={toggleListening}
+                className={`shrink-0 ${
+                  listening
+                    ? "text-red-500 bg-red-50 hover:bg-red-100 hover:text-red-600 animate-pulse"
+                    : "text-slate-400"
+                }`}
                 data-testid="button-portal-chat-mic"
-                aria-label="Voice input (coming soon)"
+                aria-label={listening ? "Stop voice input" : "Start voice input"}
+                aria-pressed={listening}
               >
                 <Mic className="w-4 h-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Coming soon</TooltipContent>
+            <TooltipContent>
+              {speechSupported
+                ? listening
+                  ? "Listening… tap to stop"
+                  : "Speak your question"
+                : "Voice input not supported in this browser"}
+            </TooltipContent>
           </Tooltip>
           <Textarea
             value={draft}
