@@ -61,8 +61,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: "/clinician-portal", label: "Clinician Portal", Icon: Stethoscope,    roles: ["admin", "clinician"] },
   { href: "/technician-portal", label: "Technician Portal", Icon: Stethoscope,    roles: ["admin", "technician", "liaison"] },
   { href: "/liaison-technician-portal",    label: "Liaison Technician Portal",    Icon: HeartHandshake, roles: ["admin", "technician", "liaison"] },
-  { href: "/call-list-audit",  label: "Call List Audit",  Icon: Shield,       roles: ["admin"] },
-  { href: "/admin-ops",        label: "Admin",            Icon: Shield,       roles: ["admin"] },
+  { href: "/admin/settings",   label: "Admin",            Icon: Shield,       roles: ["admin"] },
 ];
 
 function TodayBadge({ count }: { count: number }) {
@@ -129,8 +128,19 @@ export function GlobalNav({ user }: { user?: AuthUser; onLogout?: () => void }) 
   const isActive = (href: string) => {
     if (href === "/home") return location === "/home" || location === "/";
     if (href === "/schedule") return location === "/schedule";
-    if (href === "/admin-ops") {
-      return location === "/admin-ops" || location === "/admin" || location.startsWith("/admin/") || location.startsWith("/admin-ops/");
+    if (href === "/admin/settings") {
+      return (
+        location === "/admin/settings" ||
+        location === "/admin" ||
+        location === "/admin-ops" ||
+        location.startsWith("/admin/") ||
+        location.startsWith("/admin-ops/") ||
+        location === "/audit-log" ||
+        location === "/call-list-audit" ||
+        location === "/settings" ||
+        location === "/billing/auditor" ||
+        location === "/billing/remittance"
+      );
     }
     return location === href || location.startsWith(href + "/");
   };

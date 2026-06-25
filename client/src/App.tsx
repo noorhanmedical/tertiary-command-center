@@ -24,25 +24,13 @@ import OutreachSchedulerPortalPage from "@/pages/outreach-scheduler-portal";
 import TechnicianPortalPage from "@/pages/technician-portal";
 import LiaisonPortalPage from "@/pages/liaison-portal";
 import PhysicianPortalPage from "@/pages/physician-portal";
-import AdminOpsPage from "@/pages/admin-ops";
-import CallListAuditPage from "@/pages/call-list-audit";
-import AdminPage from "@/pages/admin";
-import StovetopHeatSettingsPage from "@/pages/stovetop-heat-settings";
-import AdminUsersPage from "@/pages/admin-users";
-import AdminSettingsCenterPage from "@/pages/admin-settings-center";
-import BillingSettingsPage from "@/pages/billing-settings";
+import AdminSettingsPage from "@/pages/admin-settings";
 import BillingReadinessPage from "@/pages/billing-readiness";
 import InvoiceBatchesPage from "@/pages/invoice-batches";
 import InvoiceReviewPage from "@/pages/invoice-review";
 import InvoiceDeliveryPage from "@/pages/invoice-delivery";
-import RemittanceAuditPage from "@/pages/remittance-audit";
-import BillingAuditorPage from "@/pages/billing-auditor";
 import BillingReportsPage from "@/pages/billing-reports";
-import AuditLogPage from "@/pages/audit-log";
-import AdminAnalysisJobsPage from "@/pages/admin-analysis-jobs";
-import AdminOutboxPage from "@/pages/admin-outbox";
 import ScheduleDashboardPage from "@/pages/schedule-dashboard";
-import SettingsPage from "@/pages/settings";
 import TeamOpsPage from "@/pages/team-ops";
 import PlexusTasksPage from "@/pages/plexus-tasks";
 import DrivePage from "@/pages/drive";
@@ -250,17 +238,21 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/document-library">
                   <AdminGuard user={user}><DocumentLibraryPage /></AdminGuard>
                 </Route>
+                {/* Task #530: unified admin settings hub. */}
+                <Route path="/admin/settings">
+                  <AdminGuard user={user}><AdminSettingsPage /></AdminGuard>
+                </Route>
                 <Route path="/admin">
-                  <AdminGuard user={user}><AdminPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=system" />
                 </Route>
                 <Route path="/admin/stovetop-heat-settings">
-                  <AdminGuard user={user}><StovetopHeatSettingsPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=facility" />
                 </Route>
                 <Route path="/admin/settings-center">
-                  <AdminGuard user={user}><AdminSettingsCenterPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=system" />
                 </Route>
                 <Route path="/admin/billing-settings">
-                  <AdminGuard user={user}><BillingSettingsPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=billing" />
                 </Route>
                 <Route path="/billing/readiness">
                   <AdminGuard user={user}><BillingReadinessPage /></AdminGuard>
@@ -275,38 +267,38 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                   <AdminGuard user={user}><InvoiceDeliveryPage /></AdminGuard>
                 </Route>
                 <Route path="/billing/remittance">
-                  <AdminGuard user={user}><RemittanceAuditPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=logs&log=remittance" />
                 </Route>
                 <Route path="/billing/auditor">
-                  <AdminGuard user={user}><BillingAuditorPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=logs&log=billing-auditor" />
                 </Route>
                 <Route path="/billing/reports">
                   <AdminGuard user={user}><BillingReportsPage /></AdminGuard>
                 </Route>
                 <Route path="/admin/users">
-                  <AdminGuard user={user}><AdminUsersPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=team" />
                 </Route>
                 <Route path="/audit-log">
-                  <AdminGuard user={user}><AuditLogPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=logs&log=audit" />
                 </Route>
                 <Route path="/admin/analysis-jobs">
-                  <AdminGuard user={user}><AdminAnalysisJobsPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=logs&log=analysis-jobs" />
                 </Route>
                 <Route path="/admin/outbox">
-                  <AdminGuard user={user}><AdminOutboxPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=logs&log=outbox" />
                 </Route>
                 <Route path="/admin-ops">
-                  <AdminGuard user={user}><AdminOpsPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=system" />
                 </Route>
                 <Route path="/call-list-audit">
-                  <AdminGuard user={user}><CallListAuditPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=logs&log=call-list-audit" />
                 </Route>
                 <Route path="/dashboard" component={ScheduleDashboardPage} />
                 <Route path="/schedule-dashboard">
                   <Redirect to="/dashboard" />
                 </Route>
                 <Route path="/settings">
-                  <AdminGuard user={user}><SettingsPage /></AdminGuard>
+                  <Redirect to="/admin/settings?tab=team" />
                 </Route>
                 <Route component={NotFound} />
               </Switch>

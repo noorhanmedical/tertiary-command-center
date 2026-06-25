@@ -35,7 +35,7 @@ function formatTimestamp(ts: string | Date) {
 }
 
 export default function AuditLogPage() {
-  const [userFilter, setUserFilter] = useState("");
+  const [userFilter, setUserFilter] = useState("all");
   const [entityTypeFilter, setEntityTypeFilter] = useState("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -62,7 +62,7 @@ export default function AuditLogPage() {
     queryKey: ["/api/audit-log/users"],
   });
 
-  const filtered = userFilter
+  const filtered = userFilter && userFilter !== "all"
     ? logs.filter((l) => l.userId === userFilter)
     : logs;
 
@@ -97,7 +97,7 @@ export default function AuditLogPage() {
                   <SelectValue placeholder="All users" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All users</SelectItem>
+                  <SelectItem value="all">All users</SelectItem>
                   {users.map((u) => (
                     <SelectItem key={u.id} value={u.id}>{u.username}</SelectItem>
                   ))}

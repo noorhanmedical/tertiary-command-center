@@ -17,3 +17,4 @@
 - [engagement_call_settings column drift](engagement-call-settings-column-drift.md) — explicit completed-KPI maps to DB `explicit_completed_call_kpi`; a `.select()` drift throws PG 42703 and breaks the call-settings repo for all consumers.
 - [applyDistribution post-commit audit flush](engagement-distribution-apply-deadlock.md) — distribution apply must flush journey events AFTER commit: in-tx cross-connection FK insert vs FOR UPDATE row lock deadlocks undetectably.
 - [Team Portal rail pill](team-portal-rail-pill.md) — pills: 2 sizes, NO arrows, half-toward-edge=small/inner=normal, click-away collapses; small left=icon rail, sticker-glass cards.
+- [Consolidating pages into tabs](page-consolidation-tabs.md) — embedding whole pages as Radix Tabs panels surfaces latent runtime crashes (esp. `<SelectItem value="">`); tsc/HMR miss them, so e2e-click every tab + sub-tab.

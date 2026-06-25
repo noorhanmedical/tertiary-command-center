@@ -97,7 +97,7 @@ function formatLastActivity(iso: string | null): string {
   return `${hours}h ${mins % 60}m ago`;
 }
 
-function CallListDistributionCard() {
+export function CallListDistributionCard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery<{ asOfDate: string; rows: DistributionRow[] }>({
@@ -230,7 +230,7 @@ function facilityColor(f: string) {
   return "bg-blue-50 text-blue-700 border-blue-200";
 }
 
-function InvoiceReminderSettingsCard() {
+export function InvoiceReminderSettingsCard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery<{ thresholdDays: number; defaultThresholdDays: number }>({
@@ -326,7 +326,7 @@ function InvoiceReminderSettingsCard() {
   );
 }
 
-function ChangePasswordCard() {
+export function ChangePasswordCard() {
   const { toast } = useToast();
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -377,7 +377,7 @@ function ChangePasswordCard() {
   );
 }
 
-export default function SettingsPage() {
+export function SchedulerTeamSection() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -475,17 +475,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-6 py-6">
-        <PageHeader
-          backHref="/"
-          eyebrow="PLEXUS ANCILLARY · SETTINGS"
-          icon={SettingsIcon}
-          title="Settings"
-          subtitle="Team members, patient databases, and clinic spreadsheet connections."
-        />
-
-        {/* Static Team Members card */}
+    <>
         <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
           <div className="mb-4 flex items-center gap-2">
             <Database className="h-5 w-5 text-blue-700" />
@@ -679,17 +669,21 @@ export default function SettingsPage() {
             </Button>
           </div>
         </Card>
+    </>
+  );
+}
 
-        {/* Call-list distribution */}
-        <CallListDistributionCard />
+export function ClinicConnectionsCard() {
+  const { data } = useQuery<SettingsSnapshot>({
+    queryKey: ["/api/settings/platform"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings/platform");
+      if (!res.ok) throw new Error("Failed to load settings");
+      return res.json();
+    },
+  });
 
-        {/* Overdue invoice reminders */}
-        <InvoiceReminderSettingsCard />
-
-        {/* Change Password */}
-        <ChangePasswordCard />
-
-        {/* Clinic Spreadsheet Connections */}
+  return (
         <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
           <div className="mb-4 flex items-center gap-2">
             <Sheet className="h-5 w-5 text-green-700" />
@@ -717,8 +711,20 @@ export default function SettingsPage() {
             Shared calendar spreadsheet ID: {data?.sharedCalendarSpreadsheetId || "Not configured"}
           </div>
         </Card>
+  );
+}
 
-        {/* Storage Provider */}
+export function StorageProviderCard() {
+  const { data } = useQuery<SettingsSnapshot>({
+    queryKey: ["/api/settings/platform"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings/platform");
+      if (!res.ok) throw new Error("Failed to load settings");
+      return res.json();
+    },
+  });
+
+  return (
         <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] backdrop-blur-xl">
           <div className="mb-4 flex items-center gap-2">
             <HardDrive className="h-5 w-5 text-indigo-600" />
@@ -758,8 +764,11 @@ export default function SettingsPage() {
             (<code className="rounded bg-slate-100 px-1 py-0.5 font-mono">google_drive</code> or <code className="rounded bg-slate-100 px-1 py-0.5 font-mono">s3</code>).
           </p>
         </Card>
-      </div>
+  );
+}
 
+export function OperationalRuleSections() {
+  return (
           <div className="mt-8 grid gap-6">
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" data-testid="settings-staff-capacity">
               <h2 className="text-lg font-semibold text-slate-900">Scheduler, Liaison, and Technician Capacity Settings</h2>
@@ -1116,7 +1125,28 @@ export default function SettingsPage() {
               </div>
             </section>
           </div>
+  );
+}
 
+export default function SettingsPage() {
+  return (
+    <div className="finance-page">
+      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-6 py-6">
+        <PageHeader
+          backHref="/"
+          eyebrow="PLEXUS ANCILLARY · SETTINGS"
+          icon={SettingsIcon}
+          title="Settings"
+          subtitle="Team members, patient databases, and clinic spreadsheet connections."
+        />
+        <SchedulerTeamSection />
+        <CallListDistributionCard />
+        <InvoiceReminderSettingsCard />
+        <ChangePasswordCard />
+        <ClinicConnectionsCard />
+        <StorageProviderCard />
+        <OperationalRuleSections />
+      </div>
     </div>
   );
 }
