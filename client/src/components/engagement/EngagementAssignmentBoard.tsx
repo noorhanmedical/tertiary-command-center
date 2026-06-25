@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Building2,
-  ChevronDown,
   ChevronRight,
   Loader2,
   Stethoscope,
@@ -609,7 +608,9 @@ export function EngagementWorklist({
   const [bulkPdfBusy, setBulkPdfBusy] = useState<"plexus" | "clinician" | null>(
     null,
   );
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Worklist groups are collapsed by default; clicking a header opens a single
+  // right-anchored flyout. Only one group's flyout is open at a time.
+  const [openGroupKey, setOpenGroupKey] = useState<string | null>(null);
 
   const rowByCase = useMemo(() => {
     const m = new Map<number, BoardRow>();
@@ -687,11 +688,15 @@ export function EngagementWorklist({
       map.get(key)!.rows.push(r);
     }
     const groups = Array.from(map.values());
-    // Date ascending (undated last), then facility alphabetical.
+    // Date descending — most recent first (undated last), then facility
+    // alphabetical so today's and tomorrow's work sits at the top.
     groups.sort((a, b) => {
-      const ta = a.date ? new Date(a.date).getTime() : Infinity;
-      const tb = b.date ? new Date(b.date).getTime() : Infinity;
-      if (ta !== tb) return ta - tb;
+      const ta = a.date ? new Date(a.date).getTime() : null;
+      const tb = b.date ? new Date(b.date).getTime() : null;
+      if (ta == null && tb == null) return a.facility.localeCompare(b.facility);
+      if (ta == null) return 1;
+      if (tb == null) return -1;
+      if (ta !== tb) return tb - ta;
       return a.facility.localeCompare(b.facility);
     });
     // Within a group: high priority first, then earliest next-action.
@@ -751,15 +756,6 @@ export function EngagementWorklist({
       .map((r) => r.patientScreeningId)
       .filter((v): v is number => v != null);
     if (psids.length) onAssign(psids, schedulerId);
-  }
-
-  function toggleCollapse(key: string) {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
   }
 
   function bulkAssign(schedulerId: number) {
@@ -955,14 +951,16 @@ export function EngagementWorklist({
             )}
           </div>
 
-          {/* Date · facility groups — each collapsible, with its own
-              select-all and one-click "assign all" picker. */}
+          {/* Date · facility groups — collapsed by default. Clicking a header
+              opens a single right-anchored flyout panel with the group's
+              patient cards + "assign all" picker, leaving the date list in a
+              fixed left column. */}
           {grouped.map((group) => {
             const key = `${group.date ?? "no-date"}|${group.facility}`;
             const ids = groupSelectableIds(group);
             const groupAllSelected =
               ids.length > 0 && ids.every((id) => selectedIds.has(id));
-            const isCollapsed = collapsed.has(key);
+            const isOpen = openGroupKey === key;
             return (
               <section
                 key={key}
@@ -970,74 +968,110 @@ export function EngagementWorklist({
                 data-group-date={group.date ?? "no-date"}
                 data-group-facility={group.facility}
               >
-                <div className="mb-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-800 dark:bg-slate-800/40">
-                  <button
-                    type="button"
-                    onClick={() => toggleCollapse(key)}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-200 hover:text-slate-600 dark:hover:bg-slate-700"
-                    aria-label={isCollapsed ? "Expand group" : "Collapse group"}
-                    data-testid="engagement-group-toggle"
-                  >
-                    {isCollapsed ? (
-                      <ChevronRight className="h-4 w-4" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4" />
-                    )}
-                  </button>
-                  <Checkbox
-                    checked={groupAllSelected}
-                    disabled={ids.length === 0}
-                    onCheckedChange={() => toggleGroupSelect(ids)}
-                    aria-label="Select all in group"
-                    data-testid="engagement-group-select"
-                  />
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">
-                    {group.date ? formatDateHeader(group.date) : "Unscheduled"}
-                  </h3>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-300">
-                    <Building2 className="h-3 w-3" />
-                    {group.facility}
-                  </span>
-                  <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                    {group.rows.length}
-                  </span>
-                  <div className="ml-auto">
-                    <SchedulerPicker
-                      schedulers={schedulers}
-                      busy={assigning}
-                      onPick={(sid) => assignGroup(group, sid)}
-                      label="Assign all"
-                      testId="engagement-group-assign"
-                      caseFacility={group.facility}
-                      memberLoad={effectiveMemberLoad}
-                    />
-                  </div>
-                </div>
-                {!isCollapsed && (
-                  <div className="space-y-2">
-                    {group.rows.map((r) => (
-                      <WorklistCard
-                        key={r.executionCaseId}
-                        row={r}
-                        schedulers={schedulers}
-                        memberLoad={effectiveMemberLoad}
-                        selected={selectedIds.has(r.executionCaseId)}
-                        active={selectedCaseId === r.executionCaseId}
-                        assigning={assigning}
-                        removing={
-                          cancelling && removingCaseId === r.executionCaseId
+                <Popover
+                  open={isOpen}
+                  onOpenChange={(o) => setOpenGroupKey(o ? key : null)}
+                >
+                  <PopoverTrigger asChild>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setOpenGroupKey(isOpen ? null : key);
                         }
-                        onToggleSelect={() => toggleSelect(r.executionCaseId)}
-                        onOpen={() => onSelectCase(r.executionCaseId)}
-                        onAssignOne={(sid) => {
-                          const psid = psidByCase.get(r.executionCaseId);
-                          if (psid != null) onAssign([psid], sid);
-                        }}
-                        onRemove={() => onCancel([r.executionCaseId])}
+                      }}
+                      aria-expanded={isOpen}
+                      data-testid="engagement-group-toggle"
+                      className={`flex cursor-pointer items-center gap-2 rounded-xl border px-2 py-1.5 transition-colors ${
+                        isOpen
+                          ? "border-slate-900 bg-slate-100 dark:border-white dark:bg-slate-800"
+                          : "border-slate-200 bg-slate-50 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800/40 dark:hover:border-slate-700"
+                      }`}
+                    >
+                      <ChevronRight
+                        className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${
+                          isOpen ? "rotate-90" : ""
+                        }`}
                       />
-                    ))}
-                  </div>
-                )}
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={groupAllSelected}
+                          disabled={ids.length === 0}
+                          onCheckedChange={() => toggleGroupSelect(ids)}
+                          aria-label="Select all in group"
+                          data-testid="engagement-group-select"
+                        />
+                      </span>
+                      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                        {group.date
+                          ? formatDateHeader(group.date)
+                          : "Unscheduled"}
+                      </h3>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-300">
+                        <Building2 className="h-3 w-3" />
+                        {group.facility}
+                      </span>
+                      <span className="ml-auto rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                        {group.rows.length}
+                      </span>
+                    </div>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    side="right"
+                    align="start"
+                    sideOffset={8}
+                    collisionPadding={12}
+                    className="z-[60] flex max-h-[70vh] w-[440px] flex-col gap-2 overflow-hidden p-2.5"
+                    data-testid="engagement-group-flyout"
+                  >
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-2 dark:border-slate-800">
+                      <h4 className="truncate text-xs font-semibold text-slate-700 dark:text-slate-200">
+                        {group.date
+                          ? formatDateHeader(group.date)
+                          : "Unscheduled"}
+                        <span className="ml-1 font-normal text-slate-400">
+                          · {group.facility}
+                        </span>
+                      </h4>
+                      <div className="ml-auto">
+                        <SchedulerPicker
+                          schedulers={schedulers}
+                          busy={assigning}
+                          onPick={(sid) => assignGroup(group, sid)}
+                          label="Assign all"
+                          testId="engagement-group-assign"
+                          caseFacility={group.facility}
+                          memberLoad={effectiveMemberLoad}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2 overflow-y-auto">
+                      {group.rows.map((r) => (
+                        <WorklistCard
+                          key={r.executionCaseId}
+                          row={r}
+                          schedulers={schedulers}
+                          memberLoad={effectiveMemberLoad}
+                          selected={selectedIds.has(r.executionCaseId)}
+                          active={selectedCaseId === r.executionCaseId}
+                          assigning={assigning}
+                          removing={
+                            cancelling && removingCaseId === r.executionCaseId
+                          }
+                          onToggleSelect={() => toggleSelect(r.executionCaseId)}
+                          onOpen={() => onSelectCase(r.executionCaseId)}
+                          onAssignOne={(sid) => {
+                            const psid = psidByCase.get(r.executionCaseId);
+                            if (psid != null) onAssign([psid], sid);
+                          }}
+                          onRemove={() => onCancel([r.executionCaseId])}
+                        />
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </section>
             );
           })}
