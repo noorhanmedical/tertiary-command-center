@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { CoverageSummary } from "./CoverageSummary";
 import {
   useEngagementCallSettings,
   useUpdateCallSettings,
@@ -983,6 +984,8 @@ export function EngagementCallSettings() {
       </div>
 
       <GlobalDefaultsPanel config={config} tiers={tiers} canEdit={canEdit} />
+
+      {members.length > 0 ? <CoverageSummary members={members} /> : null}
 
       {!data?.calendarAvailable ? (
         <div
