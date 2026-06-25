@@ -57,6 +57,11 @@ import {
 } from "@/components/portal/SchedulePatientDialog";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
 import { CallRowQuickActions } from "@/components/portal/CallRowQuickActions";
+import {
+  CompactCallRow,
+  CompactClinicRow,
+  CompactAncillaryRow,
+} from "@/components/portal/CompactCallRow";
 import type { CallCaseContext } from "@/components/portal/caseWorkspace";
 import { CallWorkspace } from "@/components/portal/CallWorkspace";
 import { SchedulingWorkspace } from "@/components/portal/SchedulingWorkspace";
@@ -844,7 +849,7 @@ export function TeamPortalShell({
   // admin_settings via /api/admin-settings/effective. Falls back to a
   // role-derived default when no row exists. Read-only here; profile
   // updates happen from the Admin Users page.
-  const { data: currentUser } = useQuery<{ id?: string; role?: string | null } | null>({
+  const { data: currentUser } = useQuery<{ id?: string; username?: string | null; role?: string | null } | null>({
     queryKey: ["/api/auth/me"],
     queryFn: async () => {
       const res = await fetch("/api/auth/me", { credentials: "include" });
@@ -956,6 +961,43 @@ export function TeamPortalShell({
     !!workspaceProfile &&
     !profileViewAllFacilities &&
     profileAssignedFacilities.length === 0;
+
+  // No-facility "Message Admin" — opens a Plexus task addressed to an admin
+  // so the member can self-serve a fix without leaving the portal. We look
+  // up an admin to assign to; if none is found the task is left unassigned
+  // with urgent priority so it still surfaces in the admin urgent panel.
+  const messageAdminMutation = useMutation({
+    mutationFn: async () => {
+      let adminId: string | null = null;
+      try {
+        const res = await fetch("/api/plexus/users", { credentials: "include" });
+        if (res.ok) {
+          const users = (await res.json()) as Array<{ id: string; role?: string | null }>;
+          adminId = users.find((u) => u.role === "admin")?.id ?? null;
+        }
+      } catch {
+        adminId = null;
+      }
+      const memberName = currentUser?.username ?? "A team member";
+      await apiRequest("POST", "/api/plexus/tasks", {
+        title: `Facility access needed — ${memberName}`,
+        description:
+          `${memberName} has no clinic/facility assigned on their Team Member ` +
+          `Profile and cannot see any work queue. Please assign at least one ` +
+          `facility (or grant view-all access) so they can begin working.`,
+        urgency: "urgent",
+        priority: "high",
+        assignedToUserId: adminId,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/plexus/tasks/urgent"] });
+      toast({ title: "Message sent", description: "An admin has been notified to assign you a facility." });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't send message", description: e?.message ?? "Please try again.", variant: "destructive" });
+    },
+  });
 
   // Apply assigned-facility allow-list when the profile has any. The
   // backend /api/portal/my-facilities is the underlying source of truth;
@@ -1121,6 +1163,21 @@ export function TeamPortalShell({
     setRightRailCollapsed(false);
     setRightRailSize(size);
   };
+  // Patient-opens-center slide-away. When a patient profile is loaded into
+  // the center canvas (centerMode === "patient"), both side rails animate
+  // off-screen so they don't obstruct the chart. Hovering the collapsed
+  // screen-edge strip temporarily peeks the rail back in.
+  const [leftRailPeek, setLeftRailPeek] = useState(false);
+  const [rightRailPeek, setRightRailPeek] = useState(false);
+  const centerPatientOpen = centerMode === "patient";
+  // Reset any lingering peek state whenever the patient canvas closes so the
+  // rails return to their normal docked position.
+  useEffect(() => {
+    if (!centerPatientOpen) {
+      setLeftRailPeek(false);
+      setRightRailPeek(false);
+    }
+  }, [centerPatientOpen]);
   const leftRailRef = useRef<HTMLDivElement>(null);
   const rightRailRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -2413,9 +2470,23 @@ export function TeamPortalShell({
           </div>
         </div>
 
+        {/* Left screen-edge peek strip — re-shows the rail on hover while a
+            patient profile occupies the center canvas. */}
+        {centerPatientOpen && (
+          <div
+            className="pointer-events-auto absolute left-0 top-0 bottom-0 z-30 w-2"
+            onMouseEnter={() => setLeftRailPeek(true)}
+            data-testid="left-rail-peek-edge"
+          />
+        )}
+
         <div
           ref={leftRailRef}
-          className={`pointer-events-none absolute left-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ${LEFT_RAIL_WIDTH[leftRailSize]}`}
+          onMouseEnter={centerPatientOpen ? () => setLeftRailPeek(true) : undefined}
+          onMouseLeave={centerPatientOpen ? () => setLeftRailPeek(false) : undefined}
+          className={`absolute left-4 top-4 bottom-4 z-20 flex flex-col transition-[width,transform] duration-300 ease-out ${LEFT_RAIL_WIDTH[leftRailSize]} ${
+            centerPatientOpen ? "pointer-events-auto" : "pointer-events-none"
+          } ${centerPatientOpen && !leftRailPeek ? "-translate-x-[140%]" : "translate-x-0"}`}
           data-testid="portal-left-rail"
         >
           {/* Trigger pill — ONE click region, two sizes, no arrows. Clicking the
@@ -2602,9 +2673,23 @@ export function TeamPortalShell({
           </div>
         </div>
 
+        {/* Right screen-edge peek strip — re-shows the rail on hover while a
+            patient profile occupies the center canvas. */}
+        {centerPatientOpen && (
+          <div
+            className="pointer-events-auto absolute right-0 top-0 bottom-0 z-30 w-2"
+            onMouseEnter={() => setRightRailPeek(true)}
+            data-testid="right-rail-peek-edge"
+          />
+        )}
+
         <div
           ref={rightRailRef}
-          className={`pointer-events-none absolute right-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ${RIGHT_RAIL_WIDTH[rightRailSize]}`}
+          onMouseEnter={centerPatientOpen ? () => setRightRailPeek(true) : undefined}
+          onMouseLeave={centerPatientOpen ? () => setRightRailPeek(false) : undefined}
+          className={`absolute right-4 top-4 bottom-4 z-20 flex flex-col transition-[width,transform] duration-300 ease-out ${RIGHT_RAIL_WIDTH[rightRailSize]} ${
+            centerPatientOpen ? "pointer-events-auto" : "pointer-events-none"
+          } ${centerPatientOpen && !rightRailPeek ? "translate-x-[140%]" : "translate-x-0"}`}
           data-testid="portal-right-rail"
         >
           {/* Trigger pill — ONE click region, two sizes, no arrows. Clicking the
@@ -2637,10 +2722,10 @@ export function TeamPortalShell({
             </div>
           </div>
 
-          {/* Body — frosted-glass panel (step 1) that drops down from the
-              trigger with a transform + opacity transition. */}
+          {/* Body — canonical .glass-tile panel (step 3) that drops down from
+              the trigger with a transform + opacity transition. */}
           <div
-            className={`pointer-events-auto mt-2 min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/30 bg-white/50 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
+            className={`glass-tile pointer-events-auto mt-2 min-h-0 flex-1 origin-top !rounded-[24px] text-slate-900 transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
               rightRailCollapsed
                 ? "pointer-events-none -translate-y-3 scale-y-95 opacity-0"
                 : "translate-y-0 scale-y-100 opacity-100"
@@ -2673,10 +2758,32 @@ export function TeamPortalShell({
                 <div className="p-3">
                 {noFacilityAssigned && (
                   <div
-                    className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800"
-                    data-testid="workspace-no-facility-warning"
+                    className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-amber-900"
+                    data-testid="workspace-no-facility-card"
                   >
-                    No facility assigned. Ask an admin to update your Team Member Profile.
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                      <div className="min-w-0">
+                        <div className="text-[12px] font-semibold" data-testid="text-no-facility-member">
+                          {currentUser?.username ?? "Welcome"} — no facility assigned yet
+                        </div>
+                        <p className="mt-1 text-[11px] leading-snug text-amber-800">
+                          Your Team Member Profile doesn't have a clinic/facility assigned,
+                          so there's no work queue to show. The rest of the portal still works —
+                          message an admin to get set up.
+                        </p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => messageAdminMutation.mutate()}
+                          disabled={messageAdminMutation.isPending}
+                          className="mt-2 h-7 bg-amber-600 px-2.5 text-[11px] text-white hover:bg-amber-700"
+                          data-testid="button-message-admin"
+                        >
+                          {messageAdminMutation.isPending ? "Sending…" : "Message Admin"}
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 )}
                 {activeWorkspaceMode === "clinicSchedule" && (
@@ -2695,6 +2802,19 @@ export function TeamPortalShell({
                       // isAli branch was removed with the demo patient.
                       const consentDone = !!p.consentSigned;
                       const screeningDone = false;
+
+                      if (rightRailSize === "small") {
+                        return (
+                          <CompactClinicRow
+                            key={(p.patientScreeningId ?? p.name) + ""}
+                            name={p.name}
+                            time={formatTime(p.time)}
+                            consentDone={consentDone}
+                            testIdKey={p.patientScreeningId ?? p.name}
+                            onClick={() => togglePatientInPlayground(p)}
+                          />
+                        );
+                      }
 
                       return (
                         <div
@@ -2857,6 +2977,21 @@ export function TeamPortalShell({
                       (applyTagFilter(workspaceCallList as any, callListFilterTag) as typeof workspaceCallList).map((row, idx) => {
                         const callReason = deriveCallReason(row);
                         const canCall = row.patientScreeningId != null;
+                        if (rightRailSize === "small") {
+                          return (
+                            <CompactCallRow
+                              key={`${row.id ?? idx}`}
+                              name={row.patientName ?? "Unnamed patient"}
+                              callReason={callReason}
+                              canCall={canCall}
+                              testIdKey={row.id ?? idx}
+                              onOpenPatient={() => openCallRowPatient(row)}
+                              onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
+                              onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
+                              onOpenCase={() => openCaseTab("caseOverview", callRowToCaseContext(row))}
+                            />
+                          );
+                        }
                         return (
                         <div
                           key={`${row.id ?? idx}`}
@@ -2932,6 +3067,34 @@ export function TeamPortalShell({
                       filteredAncillarySchedule.map((row, idx) => {
                         const rowKey = `ancillary:${row.id ?? idx}`;
                         const removing = removingRowKeys.has(rowKey);
+                        if (rightRailSize === "small" && !removing) {
+                          return (
+                            <CompactAncillaryRow
+                              key={`${row.id ?? idx}`}
+                              name={row.patientName ?? "Unnamed patient"}
+                              time={
+                                row.startsAt
+                                  ? new Date(row.startsAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+                                  : "—"
+                              }
+                              serviceType={row.serviceType ?? "Ancillary"}
+                              testIdKey={row.id ?? idx}
+                              onClick={() =>
+                                openSchedulePatientPlayground({
+                                  patient: {
+                                    patientName: row.patientName ?? null,
+                                    patientDob: row.patientDob ?? null,
+                                    facilityId: row.facilityId ?? null,
+                                    patientScreeningId: row.patientScreeningId ?? null,
+                                    executionCaseId: row.executionCaseId ?? null,
+                                    serviceType: row.serviceType ?? null,
+                                  },
+                                  selectedDate,
+                                })
+                              }
+                            />
+                          );
+                        }
                         return (
                         <div
                           key={`${row.id ?? idx}`}
