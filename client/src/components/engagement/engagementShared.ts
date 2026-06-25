@@ -31,7 +31,71 @@ export type SchedulerOption = {
   id: number;
   name: string;
   facility: string;
+  /** Extra facilities this member explicitly covers (per-member engagement
+   *  call settings). Empty/undefined when no coverage is configured. */
+  facilitiesCovered?: string[];
 };
+
+// ─── Coverage-aware assignment suggestions ──────────────────────────
+//
+// The manual assignment picker highlights/sorts members who can serve a
+// case's facility — first the member whose roster facility matches ("home"),
+// then members who explicitly cover it via facilitiesCovered ("covers"). This
+// lets a manager benefit from coverage routing data even when commit-time
+// auto-assign is OFF. Falls back cleanly (everyone "none") when no facility is
+// known or no coverage is configured.
+
+export type CoverageRelation = "home" | "covers" | "none";
+
+function normFacility(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+/** How a team member relates to a case's facility. */
+export function coverageRelation(
+  s: SchedulerOption,
+  facility: string | null | undefined,
+): CoverageRelation {
+  const target = normFacility(facility);
+  if (!target) return "none";
+  if (normFacility(s.facility) === target) return "home";
+  if ((s.facilitiesCovered ?? []).some((f) => normFacility(f) === target))
+    return "covers";
+  return "none";
+}
+
+const COVERAGE_RANK: Record<CoverageRelation, number> = {
+  home: 0,
+  covers: 1,
+  none: 2,
+};
+
+/** Sort schedulers so the case's facility "home" member comes first, then
+ *  coverage members, then everyone else — alphabetical within each tier. When
+ *  no facility is supplied the order is plain alphabetical (no regression). */
+export function sortSchedulersByCoverage(
+  schedulers: SchedulerOption[],
+  facility: string | null | undefined,
+): SchedulerOption[] {
+  return [...schedulers].sort((a, b) => {
+    const ra = COVERAGE_RANK[coverageRelation(a, facility)];
+    const rb = COVERAGE_RANK[coverageRelation(b, facility)];
+    if (ra !== rb) return ra - rb;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+/** The single facility shared by every selected row, or null when the
+ *  selection spans multiple (or zero) facilities — used to decide whether a
+ *  bulk picker can show coverage suggestions. */
+export function commonFacility(
+  facilities: Array<string | null | undefined>,
+): string | null {
+  const distinct = new Set(
+    facilities.map((f) => (f ?? "").trim()).filter((f) => f.length > 0),
+  );
+  return distinct.size === 1 ? Array.from(distinct)[0] : null;
+}
 
 export type AssignedRole =
   | "scheduler"

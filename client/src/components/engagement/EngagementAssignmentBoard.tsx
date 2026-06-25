@@ -48,6 +48,9 @@ import {
   openSinglePatientPacket,
   openBulkPatientPackets,
   type BulkPacketRef,
+  coverageRelation,
+  sortSchedulersByCoverage,
+  commonFacility,
 } from "./engagementShared";
 import { formatDateHeader } from "@/lib/format";
 
@@ -63,7 +66,30 @@ const PRIORITY_TONE: Record<string, string> = {
   normal: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300",
 };
 
-// Compact inline scheduler picker used for per-card + bulk assign.
+// Small "Home" / "Covers" tag rendered next to a member who can serve the
+// case's facility.
+function CoverageTag({ relation }: { relation: "home" | "covers" }) {
+  const isHome = relation === "home";
+  return (
+    <span
+      className={`ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+        isHome
+          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
+          : "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
+      }`}
+      data-testid={`engagement-coverage-tag-${relation}`}
+    >
+      {isHome ? "Home" : "Covers"}
+    </span>
+  );
+}
+
+// Compact inline scheduler picker used for per-card + bulk assign. When
+// `caseFacility` is supplied, members who serve that facility — first the
+// roster "home" member, then members who explicitly cover it — are sorted to
+// the top and tagged, so a manager gets coverage-based routing suggestions
+// even while commit-time auto-assign is OFF. Falls back to plain alphabetical
+// order when no facility is known or no coverage is configured.
 function SchedulerPicker({
   schedulers,
   busy,
@@ -72,6 +98,7 @@ function SchedulerPicker({
   label = "Assign",
   testId,
   disabled,
+  caseFacility,
 }: {
   schedulers: SchedulerOption[];
   busy: boolean;
@@ -80,10 +107,15 @@ function SchedulerPicker({
   label?: string;
   testId?: string;
   disabled?: boolean;
+  caseFacility?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState<string>(
     initial != null ? String(initial) : "",
+  );
+  const ordered = useMemo(
+    () => sortSchedulersByCoverage(schedulers, caseFacility),
+    [schedulers, caseFacility],
   );
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -105,11 +137,19 @@ function SchedulerPicker({
             <SelectValue placeholder="Pick a team member…" />
           </SelectTrigger>
           <SelectContent>
-            {schedulers.map((s) => (
-              <SelectItem key={s.id} value={String(s.id)}>
-                {s.name} · {s.facility}
-              </SelectItem>
-            ))}
+            {ordered.map((s) => {
+              const relation = coverageRelation(s, caseFacility);
+              return (
+                <SelectItem key={s.id} value={String(s.id)}>
+                  <span className="flex w-full items-center gap-2">
+                    <span className="truncate">
+                      {s.name} · {s.facility}
+                    </span>
+                    {relation !== "none" && <CoverageTag relation={relation} />}
+                  </span>
+                </SelectItem>
+              );
+            })}
           </SelectContent>
         </Select>
         <Button
@@ -140,14 +180,20 @@ function DistributePopover({
   busy,
   onDistribute,
   disabled,
+  caseFacility,
 }: {
   schedulers: SchedulerOption[];
   busy: boolean;
   onDistribute: (schedulerIds: number[]) => void;
   disabled?: boolean;
+  caseFacility?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  const ordered = useMemo(
+    () => sortSchedulersByCoverage(schedulers, caseFacility),
+    [schedulers, caseFacility],
+  );
 
   function toggle(id: number) {
     setPicked((prev) => {
@@ -183,21 +229,25 @@ function DistributePopover({
           Split evenly across team members
         </p>
         <div className="max-h-48 space-y-1 overflow-y-auto">
-          {schedulers.map((s) => (
-            <label
-              key={s.id}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-slate-50 dark:hover:bg-slate-800"
-            >
-              <Checkbox
-                checked={picked.has(s.id)}
-                onCheckedChange={() => toggle(s.id)}
-                data-testid={`engagement-distribute-option-${s.id}`}
-              />
-              <span className="truncate">
-                {s.name} · {s.facility}
-              </span>
-            </label>
-          ))}
+          {ordered.map((s) => {
+            const relation = coverageRelation(s, caseFacility);
+            return (
+              <label
+                key={s.id}
+                className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                <Checkbox
+                  checked={picked.has(s.id)}
+                  onCheckedChange={() => toggle(s.id)}
+                  data-testid={`engagement-distribute-option-${s.id}`}
+                />
+                <span className="truncate">
+                  {s.name} · {s.facility}
+                </span>
+                {relation !== "none" && <CoverageTag relation={relation} />}
+              </label>
+            );
+          })}
         </div>
         <Button
           size="sm"
@@ -389,6 +439,7 @@ function WorklistCard({
             onPick={onAssignOne}
             label={row.assignedName ? "Reassign" : "Assign"}
             testId="engagement-worklist-card-assign"
+            caseFacility={row.facility}
           />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -525,6 +576,17 @@ export function EngagementWorklist({
     allSelectableIds.length > 0 &&
     allSelectableIds.every((id) => selectedIds.has(id));
   const someSelected = selectedIds.size > 0;
+
+  // The facility shared by every selected row (null when the selection spans
+  // multiple facilities) — lets the bulk pickers surface coverage suggestions
+  // only when they apply unambiguously.
+  const selectedFacility = useMemo(
+    () =>
+      commonFacility(
+        Array.from(selectedIds).map((id) => rowByCase.get(id)?.facility),
+      ),
+    [selectedIds, rowByCase],
+  );
 
   // Prune any selected case that is no longer visible (search / filter /
   // smart-filter change). Prevents bulk actions from touching hidden rows.
@@ -747,12 +809,14 @@ export function EngagementWorklist({
               label="Assign"
               disabled={!someSelected}
               testId="engagement-worklist-bulk-assign"
+              caseFacility={selectedFacility}
             />
             <DistributePopover
               schedulers={schedulers}
               busy={assigning}
               onDistribute={bulkDistribute}
               disabled={!someSelected}
+              caseFacility={selectedFacility}
             />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -873,6 +937,7 @@ export function EngagementWorklist({
                       onPick={(sid) => assignGroup(group, sid)}
                       label="Assign all"
                       testId="engagement-group-assign"
+                      caseFacility={group.facility}
                     />
                   </div>
                 </div>

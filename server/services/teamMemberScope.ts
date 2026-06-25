@@ -35,6 +35,7 @@
 import type { Request } from "express";
 import { storage } from "../storage";
 import type { OutreachScheduler } from "@shared/schema/outreach";
+import { engagementCallSettingsRepository } from "../repositories/engagementCallSettings.repo";
 
 export type CallListAssignmentScope = {
   /** When non-null, narrow the feed to assignedTeamMemberId = this value. */
@@ -57,9 +58,17 @@ export type AssignableTeamMember = {
   capacityPercent: number;
   dailyTarget: number | null;
   userId: string | null;
+  /** Extra facilities this member explicitly covers via their per-member
+   *  engagement call settings (facilitiesCovered). Empty when none are
+   *  configured. Lets a manual assignment picker surface coverage-based
+   *  routing suggestions even when commit-time auto-assign is OFF. */
+  facilitiesCovered: string[];
 };
 
-function toAssignableTeamMember(s: OutreachScheduler): AssignableTeamMember {
+function toAssignableTeamMember(
+  s: OutreachScheduler,
+  coverageBySchedulerId: Map<number, string[]>,
+): AssignableTeamMember {
   return {
     id: String(s.id),
     name: s.name,
@@ -67,7 +76,38 @@ function toAssignableTeamMember(s: OutreachScheduler): AssignableTeamMember {
     capacityPercent: s.capacityPercent,
     dailyTarget: s.dailyTarget ?? null,
     userId: s.userId ?? null,
+    facilitiesCovered: coverageBySchedulerId.get(s.id) ?? [],
   };
+}
+
+/**
+ * Build a schedulerId → facilitiesCovered map for the given roster ids from
+ * the per-member engagement call settings. Members with no row, or with an
+ * empty/unset facilitiesCovered, simply have no entry. Best-effort: a lookup
+ * failure resolves to an empty map so coverage is treated as "not configured"
+ * rather than breaking the caller.
+ */
+export async function getCoverageMapForSchedulers(
+  schedulerIds: number[],
+): Promise<Map<number, string[]>> {
+  const map = new Map<number, string[]>();
+  if (schedulerIds.length === 0) return map;
+  try {
+    const settings =
+      await engagementCallSettingsRepository.listForSchedulers(schedulerIds);
+    for (const row of settings) {
+      const covered = (row.facilitiesCovered ?? []).filter(
+        (f) => typeof f === "string" && f.trim().length > 0,
+      );
+      if (covered.length > 0) map.set(row.schedulerId, covered);
+    }
+  } catch (err) {
+    console.error(
+      "[teamMemberScope] coverage lookup failed; treating coverage as empty:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+  return map;
 }
 
 /**
@@ -85,9 +125,12 @@ export async function listAssignableTeamMembers(opts?: {
 }): Promise<AssignableTeamMember[]> {
   const rows = await storage.getOutreachSchedulers();
   const facilities = opts?.facilities ?? null;
-  return rows
-    .filter((r) => (facilities ? facilities.has(r.facility) : true))
-    .map(toAssignableTeamMember)
+  const scoped = rows.filter((r) =>
+    facilities ? facilities.has(r.facility) : true,
+  );
+  const coverage = await getCoverageMapForSchedulers(scoped.map((r) => r.id));
+  return scoped
+    .map((r) => toAssignableTeamMember(r, coverage))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 

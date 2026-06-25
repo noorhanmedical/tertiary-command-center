@@ -12,6 +12,7 @@ import {
 } from "../../shared/schema";
 import { eq } from "drizzle-orm";
 import { buildOutreachDashboard } from "../services/outreachService";
+import { getCoverageMapForSchedulers } from "../services/teamMemberScope";
 import { ensureCanonicalSpineForScreening } from "../services/patientCommitService";
 import {
   isRecordCallResultOutreachPreviewEnabled,
@@ -137,7 +138,17 @@ export function registerOutreachRoutes(app: Express) {
   app.get("/api/outreach/schedulers", async (_req, res) => {
     try {
       const schedulers = await storage.getOutreachSchedulers();
-      res.json(schedulers);
+      // Attach each member's facilitiesCovered (per-member engagement call
+      // settings) so manual assignment pickers can surface coverage-based
+      // routing suggestions even when commit-time auto-assign is OFF.
+      const coverage = await getCoverageMapForSchedulers(
+        schedulers.map((s) => s.id),
+      );
+      const enriched = schedulers.map((s) => ({
+        ...s,
+        facilitiesCovered: coverage.get(s.id) ?? [],
+      }));
+      res.json(enriched);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

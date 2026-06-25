@@ -41,6 +41,8 @@ import {
   openSinglePatientPacket,
   priorityOf,
   PRIORITY_LABELS,
+  coverageRelation,
+  sortSchedulersByCoverage,
 } from "./engagementShared";
 
 const PRIORITY_TONE: Record<string, string> = {
@@ -766,11 +768,30 @@ export function EngagementCasePanel({
               <SelectValue placeholder="Pick a team member…" />
             </SelectTrigger>
             <SelectContent>
-              {schedulers.map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>
-                  {s.name} · {s.facility}
-                </SelectItem>
-              ))}
+              {sortSchedulersByCoverage(schedulers, row.facility).map((s) => {
+                const relation = coverageRelation(s, row.facility);
+                return (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    <span className="flex w-full items-center gap-2">
+                      <span className="truncate">
+                        {s.name} · {s.facility}
+                      </span>
+                      {relation !== "none" && (
+                        <span
+                          className={`ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                            relation === "home"
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
+                              : "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
+                          }`}
+                          data-testid={`engagement-coverage-tag-${relation}`}
+                        >
+                          {relation === "home" ? "Home" : "Covers"}
+                        </span>
+                      )}
+                    </span>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         </div>
