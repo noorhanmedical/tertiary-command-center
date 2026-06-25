@@ -56,7 +56,7 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "bg-rose-100 text-rose-800",
 };
 
-export default function AdminOutboxPage() {
+export default function AdminOutboxPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { toast } = useToast();
   const [filter, setFilter] = useState<string>("all");
 
@@ -102,28 +102,8 @@ export default function AdminOutboxPage() {
   const filtered = filter === "all" ? items : items.filter((i) => i.status === filter);
   const summary = data?.summary ?? { pending: 0, failed: 0, uploading: 0, completed: 0, total: 0 };
 
-  return (
-    <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
-        <PageHeader
-          eyebrow="PLEXUS ANCILLARY · OUTBOX"
-          icon={Inbox}
-          iconAccent="bg-blue-100 text-blue-700"
-          title="Admin Outbox"
-          subtitle="All Drive uploads and Sheet syncs are queued here. Files are saved locally first, then uploaded with one click."
-          actions={
-            <Button
-              onClick={() => drainAll.mutate()}
-              disabled={drainAll.isPending || summary.pending + summary.failed === 0}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
-              data-testid="button-upload-all"
-            >
-              {drainAll.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CloudUpload className="h-4 w-4 mr-2" />}
-              Upload All ({summary.pending + summary.failed})
-            </Button>
-          }
-        />
-
+  const body = (
+    <>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {([
             ["all", `All (${summary.total})`, "bg-slate-100 text-slate-800"],
@@ -146,6 +126,16 @@ export default function AdminOutboxPage() {
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <Button
+            onClick={() => drainAll.mutate()}
+            disabled={drainAll.isPending || summary.pending + summary.failed === 0}
+            size="sm"
+            className="bg-blue-600 hover:bg-blue-700 text-white"
+            data-testid="button-upload-all"
+          >
+            {drainAll.isPending ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <CloudUpload className="h-3.5 w-3.5 mr-2" />}
+            Upload All ({summary.pending + summary.failed})
+          </Button>
           <Button variant="outline" size="sm" onClick={() => drainFailed.mutate()} disabled={summary.failed === 0}>
             <RefreshCcw className="h-3.5 w-3.5 mr-2" />Retry Failed
           </Button>
@@ -241,6 +231,22 @@ export default function AdminOutboxPage() {
             And at the facility level: <b>Templates</b>, <b>Compliance Archive</b>, <b>Test Data</b>.
           </p>
         </Card>
+    </>
+  );
+
+  if (embedded) return <div className="flex flex-col gap-6">{body}</div>;
+
+  return (
+    <div className="finance-page">
+      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
+        <PageHeader
+          eyebrow="PLEXUS ANCILLARY · OUTBOX"
+          icon={Inbox}
+          iconAccent="bg-blue-100 text-blue-700"
+          title="Admin Outbox"
+          subtitle="All Drive uploads and Sheet syncs are queued here. Files are saved locally first, then uploaded with one click."
+        />
+        {body}
       </div>
     </div>
   );

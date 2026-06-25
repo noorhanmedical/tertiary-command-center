@@ -53,7 +53,11 @@ const LOG_TABS = [
   { key: "billing-auditor", label: "Billing Auditor", Component: BillingAuditorPage },
   { key: "call-list-audit", label: "Call List Audit", Component: CallListAuditPage },
   { key: "remittance", label: "Remittance Audit", Component: RemittanceAuditPage },
-] as const;
+] as const satisfies ReadonlyArray<{
+  key: string;
+  label: string;
+  Component: (props: { embedded?: boolean }) => JSX.Element;
+}>;
 
 function SectionTitle({ title, desc }: { title: string; desc?: string }) {
   return (
@@ -122,7 +126,7 @@ export default function AdminSettingsPage() {
           {/* System */}
           <TabsContent value="system" className="flex flex-col gap-6" data-testid="tabpanel-system">
             <Card className="rounded-3xl border border-white/60 bg-white/75 p-0 shadow-sm overflow-hidden">
-              <AdminSettingsCenterPage />
+              <AdminSettingsCenterPage embedded />
             </Card>
 
             <Card className="rounded-3xl border border-white/60 bg-white/75 p-5 shadow-sm">
@@ -147,7 +151,7 @@ export default function AdminSettingsPage() {
           {/* Billing */}
           <TabsContent value="billing" className="flex flex-col gap-6" data-testid="tabpanel-billing">
             <Card className="rounded-3xl border border-white/60 bg-white/75 p-0 shadow-sm overflow-hidden">
-              <BillingSettingsPage />
+              <BillingSettingsPage embedded />
             </Card>
             <InvoiceReminderSettingsCard />
           </TabsContent>
@@ -160,14 +164,14 @@ export default function AdminSettingsPage() {
             <div>
               <SectionTitle title="User Management" desc="Create and remove team accounts, view all users, and manage access." />
               <div className="mt-3">
-                <AdminUsersPage />
+                <AdminUsersPage embedded />
               </div>
             </div>
           </TabsContent>
 
           {/* Facility */}
           <TabsContent value="facility" data-testid="tabpanel-facility">
-            <StovetopHeatSettingsPage />
+            <StovetopHeatSettingsPage embedded />
           </TabsContent>
 
           {/* Logs */}
@@ -187,7 +191,7 @@ export default function AdminSettingsPage() {
               </TabsList>
               {LOG_TABS.map(({ key, Component }) => (
                 <TabsContent key={key} value={key} data-testid={`tabpanel-log-${key}`}>
-                  <Component />
+                  <Component embedded />
                 </TabsContent>
               ))}
             </Tabs>

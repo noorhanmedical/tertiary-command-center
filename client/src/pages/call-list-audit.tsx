@@ -48,7 +48,7 @@ const VISIBILITY_STYLE: Record<string, string> = {
   assigned_scheduler_missing: "bg-rose-100 text-rose-800 border-rose-200",
 };
 
-export default function CallListAuditPage() {
+export default function CallListAuditPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { toast } = useToast();
   const [dryRun, setDryRun] = useState<unknown>(null);
   const [dryRunLoading, setDryRunLoading] = useState(false);
@@ -83,7 +83,7 @@ export default function CallListAuditPage() {
     <div className="mx-auto max-w-6xl px-6 py-8" data-testid="page-call-list-audit">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Call List Audit</h1>
+          {!embedded && <h1 className="text-2xl font-semibold text-slate-900">Call List Audit</h1>}
           <p className="mt-1 text-sm text-slate-500">
             Diagnoses why engagement-assigned work may not appear on a team
             member's call list. Source of truth: patient execution cases.

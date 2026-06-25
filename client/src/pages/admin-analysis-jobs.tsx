@@ -72,23 +72,13 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-export default function AdminAnalysisJobsPage() {
+export default function AdminAnalysisJobsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { data: jobs, isLoading, isError } = useQuery<AnalysisJobRow[]>({
     queryKey: ["/api/admin/analysis-jobs"],
   });
 
-  return (
-    <div className="finance-page">
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
-        <PageHeader
-          backHref="/admin"
-          eyebrow="PLEXUS ANCILLARY · ANALYSIS"
-          icon={History}
-          iconAccent="bg-indigo-100 text-indigo-700"
-          title="Analysis Run History"
-          subtitle="Recent batch analysis runs — up to 7 days of history. Older runs are auto-purged."
-        />
-
+  const body = (
+    <>
         {isLoading && (
           <Card className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl">
             <div className="space-y-3">
@@ -172,6 +162,23 @@ export default function AdminAnalysisJobsPage() {
             </div>
           </Card>
         )}
+    </>
+  );
+
+  if (embedded) return <div className="flex flex-col gap-6">{body}</div>;
+
+  return (
+    <div className="finance-page">
+      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-6 py-6">
+        <PageHeader
+          backHref="/admin"
+          eyebrow="PLEXUS ANCILLARY · ANALYSIS"
+          icon={History}
+          iconAccent="bg-indigo-100 text-indigo-700"
+          title="Analysis Run History"
+          subtitle="Recent batch analysis runs — up to 7 days of history. Older runs are auto-purged."
+        />
+        {body}
       </div>
     </div>
   );
