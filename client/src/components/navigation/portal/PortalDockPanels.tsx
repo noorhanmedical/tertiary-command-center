@@ -47,6 +47,11 @@ import {
 } from "@/components/ui/tooltip";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import {
+  useScreeningBatches,
+  useCreateBatch,
+  useAddPatient,
+} from "@/hooks/api/screening-batches";
 
 // ── Chat AI panel ────────────────────────────────────────────────────────────
 
@@ -431,9 +436,21 @@ type QuickQualifyResult = {
   name: string;
   age: number | null;
   gender: string | null;
+  diagnoses?: string | null;
+  history?: string | null;
+  medications?: string | null;
   qualifyingTests: string[];
   reasoning: Record<string, TestReasoning>;
 };
+
+type MyFacilitiesResponse = { facilities: string[] };
+
+function isoTodayKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+}
 
 export function PortalPlexusIQPanel({
   open,
@@ -456,6 +473,26 @@ export function PortalPlexusIQPanel({
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<QuickQualifyResult | null>(null);
 
+  // "Add to schedule" sub-flow: pick a facility + date, then reuse the
+  // resolveBatchId / addPatient flow to persist the quick-qualify result as a
+  // real patient on the matching screening_batch.
+  const [showAdd, setShowAdd] = useState(false);
+  const [addFacility, setAddFacility] = useState("");
+  const [addDate, setAddDate] = useState(isoTodayKey());
+  const [addPending, setAddPending] = useState(false);
+  const [added, setAdded] = useState(false);
+
+  const { data: facilitiesData } = useQuery<MyFacilitiesResponse>({
+    queryKey: ["/api/portal/my-facilities"],
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const facilities = facilitiesData?.facilities ?? [];
+
+  const { data: batches = [] } = useScreeningBatches();
+  const createBatchMut = useCreateBatch();
+  const addPatientMut = useAddPatient();
+
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
@@ -464,6 +501,8 @@ export function PortalPlexusIQPanel({
     if (!form.name.trim() || pending) return;
     setPending(true);
     setResult(null);
+    setShowAdd(false);
+    setAdded(false);
     try {
       const res = await apiRequest("POST", "/api/portal/quick-qualify", {
         name: form.name.trim(),
@@ -485,6 +524,69 @@ export function PortalPlexusIQPanel({
       });
     } finally {
       setPending(false);
+    }
+  }
+
+  // Find the existing batch for (facility, date) or create it — mirrors the
+  // resolveBatchId pattern on the Plexus IQ page.
+  async function resolveBatchId(facility: string, scheduleDate: string): Promise<number> {
+    const existing = batches.find(
+      (b) => b.facility === facility && b.scheduleDate === scheduleDate,
+    );
+    if (existing) return existing.id;
+    const created = await createBatchMut.mutateAsync({
+      name: `${facility} - ${scheduleDate}`,
+      facility,
+      scheduleDate,
+    });
+    return created.id;
+  }
+
+  async function addToSchedule() {
+    if (!result || addPending) return;
+    if (!addFacility) {
+      toast({ title: "Pick a facility", variant: "destructive" });
+      return;
+    }
+    if (!addDate) {
+      toast({ title: "Pick a date", variant: "destructive" });
+      return;
+    }
+    setAddPending(true);
+    try {
+      const batchId = await resolveBatchId(addFacility, addDate);
+      await addPatientMut.mutateAsync({
+        batchId,
+        name: result.name || form.name.trim(),
+        age: result.age ?? undefined,
+        gender: result.gender ?? undefined,
+        dob: form.dob.trim() || undefined,
+        insurance: form.insurance,
+        diagnoses: result.diagnoses ?? (form.diagnoses.trim() || undefined),
+        history: result.history ?? (form.history.trim() || undefined),
+        medications: result.medications ?? (form.medications.trim() || undefined),
+        noPreviousTests: form.noPreviousTests,
+        previousTests: form.noPreviousTests
+          ? undefined
+          : form.previousTests.trim() || undefined,
+        qualifyingTests: result.qualifyingTests,
+        reasoning: result.reasoning,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+      setAdded(true);
+      setShowAdd(false);
+      toast({
+        title: "Added to schedule",
+        description: `${result.name} · ${addFacility} on ${addDate}`,
+      });
+    } catch (err) {
+      toast({
+        title: "Add failed",
+        description: err instanceof Error ? err.message : "Could not add patient",
+        variant: "destructive",
+      });
+    } finally {
+      setAddPending(false);
     }
   }
 
@@ -670,6 +772,103 @@ export function PortalPlexusIQPanel({
                   </div>
                 );
               })}
+
+              {result.qualifyingTests.length > 0 && (
+                <div className="pt-1" data-testid="portal-qq-add-to-schedule">
+                  {added ? (
+                    <div
+                      className="flex items-center gap-2 rounded-lg bg-emerald-50 text-emerald-700 px-3 py-2 text-sm"
+                      data-testid="portal-qq-added-confirmation"
+                    >
+                      <CheckCircle2 className="w-4 h-4" /> Added to schedule.
+                    </div>
+                  ) : !showAdd ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setShowAdd(true);
+                        if (!addFacility && facilities.length === 1) {
+                          setAddFacility(facilities[0]);
+                        }
+                      }}
+                      className="w-full"
+                      data-testid="button-portal-qq-open-add"
+                    >
+                      <Plus className="w-4 h-4 mr-2" /> Add to schedule
+                    </Button>
+                  ) : (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 space-y-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Add to schedule
+                      </p>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="qq-add-facility">Facility</Label>
+                        <Select value={addFacility} onValueChange={setAddFacility}>
+                          <SelectTrigger
+                            id="qq-add-facility"
+                            data-testid="select-portal-qq-facility"
+                          >
+                            <SelectValue placeholder="Select facility" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {facilities.length === 0 ? (
+                              <SelectItem value="__none" disabled>
+                                No facilities available
+                              </SelectItem>
+                            ) : (
+                              facilities.map((f) => (
+                                <SelectItem key={f} value={f}>
+                                  {f}
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="qq-add-date">Date</Label>
+                        <Input
+                          id="qq-add-date"
+                          type="date"
+                          value={addDate}
+                          onChange={(e) => setAddDate(e.target.value)}
+                          data-testid="input-portal-qq-date"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => setShowAdd(false)}
+                          disabled={addPending}
+                          className="flex-1"
+                          data-testid="button-portal-qq-cancel-add"
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={addToSchedule}
+                          disabled={addPending || !addFacility}
+                          className="flex-1"
+                          data-testid="button-portal-qq-confirm-add"
+                        >
+                          {addPending ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Adding…
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="w-4 h-4 mr-2" /> Add patient
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

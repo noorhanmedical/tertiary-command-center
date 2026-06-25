@@ -136,6 +136,8 @@ export const addPatientSchema = z.object({
   noPreviousTests: z.boolean().optional(),
   patientType: z.string().optional(),
   notes: z.string().optional(),
+  qualifyingTests: z.array(z.string()).optional(),
+  reasoning: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const updatePatientSchema = z.object({

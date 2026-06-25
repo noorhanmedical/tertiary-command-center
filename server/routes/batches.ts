@@ -231,8 +231,13 @@ export function registerBatchRoutes(app: Express) {
         name, time, age, gender, dob, phoneNumber,
         insurance, diagnoses, history, medications,
         previousTests, previousTestsDate, noPreviousTests,
-        patientType, notes,
+        patientType, notes, qualifyingTests, reasoning,
       } = parsed.data;
+
+      // When the caller supplies pre-computed qualification (e.g. the portal
+      // quick-qualify "Add to schedule" flow), persist those tests + reasoning
+      // and land the patient as already-completed so the result isn't wiped.
+      const hasPrecomputedQualification = Array.isArray(qualifyingTests);
 
       const patient = await storage.createPatientScreening({
         batchId,
@@ -251,9 +256,9 @@ export function registerBatchRoutes(app: Express) {
         previousTestsDate: previousTestsDate || extractDateFromPrevTests(previousTests) || null,
         noPreviousTests: noPreviousTests ?? false,
         notes: notes || null,
-        qualifyingTests: [],
-        reasoning: {},
-        status: "draft",
+        qualifyingTests: hasPrecomputedQualification ? qualifyingTests : [],
+        reasoning: (reasoning as Record<string, unknown>) || {},
+        status: hasPrecomputedQualification ? "completed" : "draft",
         appointmentStatus: "pending",
         patientType: patientType || (time ? "visit" : "outreach"),
       });
