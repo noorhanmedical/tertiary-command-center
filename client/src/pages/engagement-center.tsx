@@ -49,6 +49,7 @@ import {
   type SmartFilterKey,
   countBySmartFilter,
   matchesSmartFilter,
+  buildMemberLoadMap,
 } from "@/components/engagement/engagementShared";
 
 const ALL = "__all";
@@ -114,6 +115,10 @@ export default function EngagementCenterPage() {
   const schedulers = schedulersQuery.data ?? [];
 
   const allRows = useMemo<BoardRow[]>(() => board.data?.rows ?? [], [board.data]);
+
+  // Board-wide open-case load per team member, so the assignment pickers can
+  // show how busy each member already is regardless of the current filter.
+  const memberLoad = useMemo(() => buildMemberLoadMap(allRows), [allRows]);
 
   // Distinct option lists from the live rows.
   const facilityOptions = useMemo(() => {
@@ -441,6 +446,7 @@ export default function EngagementCenterPage() {
               rows={visibleRows}
               loading={board.isLoading}
               schedulers={schedulers}
+              memberLoad={memberLoad}
               selectedCaseId={selectedCaseId}
               assigning={assignMutation.isPending}
               cancelling={cancelMutation.isPending}
@@ -464,6 +470,7 @@ export default function EngagementCenterPage() {
           <EngagementCasePanel
             row={selectedRow}
             schedulers={schedulers}
+            memberLoad={memberLoad}
             assigning={assignMutation.isPending}
             cancelling={cancelMutation.isPending}
             onAssign={handleAssign}

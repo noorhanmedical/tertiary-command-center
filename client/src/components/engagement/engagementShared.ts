@@ -34,7 +34,60 @@ export type SchedulerOption = {
   /** Extra facilities this member explicitly covers (per-member engagement
    *  call settings). Empty/undefined when no coverage is configured. */
   facilitiesCovered?: string[];
+  /** Absolute daily call target for this member (outreach_schedulers.dailyTarget).
+   *  Null/undefined when no target is configured — load indicators then fall
+   *  back to a plain open-case count. */
+  dailyTarget?: number | null;
 };
+
+// ─── Per-member load (capacity signal) ──────────────────────────────
+//
+// The manual assignment picker surfaces how loaded each team member already
+// is so a manager picking among several covering members can tell who has
+// room. Load is the count of currently OPEN engagement cases assigned to a
+// member, derived from the board rows (the board only contains active,
+// non-closed cases — exactly the live workload). When a daily target is
+// configured we show "open / target"; otherwise we degrade to a plain
+// open-case count.
+
+/** Count open engagement cases per assignedTeamMemberId from board rows.
+ *  Build this from the FULL row set (not a filtered/visible subset) so the
+ *  number reflects each member's total live workload. */
+export function buildMemberLoadMap(rows: BoardRow[]): Map<number, number> {
+  const m = new Map<number, number>();
+  for (const r of rows) {
+    if (r.assignedTeamMemberId != null) {
+      m.set(r.assignedTeamMemberId, (m.get(r.assignedTeamMemberId) ?? 0) + 1);
+    }
+  }
+  return m;
+}
+
+export type MemberLoadTone = "ok" | "warn" | "full" | "none";
+
+export type MemberLoad = {
+  /** Short label e.g. "12 / 20" (with target) or "12 open" (no target). */
+  text: string;
+  /** open ÷ dailyTarget when a positive target exists, else null. */
+  ratio: number | null;
+  /** Fullness tone: "none" when no target, else ok/warn/full by ratio. */
+  tone: MemberLoadTone;
+};
+
+/** Derive a member's display load from their open-case count and daily target.
+ *  Falls back cleanly to a plain count (tone "none") when no target is set. */
+export function memberLoadOf(
+  open: number,
+  dailyTarget: number | null | undefined,
+): MemberLoad {
+  if (dailyTarget != null && dailyTarget > 0) {
+    const ratio = open / dailyTarget;
+    const tone: MemberLoadTone =
+      ratio >= 1 ? "full" : ratio >= 0.75 ? "warn" : "ok";
+    return { text: `${open} / ${dailyTarget}`, ratio, tone };
+  }
+  return { text: `${open} open`, ratio: null, tone: "none" };
+}
 
 // ─── Coverage-aware assignment suggestions ──────────────────────────
 //

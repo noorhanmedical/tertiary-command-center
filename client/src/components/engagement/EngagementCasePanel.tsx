@@ -44,6 +44,7 @@ import {
   coverageRelation,
   sortSchedulersByCoverage,
 } from "./engagementShared";
+import { MemberLoadTag } from "./EngagementAssignmentBoard";
 
 const PRIORITY_TONE: Record<string, string> = {
   high: "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300",
@@ -142,6 +143,7 @@ function Section({
 export function EngagementCasePanel({
   row,
   schedulers,
+  memberLoad,
   assigning,
   cancelling,
   onAssign,
@@ -150,6 +152,9 @@ export function EngagementCasePanel({
 }: {
   row: BoardRow | null;
   schedulers: SchedulerOption[];
+  /** Open-case count per assignedTeamMemberId across the full board — drives
+   *  the per-member load indicator in the team-member picker. */
+  memberLoad?: Map<number, number>;
   assigning: boolean;
   cancelling: boolean;
   onAssign: (
@@ -776,18 +781,24 @@ export function EngagementCasePanel({
                       <span className="truncate">
                         {s.name} · {s.facility}
                       </span>
-                      {relation !== "none" && (
-                        <span
-                          className={`ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
-                            relation === "home"
-                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
-                              : "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
-                          }`}
-                          data-testid={`engagement-coverage-tag-${relation}`}
-                        >
-                          {relation === "home" ? "Home" : "Covers"}
-                        </span>
-                      )}
+                      <span className="ml-auto flex shrink-0 items-center gap-1">
+                        <MemberLoadTag
+                          open={memberLoad?.get(s.id) ?? 0}
+                          dailyTarget={s.dailyTarget}
+                        />
+                        {relation !== "none" && (
+                          <span
+                            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                              relation === "home"
+                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
+                                : "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
+                            }`}
+                            data-testid={`engagement-coverage-tag-${relation}`}
+                          >
+                            {relation === "home" ? "Home" : "Covers"}
+                          </span>
+                        )}
+                      </span>
                     </span>
                   </SelectItem>
                 );

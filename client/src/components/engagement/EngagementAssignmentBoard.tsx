@@ -51,6 +51,8 @@ import {
   coverageRelation,
   sortSchedulersByCoverage,
   commonFacility,
+  memberLoadOf,
+  buildMemberLoadMap,
 } from "./engagementShared";
 import { formatDateHeader } from "@/lib/format";
 
@@ -84,6 +86,39 @@ function CoverageTag({ relation }: { relation: "home" | "covers" }) {
   );
 }
 
+// Compact per-member load badge shown beside a team member's name in the
+// assignment pickers — how loaded they already are. Shows "open / target"
+// when a daily target is configured (tone shifts amber→rose as they fill),
+// and degrades to a plain "N open" count when no target is set.
+export function MemberLoadTag({
+  open,
+  dailyTarget,
+}: {
+  open: number;
+  dailyTarget?: number | null;
+}) {
+  const load = memberLoadOf(open, dailyTarget);
+  const tone =
+    load.tone === "full"
+      ? "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300"
+      : load.tone === "warn"
+        ? "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300"
+        : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300";
+  return (
+    <span
+      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold tabular-nums ${tone}`}
+      title={
+        dailyTarget != null && dailyTarget > 0
+          ? `${open} open of ${dailyTarget} daily target`
+          : `${open} open case${open === 1 ? "" : "s"}`
+      }
+      data-testid="engagement-member-load"
+    >
+      {load.text}
+    </span>
+  );
+}
+
 // Compact inline scheduler picker used for per-card + bulk assign. When
 // `caseFacility` is supplied, members who serve that facility — first the
 // roster "home" member, then members who explicitly cover it — are sorted to
@@ -99,6 +134,7 @@ function SchedulerPicker({
   testId,
   disabled,
   caseFacility,
+  memberLoad,
 }: {
   schedulers: SchedulerOption[];
   busy: boolean;
@@ -108,6 +144,7 @@ function SchedulerPicker({
   testId?: string;
   disabled?: boolean;
   caseFacility?: string | null;
+  memberLoad?: Map<number, number>;
 }) {
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState<string>(
@@ -145,7 +182,15 @@ function SchedulerPicker({
                     <span className="truncate">
                       {s.name} · {s.facility}
                     </span>
-                    {relation !== "none" && <CoverageTag relation={relation} />}
+                    <span className="ml-auto flex shrink-0 items-center gap-1">
+                      <MemberLoadTag
+                        open={memberLoad?.get(s.id) ?? 0}
+                        dailyTarget={s.dailyTarget}
+                      />
+                      {relation !== "none" && (
+                        <CoverageTag relation={relation} />
+                      )}
+                    </span>
                   </span>
                 </SelectItem>
               );
@@ -181,12 +226,14 @@ function DistributePopover({
   onDistribute,
   disabled,
   caseFacility,
+  memberLoad,
 }: {
   schedulers: SchedulerOption[];
   busy: boolean;
   onDistribute: (schedulerIds: number[]) => void;
   disabled?: boolean;
   caseFacility?: string | null;
+  memberLoad?: Map<number, number>;
 }) {
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
@@ -244,7 +291,13 @@ function DistributePopover({
                 <span className="truncate">
                   {s.name} · {s.facility}
                 </span>
-                {relation !== "none" && <CoverageTag relation={relation} />}
+                <span className="ml-auto flex shrink-0 items-center gap-1">
+                  <MemberLoadTag
+                    open={memberLoad?.get(s.id) ?? 0}
+                    dailyTarget={s.dailyTarget}
+                  />
+                  {relation !== "none" && <CoverageTag relation={relation} />}
+                </span>
               </label>
             );
           })}
@@ -274,6 +327,7 @@ function DistributePopover({
 function WorklistCard({
   row,
   schedulers,
+  memberLoad,
   selected,
   active,
   assigning,
@@ -285,6 +339,7 @@ function WorklistCard({
 }: {
   row: BoardRow;
   schedulers: SchedulerOption[];
+  memberLoad: Map<number, number>;
   selected: boolean;
   active: boolean;
   assigning: boolean;
@@ -440,6 +495,7 @@ function WorklistCard({
             label={row.assignedName ? "Reassign" : "Assign"}
             testId="engagement-worklist-card-assign"
             caseFacility={row.facility}
+            memberLoad={memberLoad}
           />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -520,6 +576,7 @@ export function EngagementWorklist({
   rows,
   loading,
   schedulers,
+  memberLoad,
   selectedCaseId,
   assigning,
   cancelling,
@@ -531,6 +588,10 @@ export function EngagementWorklist({
   rows: BoardRow[];
   loading: boolean;
   schedulers: SchedulerOption[];
+  /** Open-case count per assignedTeamMemberId across the full board (not just
+   *  the rows visible here) — drives the per-member load indicator in the
+   *  assignment pickers. Optional: falls back to deriving from `rows`. */
+  memberLoad?: Map<number, number>;
   selectedCaseId: number | null;
   assigning: boolean;
   cancelling: boolean;
@@ -555,6 +616,14 @@ export function EngagementWorklist({
     for (const r of rows) m.set(r.executionCaseId, r);
     return m;
   }, [rows]);
+
+  // Per-member open-case load for the assignment pickers. Prefer the board-wide
+  // map from the parent (full workload); fall back to deriving from the rows in
+  // view so the indicator still works when the prop is omitted.
+  const effectiveMemberLoad = useMemo(
+    () => memberLoad ?? buildMemberLoadMap(rows),
+    [memberLoad, rows],
+  );
 
   // executionCaseId -> patientScreeningId for assign payloads.
   const psidByCase = useMemo(() => {
@@ -810,6 +879,7 @@ export function EngagementWorklist({
               disabled={!someSelected}
               testId="engagement-worklist-bulk-assign"
               caseFacility={selectedFacility}
+              memberLoad={effectiveMemberLoad}
             />
             <DistributePopover
               schedulers={schedulers}
@@ -817,6 +887,7 @@ export function EngagementWorklist({
               onDistribute={bulkDistribute}
               disabled={!someSelected}
               caseFacility={selectedFacility}
+              memberLoad={effectiveMemberLoad}
             />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -938,6 +1009,7 @@ export function EngagementWorklist({
                       label="Assign all"
                       testId="engagement-group-assign"
                       caseFacility={group.facility}
+                      memberLoad={effectiveMemberLoad}
                     />
                   </div>
                 </div>
@@ -948,6 +1020,7 @@ export function EngagementWorklist({
                         key={r.executionCaseId}
                         row={r}
                         schedulers={schedulers}
+                        memberLoad={effectiveMemberLoad}
                         selected={selectedIds.has(r.executionCaseId)}
                         active={selectedCaseId === r.executionCaseId}
                         assigning={assigning}
