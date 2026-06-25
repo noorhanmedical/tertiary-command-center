@@ -13,7 +13,8 @@ export type CommandComponentType =
   | "scratchpad"
   | "searchResult"
   | "visit"
-  | "outreach";
+  | "outreach"
+  | "plexusTasks";
 
 export type AncillaryType = "brainwave" | "vitalwave" | "ultrasound" | "other";
 

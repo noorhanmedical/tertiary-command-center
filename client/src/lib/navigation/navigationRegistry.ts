@@ -46,8 +46,8 @@ export const DOCK_ITEMS: DockItem[] = [
     id: "tasks",
     label: "Tasks",
     Icon: CheckSquare,
-    kind: "link",
-    href: "/plexus-tasks",
+    kind: "panel",
+    panelId: "tasks",
     testId: "global-floating-dock-tasks",
   },
   {
@@ -111,6 +111,14 @@ export const PORTAL_DOCK_ITEMS: DockItem[] = [
     kind: "panel",
     panelId: "portal-search",
     testId: "global-floating-dock-portal-search",
+  },
+  {
+    id: "portal-tasks",
+    label: "Tasks",
+    Icon: CheckSquare,
+    kind: "panel",
+    panelId: "tasks",
+    testId: "global-floating-dock-portal-tasks",
   },
   {
     id: "portal-plexus-iq",

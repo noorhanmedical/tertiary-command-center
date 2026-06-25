@@ -1,6 +1,7 @@
 import React from "react";
 import { CalendarDays, Mail, Megaphone, NotebookPen, Phone, Search } from "lucide-react";
 import { useCommandCenter } from "../context/CommandCenterContext";
+import { PlexusTasksWorkspace } from "@/features/plexus-tasks/PlexusTasksWorkspace";
 
 function EmptyPlayground() {
   return (
@@ -57,6 +58,10 @@ export function CommandPlayground() {
         <VisitWorkspace surface={playgroundContext.sourceSurface} actions={(playgroundContext.metadata?.actions as string[]) ?? []} />
       ) : playgroundContext.componentType === "outreach" ? (
         <OutreachWorkspace surface={playgroundContext.sourceSurface} actions={(playgroundContext.metadata?.actions as string[]) ?? []} />
+      ) : playgroundContext.componentType === "plexusTasks" ? (
+        <div className="h-[760px]">
+          <PlexusTasksWorkspace embedded />
+        </div>
       ) : (
         <GenericWorkspace />
       )}

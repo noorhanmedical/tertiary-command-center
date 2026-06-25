@@ -21,6 +21,8 @@ import {
   PortalPlexusIQPanel,
   PortalTeamOpsPanel,
 } from "@/components/navigation/portal/PortalDockPanels";
+import { TasksDockPopup } from "@/features/plexus-tasks/TasksDockPopup";
+import { useUnreadCount } from "@/features/plexus-tasks/hooks";
 
 function DockCalendarPanel({ onClose }: { onClose: () => void }) {
   const [, navigate] = useLocation();
@@ -65,11 +67,13 @@ function DockButton({
   expanded,
   active,
   onActivate,
+  badge = 0,
 }: {
   item: DockItem;
   expanded: boolean;
   active: boolean;
   onActivate: (item: DockItem) => void;
+  badge?: number;
 }) {
   const Icon = item.Icon;
 
@@ -93,6 +97,14 @@ function DockButton({
         className={`transition-all duration-200 ease-out ${expanded ? "w-5 h-5" : "w-4 h-4"}`}
         strokeWidth={1.75}
       />
+      {badge > 0 && (
+        <span
+          className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#7283B0] px-1 text-[9px] font-bold text-white ring-2 ring-slate-800"
+          data-testid={`${item.testId}-badge`}
+        >
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
     </span>
   );
 
@@ -162,6 +174,9 @@ export function GlobalFloatingDock() {
   });
   const isPortalUser = !!me && PORTAL_DOCK_ROLES.has(me.role);
   const dockItems = isPortalUser ? PORTAL_DOCK_ITEMS : DOCK_ITEMS;
+
+  const { data: unread } = useUnreadCount();
+  const taskUnread = unread?.count ?? 0;
 
   const expanded = hovered || tapToggled;
 
@@ -233,6 +248,7 @@ export function GlobalFloatingDock() {
                   expanded={expanded}
                   active={active}
                   onActivate={handleActivate}
+                  badge={item.panelId === "tasks" ? taskUnread : 0}
                 />
               );
             })}
@@ -253,6 +269,23 @@ export function GlobalFloatingDock() {
           </SheetHeader>
           <div className="flex-1 overflow-y-auto -mx-6 px-6">
             <DockCalendarPanel onClose={() => setOpenPanel(null)} />
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet
+        open={openPanel === "tasks"}
+        onOpenChange={(open) => setOpenPanel(open ? "tasks" : null)}
+      >
+        <SheetContent side="right" className="w-full sm:max-w-md flex flex-col overflow-hidden">
+          <SheetHeader className="shrink-0">
+            <SheetTitle>Tasks</SheetTitle>
+            <SheetDescription>
+              Your work, urgent items, and what's due — quick-add or open the full workspace.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="flex-1 overflow-hidden pt-2">
+            <TasksDockPopup onOpenFullView={() => setOpenPanel(null)} />
           </div>
         </SheetContent>
       </Sheet>
