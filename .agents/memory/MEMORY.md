@@ -15,3 +15,4 @@
 - [Plexus IQ BatchFlow sessions](plexus-iq-batchflow-sessions.md) — BatchFlow tile opens a landing dialog that sets a placement ref (default newRun isolates; server default is append); active batch in sessionStorage; source map separate.
 - [Engagement Center command UI](engagement-center-command-ui.md) — assign endpoint persists only schedulerId/role/reason; priority + smart filters are DERIVED read-only; no priority/next-action field in board contract.
 - [engagement_call_settings column drift](engagement-call-settings-column-drift.md) — explicit completed-KPI maps to DB `explicit_completed_call_kpi`; a `.select()` drift throws PG 42703 and breaks the call-settings repo for all consumers.
+- [applyDistribution post-commit audit flush](engagement-distribution-apply-deadlock.md) — distribution apply must flush journey events AFTER commit: in-tx cross-connection FK insert vs FOR UPDATE row lock deadlocks undetectably.

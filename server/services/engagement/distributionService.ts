@@ -25,7 +25,7 @@ import {
   users,
 } from "@shared/schema";
 import { engagementCallSettingsRepository } from "../../repositories/engagementCallSettings.repo";
-import { appendJourneyEvent } from "../journey/appendJourneyEvent";
+import { appendJourneyEvent, type AppendJourneyEventInput } from "../journey/appendJourneyEvent";
 import { calculateNextActionAt } from "../callList/nextActionPolicy";
 import {
   computeCallTargets,
@@ -701,6 +701,19 @@ function siblingKey(name: string, dob: string | null, scheduleDate: string | nul
   return `${name.trim().toLowerCase()}|${dob ?? ""}|${scheduleDate ?? ""}`;
 }
 
+/** Optional test seam for {@link applyDistribution}.
+ *
+ *  Production callers omit this and get the exact previous behavior (the live
+ *  global gather). Tests pass scoped gather functions so the atomic write-path
+ *  (transaction + SELECT…FOR UPDATE row lock + re-validation + conflict guard)
+ *  can be exercised against an isolated, seeded pool of cases/members without
+ *  touching the real eligible-case pool or roster. The defaults below are
+ *  byte-for-byte the original implementation. */
+export interface ApplyDistributionDeps {
+  gatherCases?: (exec: DbExecutor) => Promise<DistributionCaseInput[]>;
+  gatherMembers?: () => Promise<DistributionMemberInput[]>;
+}
+
 /** Re-run the allocator inside a single transaction and commit it atomically.
  *
  *  At commit time every proposed case is re-locked (SELECT … FOR UPDATE) and
@@ -713,11 +726,22 @@ function siblingKey(name: string, dob: string | null, scheduleDate: string | nul
 export async function applyDistribution(
   actorUserId: string | null,
   assignedRole = "scheduler",
+  deps: ApplyDistributionDeps = {},
 ): Promise<ApplyDistributionResult> {
-  return db.transaction(async (tx) => {
+  const gatherCases = deps.gatherCases ?? gatherEligibleCases;
+  const gatherMembers = deps.gatherMembers ?? gatherDistributionMembers;
+  // Journey/audit events are collected DURING the transaction but flushed
+  // AFTER it commits. Writing them inside the tx would issue an FK insert
+  // (FOR KEY SHARE on the parent execution-case row) over a SEPARATE pool
+  // connection while the tx still holds FOR UPDATE on that same row — a
+  // cross-connection lock wait Postgres cannot resolve, which deadlocks the
+  // apply forever. Deferring the (best-effort) audit write past commit keeps
+  // the previous "audit failure never rolls back the assignment" semantics.
+  const pendingEvents: AppendJourneyEventInput[] = [];
+  const result = await db.transaction(async (tx) => {
     const [cases, members] = await Promise.all([
-      gatherEligibleCases(tx),
-      gatherDistributionMembers(),
+      gatherCases(tx),
+      gatherMembers(),
     ]);
     const plan = buildDistributionPlan(cases, members);
     const memberById = new Map(members.map((m) => [m.schedulerId, m]));
@@ -837,31 +861,24 @@ export async function applyDistribution(
         })
         .where(eq(patientExecutionCases.id, a.executionCaseId));
 
-      try {
-        await appendJourneyEvent({
-          patientScreeningId: a.patientScreeningId,
-          executionCaseId: a.executionCaseId,
-          actorUserId,
-          patientName: a.patientName,
-          patientDob: a.patientDob,
-          eventType: "engagement_assignment_changed",
-          eventSource: "engagement_distribution",
-          summary: `Auto-distributed to ${a.schedulerName}`,
-          metadata: {
-            newSchedulerId: a.schedulerId,
-            newSchedulerName: a.schedulerName,
-            assignedRole,
-            lane: a.lane,
-            distribution: true,
-            nextActionAt: nextActionAt ? nextActionAt.toISOString() : null,
-          },
-        });
-      } catch (err) {
-        console.error(
-          "[engagement/distribution] journey append failed:",
-          err instanceof Error ? err.message : err,
-        );
-      }
+      pendingEvents.push({
+        patientScreeningId: a.patientScreeningId,
+        executionCaseId: a.executionCaseId,
+        actorUserId,
+        patientName: a.patientName,
+        patientDob: a.patientDob,
+        eventType: "engagement_assignment_changed",
+        eventSource: "engagement_distribution",
+        summary: `Auto-distributed to ${a.schedulerName}`,
+        metadata: {
+          newSchedulerId: a.schedulerId,
+          newSchedulerName: a.schedulerName,
+          assignedRole,
+          lane: a.lane,
+          distribution: true,
+          nextActionAt: nextActionAt ? nextActionAt.toISOString() : null,
+        },
+      });
 
       if (a.scheduleDate) committedSibling.set(key, a.schedulerId);
       applied.push({
@@ -886,6 +903,22 @@ export async function applyDistribution(
       },
     };
   });
+
+  // Flush audit events now that the FOR UPDATE row locks are released
+  // (post-commit). Best-effort: a failed audit write never undoes a
+  // committed assignment.
+  for (const ev of pendingEvents) {
+    try {
+      await appendJourneyEvent(ev);
+    } catch (err) {
+      console.error(
+        "[engagement/distribution] journey append failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  return result;
 }
 
 /** Is there an ACTIVE execution case for the same patient (name + DOB) on the
