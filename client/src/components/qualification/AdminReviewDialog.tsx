@@ -66,7 +66,10 @@ import type {
   AdminEvidenceChip,
   AdminDiagnosisSuggestion,
 } from "@shared/plexus-iq/adminReviewEvidence";
-import { evidenceForUltrasoundTest } from "@shared/plexus-iq/adminReviewEvidence";
+import {
+  evidenceForUltrasoundTest,
+  ALL_ULTRASOUND_SUBTYPES,
+} from "@shared/plexus-iq/adminReviewEvidence";
 
 export type AdminReviewDialogProps = {
   open: boolean;
@@ -108,17 +111,7 @@ const REGENERATE_TEST_IDS: Record<AdminReviewAncillaryId, string> = {
 // control. These match the qualifying-test strings used across scheduling /
 // PDF surfaces (with CPT codes) so a hand-added test dedupes against an
 // AI-qualified one. Generic "Ultrasound Studies" is offered separately.
-const ADD_ULTRASOUND_SUBTYPES: readonly string[] = [
-  "Bilateral Carotid Duplex (93880)",
-  "Echocardiogram TTE (93306)",
-  "Renal Artery Doppler (93975)",
-  "Lower Extremity Arterial Doppler (93925)",
-  "Abdominal Aortic Aneurysm Duplex (93978)",
-  "Lower Extremity Venous Duplex (93971)",
-  "Stress Echocardiogram (93350)",
-  "Upper Extremity Arterial Doppler (93930)",
-  "Upper Extremity Venous Duplex (93970)",
-];
+const ADD_ULTRASOUND_SUBTYPES: readonly string[] = ALL_ULTRASOUND_SUBTYPES;
 
 export type AdminReviewUpdateType =
   | "diagnosis_added"
@@ -923,6 +916,13 @@ export function AdminReviewDialog({
   // Manual "Add Ancillary" control state.
   const [addOpen, setAddOpen] = useState(false);
   const [addReason, setAddReason] = useState("");
+  // Set when an add attempt found no qualifying evidence — surfaces the
+  // honest "no qualifying evidence" state plus the required-reason override.
+  const [overrideTarget, setOverrideTarget] = useState<{
+    ancillaryId: AdminReviewAncillaryId;
+    testName: string;
+    candidates: string[];
+  } | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // Per-ultrasound-child dropdown collapse state — defaults closed.
   const [ultrasoundChildExpanded, setUltrasoundChildExpanded] = useState<
@@ -2015,13 +2015,25 @@ export function AdminReviewDialog({
   const addAncillaryMutation = useMutation<
     {
       ok: boolean;
-      patient: PatientScreening;
+      qualified?: boolean;
+      patient?: PatientScreening;
       ancillaryId: AdminReviewAncillaryId;
-      testName: string;
-      alreadyPresent: boolean;
+      testName?: string;
+      addedTests?: string[];
+      alreadyPresent?: boolean;
+      narrativeGenerated?: boolean;
+      // qualified: false branch
+      requestedTestName?: string;
+      state?: "no_evidence" | "needs_reason" | "already_present";
+      candidates?: string[];
     },
     Error,
-    { ancillaryId: AdminReviewAncillaryId; testName: string; reason?: string }
+    {
+      ancillaryId: AdminReviewAncillaryId;
+      testName: string;
+      reason?: string;
+      override?: boolean;
+    }
   >({
     mutationFn: async (vars) => {
       const res = await apiRequest(
@@ -2032,6 +2044,38 @@ export function AdminReviewDialog({
       return res.json();
     },
     onSuccess: (data, vars) => {
+      // Honest empty-qualification state — nothing qualified. Surface the
+      // override affordance (required reason) rather than adding a bare service.
+      if (data.qualified === false) {
+        if (data.state === "needs_reason") {
+          toast({
+            title: "Reason required",
+            description: "Enter a qualification reason to override and add anyway.",
+            variant: "destructive",
+          });
+          return;
+        }
+        if (data.state === "already_present") {
+          // Every ultrasound sub-test is already on this patient — there is
+          // nothing for the generic option to add. No override affordance.
+          setOverrideTarget(null);
+          setAddReason("");
+          setAddOpen(false);
+          toast({
+            title: "All ultrasound tests already added",
+            description: "Every ultrasound study is already on this patient.",
+          });
+          return;
+        }
+        setOverrideTarget({
+          ancillaryId: vars.ancillaryId,
+          testName: data.requestedTestName ?? vars.testName,
+          candidates: data.candidates ?? [],
+        });
+        setAddOpen(true);
+        return;
+      }
+
       if (data.patient) {
         onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
         if (Array.isArray(data.patient.qualifyingTests)) {
@@ -2040,26 +2084,37 @@ export function AdminReviewDialog({
       }
       // Surface the affected bar so the operator sees the result of the add.
       setExpanded((prev) => ({ ...prev, [vars.ancillaryId]: true }));
-      if (data.alreadyPresent) {
+      setOverrideTarget(null);
+      setAddReason("");
+      setAddOpen(false);
+
+      const addedTests = Array.isArray(data.addedTests) ? data.addedTests : [];
+      if (data.alreadyPresent && addedTests.length === 0) {
         toast({
-          title: `${data.testName} already added`,
+          title: `${data.testName ?? vars.testName} already added`,
           description: "Focused the existing entry — no duplicate created.",
         });
         return;
       }
+      const addedLabel =
+        addedTests.length > 1
+          ? `${addedTests.length} ultrasound tests`
+          : addedTests[0] ?? data.testName ?? vars.testName;
       toast({
-        title: `Added ${data.testName}`,
-        description: "Regenerate to populate clinical reasoning.",
+        title: `Added ${addedLabel}`,
+        description: data.narrativeGenerated
+          ? "Qualified against clinical data — reasoning generated."
+          : "Qualified — regenerate to populate clinical reasoning.",
       });
-      const isChild =
-        vars.ancillaryId === "ultrasound" && data.testName !== "Ultrasound Studies";
-      recordAdminReviewUpdate(
-        isChild ? "ultrasound_child_added" : "ancillary_added",
-        isChild
-          ? `Added ultrasound test: ${data.testName}`
-          : `Added ${data.testName}`,
-        { ancillary: vars.ancillaryId, testName: data.testName, reason: vars.reason ?? null },
-      );
+      for (const added of addedTests) {
+        const isChild =
+          vars.ancillaryId === "ultrasound" && added !== "Ultrasound Studies";
+        recordAdminReviewUpdate(
+          isChild ? "ultrasound_child_added" : "ancillary_added",
+          isChild ? `Added ultrasound test: ${added}` : `Added ${added}`,
+          { ancillary: vars.ancillaryId, testName: added, reason: vars.reason ?? null },
+        );
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
     },
     onError: (err) => {
@@ -2074,14 +2129,14 @@ export function AdminReviewDialog({
   function handleAddAncillary(
     ancillaryId: AdminReviewAncillaryId,
     testName: string,
+    override = false,
   ) {
     addAncillaryMutation.mutate({
       ancillaryId,
       testName,
       reason: addReason.trim() || undefined,
+      override,
     });
-    setAddReason("");
-    setAddOpen(false);
   }
 
   // Backend: remove an entire ancillary from this patient.
@@ -2582,10 +2637,15 @@ export function AdminReviewDialog({
   const canAddVitalwave = !presentTestList.some(
     (t) => getAncillaryCategory(t) === "vitalwave",
   );
-  const canAddGenericUltrasound = !presentTestSet.has("Ultrasound Studies");
   const availableUltrasoundSubtypes = ADD_ULTRASOUND_SUBTYPES.filter(
     (t) => !presentTestSet.has(t),
   );
+  // Generic ultrasound is only addable when there is at least one sub-test
+  // still missing. If every sub-test (or the generic sentinel) is already on
+  // the patient, there is nothing for "Add Ultrasound (generic)" to add.
+  const allUltrasoundSubtypesPresent = availableUltrasoundSubtypes.length === 0;
+  const canAddGenericUltrasound =
+    !presentTestSet.has("Ultrasound Studies") && !allUltrasoundSubtypesPresent;
   const hasAnyAddableAncillary =
     canAddBrainwave ||
     canAddVitalwave ||
@@ -2726,7 +2786,16 @@ export function AdminReviewDialog({
                 <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                   Ancillaries
                 </div>
-                <Popover open={addOpen} onOpenChange={setAddOpen}>
+                <Popover
+                  open={addOpen}
+                  onOpenChange={(o) => {
+                    setAddOpen(o);
+                    if (!o) {
+                      setOverrideTarget(null);
+                      setAddReason("");
+                    }
+                  }}
+                >
                   <PopoverTrigger asChild>
                     <button
                       type="button"
@@ -2748,6 +2817,60 @@ export function AdminReviewDialog({
                     align="end"
                     data-testid="admin-review-add-ancillary-menu"
                   >
+                    {overrideTarget ? (
+                      <div
+                        className="space-y-2"
+                        data-testid="admin-review-add-override"
+                      >
+                        <div
+                          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-900"
+                          data-testid="admin-review-add-no-evidence"
+                        >
+                          <div className="font-semibold">No qualifying evidence found</div>
+                          <div className="mt-0.5">
+                            Nothing in this patient's Dx/Hx/Rx qualifies{" "}
+                            <span className="font-medium">{overrideTarget.testName}</span>.
+                            To add it anyway, enter a reason for the manual override.
+                          </div>
+                        </div>
+                        <Textarea
+                          value={addReason}
+                          onChange={(e) => setAddReason(e.target.value)}
+                          placeholder="Required: reason for manual override"
+                          rows={2}
+                          className="text-xs resize-none"
+                          data-testid="admin-review-add-override-reason"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={!addReason.trim() || addAncillaryMutation.isPending}
+                            onClick={() =>
+                              handleAddAncillary(
+                                overrideTarget.ancillaryId,
+                                overrideTarget.testName,
+                                true,
+                              )
+                            }
+                            data-testid="admin-review-add-override-confirm"
+                            className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 text-white px-3 py-1.5 text-xs font-semibold hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Add anyway
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOverrideTarget(null);
+                              setAddReason("");
+                            }}
+                            data-testid="admin-review-add-override-cancel"
+                            className="inline-flex items-center rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
                     <div className="space-y-2">
                       <Textarea
                         value={addReason}
@@ -2822,6 +2945,7 @@ export function AdminReviewDialog({
                         </div>
                       )}
                     </div>
+                    )}
                   </PopoverContent>
                 </Popover>
               </div>

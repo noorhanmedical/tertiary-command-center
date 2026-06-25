@@ -5,8 +5,26 @@ description: How manual ancillary selection in AdminReviewDialog persists and fl
 
 # Admin Review manual add-ancillary
 
-Adding a manual ancillary in the Admin Review dialog is fundamentally one lever:
-**append the canonical test name to `patient.qualifyingTests`**. Everything
+Adding a manual ancillary now **qualifies on add**: the add service builds the
+shared admin-review evidence for the patient and decides what (if anything)
+qualifies before writing anything.
+- `brainwave`/`vitalwave`: qualify only if their `candidate.evidenceIds` are
+  non-empty (the same support set used by the panels).
+- generic `ultrasound` (test name "Ultrasound Studies"): fans out to
+  `qualifyingUltrasoundSubtests(evidence)` — the AI-qualifying 6 (NOT the 3
+  manual-only) ultrasounds that have non-medication clinical support — and adds
+  each qualifying subtype not already present.
+- a specific ultrasound subtype: qualifies via
+  `clinicalEvidenceForUltrasoundTest` (non-medication evidence only).
+If nothing qualifies, the service returns `{ qualified:false, state:"no_evidence" }`
+and the dialog shows an amber "No qualifying evidence found" block with a
+**required** reason and an "Add anyway" override (`override:true` skips
+qualification, requires a reason, writes a blank narrative). Helpers live in
+`shared/plexus-iq/adminReviewEvidence.ts`. The qualifying outcome union carries
+`candidates`, `addedTests`, `narrativeGenerated`.
+
+Whether qualified or overridden, the underlying lever is still the same:
+**append the canonical test name(s) to `patient.qualifyingTests`**. Everything
 downstream already reads from `qualifyingTests`:
 
 - Approval → `commitPatient` → `createOrUpdateExecutionCaseFromScreening` sets

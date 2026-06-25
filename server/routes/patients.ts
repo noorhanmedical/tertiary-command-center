@@ -587,12 +587,25 @@ export function registerPatientRoutes(
           }
           return res.status(404).json({ error: "Patient not found" });
         }
+        if (!outcome.qualified) {
+          return res.json({
+            ok: true,
+            qualified: false,
+            ancillaryId: outcome.ancillaryId,
+            requestedTestName: outcome.requestedTestName,
+            state: outcome.state,
+            candidates: outcome.candidates,
+          });
+        }
         res.json({
           ok: true,
+          qualified: true,
           patient: outcome.patient,
           ancillaryId: outcome.ancillaryId,
           testName: outcome.testName,
+          addedTests: outcome.addedTests,
           alreadyPresent: outcome.alreadyPresent,
+          narrativeGenerated: outcome.narrativeGenerated,
         });
       } catch (error: any) {
         console.error(
