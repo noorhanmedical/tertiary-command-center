@@ -430,6 +430,19 @@ export function HomeDashboard({
         <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-10 pb-16">
           <div className="max-w-5xl mx-auto">
             <div className="space-y-6">
+              <div className="flex justify-end">
+                <Link href="/home-preview">
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    data-testid="button-home-preview"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    Preview new home design
+                  </Button>
+                </Link>
+              </div>
+
               <HomeLiveDashboard />
 
               <HomeWorldClocks />
