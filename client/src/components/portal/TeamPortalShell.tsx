@@ -1080,17 +1080,25 @@ export function TeamPortalShell({
   // visit stays expanded (false).
   const railKeyScope =
     currentUserId != null ? `${currentUserId}:${workspaceRole ?? role}` : null;
-  const [leftRailCollapsed, setLeftRailCollapsed] = usePersistedBool(
+  // --- Independent per-panel state (task #626) ---
+  // The Tools (left) and Work Queue (right) panels are FULLY independent:
+  // interacting with one never changes the other. There is intentionally no
+  // shared "active panel" state. Each panel owns:
+  //   • an `aside` flag (slid mostly off-screen at reduced opacity, but still
+  //     mounted + recoverable via its edge pill), persisted per user/role.
+  //   • a `size` ("small" | "normal"), persisted independently of `aside` so a
+  //     panel can be narrow OR wide while docked, and the width survives an
+  //     aside/back toggle.
+  //   • a transient `peek` flag used only while aside, to reveal the panel at
+  //     full opacity on hover/focus without changing the persisted `aside`.
+  const [leftRailAside, setLeftRailAside] = usePersistedBool(
     railKeyScope ? `teamPortal:leftRailCollapsed:${railKeyScope}` : null,
     false,
   );
-  const [rightRailCollapsed, setRightRailCollapsed] = usePersistedBool(
+  const [rightRailAside, setRightRailAside] = usePersistedBool(
     railKeyScope ? `teamPortal:rightRailCollapsed:${railKeyScope}` : null,
     false,
   );
-  // Per-user/role persistence of the side-rail widths (step 2 — pill as size
-  // control). Independent of the collapsed flag so a rail can be narrow OR wide
-  // while open, and the width preference survives an open/close toggle.
   const [leftRailSize, setLeftRailSize] = usePersistedString<RailSize>(
     railKeyScope ? `teamPortal:leftRailSize:${railKeyScope}` : null,
     "normal",
@@ -1101,52 +1109,43 @@ export function TeamPortalShell({
     "normal",
     RAIL_SIZES,
   );
-  // Pill click = open the rail at the chosen size (two sizes, no arrows). The
-  // outer pill half (toward the screen edge) selects "small", the inner half
-  // "normal". Clicking anywhere outside an open rail collapses it.
-  const openLeftRail = (size: RailSize) => {
-    setLeftRailCollapsed(false);
-    setLeftRailSize(size);
-    setLeftRailPeek(true);
-  };
-  const openRightRail = (size: RailSize) => {
-    setRightRailCollapsed(false);
-    setRightRailSize(size);
-    setRightRailPeek(true);
-  };
-  // Patient-opens-center slide-away. When a patient profile is loaded into
-  // the center canvas (centerMode === "patient"), both side rails animate
-  // off-screen so they don't obstruct the chart. Hovering the collapsed
-  // screen-edge strip temporarily peeks the rail back in.
   const [leftRailPeek, setLeftRailPeek] = useState(false);
   const [rightRailPeek, setRightRailPeek] = useState(false);
-  const centerPatientOpen = centerMode === "patient";
-  // Reset any lingering peek state whenever the patient canvas closes so the
-  // rails return to their normal docked position.
-  useEffect(() => {
-    if (!centerPatientOpen) {
-      setLeftRailPeek(false);
-      setRightRailPeek(false);
-    }
-  }, [centerPatientOpen]);
   const leftRailRef = useRef<HTMLDivElement>(null);
   const rightRailRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    function onDocPointerDown(e: PointerEvent) {
-      const t = e.target as HTMLElement | null;
-      if (!t) return;
-      // Ignore clicks inside modals / popovers so dialogs don't collapse rails.
-      if (t.closest('[role="dialog"], [data-radix-popper-content-wrapper]')) return;
-      if (!leftRailCollapsed && leftRailRef.current && !leftRailRef.current.contains(t)) {
-        setLeftRailCollapsed(true);
-      }
-      if (!rightRailCollapsed && rightRailRef.current && !rightRailRef.current.contains(t)) {
-        setRightRailCollapsed(true);
-      }
-    }
-    document.addEventListener("pointerdown", onDocPointerDown);
-    return () => document.removeEventListener("pointerdown", onDocPointerDown);
-  }, [leftRailCollapsed, rightRailCollapsed, setLeftRailCollapsed, setRightRailCollapsed]);
+  // Pill zone handlers. Each side pill has three zones: the outer edge opens
+  // the compact (small) panel, the inner edge opens the expanded (normal)
+  // panel, and the middle toggles that panel aside/back. Opening always docks
+  // the panel (aside=false) and clears the peek so it lands at full opacity.
+  // None of these touch the OTHER panel.
+  const openLeftRail = (size: RailSize) => {
+    setLeftRailAside(false);
+    setLeftRailSize(size);
+    setLeftRailPeek(false);
+  };
+  const openRightRail = (size: RailSize) => {
+    setRightRailAside(false);
+    setRightRailSize(size);
+    setRightRailPeek(false);
+  };
+  const toggleLeftAside = () => {
+    setLeftRailPeek(false);
+    setLeftRailAside((v) => !v);
+  };
+  const toggleRightAside = () => {
+    setRightRailPeek(false);
+    setRightRailAside((v) => !v);
+  };
+  // Clicking the center Playground/canvas is the ONLY action that moves BOTH
+  // panels aside together. Each panel stays mounted (filters / scroll / tool
+  // state preserved) and is recoverable via its own edge pill; bringing one
+  // back afterwards never affects the other.
+  const focusPlayground = () => {
+    setLeftRailPeek(false);
+    setRightRailPeek(false);
+    setLeftRailAside(true);
+    setRightRailAside(true);
+  };
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiDraft, setAiDraft] = useState("");
@@ -1927,50 +1926,34 @@ export function TeamPortalShell({
           </div>
         </div>
 
-        <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
-          <div className="relative mx-auto flex h-full max-w-[1600px] flex-col px-[10%] pt-14">
-            {/* Playground control — single continuous pill with three
-                 invisible click zones overlaid: left 25% toggles the
-                 left rail only, center 50% toggles both rails, right
-                 25% toggles the right rail only. No visible arrows or
-                 dividers. */}
+        <div
+          className="absolute inset-0 z-[1] overflow-auto px-6 py-5"
+          onClick={(e) => { if (e.target === e.currentTarget) focusPlayground(); }}
+        >
+          <div
+            className="relative mx-auto flex h-full max-w-[1600px] flex-col px-[10%] pt-14"
+            onClick={(e) => { if (e.target === e.currentTarget) focusPlayground(); }}
+            data-testid="playground-canvas-surface"
+          >
+            {/* Playground control — clicking it moves BOTH panels aside (the
+                 single "focus the canvas" action). Each panel stays recoverable
+                 via its own edge pill; this never resizes or unmounts them. */}
             <div
               className="absolute left-1/2 top-0 z-30 -translate-x-1/2 text-center"
               role="group"
               aria-label="Playground rail controls"
               data-testid="group-playground-controls"
             >
-              <div className="relative inline-flex items-center justify-center rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] px-7 py-2 text-base font-semibold tracking-tight text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl overflow-hidden">
+              <button
+                type="button"
+                onClick={focusPlayground}
+                title="Move both panels aside"
+                aria-label="Move both panels aside"
+                data-testid="button-focus-playground"
+                className="relative inline-flex items-center justify-center rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] px-7 py-2 text-base font-semibold tracking-tight text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl overflow-hidden cursor-pointer"
+              >
                 <span className="relative z-10 pointer-events-none">Playground</span>
-                <button
-                  type="button"
-                  aria-label="Toggle left panel"
-                  title="Toggle left panel"
-                  onClick={() => setLeftRailCollapsed((v) => !v)}
-                  className="absolute left-0 top-0 h-full w-1/4 opacity-0 cursor-pointer"
-                  data-testid="button-toggle-left-rail-zone"
-                />
-                <button
-                  type="button"
-                  aria-label="Toggle both panels"
-                  title="Toggle both panels"
-                  onClick={() => {
-                    const bothOpen = !leftRailCollapsed && !rightRailCollapsed;
-                    setLeftRailCollapsed(bothOpen);
-                    setRightRailCollapsed(bothOpen);
-                  }}
-                  className="absolute left-1/4 top-0 h-full w-1/2 opacity-0 cursor-pointer"
-                  data-testid="button-toggle-both-rails"
-                />
-                <button
-                  type="button"
-                  aria-label="Toggle right panel"
-                  title="Toggle right panel"
-                  onClick={() => setRightRailCollapsed((v) => !v)}
-                  className="absolute right-0 top-0 h-full w-1/4 opacity-0 cursor-pointer"
-                  data-testid="button-toggle-right-rail-zone"
-                />
-              </div>
+              </button>
               <div className="mt-2 text-xs text-slate-600">
                 {facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}
               </div>
@@ -2447,30 +2430,40 @@ export function TeamPortalShell({
           className={`pointer-events-none absolute left-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ease-out ${LEFT_RAIL_WIDTH[leftRailSize]}`}
           data-testid="portal-left-rail"
         >
-          {/* Trigger pill — ONE click region, two sizes, no arrows. Clicking the
-              LEFT half (toward the screen edge) opens the THIN icon rail; the
-              RIGHT half opens the NORMAL panel. Clicking away collapses it. */}
+          {/* Trigger pill — THREE click zones, no arrows. Outer edge (left
+              third) opens the COMPACT icon rail; the middle third toggles the
+              panel aside/back; the inner edge (right third) opens the EXPANDED
+              panel. Affects only this panel. */}
           <div
-            onMouseEnter={centerPatientOpen ? () => setLeftRailPeek(true) : undefined}
+            onMouseEnter={() => setLeftRailPeek(true)}
             className="pointer-events-auto relative inline-flex h-7 select-none items-center self-start overflow-hidden rounded-full border border-white/25 border-t-white/40 bg-[#4863A0]/70 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl"
             data-testid="portal-left-rail-pill"
           >
-            {/* Left half (outer edge) → thin */}
+            {/* Outer edge (left third) → compact/narrow */}
             <button
               type="button"
               onClick={() => openLeftRail("small")}
-              className="absolute inset-y-0 left-0 z-10 w-1/2 cursor-pointer"
-              title="Thin Tools panel"
-              aria-label="Thin Tools panel"
+              className="absolute inset-y-0 left-0 z-10 w-1/3 cursor-pointer"
+              title="Compact Tools panel"
+              aria-label="Compact Tools panel"
               data-testid="button-narrow-left-rail"
             />
-            {/* Right half (inner) → normal */}
+            {/* Middle third → toggle aside/back */}
+            <button
+              type="button"
+              onClick={toggleLeftAside}
+              className="absolute inset-y-0 left-1/3 z-10 w-1/3 cursor-pointer"
+              title="Toggle Tools panel aside"
+              aria-label="Toggle Tools panel aside"
+              data-testid="button-toggle-left-rail"
+            />
+            {/* Inner edge (right third) → expanded/full */}
             <button
               type="button"
               onClick={() => openLeftRail("normal")}
-              className="absolute inset-y-0 right-0 z-10 w-1/2 cursor-pointer"
-              title="Normal Tools panel"
-              aria-label="Normal Tools panel"
+              className="absolute inset-y-0 right-0 z-10 w-1/3 cursor-pointer"
+              title="Expanded Tools panel"
+              aria-label="Expanded Tools panel"
               data-testid="button-widen-left-rail"
             />
             <div className="pointer-events-none relative flex h-full items-center gap-1.5 px-3">
@@ -2479,17 +2472,16 @@ export function TeamPortalShell({
             </div>
           </div>
 
-          {/* Body — frosted-glass panel (step 1) that drops down from the
-              trigger with a transform + opacity transition. */}
+          {/* Body — frosted-glass panel. When "aside" it slides mostly
+              off-screen at ~50% opacity (never opacity:0, never unmounted) and
+              peeks back to full opacity on hover/focus. */}
           <div
-            onMouseEnter={centerPatientOpen ? () => setLeftRailPeek(true) : undefined}
-            onMouseLeave={centerPatientOpen ? () => setLeftRailPeek(false) : undefined}
+            onMouseEnter={() => setLeftRailPeek(true)}
+            onMouseLeave={() => setLeftRailPeek(false)}
             className={`pointer-events-auto mt-2 min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/30 bg-white/50 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
-              leftRailCollapsed
-                ? "pointer-events-none -translate-y-3 scale-y-95 opacity-0"
-                : centerPatientOpen && !leftRailPeek
-                  ? "-translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
-                  : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
+              leftRailAside && !leftRailPeek
+                ? "-translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
+                : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
             }`}
           >
             <div className="flex h-full flex-col">
@@ -2639,30 +2631,40 @@ export function TeamPortalShell({
           className={`pointer-events-none absolute right-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ease-out ${RIGHT_RAIL_WIDTH[rightRailSize]}`}
           data-testid="portal-right-rail"
         >
-          {/* Trigger pill — ONE click region, two sizes, no arrows. Clicking the
-              RIGHT half (toward the screen edge) opens the THIN panel; the LEFT
-              half opens the NORMAL panel. Clicking away collapses it. */}
+          {/* Trigger pill — THREE click zones, no arrows. Outer edge (right
+              third) opens the COMPACT panel; the middle third toggles the panel
+              aside/back; the inner edge (left third) opens the EXPANDED panel.
+              Affects only this panel. */}
           <div
-            onMouseEnter={centerPatientOpen ? () => setRightRailPeek(true) : undefined}
+            onMouseEnter={() => setRightRailPeek(true)}
             className="pointer-events-auto relative inline-flex h-7 select-none items-center self-end overflow-hidden rounded-full border border-white/25 border-t-white/40 bg-[#4863A0]/70 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl"
             data-testid="portal-right-rail-pill"
           >
-            {/* Left half (inner) → normal */}
+            {/* Inner edge (left third) → expanded/full */}
             <button
               type="button"
               onClick={() => openRightRail("normal")}
-              className="absolute inset-y-0 left-0 z-10 w-1/2 cursor-pointer"
-              title="Normal Work Queue panel"
-              aria-label="Normal Work Queue panel"
+              className="absolute inset-y-0 left-0 z-10 w-1/3 cursor-pointer"
+              title="Expanded Work Queue panel"
+              aria-label="Expanded Work Queue panel"
               data-testid="button-widen-right-rail"
             />
-            {/* Right half (outer edge) → thin */}
+            {/* Middle third → toggle aside/back */}
+            <button
+              type="button"
+              onClick={toggleRightAside}
+              className="absolute inset-y-0 left-1/3 z-10 w-1/3 cursor-pointer"
+              title="Toggle Work Queue panel aside"
+              aria-label="Toggle Work Queue panel aside"
+              data-testid="button-toggle-right-rail"
+            />
+            {/* Outer edge (right third) → compact/narrow */}
             <button
               type="button"
               onClick={() => openRightRail("small")}
-              className="absolute inset-y-0 right-0 z-10 w-1/2 cursor-pointer"
-              title="Thin Work Queue panel"
-              aria-label="Thin Work Queue panel"
+              className="absolute inset-y-0 right-0 z-10 w-1/3 cursor-pointer"
+              title="Compact Work Queue panel"
+              aria-label="Compact Work Queue panel"
               data-testid="button-narrow-right-rail"
             />
             <div className="pointer-events-none relative flex h-full items-center gap-1.5 px-3">
@@ -2670,17 +2672,16 @@ export function TeamPortalShell({
             </div>
           </div>
 
-          {/* Body — canonical .glass-tile panel (step 3) that drops down from
-              the trigger with a transform + opacity transition. */}
+          {/* Body — canonical .glass-tile panel. When "aside" it slides mostly
+              off-screen at ~50% opacity (never opacity:0, never unmounted) and
+              peeks back to full opacity on hover/focus. Mirrors the left rail. */}
           <div
-            onMouseEnter={centerPatientOpen ? () => setRightRailPeek(true) : undefined}
-            onMouseLeave={centerPatientOpen ? () => setRightRailPeek(false) : undefined}
+            onMouseEnter={() => setRightRailPeek(true)}
+            onMouseLeave={() => setRightRailPeek(false)}
             className={`glass-tile pointer-events-auto mt-2 min-h-0 flex-1 origin-top !rounded-[24px] text-slate-900 transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
-              rightRailCollapsed
-                ? "pointer-events-none -translate-y-3 scale-y-95 opacity-0"
-                : centerPatientOpen && !rightRailPeek
-                  ? "translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
-                  : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
+              rightRailAside && !rightRailPeek
+                ? "translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
+                : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
             }`}
           >
             <div className="flex h-full flex-col">

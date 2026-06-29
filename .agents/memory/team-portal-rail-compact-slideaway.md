@@ -12,17 +12,26 @@ description: How the TeamPortalShell right/left rails do thin-mode and the patie
 - **Why:** the full cards carry multi-button action clusters that don't fit ~200px
   usable width; a separate branch keeps each mode legible.
 
-# Patient-opens-center slide-away (current design — pill is FIXED)
-- `centerPatientOpen = centerMode === "patient"` is the single signal (covers every
-  open path AND auto-resets on dismiss — don't track a separate boolean per entry point).
+# Independent panels + aside slide-away (current design — pill is FIXED)
+- The two panels are FULLY independent: there is intentionally NO shared "active
+  panel" / `centerPatientOpen` reactive slide and NO document outside-click handler
+  (both removed). Each panel owns `leftRailAside`/`rightRailAside` (persisted bool,
+  storage key still `…leftRailCollapsed…`/`…rightRailCollapsed…`), `…Size`, `…Peek`.
+- The ONLY thing that slides BOTH aside is clicking the center Playground: the
+  `button-focus-playground` pill OR an empty-canvas click (`focusPlayground`, guarded
+  with `e.target===e.currentTarget` on the two center padding containers). Bringing
+  one panel back never affects the other (per-panel state, no shared flag).
+- Each side pill has THREE zones (no arrows): outer edge = compact/small, middle =
+  toggle aside/back, inner edge = expanded/normal. Mapping preserved: Work Queue
+  right=narrow/left=full, Tools left=narrow/right=full. Handlers `openLeftRail`/
+  `openRightRail`(dock+size), `toggleLeftAside`/`toggleRightAside`.
 - The trigger PILL never moves. The rail OUTER container is **always
   `pointer-events-none`** with `transition-[width]` only — no transform, no edge strips.
-- Only the rail BODY/tile translates: resting state while `centerPatientOpen && !peek`
-  is `±translate-x-[82%] opacity-50`; reveal state is `translate-x-0 opacity-100`.
-  The collapse animation still uses **translate-y on the BODY** — translate-x +
-  translate-y compose on the same body element fine via Tailwind's transform vars.
-- Peek-back flag (`left/rightRailPeek`): set true on hover of pill OR body, and on
-  pill-click (`openLeftRail/openRightRail` set peek true so the click un-dims).
+- Only the rail BODY/tile translates: resting state while `aside && !peek` is
+  `±translate-x-[82%] opacity-50`; reveal state is `translate-x-0 opacity-100`. There
+  is no longer an opacity-0/unmount collapse state — aside is the single hidden visual.
+- Peek-back flag (`left/rightRailPeek`): set true on hover of pill OR body; opening a
+  panel clears peek so it docks at full opacity.
 - **Hover-boundary lesson:** the pill and body are separated by an 8px gap (`mt-2`).
   Put `onMouseLeave`→peek(false) **only on the BODY**, never on the pill. The pill
   only does `onMouseEnter`→peek(true). If both drop peek on leave, crossing the gap
