@@ -1091,6 +1091,51 @@ export function TeamPortalShell({
   const [rightRailPinned, setRightRailPinned] = useState(false);
   const leftRailRef = useRef<HTMLDivElement>(null);
   const rightRailRef = useRef<HTMLDivElement>(null);
+  // TOUCH SUPPORT (task #629) — hover is unavailable on tablets / touchscreens,
+  // so the hover-only reveal from task #628 leaves touch users stuck with just
+  // the center canvas. On `(hover: none)` devices we switch the panels to a TAP
+  // toggle instead: tapping a panel's resting edge reveals it, tapping the
+  // canvas (anywhere outside the panel) slides it back aside. Pointer devices
+  // keep the unchanged mouseenter/leave hover behavior. The two panels stay
+  // fully independent and never unmount.
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(hover: none)");
+    const update = () => setIsTouchDevice(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  // Click-away dismissal for the tap toggle: when a panel is revealed on a
+  // touch device, a pointerdown outside that panel slides it back aside. Each
+  // panel is checked independently against its own ref. No-op on pointer
+  // devices. Pinned panels stay revealed regardless (pin is a separate lever).
+  useEffect(() => {
+    if (!isTouchDevice) return;
+    if (!leftRailPeek && !rightRailPeek) return;
+    const handler = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (
+        leftRailPeek &&
+        leftRailRef.current &&
+        target &&
+        !leftRailRef.current.contains(target)
+      ) {
+        setLeftRailPeek(false);
+      }
+      if (
+        rightRailPeek &&
+        rightRailRef.current &&
+        target &&
+        !rightRailRef.current.contains(target)
+      ) {
+        setRightRailPeek(false);
+      }
+    };
+    document.addEventListener("pointerdown", handler);
+    return () => document.removeEventListener("pointerdown", handler);
+  }, [isTouchDevice, leftRailPeek, rightRailPeek]);
   const leftRailSize = "normal" as RailSize;
   const rightRailSize = "normal" as RailSize;
   const [aiMinimized, setAiMinimized] = useState(false);
@@ -2361,8 +2406,18 @@ export function TeamPortalShell({
               full opacity on hover/focus; moving the pointer away slides it back
               aside. Independent of the right rail. */}
           <div
-            onMouseEnter={() => setLeftRailPeek(true)}
-            onMouseLeave={() => setLeftRailPeek(false)}
+            onMouseEnter={isTouchDevice ? undefined : () => setLeftRailPeek(true)}
+            onMouseLeave={isTouchDevice ? undefined : () => setLeftRailPeek(false)}
+            onClick={
+              isTouchDevice
+                ? () => {
+                    // Tap the resting edge to reveal. When already revealed,
+                    // taps inside fall through to content; dismissal is handled
+                    // by the click-away listener so inner controls still work.
+                    if (!leftRailPeek) setLeftRailPeek(true);
+                  }
+                : undefined
+            }
             className={`pointer-events-auto min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/30 bg-white/30 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
               !(leftRailPeek || leftRailPinned)
                 ? "-translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
@@ -2534,8 +2589,18 @@ export function TeamPortalShell({
               full opacity on hover/focus; moving the pointer away slides it back
               aside. Mirrors the left rail; independent of it. */}
           <div
-            onMouseEnter={() => setRightRailPeek(true)}
-            onMouseLeave={() => setRightRailPeek(false)}
+            onMouseEnter={isTouchDevice ? undefined : () => setRightRailPeek(true)}
+            onMouseLeave={isTouchDevice ? undefined : () => setRightRailPeek(false)}
+            onClick={
+              isTouchDevice
+                ? () => {
+                    // Tap the resting edge to reveal. When already revealed,
+                    // taps inside fall through to content; dismissal is handled
+                    // by the click-away listener so inner controls still work.
+                    if (!rightRailPeek) setRightRailPeek(true);
+                  }
+                : undefined
+            }
             className={`glass-tile !bg-white/40 pointer-events-auto min-h-0 flex-1 origin-top !rounded-[24px] text-slate-900 transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
               !(rightRailPeek || rightRailPinned)
                 ? "translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
