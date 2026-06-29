@@ -5,7 +5,7 @@ import {
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
   Sparkles, Send, Minimize2, Maximize2, FileBarChart, FilePlus, User, Bell, Bot,
   Home, BookOpen, CalendarDays, Mail, ClipboardPen, Pill, History, ShieldCheck, Users, Search, Megaphone,
-  NotebookPen, ChevronDown, Wrench, PhoneCall,
+  NotebookPen, ChevronDown, Wrench, PhoneCall, Pin, PinOff,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1074,78 +1074,25 @@ export function TeamPortalShell({
   // refetch the assigned-work queries, change the active patient,
   // change the facility, or affect activeWorkspaceMode.
   const [globalCalendarDate, setGlobalCalendarDate] = useState<string>(todayIso());
-  // Per-user/role persistence of the side-rail collapsed states. The key
-  // waits for the logged-in user id (loads async) before persisting; the
-  // workspace role keeps PCS vs ACS layouts independent. Default on first
-  // visit stays expanded (false).
-  const railKeyScope =
-    currentUserId != null ? `${currentUserId}:${workspaceRole ?? role}` : null;
-  // --- Independent per-panel state (task #626) ---
-  // The Tools (left) and Work Queue (right) panels are FULLY independent:
-  // interacting with one never changes the other. There is intentionally no
-  // shared "active panel" state. Each panel owns:
-  //   • an `aside` flag (slid mostly off-screen at reduced opacity, but still
-  //     mounted + recoverable via its edge pill), persisted per user/role.
-  //   • a `size` ("small" | "normal"), persisted independently of `aside` so a
-  //     panel can be narrow OR wide while docked, and the width survives an
-  //     aside/back toggle.
-  //   • a transient `peek` flag used only while aside, to reveal the panel at
-  //     full opacity on hover/focus without changing the persisted `aside`.
-  const [leftRailAside, setLeftRailAside] = usePersistedBool(
-    railKeyScope ? `teamPortal:leftRailCollapsed:${railKeyScope}` : null,
-    false,
-  );
-  const [rightRailAside, setRightRailAside] = usePersistedBool(
-    railKeyScope ? `teamPortal:rightRailCollapsed:${railKeyScope}` : null,
-    false,
-  );
-  const [leftRailSize, setLeftRailSize] = usePersistedString<RailSize>(
-    railKeyScope ? `teamPortal:leftRailSize:${railKeyScope}` : null,
-    "normal",
-    RAIL_SIZES,
-  );
-  const [rightRailSize, setRightRailSize] = usePersistedString<RailSize>(
-    railKeyScope ? `teamPortal:rightRailSize:${railKeyScope}` : null,
-    "normal",
-    RAIL_SIZES,
-  );
+  // --- Hover-only panels (task #628) ---
+  // The Tools (left) and Work Queue (right) panels always REST ASIDE (slid
+  // mostly off-screen at ~50% opacity, leaving a visible edge) and reveal to
+  // full opacity on hover via a transient `peek` flag, hiding again on pointer
+  // leave. They never unmount, so filters / scroll / selected patient / tool
+  // state are preserved. The two panels are FULLY independent — revealing or
+  // hiding one never affects the other. There is no persisted open/aside toggle
+  // and no compact/expanded size switching (both were driven by the removed
+  // pills); both panels reveal at their normal/full width.
   const [leftRailPeek, setLeftRailPeek] = useState(false);
   const [rightRailPeek, setRightRailPeek] = useState(false);
+  // Pin a panel so it stays fully revealed regardless of hover. Toggled from a
+  // pin button in each panel's header; independent per panel.
+  const [leftRailPinned, setLeftRailPinned] = useState(false);
+  const [rightRailPinned, setRightRailPinned] = useState(false);
   const leftRailRef = useRef<HTMLDivElement>(null);
   const rightRailRef = useRef<HTMLDivElement>(null);
-  // Pill zone handlers. Each side pill has three zones: the outer edge opens
-  // the compact (small) panel, the inner edge opens the expanded (normal)
-  // panel, and the middle toggles that panel aside/back. Opening always docks
-  // the panel (aside=false) and clears the peek so it lands at full opacity.
-  // None of these touch the OTHER panel.
-  const openLeftRail = (size: RailSize) => {
-    setLeftRailAside(false);
-    setLeftRailSize(size);
-    setLeftRailPeek(false);
-  };
-  const openRightRail = (size: RailSize) => {
-    setRightRailAside(false);
-    setRightRailSize(size);
-    setRightRailPeek(false);
-  };
-  const toggleLeftAside = () => {
-    setLeftRailPeek(false);
-    setLeftRailAside((v) => !v);
-  };
-  const toggleRightAside = () => {
-    setRightRailPeek(false);
-    setRightRailAside((v) => !v);
-  };
-  // Clicking the center Playground/canvas is the ONLY action that moves BOTH
-  // panels aside together. Each panel stays mounted (filters / scroll / tool
-  // state preserved) and is recoverable via its own edge pill; bringing one
-  // back afterwards never affects the other.
-  const focusPlayground = () => {
-    setLeftRailPeek(false);
-    setRightRailPeek(false);
-    setLeftRailAside(true);
-    setRightRailAside(true);
-  };
+  const leftRailSize = "normal" as RailSize;
+  const rightRailSize = "normal" as RailSize;
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiDraft, setAiDraft] = useState("");
@@ -1839,82 +1786,88 @@ export function TeamPortalShell({
 
   return (
     <div className="fixed inset-0 z-[80] flex flex-col overflow-hidden bg-white" data-testid={`portal-${role}`}>
-      <header className="relative z-20 overflow-hidden px-6 py-4 border-b border-white/10 bg-[radial-gradient(circle_at_14%_28%,rgba(255,255,255,0.18)_0,rgba(255,255,255,0.18)_1px,transparent_2px),radial-gradient(circle_at_33%_62%,rgba(255,255,255,0.12)_0,rgba(255,255,255,0.12)_1px,transparent_2px),radial-gradient(circle_at_57%_24%,rgba(255,255,255,0.14)_0,rgba(255,255,255,0.14)_1px,transparent_2px),radial-gradient(circle_at_74%_54%,rgba(255,255,255,0.10)_0,rgba(255,255,255,0.10)_1px,transparent_2px),radial-gradient(circle_at_88%_22%,rgba(255,255,255,0.16)_0,rgba(255,255,255,0.16)_1px,transparent_2px),linear-gradient(180deg,rgba(0,0,0,0.88),rgba(10,10,18,0.84))] backdrop-blur-xl">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-                        <div>
-              <h1 className="text-lg font-semibold text-[#6F8FD6] drop-shadow-[0_0_14px_rgba(111,143,214,0.95)]" data-testid="text-portal-title">{title}</h1>
-              {subtitle ? <p className="text-sm text-white/70">{subtitle}</p> : null}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* ADMIN VIEW-AS selector — only rendered for admins. The
-                 list contains active users with the workspace role
-                 (PCS→liaison, ACS→technician). Selecting a team
-                 member narrows feeds + facility allow-list; admin
-                 identity is preserved for audit/writes. */}
-            {isAdmin && (
-              <div
-                className="flex items-center gap-2"
-                data-testid="admin-viewas-selector-wrap"
-              >
-                <Label
-                  htmlFor="admin-viewas-team-member-select"
-                  className="text-sm text-white/80"
-                  data-testid="admin-viewas-label"
-                >
-                  Viewing as
-                </Label>
-                <Select
-                  value={viewAsTeamMemberId ?? "__self__"}
-                  onValueChange={(v) =>
-                    setViewAsTeamMemberId(v === "__self__" ? null : v)
-                  }
-                >
-                  <SelectTrigger
-                    id="admin-viewas-team-member-select"
-                    className="w-[220px] border-white/20 bg-white/90 text-slate-900"
-                    data-testid="admin-viewas-team-member-select"
-                  >
-                    <SelectValue placeholder="Admin (self)" />
-                  </SelectTrigger>
-                  <SelectContent className="z-[90]">
-                    <SelectItem value="__self__" data-testid="admin-viewas-option-self">
-                      Admin (self)
-                    </SelectItem>
-                    {viewAsCandidates.map((u) => (
-                      <SelectItem
-                        key={u.id}
-                        value={u.id}
-                        data-testid={`admin-viewas-option-${u.id}`}
-                      >
-                        {u.username}{u.facility ? ` · ${u.facility}` : ""}{typeof u.dailyTarget === "number" ? ` · target ${u.dailyTarget}` : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            <Label htmlFor="facility-select" className="text-sm text-white/80">Clinic</Label>
-            <Select value={facility} onValueChange={setFacility}>
-              <SelectTrigger id="facility-select" className="w-[220px] border-white/20 bg-white/90 text-slate-900" data-testid="select-facility">
-                <SelectValue placeholder={facilities.length === 0 ? "No clinic assignments" : "Choose clinic"} />
-              </SelectTrigger>
-              <SelectContent className="z-[90]">
-                {facilities.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <button
-              type="button"
-              onClick={() => setTeamPortalCalendarOpen(true)}
-              aria-label="Open team portal calendar"
-              title="Open team portal calendar"
-              className="inline-flex items-center justify-center h-9 w-9 rounded-full border border-white/20 bg-white/90 text-slate-900 hover:bg-white transition-colors"
-              data-testid="button-team-portal-main-calendar"
+      {/* Slim light top strip (task #628). Replaces the heavy dark banner so the
+          reclaimed space reads as usable canvas. Left: "The Playground" wordmark
+          in a cursive script font, blue. Right: the existing Clinic selector,
+          Calendar button, and (admins only) the "Viewing as" selector — all
+          unchanged in behavior + test ids. */}
+      <header className="relative z-20 flex items-center justify-between gap-4 flex-wrap bg-white/85 px-6 py-2 backdrop-blur-xl">
+        <div className="flex items-center gap-3">
+          <span
+            className="text-[30px] font-semibold leading-none text-[#2563EB]"
+            style={{ fontFamily: '"Dancing Script", cursive' }}
+            data-testid="text-portal-title"
+          >
+            The Playground
+          </span>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* ADMIN VIEW-AS selector — only rendered for admins. The
+               list contains active users with the workspace role
+               (PCS→liaison, ACS→technician). Selecting a team
+               member narrows feeds + facility allow-list; admin
+               identity is preserved for audit/writes. */}
+          {isAdmin && (
+            <div
+              className="flex items-center gap-2"
+              data-testid="admin-viewas-selector-wrap"
             >
-              <CalendarIcon className="h-4 w-4" />
-            </button>
-          </div>
+              <Label
+                htmlFor="admin-viewas-team-member-select"
+                className="text-xs text-slate-600"
+                data-testid="admin-viewas-label"
+              >
+                Viewing as
+              </Label>
+              <Select
+                value={viewAsTeamMemberId ?? "__self__"}
+                onValueChange={(v) =>
+                  setViewAsTeamMemberId(v === "__self__" ? null : v)
+                }
+              >
+                <SelectTrigger
+                  id="admin-viewas-team-member-select"
+                  className="h-8 w-[160px] border-slate-300 bg-white text-xs text-slate-900"
+                  data-testid="admin-viewas-team-member-select"
+                >
+                  <SelectValue placeholder="Admin (self)" />
+                </SelectTrigger>
+                <SelectContent className="z-[90]">
+                  <SelectItem value="__self__" data-testid="admin-viewas-option-self">
+                    Admin (self)
+                  </SelectItem>
+                  {viewAsCandidates.map((u) => (
+                    <SelectItem
+                      key={u.id}
+                      value={u.id}
+                      data-testid={`admin-viewas-option-${u.id}`}
+                    >
+                      {u.username}{u.facility ? ` · ${u.facility}` : ""}{typeof u.dailyTarget === "number" ? ` · target ${u.dailyTarget}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <Label htmlFor="facility-select" className="text-xs text-slate-600">Clinic</Label>
+          <Select value={facility} onValueChange={setFacility}>
+            <SelectTrigger id="facility-select" className="h-8 w-[160px] border-slate-300 bg-white text-xs text-slate-900" data-testid="select-facility">
+              <SelectValue placeholder={facilities.length === 0 ? "No clinic assignments" : "Choose clinic"} />
+            </SelectTrigger>
+            <SelectContent className="z-[90]">
+              {facilities.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <button
+            type="button"
+            onClick={() => setTeamPortalCalendarOpen(true)}
+            aria-label="Open team portal calendar"
+            title="Open team portal calendar"
+            className="inline-flex items-center justify-center h-9 w-9 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition-colors"
+            data-testid="button-team-portal-main-calendar"
+          >
+            <CalendarIcon className="h-4 w-4" />
+          </button>
         </div>
       </header>
 
@@ -1926,39 +1879,11 @@ export function TeamPortalShell({
           </div>
         </div>
 
-        <div
-          className="absolute inset-0 z-[1] overflow-auto px-6 py-5"
-          onClick={(e) => { if (e.target === e.currentTarget) focusPlayground(); }}
-        >
+        <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
           <div
-            className="relative mx-auto flex h-full max-w-[1600px] flex-col px-[10%] pt-14"
-            onClick={(e) => { if (e.target === e.currentTarget) focusPlayground(); }}
+            className="relative mx-auto flex h-full max-w-[1600px] flex-col px-[10%] pt-2"
             data-testid="playground-canvas-surface"
           >
-            {/* Playground control — clicking it moves BOTH panels aside (the
-                 single "focus the canvas" action). Each panel stays recoverable
-                 via its own edge pill; this never resizes or unmounts them. */}
-            <div
-              className="absolute left-1/2 top-0 z-30 -translate-x-1/2 text-center"
-              role="group"
-              aria-label="Playground rail controls"
-              data-testid="group-playground-controls"
-            >
-              <button
-                type="button"
-                onClick={focusPlayground}
-                title="Move both panels aside"
-                aria-label="Move both panels aside"
-                data-testid="button-focus-playground"
-                className="relative inline-flex items-center justify-center rounded-full border border-white/35 bg-[rgba(72,99,160,0.40)] px-7 py-2 text-base font-semibold tracking-tight text-white shadow-[0_16px_40px_rgba(15,23,42,0.28)] backdrop-blur-2xl overflow-hidden cursor-pointer"
-              >
-                <span className="relative z-10 pointer-events-none">Playground</span>
-              </button>
-              <div className="mt-2 text-xs text-slate-600">
-                {facility ? `${facility} · ${selectedDate}` : "Choose your clinic to get started."}
-              </div>
-            </div>
-
             {portalTabs.length > 0 && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1" data-testid="portal-playfield-tabs">
                 {portalTabs.map((tab) => {
@@ -2430,65 +2355,37 @@ export function TeamPortalShell({
           className={`pointer-events-none absolute left-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ease-out ${LEFT_RAIL_WIDTH[leftRailSize]}`}
           data-testid="portal-left-rail"
         >
-          {/* Trigger pill — THREE click zones, no arrows. Outer edge (left
-              third) opens the COMPACT icon rail; the middle third toggles the
-              panel aside/back; the inner edge (right third) opens the EXPANDED
-              panel. Affects only this panel. */}
-          <div
-            onMouseEnter={() => setLeftRailPeek(true)}
-            className="pointer-events-auto relative inline-flex h-7 select-none items-center self-start overflow-hidden rounded-full border border-white/25 border-t-white/40 bg-[#4863A0]/70 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl"
-            data-testid="portal-left-rail-pill"
-          >
-            {/* Outer edge (left third) → compact/narrow */}
-            <button
-              type="button"
-              onClick={() => openLeftRail("small")}
-              className="absolute inset-y-0 left-0 z-10 w-1/3 cursor-pointer"
-              title="Compact Tools panel"
-              aria-label="Compact Tools panel"
-              data-testid="button-narrow-left-rail"
-            />
-            {/* Middle third → toggle aside/back */}
-            <button
-              type="button"
-              onClick={toggleLeftAside}
-              className="absolute inset-y-0 left-1/3 z-10 w-1/3 cursor-pointer"
-              title="Toggle Tools panel aside"
-              aria-label="Toggle Tools panel aside"
-              data-testid="button-toggle-left-rail"
-            />
-            {/* Inner edge (right third) → expanded/full */}
-            <button
-              type="button"
-              onClick={() => openLeftRail("normal")}
-              className="absolute inset-y-0 right-0 z-10 w-1/3 cursor-pointer"
-              title="Expanded Tools panel"
-              aria-label="Expanded Tools panel"
-              data-testid="button-widen-left-rail"
-            />
-            <div className="pointer-events-none relative flex h-full items-center gap-1.5 px-3">
-              <Wrench className="h-3.5 w-3.5 text-white/75" />
-              <span className="text-[11px] font-semibold tracking-wide text-white/90">Tools</span>
-            </div>
-          </div>
-
-          {/* Body — frosted-glass panel. When "aside" it slides mostly
-              off-screen at ~50% opacity (never opacity:0, never unmounted) and
-              peeks back to full opacity on hover/focus. */}
+          {/* Body — frosted-glass panel. Hover-only (task #628): it always
+              rests aside (slid mostly off-screen at ~50% opacity, never
+              opacity:0, never unmounted) leaving a visible edge, and reveals to
+              full opacity on hover/focus; moving the pointer away slides it back
+              aside. Independent of the right rail. */}
           <div
             onMouseEnter={() => setLeftRailPeek(true)}
             onMouseLeave={() => setLeftRailPeek(false)}
-            className={`pointer-events-auto mt-2 min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/30 bg-white/50 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
-              leftRailAside && !leftRailPeek
+            className={`pointer-events-auto min-h-0 flex-1 origin-top overflow-hidden rounded-[24px] border border-white/30 bg-white/30 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.42)] backdrop-blur-3xl transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
+              !(leftRailPeek || leftRailPinned)
                 ? "-translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
                 : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
             }`}
           >
             <div className="flex h-full flex-col">
             {/* Blue header band (step 1). */}
-            <div className="flex items-center gap-1.5 border-b border-white/20 bg-[#4863A0] px-3 py-2 text-white">
-              <Wrench className="h-3.5 w-3.5 text-white/80" />
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-white/90">Tools</span>
+            <div className="flex items-center justify-between gap-1.5 border-b border-white/20 bg-[#4863A0] px-3 py-2 text-white">
+              <div className="flex items-center gap-1.5">
+                <Wrench className="h-3.5 w-3.5 text-white/80" />
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-white/90">Tools</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLeftRailPinned((v) => !v)}
+                aria-label={leftRailPinned ? "Unpin Tools panel" : "Pin Tools panel"}
+                title={leftRailPinned ? "Unpin Tools panel" : "Pin Tools panel"}
+                className={`inline-flex h-6 w-6 items-center justify-center rounded-full transition-colors ${leftRailPinned ? "bg-white/90 text-[#4863A0]" : "text-white/70 hover:bg-white/20"}`}
+                data-testid="button-pin-left-rail"
+              >
+                {leftRailPinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
+              </button>
             </div>
             {(() => {
               // Active center-canvas tab kind so we can highlight the
@@ -2631,55 +2528,16 @@ export function TeamPortalShell({
           className={`pointer-events-none absolute right-4 top-4 bottom-4 z-20 flex flex-col transition-[width] duration-300 ease-out ${RIGHT_RAIL_WIDTH[rightRailSize]}`}
           data-testid="portal-right-rail"
         >
-          {/* Trigger pill — THREE click zones, no arrows. Outer edge (right
-              third) opens the COMPACT panel; the middle third toggles the panel
-              aside/back; the inner edge (left third) opens the EXPANDED panel.
-              Affects only this panel. */}
-          <div
-            onMouseEnter={() => setRightRailPeek(true)}
-            className="pointer-events-auto relative inline-flex h-7 select-none items-center self-end overflow-hidden rounded-full border border-white/25 border-t-white/40 bg-[#4863A0]/70 text-white shadow-[0_10px_30px_rgba(15,23,42,0.30)] backdrop-blur-2xl"
-            data-testid="portal-right-rail-pill"
-          >
-            {/* Inner edge (left third) → expanded/full */}
-            <button
-              type="button"
-              onClick={() => openRightRail("normal")}
-              className="absolute inset-y-0 left-0 z-10 w-1/3 cursor-pointer"
-              title="Expanded Work Queue panel"
-              aria-label="Expanded Work Queue panel"
-              data-testid="button-widen-right-rail"
-            />
-            {/* Middle third → toggle aside/back */}
-            <button
-              type="button"
-              onClick={toggleRightAside}
-              className="absolute inset-y-0 left-1/3 z-10 w-1/3 cursor-pointer"
-              title="Toggle Work Queue panel aside"
-              aria-label="Toggle Work Queue panel aside"
-              data-testid="button-toggle-right-rail"
-            />
-            {/* Outer edge (right third) → compact/narrow */}
-            <button
-              type="button"
-              onClick={() => openRightRail("small")}
-              className="absolute inset-y-0 right-0 z-10 w-1/3 cursor-pointer"
-              title="Compact Work Queue panel"
-              aria-label="Compact Work Queue panel"
-              data-testid="button-narrow-right-rail"
-            />
-            <div className="pointer-events-none relative flex h-full items-center gap-1.5 px-3">
-              <span className="text-[11px] font-semibold tracking-wide text-white/90">Work Queue</span>
-            </div>
-          </div>
-
-          {/* Body — canonical .glass-tile panel. When "aside" it slides mostly
-              off-screen at ~50% opacity (never opacity:0, never unmounted) and
-              peeks back to full opacity on hover/focus. Mirrors the left rail. */}
+          {/* Body — canonical .glass-tile panel. Hover-only (task #628): it
+              always rests aside (slid mostly off-screen at ~50% opacity, never
+              opacity:0, never unmounted) leaving a visible edge, and reveals to
+              full opacity on hover/focus; moving the pointer away slides it back
+              aside. Mirrors the left rail; independent of it. */}
           <div
             onMouseEnter={() => setRightRailPeek(true)}
             onMouseLeave={() => setRightRailPeek(false)}
-            className={`glass-tile pointer-events-auto mt-2 min-h-0 flex-1 origin-top !rounded-[24px] text-slate-900 transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
-              rightRailAside && !rightRailPeek
+            className={`glass-tile !bg-white/40 pointer-events-auto min-h-0 flex-1 origin-top !rounded-[24px] text-slate-900 transition-[transform,opacity] duration-300 [transition-timing-function:cubic-bezier(0.32,0.72,0,1)] ${
+              !(rightRailPeek || rightRailPinned)
                 ? "translate-x-[82%] translate-y-0 scale-y-100 opacity-50"
                 : "translate-x-0 translate-y-0 scale-y-100 opacity-100"
             }`}
@@ -2693,7 +2551,19 @@ export function TeamPortalShell({
                 <div className="sticky top-0 z-10 border-b border-white/10 bg-[#4863A0] px-3 pb-2.5 pt-2.5 backdrop-blur-xl">
                   <div className="mb-1.5 flex items-center justify-between px-0.5">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-white/70">Work Queue</span>
-                    <span className="text-[10px] text-white/70">{selectedDate === todayIso() ? "Today" : selectedDate}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-white/70">{selectedDate === todayIso() ? "Today" : selectedDate}</span>
+                      <button
+                        type="button"
+                        onClick={() => setRightRailPinned((v) => !v)}
+                        aria-label={rightRailPinned ? "Unpin Work Queue panel" : "Pin Work Queue panel"}
+                        title={rightRailPinned ? "Unpin Work Queue panel" : "Pin Work Queue panel"}
+                        className={`inline-flex h-6 w-6 items-center justify-center rounded-full transition-colors ${rightRailPinned ? "bg-white/90 text-[#4863A0]" : "text-white/70 hover:bg-white/20"}`}
+                        data-testid="button-pin-right-rail"
+                      >
+                        {rightRailPinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
                   </div>
                   <WorkspaceModeSwitcher
                     activeMode={activeWorkspaceMode}
@@ -2904,57 +2774,30 @@ export function TeamPortalShell({
                         return (
                         <div
                           key={`${row.id ?? idx}`}
-                          className="rounded-xl border border-white/40 border-l-4 border-l-sky-400/80 bg-white/80 px-2.5 py-2 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.12)] backdrop-blur-md transition-colors hover:bg-white/90"
+                          className="rounded-xl border border-white/40 bg-white/70 px-2.5 py-2 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.10)] backdrop-blur-md transition-colors hover:bg-white/85"
                           data-testid={`workspace-call-${row.id ?? idx}`}
                         >
+                          {/* Minimal card: just the patient name + a circular
+                              phone button (call) and a circular calendar button
+                              (opens the quick schedule popup). */}
                           <div className="flex items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              {/* Name → pull patient into the Playground. */}
-                              <button
-                                type="button"
-                                onClick={() => openCallRowPatient(row)}
-                                className="block max-w-full truncate text-left text-sm font-medium text-slate-900 hover:text-[#4863A0] hover:underline"
-                                title={`Open ${row.patientName ?? "patient"} in Playground`}
-                                data-testid={`button-call-patient-${row.id ?? idx}`}
-                              >
-                                {row.patientName ?? "Unnamed patient"}
-                              </button>
-                              {/* Call reason — why this patient is on the list. */}
-                              <div
-                                className="text-[11px] text-slate-500 truncate"
-                                data-testid={`text-call-reason-${row.id ?? idx}`}
-                              >
-                                {callReason}
-                              </div>
-                            </div>
-                            {/* Quick-action cluster: phone pop-up + calendar
-                                day→time scheduler, each with a corner expand
-                                that pulls the patient into the Playground. */}
+                            <button
+                              type="button"
+                              onClick={() => openCallRowPatient(row)}
+                              className="block min-w-0 flex-1 truncate text-left text-sm font-medium text-slate-900 hover:text-[#4863A0] hover:underline"
+                              title={`Open ${row.patientName ?? "patient"} in Playground`}
+                              data-testid={`button-call-patient-${row.id ?? idx}`}
+                            >
+                              {row.patientName ?? "Unnamed patient"}
+                            </button>
                             <CallRowQuickActions
                               row={row}
                               idx={row.id ?? idx}
                               canCall={canCall}
                               onOpenCall={() => setCallWorkspaceCtx(callRowToCaseContext(row))}
                               onOpenSchedule={() => openSchedulePatientDialog(callRowToDialogPatient(row))}
-                              onOpenCase={() => openCaseTab("caseOverview", callRowToCaseContext(row))}
                             />
                           </div>
-                          {/* Secondary meta: time + status, de-emphasized. */}
-                          {(row.nextActionAt || row.engagementStatus || row.lifecycleStatus) && (
-                            <div className="mt-1.5 flex items-center justify-between gap-2">
-                              <span className="text-[10px] text-slate-400 truncate">
-                                {row.facilityId ?? "—"}
-                                {row.nextActionAt
-                                  ? ` · ${new Date(row.nextActionAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
-                                  : ""}
-                              </span>
-                              {(row.engagementStatus || row.lifecycleStatus) && (
-                                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                                  {row.engagementStatus ?? row.lifecycleStatus}
-                                </Badge>
-                              )}
-                            </div>
-                          )}
                         </div>
                         );
                       })
