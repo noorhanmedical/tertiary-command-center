@@ -1436,6 +1436,22 @@ export function TeamPortalShell({
     refetchInterval: POLL_MS,
   });
 
+  // Shell-level DM roster poll (Task #656). Feeds the unread badge on the
+  // Direct dock tile + tray tab so operators notice new messages without
+  // opening the tray. Shares the query cache with DirectMessagesTab (same
+  // key), so opening the tray reuses this data and the mark-read there
+  // invalidates this too.
+  const { data: dmRosterData } = useQuery<{ roster: { id: string; username: string; role: string | null; unread: number }[] }>({
+    queryKey: ["/api/portal/direct-messages/roster"],
+    queryFn: async () => {
+      const res = await fetch("/api/portal/direct-messages/roster", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load teammates");
+      return res.json();
+    },
+    refetchInterval: POLL_MS,
+  });
+  const directUnread = (dmRosterData?.roster ?? []).reduce((sum, r) => sum + (r.unread ?? 0), 0);
+
   const { data: outreachData } = useQuery<{ patients: OutreachItem[]; heavyDay?: boolean; cap?: number; totalPool?: number }>({
     queryKey: ["/api/portal/outreach-call-list", facility],
     queryFn: async () => {
@@ -2587,6 +2603,7 @@ export function TeamPortalShell({
                       onTabChange={setTrayTab}
                       currentUserId={currentUser?.id ?? null}
                       teamTasks={trayTeamTasks}
+                      directUnread={directUnread}
                     />
                   </div>
                 </div>
@@ -2690,6 +2707,7 @@ export function TeamPortalShell({
                           icon: MessageSquare,
                           onClick: () => setTrayTab("direct"),
                           active: trayTab === "direct",
+                          badge: directUnread > 0 ? directUnread : undefined,
                           testId: "left-rail-tool-direct",
                         },
                         {
@@ -2841,6 +2859,7 @@ export function TeamPortalShell({
                       onTabChange={setTrayTab}
                       currentUserId={currentUser?.id ?? null}
                       teamTasks={trayTeamTasks}
+                      directUnread={directUnread}
                     />
                   </div>
                 )}

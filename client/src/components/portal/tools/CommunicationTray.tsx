@@ -365,11 +365,15 @@ export function CommunicationTray({
   onTabChange,
   currentUserId,
   teamTasks,
+  directUnread = 0,
 }: {
   activeTab: TrayTab;
   onTabChange: (tab: TrayTab) => void;
   currentUserId: string | null;
   teamTasks: TeamTaskThread[];
+  /** Total unread direct messages, surfaced as a per-tab indicator on the
+   *  Direct tab so operators notice new messages (Task #656). */
+  directUnread?: number;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="communication-tray">
@@ -377,12 +381,13 @@ export function CommunicationTray({
         {TABS.map((t) => {
           const Icon = t.icon;
           const isActive = t.id === activeTab;
+          const unread = t.id === "direct" ? directUnread : 0;
           return (
             <button
               key={t.id}
               type="button"
               onClick={() => onTabChange(t.id)}
-              className={`inline-flex flex-1 items-center justify-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold transition ${
+              className={`relative inline-flex flex-1 items-center justify-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold transition ${
                 isActive
                   ? t.id === "direct"
                     ? "bg-sky-500 text-white shadow-sm"
@@ -393,6 +398,16 @@ export function CommunicationTray({
             >
               <Icon className="h-3.5 w-3.5" />
               {t.label}
+              {unread > 0 ? (
+                <span
+                  className={`ml-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[9px] font-semibold ${
+                    isActive ? "bg-white/90 text-sky-700" : "bg-rose-600 text-white"
+                  }`}
+                  data-testid="tray-tab-direct-unread"
+                >
+                  {unread}
+                </span>
+              ) : null}
             </button>
           );
         })}
