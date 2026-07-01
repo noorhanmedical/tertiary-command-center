@@ -279,7 +279,22 @@ export function SchedulePatientDialog({
   const [time, setTime] = useState<string>(initialTime);
   const [note, setNote] = useState<string>("");
 
-  // Reset form when a new patient is opened.
+  // Composite patient identity. Screening/case ids alone are not enough:
+  // quick-schedule name-only patients carry no ids, so switching between
+  // two of them would otherwise skip the reset and reuse the previous
+  // patient's date/time/service/note. Name, DOB, and target service are
+  // folded in so every real patient change reseeds the form.
+  const patientKey = [
+    patient?.patientScreeningId ?? "",
+    patient?.executionCaseId ?? "",
+    patient?.patientName ?? "",
+    patient?.patientDob ?? "",
+    patient?.serviceType ?? "",
+    patient?.facilityId ?? "",
+  ].join("|");
+
+  // Reset form when a new patient is opened OR the pre-fill date/time
+  // changes (e.g. a hand-off from the quick-schedule pop-up).
   useEffect(() => {
     if (open) {
       setSelectedDate(initialDate);
@@ -290,7 +305,7 @@ export function SchedulePatientDialog({
       setNote("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, patient?.patientScreeningId, patient?.executionCaseId]);
+  }, [open, patientKey, initialDate, initialTime]);
 
   const { data: dayContext, isLoading: contextLoading } =
     useQuery<PatientScheduleDayContext>({

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  Stethoscope, HeartHandshake, Calendar as CalendarIcon, Phone, FileSignature,
+  Stethoscope, HeartHandshake, Calendar as CalendarIcon, CalendarPlus, Phone, FileSignature,
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
   Sparkles, Send, Minimize2, Maximize2, FileBarChart, FilePlus, User, Bell, Bot,
   Home, BookOpen, CalendarDays, Mail, ClipboardPen, Pill, History, ShieldCheck, Users, Search, Megaphone,
@@ -2707,7 +2707,11 @@ export function TeamPortalShell({
                       label: "Calendar",
                       icon: CalendarDays,
                       onClick: handleCalendarTool,
-                      active: centerMode === "calendar",
+                      // Active when the calendar view is open in the
+                      // Playground OR the quick-schedule pop-up it launches
+                      // is showing, so the tool reads as engaged either way.
+                      active:
+                        centerMode === "calendar" || !!calendarQuickScheduleDate,
                       testId: "left-rail-tool-calendar",
                     },
                     {
@@ -2983,7 +2987,7 @@ export function TeamPortalShell({
                                   data-testid={`button-patient-calendar-${p.patientScreeningId ?? p.name}`}
                                   title="Schedule patient"
                                 >
-                                  <CalendarIcon className="h-4 w-4 text-[#4863A0]" />
+                                  <CalendarPlus className="h-4 w-4 text-[#4863A0]" />
                                 </button>
                                 <button
                                   type="button"
@@ -3222,7 +3226,7 @@ export function TeamPortalShell({
                                       : "Schedule patient"
                                   }
                                 >
-                                  <CalendarIcon className="h-3.5 w-3.5 text-[#4863A0]" />
+                                  <CalendarPlus className="h-3.5 w-3.5 text-[#4863A0]" />
                                 </button>
                                 <button
                                   type="button"
@@ -3484,6 +3488,7 @@ export function TeamPortalShell({
           openSchedulePatientDialog(
             {
               patientName: patientName || null,
+              facilityId: facility || null,
               serviceType: service || null,
             },
             { date, time },
@@ -3494,6 +3499,7 @@ export function TeamPortalShell({
           openSchedulePatientPlayground({
             patient: {
               patientName: patientName || null,
+              facilityId: facility || null,
               serviceType: service || null,
             },
             selectedDate: date,
