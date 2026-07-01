@@ -1,0 +1,267 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+If this Replit workspace cannot switch branches or push, report that clearly and continue implementing in the active workspace. I will push from the Replit Git pane.
+
+Before editing, run and report if available:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+TASK:
+
+Fix the Admin Review right panel layout on mobile / narrow screens.
+
+Current problem:
+On mobile/narrow viewport, the Admin Review right panel looks broken and wasteful.
+
+Observed current screen:
+- Patient header is okay but takes vertical space.
+- Right panel content is extremely tall and sparse.
+- Reference section takes too much space at the top.
+- Updates section is pushed far down.
+- Updates empty state is weak and too low.
+- Bottom action buttons are too low and feel disconnected.
+- The panel has too much empty vertical whitespace.
+- There is a large blank area between Reference and Updates.
+- The action footer is not integrated enough.
+- The left side/ancillary workspace is barely visible and the right panel dominates awkwardly.
+- The right panel should feel like an action workbench, not a stretched empty column.
+
+IMPORTANT:
+Do not redesign the left ancillary workspace in this task.
+This task is only for the Admin Review right panel responsive layout.
+
+GOAL:
+
+On mobile/narrow screens, the right panel should become a compact, premium action workbench.
+
+It should show, from top to bottom:
+
+1. Compact Review Workbench header
+2. Compact reference/action buttons
+3. Changes section immediately below reference buttons
+4. Regenerate button in Changes header
+5. Changes empty state or change rows
+6. Sticky bottom footer with navigation and approve/hold/reject actions
+
+There should not be large dead space between sections.
+
+PART 1 — Compact right panel spacing
+
+Reduce vertical padding and gaps in the right panel on mobile/narrow viewports.
+
+Reference buttons should not consume half the panel.
+
+Use tighter spacing:
+- smaller section padding
+- smaller gaps between buttons
+- smaller button height
+- smaller top margin before Changes
+- no large blank area
+
+Suggested mobile dimensions:
+- right panel inner padding: 16px to 20px
+- reference button height: 44px to 48px
+- grid gap: 10px to 12px
+- margin between Reference and Changes: 20px max
+
+PART 2 — Reference section
+
+Keep the Reference section but make it compact.
+
+Buttons:
+- Source data
+- ICD search
+- Diagnosis
+- Medications
+- Symptoms
+- Prior Testing
+
+Mobile layout:
+- 2-column grid is okay if it fits
+- if too cramped, use compact 2-column buttons with smaller text/icons
+- do not make buttons huge
+- do not create a large empty area below the buttons
+
+The Reference section is secondary. It should not dominate the right panel.
+
+PART 3 — Changes section must move up
+
+The Changes section should start immediately after the reference buttons.
+
+It should not be pushed halfway down the panel.
+
+Header:
+Changes
+
+Include:
+- count, for example “0 changes” or “8 changes”
+- Regenerate button directly in the Changes header
+
+If there are no updates, show a compact empty state:
+“Changes you make will appear here, grouped by ancillary.”
+
+But the empty state should not create a huge blank white area.
+
+Make it compact and centered within the Changes card.
+
+PART 4 — Changes card design
+
+Make the Changes section visually distinct from Reference.
+
+Reference section:
+- neutral white buttons
+
+Changes section:
+- slightly tinted card background
+- subtle border
+- grouped rows if updates exist
+- compact empty state if no updates
+
+For update rows:
+- Added = soft green row
+- Removed = soft red row
+- Updated = soft blue/slate row if needed
+
+Do not show large timestamps as the main visual element.
+If timestamps exist, make them secondary.
+
+PART 5 — Sticky footer
+
+The bottom action footer should be sticky to the bottom of the right panel.
+
+It should contain:
+- previous button
+- current item indicator, example: 1 of 7
+- next button
+- approve button
+- hold button
+- reject button
+
+The footer should:
+- remain visible
+- feel connected to the panel
+- not float awkwardly in huge whitespace
+- have compact spacing on mobile
+- use smaller circular dark action buttons
+
+Button sizing:
+- approve/hold/reject around 40px to 44px diameter on mobile
+- previous/next around 38px to 42px diameter
+- spacing should be balanced
+
+PART 6 — Mobile height management
+
+The right panel content should fit better in the viewport.
+
+Use a structure like:
+
+Right panel:
+- header/reference area = auto height
+- changes area = flex: 1 / scrollable if needed
+- footer = sticky bottom
+
+Do not let the Changes empty state push the footer too far down.
+
+If content overflows:
+- the Changes list can scroll internally
+- the footer remains visible
+- the top reference buttons remain accessible
+
+PART 7 — Avoid horizontal/side overflow issues
+
+On mobile/narrow viewport:
+- right panel should not be clipped awkwardly
+- panel should not require sideways scrolling
+- button grid should not overflow
+- action footer should remain inside the panel
+- approve/hold/reject buttons should not overlap browser/mobile controls
+
+PART 8 — Visual style
+
+Make the right panel feel:
+- premium
+- compact
+- clean
+- iOS-like
+- operational
+- not stretched
+- not empty
+- not cartoonish
+
+Use:
+- tighter spacing
+- subtle surface colors
+- clear hierarchy
+- compact action buttons
+- soft borders
+- refined typography
+
+Avoid:
+- massive blank areas
+- huge button grid
+- updates pushed too low
+- oversized empty state
+- disconnected footer
+- noisy timestamps
+- cartoon colors
+
+PART 9 — Preserve logic
+
+Do not break:
+- Source data button
+- ICD search button
+- Diagnosis button
+- Medications button
+- Symptoms button
+- Prior Testing button
+- Regenerate action
+- previous / next navigation
+- approve / hold / reject actions
+- current patient/review index
+- update grouping logic
+
+This is layout/styling/responsive behavior only unless a minor structural change is needed.
+
+PART 10 — Validation
+
+Verify:
+
+1. On desktop, right panel still looks good.
+2. On mobile/narrow viewport, Reference buttons are compact.
+3. Changes section appears immediately below Reference.
+4. No large blank space between Reference and Changes.
+5. Regenerate is in the Changes header.
+6. Empty changes state is compact.
+7. Footer remains visible and aligned.
+8. Approve/hold/reject buttons are small circular darker buttons.
+9. No horizontal overflow.
+10. Left panel is not redesigned in this task.
+11. npm run check passes.
+12. npm run build passes.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA if available
+   - risks
+   - whether I need to push from the Replit Git pane
+
+Commit message:
+Refine Admin Review right panel mobile layout
