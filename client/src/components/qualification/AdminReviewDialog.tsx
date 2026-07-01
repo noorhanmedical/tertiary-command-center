@@ -256,6 +256,55 @@ function groupUpdatesByAncillary(
   }));
 }
 
+// Derive the set of regenerate target ids from the pending changes in the
+// Updates panel. Mirrors the same set surfaced by `groupUpdatesByAncillary`
+// but resolves ultrasound children to their specific `test:<name>` target so
+// a change under a single ultrasound test regenerates only that test.
+// Shape matches `readStaleTargetIds`: brainwave | vitalwave | ultrasound |
+// test:<testName>.
+function regenTargetIdsFromUpdates(
+  updates: AdminReviewUpdateEntry[],
+): string[] {
+  const ids = new Set<string>();
+  for (const entry of updates) {
+    if (!UPDATE_CHANGE_TYPES.has(entry.type)) continue;
+    const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+    const tgt = (meta.target ?? meta.from) as
+      | { type?: string; ancillaryId?: string; testName?: string }
+      | undefined;
+    if (tgt && typeof tgt === "object") {
+      if (tgt.type === "all") {
+        ids.add("brainwave");
+        ids.add("vitalwave");
+        ids.add("ultrasound");
+        continue;
+      }
+      if (
+        tgt.type === "ancillary" &&
+        (tgt.ancillaryId === "brainwave" || tgt.ancillaryId === "vitalwave")
+      ) {
+        ids.add(tgt.ancillaryId);
+        continue;
+      }
+      if (
+        tgt.type === "ultrasound-test" &&
+        typeof tgt.testName === "string" &&
+        tgt.testName
+      ) {
+        ids.add(`test:${tgt.testName}`);
+        continue;
+      }
+      if (tgt.type === "ultrasound-parent") {
+        ids.add("ultrasound");
+        continue;
+      }
+    }
+    const anc = ancillaryOfUpdateEntry(entry);
+    if (anc) ids.add(anc);
+  }
+  return Array.from(ids);
+}
+
 const CONFIDENCE_TONE: Record<string, string> = {
   high: "bg-emerald-50 text-emerald-800 border-emerald-200",
   medium: "bg-amber-50 text-amber-800 border-amber-200",
@@ -2503,11 +2552,18 @@ export function AdminReviewDialog({
   // surfaces via `setRegenErrors` (existing UI).
   const [regenChangedInFlight, setRegenChangedInFlight] = useState(false);
   const regenerateChangedTargets = useCallback(async (): Promise<void> => {
+    // Regenerate both the stale targets (evidence attach/detach) and the
+    // targets of any pending change surfaced in the Updates panel (added/
+    // removed diagnosis, medication, symptom, qualifying factor, ancillary,
+    // or ultrasound child) — deduped so a change and a stale flag on the
+    // same test only regenerate once.
     const staleIds = readStaleTargetIds(lastWrittenReasoningRef.current);
-    if (staleIds.length === 0) return;
+    const changeIds = regenTargetIdsFromUpdates(updatesLog);
+    const targetIds = Array.from(new Set([...staleIds, ...changeIds]));
+    if (targetIds.length === 0) return;
     setRegenChangedInFlight(true);
     try {
-      for (const targetId of staleIds) {
+      for (const targetId of targetIds) {
         try {
           if (
             targetId === "brainwave" ||
@@ -2531,7 +2587,7 @@ export function AdminReviewDialog({
     } finally {
       setRegenChangedInFlight(false);
     }
-  }, [regenerateAncillaryMutation, regenerateTestMutation]);
+  }, [regenerateAncillaryMutation, regenerateTestMutation, updatesLog]);
 
   // The single Regenerate action surfaced in the Updates panel. Source-data
   // edits invalidate every ancillary (we don't track which Hx/Dx/Rx line maps
@@ -2648,6 +2704,19 @@ export function AdminReviewDialog({
   // marks specific stale targets. Either blocks Approve + PDF until the
   // single Updates-panel Regenerate clears it.
   const needsRegeneration = staleTargetIds.length > 0 || sourceDataSaved;
+
+  // Targets of the pending changes currently listed in the Updates panel.
+  // The Regenerate button is enabled whenever there is any such change (not
+  // just when the system flagged a target "stale"), and clicking it
+  // regenerates only these changed test(s) plus any stale targets.
+  const pendingRegenTargetIds = regenTargetIdsFromUpdates(updatesLog);
+  const canRegenerate =
+    needsRegeneration || pendingRegenTargetIds.length > 0;
+  // Union of stale + change-derived targets, used for the tooltip so it
+  // names exactly what the button will regenerate.
+  const regenTargetLabels = Array.from(
+    new Set([...staleTargetIds, ...pendingRegenTargetIds]),
+  ).map(ancillaryLabelForTargetId);
 
   // Presence of ancillaries already on the patient — drives the manual
   // Add Ancillary menu so it never re-offers something already added.
@@ -4008,20 +4077,20 @@ export function AdminReviewDialog({
                 <button
                   type="button"
                   onClick={() => void regeneratePending()}
-                  disabled={regenChangedInFlight || !needsRegeneration}
+                  disabled={regenChangedInFlight || !canRegenerate}
                   aria-label="Regenerate"
-                  title={needsRegeneration
+                  title={canRegenerate
                     ? (sourceDataSaved
                       ? "Regenerate all ancillaries with updated source data"
-                      : `Regenerate: ${staleTargetIds
-                          .map(ancillaryLabelForTargetId)
-                          .join(", ")}`)
+                      : `Regenerate the changed test(s): ${regenTargetLabels.join(", ")}`)
                     : "No changes pending — regeneration not needed"}
                   data-testid="admin-review-regenerate-changed"
                   data-stale-count={staleTargetIds.length}
+                  data-pending-change-count={pendingRegenTargetIds.length}
                   data-needs-regeneration={needsRegeneration ? "true" : "false"}
+                  data-can-regenerate={canRegenerate ? "true" : "false"}
                   className={`inline-flex items-center gap-1 h-6 px-2.5 rounded-full text-[10px] font-semibold shadow-sm disabled:cursor-not-allowed transition-colors ${
-                    needsRegeneration
+                    canRegenerate
                       ? "bg-gradient-to-b from-emerald-400 to-emerald-500 hover:from-emerald-400 hover:to-emerald-600 text-white disabled:opacity-50"
                       : "border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 disabled:opacity-100"
                   }`}
