@@ -6,8 +6,12 @@ import {
   PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 import { initials } from "./profileTypes";
-import { CHART_SECTIONS, SectionSkeleton } from "./PatientChartSections";
+import {
+  CHART_SECTIONS, SectionSkeleton, SectionSummaryCard, AccessDeniedSection,
+  sectionSummaryLine,
+} from "./PatientChartSections";
 import { type EmrChart, COOLDOWN_STATE_TONES } from "@/types/emr";
+import { usePatientDirectorySectionAccess } from "@/hooks/usePatientDirectorySectionAccess";
 
 const NAV_COLLAPSE_KEY = "pd-chart-nav-collapsed";
 
@@ -38,7 +42,29 @@ export function PatientChart({
   onVisibleSectionsChange?: (ids: string[]) => void;
 }) {
   const d = chart.demographics;
-  const [activeSection, setActiveSection] = useState<string>(CHART_SECTIONS[0].id);
+  const { getSectionAccess } = usePatientDirectorySectionAccess();
+
+  // Sections the current role may see in the nav (anything not fully hidden).
+  const navSections = CHART_SECTIONS.filter((s) => getSectionAccess(s.id) !== "hidden");
+
+  // Track the current deep-link hash so a hidden section deep-linked directly
+  // (`#section-labs`) renders an "access denied" state instead of nothing.
+  const [deepLinkId, setDeepLinkId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const m = window.location.hash.match(/^#section-(.+)$/);
+    return m ? m[1] : null;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onHash = () => {
+      const m = window.location.hash.match(/^#section-(.+)$/);
+      setDeepLinkId(m ? m[1] : null);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  const [activeSection, setActiveSection] = useState<string>(navSections[0]?.id ?? CHART_SECTIONS[0].id);
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(NAV_COLLAPSE_KEY) === "1";
@@ -176,7 +202,7 @@ export function PatientChart({
           >
             {navCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
           </button>
-          {CHART_SECTIONS.map((s) => {
+          {navSections.map((s) => {
             const active = activeSection === s.id;
             return (
               <button
@@ -198,7 +224,7 @@ export function PatientChart({
           {/* Mobile/tablet horizontal section nav */}
           <div className="xl:hidden sticky top-0 z-10 bg-finance-bg/95 backdrop-blur border-b border-slate-200/70 dark:border-border/50 px-3 py-2 overflow-x-auto">
             <div className="flex items-center gap-1.5 w-max">
-              {CHART_SECTIONS.map((s) => {
+              {navSections.map((s) => {
                 const active = activeSection === s.id;
                 return (
                   <button
@@ -216,8 +242,27 @@ export function PatientChart({
 
           <div className={`mx-auto px-4 sm:px-6 py-5 space-y-5 transition-[max-width] duration-200 ${navCollapsed ? "max-w-6xl" : "max-w-4xl"}`}>
             {CHART_SECTIONS.map((s) => {
+              const access = getSectionAccess(s.id);
+              if (access === "hidden") {
+                // Only materialize an "access denied" anchor when the user
+                // deep-links directly to a hidden section — otherwise omit it.
+                return deepLinkId === s.id
+                  ? <AccessDeniedSection key={s.id} id={s.id} title={s.label} icon={s.icon} />
+                  : null;
+              }
               if (loadingSections?.has(s.id)) {
                 return <SectionSkeleton key={s.id} id={s.id} title={s.label} icon={s.icon} />;
+              }
+              if (access === "summary") {
+                return (
+                  <SectionSummaryCard
+                    key={s.id}
+                    id={s.id}
+                    title={s.label}
+                    icon={s.icon}
+                    summary={sectionSummaryLine(chart, s.id)}
+                  />
+                );
               }
               const Comp = s.Component;
               return <Comp key={s.id} chart={chart} />;

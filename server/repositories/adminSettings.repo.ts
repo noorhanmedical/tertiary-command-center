@@ -379,3 +379,51 @@ export async function listAdminSettings(
     ? query.where(and(...conditions)).orderBy(desc(adminSettings.createdAt)).limit(safeLimit)
     : query.orderBy(desc(adminSettings.createdAt)).limit(safeLimit);
 }
+
+// ─── Patient Directory section access ───────────────────────────────────────
+
+import {
+  normalizeSectionAccessMatrix,
+  type SectionAccessMatrix,
+  type PartialSectionAccessMatrix,
+} from "@shared/patientDirectorySections";
+
+const PATIENT_DIRECTORY_DOMAIN = "patient_directory";
+const SECTION_ACCESS_KEY = "section_access";
+
+/** Read the global patient-directory section-access matrix, normalized so it
+ *  always covers every registry section + role (gaps filled with defaults). */
+export async function getPatientDirectorySectionAccessMatrix(): Promise<SectionAccessMatrix> {
+  const stored = await getGlobalAdminSettingValue<{ matrix?: PartialSectionAccessMatrix }>(
+    PATIENT_DIRECTORY_DOMAIN,
+    SECTION_ACCESS_KEY,
+  );
+  return normalizeSectionAccessMatrix(stored?.matrix ?? null);
+}
+
+/** Upsert the global patient-directory section-access matrix. Normalizes the
+ *  incoming matrix before persisting so the stored value is always complete
+ *  and admin is always `full`. */
+export async function savePatientDirectorySectionAccessMatrix(
+  matrix: PartialSectionAccessMatrix,
+): Promise<SectionAccessMatrix> {
+  const normalized = normalizeSectionAccessMatrix(matrix);
+  const existing = await findOneSetting(
+    PATIENT_DIRECTORY_DOMAIN,
+    SECTION_ACCESS_KEY,
+    null,
+    null,
+  );
+  if (existing) {
+    await updateAdminSetting(existing.id, { settingValue: { matrix: normalized } });
+  } else {
+    await createAdminSetting({
+      settingDomain: PATIENT_DIRECTORY_DOMAIN,
+      settingKey: SECTION_ACCESS_KEY,
+      settingValue: { matrix: normalized },
+      description: "Per-role access levels for Patient Directory chart sections.",
+      active: true,
+    });
+  }
+  return normalized;
+}

@@ -24,6 +24,7 @@ import {
   type AdminSettingRow,
   type EffectiveAdminSettingsBundle,
 } from "@/lib/adminSettingsApi";
+import PatientDirectorySectionAccessPanel from "@/components/admin/PatientDirectorySectionAccessPanel";
 
 function sourceTone(src: string): "default" | "secondary" | "outline" {
   // test_type wins most-specific — use the most prominent tone.
@@ -137,6 +138,8 @@ export default function AdminSettingsCenterPage({ embedded = false }: { embedded
           <Field label="ACS respects facility scope" value={effective.assignment.acsAssignmentRespectsFacilityScope ? "Yes" : "No"} source={effective.sources["assignment.acs_assignment_respects_facility_scope"]} />
         </div>
       </Card>
+
+      <PatientDirectorySectionAccessPanel />
 
       {Object.keys(grouped).sort().map((domain) => (
         <Card key={domain} className="p-4 bg-white" data-testid={`admin-settings-domain-${domain}`}>

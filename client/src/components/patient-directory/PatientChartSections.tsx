@@ -5,7 +5,7 @@ import {
   User, ShieldCheck, Stethoscope, Pill as PillIcon, AlertTriangle, FlaskConical,
   Scan, Activity, FileText, Phone, CalendarClock, Clock, Megaphone,
   Sparkles, ClipboardList, Receipt, History, CheckCircle2, XCircle,
-  MinusCircle, ExternalLink, UserCog,
+  MinusCircle, ExternalLink, UserCog, Lock, Eye,
 } from "lucide-react";
 import { fmtDate } from "./profileTypes";
 import {
@@ -76,6 +76,115 @@ export function SectionSkeleton({
         <div className="h-3.5 w-1/2 rounded bg-slate-200/70 dark:bg-muted/80" />
         <div className="h-3.5 w-3/4 rounded bg-slate-200/60 dark:bg-muted/70" />
       </div>
+    </SectionCard>
+  );
+}
+
+// Compact one-line summary of a section, used when a role has "summary" (not
+// "full") access. Shows non-sensitive counts/status only — never row detail.
+export function sectionSummaryLine(chart: EmrChart, id: string): string {
+  const n = (arr: unknown): number => (Array.isArray(arr) ? arr.length : 0);
+  switch (id) {
+    case "overview": {
+      const q = n(chart.plexusIq?.qualifyingTests);
+      return q > 0 ? `Qualifies for ${q} ancillary test${q === 1 ? "" : "s"}` : "No qualifying tests yet";
+    }
+    case "plexus-iq": {
+      const q = n(chart.plexusIq?.qualifyingTests);
+      return `${q} qualifying test${q === 1 ? "" : "s"}`;
+    }
+    case "cooldown":
+      return chart.cooldown?.stateLabel || "Cooldown status on file";
+    case "diagnoses":
+      return `${n(chart.diagnoses)} diagnosis record${n(chart.diagnoses) === 1 ? "" : "s"} on file`;
+    case "medications":
+      return `${n(chart.medications)} medication${n(chart.medications) === 1 ? "" : "s"} on file`;
+    case "allergies":
+      return `${n(chart.allergies)} allergy record${n(chart.allergies) === 1 ? "" : "s"} on file`;
+    case "demographics":
+      return chart.demographics?.name || "Patient demographics on file";
+    case "insurance":
+      return chart.insurance?.primary || "Insurance on file";
+    case "providers":
+      return `${n(chart.providers)} provider${n(chart.providers) === 1 ? "" : "s"} on care team`;
+    case "labs":
+      return `${n(chart.labs)} lab result${n(chart.labs) === 1 ? "" : "s"} on file`;
+    case "imaging":
+      return `${n(chart.imaging)} imaging stud${n(chart.imaging) === 1 ? "y" : "ies"} on file`;
+    case "vitals":
+      return `${n(chart.vitals)} vital sign record${n(chart.vitals) === 1 ? "" : "s"} on file`;
+    case "encounters":
+      return `${n(chart.encounters)} encounter/note record${n(chart.encounters) === 1 ? "" : "s"} on file`;
+    case "calls": {
+      const c = chart.communication?.callAttemptCount ?? n(chart.communication?.calls);
+      return `${c} call attempt${c === 1 ? "" : "s"} logged`;
+    }
+    case "scheduling":
+      return `${n(chart.scheduling)} appointment${n(chart.scheduling) === 1 ? "" : "s"} on file`;
+    case "documents":
+      return `${n(chart.documents)} document${n(chart.documents) === 1 ? "" : "s"} on file`;
+    case "billing": {
+      const items = chart.billing?.items ?? [];
+      const ready = items.filter((i) => i.ready).length;
+      return `${ready}/${items.length} billing readiness check${items.length === 1 ? "" : "s"} ready`;
+    }
+    case "ad-automation":
+      return chart.adAutomation?.reEngagementEligible ? "Re-engagement eligible" : "Re-engagement not eligible";
+    case "execution-cases":
+      return `${n(chart.executionCases)} execution case${n(chart.executionCases) === 1 ? "" : "s"} on file`;
+    case "timeline":
+      return "Activity timeline available";
+    default:
+      return "Summary available";
+  }
+}
+
+// Rendered when a role has "summary" (not "full") access to a section. Shows a
+// compact, non-sensitive one-line summary rather than the full section body.
+export function SectionSummaryCard({
+  id, title, icon, summary,
+}: {
+  id: string;
+  title: string;
+  icon: React.ReactNode;
+  summary: string;
+}) {
+  return (
+    <SectionCard
+      id={id}
+      title={title}
+      icon={icon}
+      action={
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 dark:bg-muted dark:text-foreground" data-testid={`badge-summary-${id}`}>
+          <Eye className="w-3 h-3" />Summary
+        </span>
+      }
+    >
+      <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200" data-testid={`section-summary-${id}`}>
+        {summary}
+      </div>
+      <p className="text-[11px] text-muted-foreground mt-1.5">Full details are restricted for your role.</p>
+    </SectionCard>
+  );
+}
+
+// Rendered in place of a section's content when a role has "hidden" access and
+// the user deep-links directly to the section anchor.
+export function AccessDeniedSection({
+  id, title, icon,
+}: {
+  id: string;
+  title: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <SectionCard id={id} title={title} icon={icon}>
+      <EmptyState
+        icon={<Lock className="w-8 h-8" />}
+        title="This section is not available for your role."
+        hint="Contact an administrator if you need access to this information."
+        testId={`section-denied-${id}`}
+      />
     </SectionCard>
   );
 }

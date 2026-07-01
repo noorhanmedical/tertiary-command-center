@@ -26,6 +26,7 @@ import { registerAdminRoutes } from "./routes/admin";
 import { registerOutboxRoutes } from "./routes/outbox";
 import { registerPatientDatabaseRoutes } from "./routes/patientDatabase";
 import { registerPatientDirectoryRoutes } from "./routes/patientDirectory";
+import { registerPatientDirectorySectionAccessRoutes } from "./routes/patientDirectorySectionAccess";
 import { registerTestFixtureRoutes } from "./routes/testFixture";
 import { registerMarketingMaterialRoutes } from "./routes/marketingMaterials";
 import { registerDocumentLibraryRoutes } from "./routes/documentLibrary";
@@ -239,6 +240,9 @@ export async function registerRoutes(
   // Default OFF — no endpoints registered until Ali flips the flag and
   // applies migrations 0027-0029 from the blockers doc.
   registerPatientDirectoryRoutes(app);
+  // Section-access config is NOT gated behind the activation flag — it applies
+  // to the always-on Patient Directory chart in the Patient Database.
+  registerPatientDirectorySectionAccessRoutes(app);
   registerPlexusIqClinicalImportRoutes(app);
   registerEngagementAssignmentBoardRoutes(app);
   registerEngagementCallSettingsRoutes(app, requireRole);
