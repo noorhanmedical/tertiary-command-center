@@ -1,0 +1,152 @@
+// Workspace settings dialog (Task #643).
+//
+// Exposes in-session workspace preferences. IMPORTANT: preferences apply
+// for the current session only — there is no persistence wired in this
+// pass. The dialog says so explicitly. The prefs shape is serializable so
+// a future pass can persist without changing this UI.
+
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import type {
+  WorkspacePrefs,
+  TrayTab,
+  PlaygroundLayout,
+  CalendarBehavior,
+} from "./workspacePrefs";
+
+function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-2">
+      <div>
+        <Label className="text-sm text-slate-800">{label}</Label>
+        {hint ? <p className="text-[11px] text-slate-500">{hint}</p> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function WorkspaceSettingsDialog({
+  open,
+  onOpenChange,
+  prefs,
+  updatePref,
+  resetPrefs,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  prefs: WorkspacePrefs;
+  updatePref: <K extends keyof WorkspacePrefs>(key: K, value: WorkspacePrefs[K]) => void;
+  resetPrefs: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md" data-testid="workspace-settings-dialog">
+        <DialogHeader>
+          <DialogTitle>Workspace Settings</DialogTitle>
+        </DialogHeader>
+
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+          Preferences apply to this session only. Saving across reloads is a next step.
+        </div>
+
+        <div className="divide-y divide-slate-100">
+          <Row label="Default tray tab" hint="Which communication tab opens first.">
+            <Select
+              value={prefs.defaultTrayTab}
+              onValueChange={(v) => updatePref("defaultTrayTab", v as TrayTab)}
+            >
+              <SelectTrigger className="h-8 w-[140px] text-xs" data-testid="setting-default-tray-tab">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="z-[95]">
+                <SelectItem value="patient">Patient Messages</SelectItem>
+                <SelectItem value="team">Team Chat</SelectItem>
+                <SelectItem value="email">Email</SelectItem>
+                <SelectItem value="notes">Notes</SelectItem>
+              </SelectContent>
+            </Select>
+          </Row>
+
+          <Row label="Calendar behavior" hint="What the Calendar tool does when clicked.">
+            <Select
+              value={prefs.calendarBehavior}
+              onValueChange={(v) => updatePref("calendarBehavior", v as CalendarBehavior)}
+            >
+              <SelectTrigger className="h-8 w-[140px] text-xs" data-testid="setting-calendar-behavior">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="z-[95]">
+                <SelectItem value="playground">Open in Playground</SelectItem>
+                <SelectItem value="quickSchedule">Quick schedule pop-up</SelectItem>
+              </SelectContent>
+            </Select>
+          </Row>
+
+          <Row label="Playground layout" hint="Docked single canvas or split two-up.">
+            <Select
+              value={prefs.playgroundLayout}
+              onValueChange={(v) => updatePref("playgroundLayout", v as PlaygroundLayout)}
+            >
+              <SelectTrigger className="h-8 w-[140px] text-xs" data-testid="setting-playground-layout">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="z-[95]">
+                <SelectItem value="docked">Docked</SelectItem>
+                <SelectItem value="split">Split</SelectItem>
+              </SelectContent>
+            </Select>
+          </Row>
+
+          <Row label="Show sticky notes" hint="Show/hide Playground widgets.">
+            <Switch
+              checked={prefs.stickyNotesVisible}
+              onCheckedChange={(v) => updatePref("stickyNotesVisible", v)}
+              data-testid="setting-sticky-visible"
+            />
+          </Row>
+
+          <Row label="Pin Tools panel by default">
+            <Switch
+              checked={prefs.toolsPinnedByDefault}
+              onCheckedChange={(v) => updatePref("toolsPinnedByDefault", v)}
+              data-testid="setting-tools-pinned"
+            />
+          </Row>
+
+          <Row label="Pin Work Queue by default">
+            <Switch
+              checked={prefs.workQueuePinnedByDefault}
+              onCheckedChange={(v) => updatePref("workQueuePinnedByDefault", v)}
+              data-testid="setting-workqueue-pinned"
+            />
+          </Row>
+        </div>
+
+        <DialogFooter className="flex items-center justify-between sm:justify-between">
+          <Button variant="ghost" size="sm" onClick={resetPrefs} data-testid="setting-reset">
+            Reset to defaults
+          </Button>
+          <Button size="sm" onClick={() => onOpenChange(false)} data-testid="setting-done">
+            Done
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

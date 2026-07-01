@@ -39,9 +39,7 @@ import { fetchTeamMemberProfile } from "@/lib/workflow/teamMemberProfileApi";
 import { useLocation } from "wouter";
 // Left-rail tool components — shared between PCS + ACS (identical
 // shell + layout).
-import { LeftRailToolsButton } from "@/components/portal/leftRail/LeftRailToolsButton";
 import { CallsRepositoryPanel } from "@/components/portal/CallsRepositoryPanel";
-import { LeftRailCompactCalendar } from "@/components/portal/leftRail/LeftRailCompactCalendar";
 import { PortalEmailComposerTab } from "@/components/portal/PortalEmailComposerTab";
 import { PortalTemplatesResourcesTab } from "@/components/portal/PortalTemplatesResourcesTab";
 import { PortalDocumentLibraryTab } from "@/components/portal/PortalDocumentLibraryTab";
@@ -73,6 +71,21 @@ import { PortalPlexusTasksTab } from "@/components/portal/PortalPlexusTasksTab";
 import { CanonicalCommandCalendar } from "@/components/calendar/CanonicalCommandCalendar";
 import { resolvePortalCapabilities } from "@/lib/portal/portalCapabilities";
 import { type CanonicalMonthCellSummary } from "@/calendar";
+// Task #643 — upgraded Tools workspace: launcher dock, communication
+// tray, Playground floating widgets + drag-and-drop, and in-session
+// workspace settings.
+import { ToolDock, type DockTool } from "@/components/portal/tools/ToolDock";
+import { CommunicationTray } from "@/components/portal/tools/CommunicationTray";
+import { WorkspaceSettingsDialog } from "@/components/portal/tools/WorkspaceSettingsDialog";
+import { useWorkspacePrefs, type TrayTab } from "@/components/portal/tools/workspacePrefs";
+import {
+  useWorkspaceWidgets,
+  PlaygroundWidgetLayer,
+  WIDGET_DND_MIME,
+  type PlaygroundWidgetType,
+  type WidgetPatientContext,
+} from "@/components/portal/tools/workspaceWidgets";
+import { MessageSquare, StickyNote, Settings as SettingsIcon } from "lucide-react";
 
 // The user-facing workspace role lets us distinguish PCS vs ACS for
 // capability gating (procedure-side actions are ACS-only). Legacy
@@ -1086,6 +1099,22 @@ export function TeamPortalShell({
   // refetch the assigned-work queries, change the active patient,
   // change the facility, or affect activeWorkspaceMode.
   const [globalCalendarDate, setGlobalCalendarDate] = useState<string>(todayIso());
+  // ── Task #643: upgraded Tools workspace ──────────────────────────
+  // In-session workspace preferences (Settings). Not persisted this pass.
+  const { prefs: workspacePrefs, updatePref: updateWorkspacePref, resetPrefs: resetWorkspacePrefs } =
+    useWorkspacePrefs();
+  const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
+  // Communication tray tab (bottom half of Tools panel).
+  const [trayTab, setTrayTab] = useState<TrayTab>(workspacePrefs.defaultTrayTab);
+  const trayTabInitRef = useRef(false);
+  // Playground floating widgets (sticky notes / email / team-chat).
+  // Attributed to the REAL logged-in user, never the admin view-as target.
+  const {
+    widgets: playgroundWidgets,
+    addWidget: addPlaygroundWidget,
+    updateWidget: updatePlaygroundWidget,
+    removeWidget: removePlaygroundWidget,
+  } = useWorkspaceWidgets(currentUser?.username ?? "you");
   // --- Hover-only panels (task #628) ---
   // The Tools (left) and Work Queue (right) panels always REST ASIDE (slid
   // mostly off-screen at ~50% opacity, leaving a visible edge) and reveal to
@@ -1101,7 +1130,23 @@ export function TeamPortalShell({
   // pin button in each panel's header; independent per panel.
   const [leftRailPinned, setLeftRailPinned] = useState(false);
   const [rightRailPinned, setRightRailPinned] = useState(false);
+  // Task #643 — apply in-session Settings prefs. Pin defaults + tray tab
+  // follow the workspace prefs; changing the pref updates live.
+  useEffect(() => {
+    setLeftRailPinned(workspacePrefs.toolsPinnedByDefault);
+  }, [workspacePrefs.toolsPinnedByDefault]);
+  useEffect(() => {
+    setRightRailPinned(workspacePrefs.workQueuePinnedByDefault);
+  }, [workspacePrefs.workQueuePinnedByDefault]);
+  useEffect(() => {
+    // Only seed the tray tab from the default once; user tab clicks win after.
+    if (trayTabInitRef.current) return;
+    trayTabInitRef.current = true;
+    setTrayTab(workspacePrefs.defaultTrayTab);
+  }, [workspacePrefs.defaultTrayTab]);
   const leftRailRef = useRef<HTMLDivElement>(null);
+  // Task #643 — Playground surface ref for drop-point math (drag tool → widget).
+  const playgroundSurfaceRef = useRef<HTMLDivElement>(null);
   const rightRailRef = useRef<HTMLDivElement>(null);
   // TOUCH SUPPORT (task #629) — hover is unavailable on tablets / touchscreens,
   // so the hover-only reveal from task #628 leaves touch users stuck with just
@@ -1410,6 +1455,27 @@ export function TeamPortalShell({
   const patients = livePatients;
 
   const selected = useMemo(() => patients.find((p) => p.patientScreeningId === selectedPatientId) ?? null, [patients, selectedPatientId]);
+
+  const traySelectedPatient = useMemo(
+    () =>
+      selected && typeof selected.patientScreeningId === "number"
+        ? {
+            patientScreeningId: selected.patientScreeningId,
+            name: selected.name ?? "",
+            email: (selected as { email?: string | null }).email ?? null,
+          }
+        : null,
+    [selected],
+  );
+
+  const trayTeamTasks = useMemo(
+    () =>
+      [...(tasksData?.urgent ?? []), ...(tasksData?.open ?? [])].map((t) => ({
+        id: t.id,
+        title: t.title,
+      })),
+    [tasksData],
+  );
 
   useEffect(() => {
     if (!selectedPatientId && patients.length > 0 && patients[0].patientScreeningId != null) {
@@ -1824,6 +1890,60 @@ export function TeamPortalShell({
     setCenterTitle("Documents");
   }
 
+  // ── Task #643 — Tools workspace helpers ──────────────────────────
+  // Current patient context carried onto new widgets / the tray, derived
+  // from the selected patient. Never fabricated.
+  function currentWidgetContext(): WidgetPatientContext {
+    if (!selected) return null;
+    return {
+      patientScreeningId: selected.patientScreeningId ?? null,
+      name: selected.name ?? null,
+    };
+  }
+
+  // Calendar tool action honours the in-session Settings preference.
+  function handleCalendarTool() {
+    if (workspacePrefs.calendarBehavior === "quickSchedule") {
+      setCalendarQuickScheduleDate(globalCalendarDate);
+      return;
+    }
+    // Default: open the calendar in the Playground, preserving the active
+    // patient/case context (we never clear selectedPatientId here).
+    setCenterMode("calendar");
+    setCenterTitle(`Calendar — ${globalCalendarDate}`);
+  }
+
+  // Drop a fresh sticky note at the top of the Playground.
+  function addStickyNote() {
+    if (!workspacePrefs.stickyNotesVisible) {
+      updateWorkspacePref("stickyNotesVisible", true);
+    }
+    addPlaygroundWidget({ type: "sticky", patientContext: currentWidgetContext() });
+  }
+
+  // Drag-and-drop: a tool tile dropped on the Playground surface spawns a
+  // widget of that type at the drop point, preserving patient context +
+  // logged-in user.
+  function handlePlaygroundDrop(e: React.DragEvent<HTMLDivElement>) {
+    const type = e.dataTransfer.getData(WIDGET_DND_MIME) as PlaygroundWidgetType | "";
+    if (!type) return;
+    e.preventDefault();
+    if (!workspacePrefs.stickyNotesVisible) {
+      updateWorkspacePref("stickyNotesVisible", true);
+    }
+    const rect = playgroundSurfaceRef.current?.getBoundingClientRect();
+    const x = rect ? Math.max(0, e.clientX - rect.left - 40) : 24;
+    const y = rect ? Math.max(0, e.clientY - rect.top - 16) : 16;
+    addPlaygroundWidget({ type, x, y, patientContext: currentWidgetContext() });
+  }
+
+  function handlePlaygroundDragOver(e: React.DragEvent<HTMLDivElement>) {
+    if (e.dataTransfer.types.includes(WIDGET_DND_MIME)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  }
+
   function markDockOpen(app: "tasks" | "schedule" | "consent" | "chart" | "documents") {
     setDockOpenApps((prev) => (prev.includes(app) ? prev : [...prev, app]));
     setDockActiveApp(app);
@@ -1968,9 +2088,26 @@ export function TeamPortalShell({
 
         <div className="absolute inset-0 z-[1] overflow-auto px-6 py-5">
           <div
+            ref={playgroundSurfaceRef}
             className="relative mx-auto flex h-full max-w-[1600px] flex-col px-[10%] pt-2"
             data-testid="playground-canvas-surface"
+            onDragOver={handlePlaygroundDragOver}
+            onDrop={handlePlaygroundDrop}
           >
+            {workspacePrefs.stickyNotesVisible && (
+              <PlaygroundWidgetLayer
+                widgets={playgroundWidgets}
+                onMove={(id, x, y) => updatePlaygroundWidget(id, { x, y })}
+                onUpdate={updatePlaygroundWidget}
+                onRemove={removePlaygroundWidget}
+                onOpenEmail={(ctx) => {
+                  setTrayTab("email");
+                  if (ctx?.patientScreeningId) {
+                    setSelectedPatientId(ctx.patientScreeningId);
+                  }
+                }}
+              />
+            )}
             {portalTabs.length > 0 && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1" data-testid="portal-playfield-tabs">
                 {portalTabs.map((tab) => {
@@ -2007,7 +2144,8 @@ export function TeamPortalShell({
               </div>
             )}
 
-            <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
+              <div className={workspacePrefs.playgroundLayout === "split" ? "min-w-0 basis-1/2 overflow-y-auto" : "min-h-0 flex-1 overflow-y-auto"}>
               {centerMode === "calendar" ? (
                 <div
                   className="h-full rounded-[28px] bg-white p-4 shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-y-auto"
@@ -2433,6 +2571,28 @@ export function TeamPortalShell({
                   ) : null}
                 </div>
               )}
+              </div>
+              {workspacePrefs.playgroundLayout === "split" && (
+                <div
+                  className="hidden min-h-0 basis-1/2 flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] lg:flex"
+                  data-testid="playground-split-panel"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+                    <div className="text-xs font-semibold text-slate-700">Split panel · Communication</div>
+                    <span className="text-[10px] text-slate-400">Split view</span>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-hidden">
+                    <CommunicationTray
+                      activeTab={trayTab}
+                      onTabChange={setTrayTab}
+                      selectedPatient={traySelectedPatient}
+                      currentUsername={currentUser?.username ?? "you"}
+                      currentUserId={currentUser?.id ?? null}
+                      teamTasks={trayTeamTasks}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2497,9 +2657,10 @@ export function TeamPortalShell({
               const leftNarrow = leftRailSize === "small";
               return (
               <div
-                className={`flex-1 overflow-y-auto ${leftNarrow ? "p-2 space-y-2" : "p-3 space-y-3"}`}
+                className={`flex min-h-0 flex-1 flex-col ${leftNarrow ? "p-2" : "p-3"}`}
                 data-testid="left-rail-tools-rail"
               >
+                <div className={`overflow-y-auto ${leftNarrow ? "space-y-2" : "space-y-3"} ${leftNarrow ? "flex-1" : ""}`}>
                 {/* TEAM PORTAL LEFT TOOLS RAIL (Phase 1.6)
                     Shared general tools rail for PCS and ACS. The rail
                     is identical in both portals; only the work-context
@@ -2508,118 +2669,147 @@ export function TeamPortalShell({
                     Directory details, no DNC/cooldown detail, no
                     metrics dashboards, no outreach call-list queue
                     (that belongs to the right rail). */}
-                <div
-                  className={leftNarrow ? "grid grid-cols-1 gap-2" : "grid grid-cols-3 gap-2"}
-                  data-testid="left-rail-tools-icons"
-                >
-                  <LeftRailToolsButton
-                    label="Calendar"
-                    icon={CalendarDays}
-                    active={false}
-                    compact={leftNarrow}
-                    onClick={() => {
-                      // Open the quick-schedule pop-up seeded with the current
-                      // calendar date (task #635). The full month view stays
-                      // reachable via the mini-calendar's expand-to-canvas button.
-                      setCalendarQuickScheduleDate(globalCalendarDate);
-                    }}
-                    testId="left-rail-tool-calendar"
-                  />
-                  <LeftRailToolsButton
-                    label="Email"
-                    icon={Mail}
-                    active={activeKind === "email"}
-                    compact={leftNarrow}
-                    onClick={() => openPortalTab("email")}
-                    testId="left-rail-tool-email"
-                  />
-                  <LeftRailToolsButton
-                    label="Marketing"
-                    icon={Megaphone}
-                    active={activeKind === "marketing"}
-                    compact={leftNarrow}
-                    onClick={() => openPortalTab("marketing")}
-                    testId="left-rail-tool-marketing"
-                  />
-                  <LeftRailToolsButton
-                    label="Documents"
-                    icon={FileText}
-                    active={activeKind === "documentLibrary"}
-                    compact={leftNarrow}
-                    onClick={() => openPortalTab("documentLibrary")}
-                    testId="left-rail-tool-document-library"
-                  />
-                  <LeftRailToolsButton
-                    label="Patient Search"
-                    icon={Search}
-                    active={activeKind === "patientSearch"}
-                    compact={leftNarrow}
-                    onClick={() => openPortalTab("patientSearch")}
-                    testId="left-rail-tool-patient-search"
-                  />
-                  <LeftRailToolsButton
-                    label="Tasks"
-                    icon={ClipboardList}
-                    active={activeKind === "plexusTasks"}
-                    compact={leftNarrow}
-                    onClick={() => openPortalTab("plexusTasks")}
-                    badge={taskCount > 0 ? taskCount : undefined}
-                    testId="left-rail-tool-tasks"
-                  />
-                  <LeftRailToolsButton
-                    label="Templates"
-                    icon={BookOpen}
-                    active={activeKind === "resources"}
-                    compact={leftNarrow}
-                    onClick={() => openPortalTab("resources")}
-                    testId="left-rail-tool-resources"
-                  />
-                  <LeftRailToolsButton
-                    label="Quick Note"
-                    icon={NotebookPen}
-                    active={activeKind === "quickNote"}
-                    compact={leftNarrow}
-                    onClick={() => openPortalTab("quickNote")}
-                    testId="left-rail-tool-quick-note"
-                  />
-                  <LeftRailToolsButton
-                    label="Contacts"
-                    icon={Phone}
-                    active={activeKind === "internalContacts"}
-                    compact={leftNarrow}
-                    onClick={() => openPortalTab("internalContacts")}
-                    testId="left-rail-tool-internal-contacts"
-                  />
-                  <LeftRailToolsButton
-                    label="Calls"
-                    icon={PhoneCall}
-                    active={activeKind === "calls"}
-                    compact={leftNarrow}
-                    onClick={() => openPortalTab("calls")}
-                    testId="left-rail-tool-calls"
-                  />
+                {(() => {
+                  // Premium launcher dock (Task #643). Communication tools
+                  // (Messages/Team Chat/Email) drive the tray tab below;
+                  // Email/Team Chat/Sticky Notes tiles are also draggable
+                  // onto the Playground to spawn floating widgets. Calendar
+                  // honours the Settings pref (Playground vs quick-schedule).
+                  const dockTools: DockTool[] = [
+                    {
+                      id: "messages",
+                      label: "Messages",
+                      icon: MessageSquare,
+                      onClick: () => setTrayTab("patient"),
+                      active: trayTab === "patient",
+                      testId: "left-rail-tool-messages",
+                    },
+                    {
+                      id: "teamChat",
+                      label: "Team Chat",
+                      icon: Users,
+                      onClick: () => setTrayTab("team"),
+                      active: trayTab === "team",
+                      draggableWidget: "teamChat",
+                      testId: "left-rail-tool-team-chat",
+                    },
+                    {
+                      id: "email",
+                      label: "Email",
+                      icon: Mail,
+                      onClick: () => setTrayTab("email"),
+                      active: trayTab === "email",
+                      draggableWidget: "email",
+                      testId: "left-rail-tool-email",
+                    },
+                    {
+                      id: "calendar",
+                      label: "Calendar",
+                      icon: CalendarDays,
+                      onClick: handleCalendarTool,
+                      active: centerMode === "calendar",
+                      testId: "left-rail-tool-calendar",
+                    },
+                    {
+                      id: "sticky",
+                      label: "Sticky Notes",
+                      icon: StickyNote,
+                      onClick: addStickyNote,
+                      draggableWidget: "sticky",
+                      testId: "left-rail-tool-sticky-notes",
+                    },
+                    {
+                      id: "documents",
+                      label: "Documents",
+                      icon: FileText,
+                      onClick: () => openPortalTab("documentLibrary"),
+                      active: activeKind === "documentLibrary",
+                      testId: "left-rail-tool-document-library",
+                    },
+                    {
+                      id: "resources",
+                      label: "Scripts",
+                      icon: BookOpen,
+                      onClick: () => openPortalTab("resources"),
+                      active: activeKind === "resources",
+                      testId: "left-rail-tool-resources",
+                    },
+                    {
+                      id: "marketing",
+                      label: "Proof/PDFs",
+                      icon: Megaphone,
+                      onClick: () => openPortalTab("marketing"),
+                      active: activeKind === "marketing",
+                      testId: "left-rail-tool-marketing",
+                    },
+                    {
+                      id: "tasks",
+                      label: "Tasks",
+                      icon: ClipboardList,
+                      onClick: () => openPortalTab("plexusTasks"),
+                      active: activeKind === "plexusTasks",
+                      badge: taskCount > 0 ? taskCount : undefined,
+                      testId: "left-rail-tool-tasks",
+                    },
+                    {
+                      id: "patientSearch",
+                      label: "Patient Search",
+                      icon: Search,
+                      onClick: () => openPortalTab("patientSearch"),
+                      active: activeKind === "patientSearch",
+                      testId: "left-rail-tool-patient-search",
+                    },
+                    {
+                      id: "quickNote",
+                      label: "Quick Note",
+                      icon: NotebookPen,
+                      onClick: () => openPortalTab("quickNote"),
+                      active: activeKind === "quickNote",
+                      testId: "left-rail-tool-quick-note",
+                    },
+                    {
+                      id: "contacts",
+                      label: "Contacts",
+                      icon: Phone,
+                      onClick: () => openPortalTab("internalContacts"),
+                      active: activeKind === "internalContacts",
+                      testId: "left-rail-tool-internal-contacts",
+                    },
+                    {
+                      id: "calls",
+                      label: "Calls",
+                      icon: PhoneCall,
+                      onClick: () => openPortalTab("calls"),
+                      active: activeKind === "calls",
+                      testId: "left-rail-tool-calls",
+                    },
+                    {
+                      id: "settings",
+                      label: "Settings",
+                      icon: SettingsIcon,
+                      onClick: () => setWorkspaceSettingsOpen(true),
+                      active: workspaceSettingsOpen,
+                      testId: "left-rail-tool-settings",
+                    },
+                  ];
+                  return <ToolDock tools={dockTools} compact={leftNarrow} />;
+                })()}
                 </div>
 
-                {/* Compact Global Calendar — NOT patient-centric and
-                    ISOLATED from the right-rail queue (Phase 1.7).
-                    Selecting a date only updates globalCalendarDate;
-                    the right-rail feeds + center-canvas patient
-                    context remain on their own selectedDate. Hidden in
-                    the narrow icon rail (too wide to fit). */}
+                {/* Communication tray (Task #643) — bottom half of the
+                    Tools panel. Hidden in the narrow icon rail (too small).
+                    Honest boundaries: no fabricated messages/sends. */}
                 {!leftNarrow && (
-                  <LeftRailCompactCalendar
-                    selectedDate={globalCalendarDate}
-                    onSelectDate={(d) => {
-                      // Clicking a date both moves the mini-calendar cursor and
-                      // opens the quick-schedule pop-up pre-filled with it (#635).
-                      setGlobalCalendarDate(d);
-                      setCalendarQuickScheduleDate(d);
-                    }}
-                    onExpandToCanvas={() => {
-                      setCenterMode("calendar");
-                      setCenterTitle(`Calendar — ${globalCalendarDate}`);
-                    }}
-                  />
+                  <div className="mt-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/40 bg-white/40">
+                    <CommunicationTray
+                      activeTab={trayTab}
+                      onTabChange={setTrayTab}
+                      selectedPatient={traySelectedPatient}
+                      currentUsername={currentUser?.username ?? "you"}
+                      currentUserId={currentUser?.id ?? null}
+                      teamTasks={trayTeamTasks}
+                    />
+                  </div>
                 )}
               </div>
               );
@@ -3384,6 +3574,15 @@ export function TeamPortalShell({
           setSelectedDate(d);
           setTeamPortalCalendarOpen(false);
         }}
+      />
+
+      {/* In-session workspace settings (Task #643). Not persisted. */}
+      <WorkspaceSettingsDialog
+        open={workspaceSettingsOpen}
+        onOpenChange={setWorkspaceSettingsOpen}
+        prefs={workspacePrefs}
+        updatePref={updateWorkspacePref}
+        resetPrefs={resetWorkspacePrefs}
       />
     </div>
   );

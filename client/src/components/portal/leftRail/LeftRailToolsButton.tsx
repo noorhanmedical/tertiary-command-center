@@ -14,6 +14,10 @@ export type LeftRailToolsButtonProps = {
   /** Icon-only "sticker glass" mode used by the narrow left rail —
    *  hides the label, keeps the icon + badge in a square tile. */
   compact?: boolean;
+  /** When true the tile can be dragged onto the Playground surface to
+   *  spawn a floating widget. A subtle dashed hover ring hints at it. */
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent<HTMLButtonElement>) => void;
   testId: string;
 };
 
@@ -24,6 +28,8 @@ export function LeftRailToolsButton({
   onClick,
   badge,
   compact = false,
+  draggable = false,
+  onDragStart,
   testId,
 }: LeftRailToolsButtonProps) {
   return (
@@ -31,14 +37,17 @@ export function LeftRailToolsButton({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      title={label}
+      title={draggable ? `${label} — click to open, drag onto Playground` : label}
       aria-label={label}
+      draggable={draggable}
+      onDragStart={onDragStart}
       className={[
         "group relative inline-flex flex-col items-center justify-center gap-1 rounded-xl border text-center backdrop-blur-md transition-colors",
         compact ? "aspect-square w-full p-0" : "px-2 py-2",
         active
           ? "border-white/50 bg-white/70 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.18)]"
           : "border-white/30 bg-white/30 text-slate-900 hover:bg-white/55",
+        draggable ? "cursor-grab active:cursor-grabbing hover:ring-1 hover:ring-dashed hover:ring-indigo-300" : "",
       ].join(" ")}
       data-testid={testId}
     >
