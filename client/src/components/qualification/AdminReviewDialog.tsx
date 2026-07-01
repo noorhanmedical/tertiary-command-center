@@ -20,22 +20,20 @@ import {
 } from "@/components/ui/popover";
 import {
   Loader2,
-  ShieldCheck,
   AlertTriangle,
-  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Lightbulb,
   Pencil,
   Plus,
   RefreshCw,
   Sparkles,
-  StickyNote,
   Trash2,
   X,
+  XCircle,
   Search,
-  FileText,
   BookOpen,
   Check,
 } from "lucide-react";
@@ -43,7 +41,6 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { PatientScreening } from "@shared/schema";
 import { computeAdminReview, type AdminApprovalStatus } from "@/lib/adminReviewStatus";
-import { PatientPdfActions } from "@/components/qualification/PatientPdfActions";
 import {
   openPatientPacketPrintPreview,
 } from "@/lib/pdfGeneration";
@@ -2723,7 +2720,7 @@ export function AdminReviewDialog({
     <>
         {/* Smoke header — black at ~70% opacity per Team Portal spec. */}
         <DialogHeader
-          className="px-6 pt-5 pb-4 border-b border-white/10 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white"
+          className="px-5 py-2.5 border-b border-white/10 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white"
           data-testid="admin-review-smoke-header"
         >
           <div className="flex items-start justify-between gap-3">
@@ -2763,55 +2760,8 @@ export function AdminReviewDialog({
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {/* Sibling navigation — Prev / counter / Next. Visible
-                  only when the caller passed a siblings list. Auto-
-                  advance on approve is handled in approvalMutation's
-                  onSuccess.
-                  SOURCE MARKER: Admin Review sibling navigation */}
-              {siblings && siblings.length >= 1 && (
-                <div
-                  className="inline-flex flex-col items-center gap-1"
-                  data-testid="admin-review-sibling-nav"
-                  data-active-index={activeIndex}
-                  data-total={totalSiblings}
-                  data-approve-pending={approvalMutation.isPending ? "true" : "false"}
-                >
-                  {/* SOURCE MARKER: Admin Review navigation disabled during approve */}
-                  <div className="inline-flex items-center gap-1 rounded-md bg-white/10 px-1 py-0.5">
-                    <button
-                      type="button"
-                      onClick={() => goToSibling(-1)}
-                      disabled={!hasPrev || approvalMutation.isPending}
-                      aria-label="Previous patient"
-                      title="Previous patient"
-                      data-testid="admin-review-sibling-prev"
-                      className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => goToSibling(1)}
-                      disabled={!hasNext || approvalMutation.isPending}
-                      aria-label="Next patient"
-                      title={hasNext ? "Next patient" : "No more patients"}
-                      data-testid="admin-review-sibling-next"
-                      className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <span
-                    className="text-[10px] font-medium text-white/70 whitespace-nowrap leading-none"
-                    data-testid="admin-review-sibling-count"
-                  >
-                    {activeIndex + 1} of {totalSiblings}{" "}
-                    {totalSiblings === 1 ? "patient" : "patients"} for Admin Review
-                  </span>
-                </div>
-              )}
-              {/* Regenerate moved into the Updates section (bottom of the
-                  right panel) per the Admin Review cleanup spec. */}
+              {/* Sibling navigation moved to the bottom-center footer of
+                  the right panel per the Admin Review layout update. */}
               <button
                 type="button"
                 onClick={() => onOpenChange(false)}
@@ -3852,6 +3802,28 @@ export function AdminReviewDialog({
                           />
                         )}
                       />
+                      {/* Hx (symptoms / history) shown alongside Dx so the
+                          reviewer has both in one popover. */}
+                      <AvailableButtonsRow
+                        title="Hx (Symptoms / History)"
+                        testId="admin-review-available-buttons-dx-hx"
+                        emptyText="No symptoms recorded"
+                        items={availableButtons.filter(
+                          (b) => b.kind === "symptom" || b.kind === "history",
+                        )}
+                        renderItem={(b) => (
+                          <SupportingChipButton
+                            key={buttonKey(b)}
+                            btn={b}
+                            testId="admin-review-hx-button"
+                            tone="amber"
+                            prefix="Hx"
+                            ultrasoundTests={ultrasoundTests}
+                            isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
+                            onAssign={(target) => assignToTarget(target, b)}
+                          />
+                        )}
+                      />
                       {/* Suggested diagnoses from meds — inactive until
                           accepted. Clicking the row promotes the
                           suggestion to a real SupportingButton via
@@ -4015,185 +3987,16 @@ export function AdminReviewDialog({
                   </section>
                 </div>
 
-                {/* Actions — heavier surfaces collapsed into popovers */}
-                <div data-testid="admin-review-actions-group">
-                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Actions</div>
-                  <div className="grid grid-cols-2 gap-2">
-
-                    {/* Documents — single Plexus / Clinician PDF set */}
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          data-testid="admin-review-documents-trigger"
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/70 bg-white/70 text-slate-700 hover:bg-white shadow-sm px-3 py-2 text-xs font-semibold transition-colors"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          Documents
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="end"
-                        className="w-[300px] p-3"
-                        data-testid="admin-review-documents-popover"
-                      >
-                        <div data-testid="admin-review-documents-group">
-                          <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Documents</div>
-                          <section className="space-y-2" data-testid="admin-review-right-actions-panel">
-              <div data-testid="admin-review-pdf-actions-inline" className="bg-white rounded-xl p-2">
-                <PatientPdfActions
-                  patient={patient}
-                  facility={facility ?? patient.facility ?? null}
-                  scheduleDate={scheduleDate ?? null}
-                  compact
-                />
-              </div>
-                          </section>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-
-                    {/* Admin note */}
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          aria-label="Add admin note"
-                          title={adminNote ? "Admin note recorded" : "Add admin note"}
-                          data-testid="admin-review-admin-note-icon-button"
-                          className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold shadow-sm transition-colors ${adminNote ? "border-[#3d4a6b]/30 bg-[#3d4a6b]/10 text-[#3d4a6b]" : "border-white/70 bg-white/70 text-slate-700 hover:bg-white"}`}
-                        >
-                          <StickyNote className="w-3.5 h-3.5" />
-                          Note
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="end"
-                        className="w-[300px] p-3 space-y-2"
-                        data-testid="admin-review-admin-note-popover"
-                      >
-                        <div data-testid="admin-review-admin-note-group">
-                    <Label
-                      htmlFor={`admin-review-admin-note-${patient.id}`}
-                      className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
-                    >
-                      Admin Note
-                    </Label>
-                    <Textarea
-                      id={`admin-review-admin-note-${patient.id}`}
-                      value={adminNote}
-                      rows={4}
-                      onChange={(e) => setAdminNote(e.target.value)}
-                      onBlur={() => {
-                        if (adminNote.trim()) {
-                          recordAdminReviewUpdate("admin_note_updated", "Admin note updated", {
-                            length: adminNote.length,
-                          });
-                        }
-                      }}
-                      placeholder="Optional context attached to this approval action"
-                      data-testid={`admin-review-admin-note-${patient.id}`}
-                    />
-                          <div className="text-[11px] text-slate-500">
-                            {adminNote.trim() ? "Admin note recorded for this session" : "No admin note yet"}
-                          </div>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-
-                    {/* Scheduler routing */}
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          data-testid="admin-review-scheduler-trigger"
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/70 bg-white/70 text-slate-700 hover:bg-white shadow-sm px-3 py-2 text-xs font-semibold transition-colors"
-                        >
-                          <ShieldCheck className="w-3.5 h-3.5" />
-                          Scheduler
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="end"
-                        className="w-[320px] p-3 space-y-2"
-                        data-testid="admin-review-scheduler-popover"
-                      >
-                        <div data-testid="admin-review-scheduler-group">
-                          <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Scheduler</div>
-                {/* Scheduler routing chip. The settings source is the
-                    canonical outreach_schedulers table (admin-edited
-                    via Settings → Scheduler Team). When that table
-                    has a scheduler matching this patient's facility,
-                    the chip lights up + the inline ribbon below
-                    reads "Assigned by Scheduler Settings". When no
-                    row matches, the chip falls back to the
-                    engagement queue and a comment marker in the
-                    backend documents the fallback path.
-                    SOURCE MARKER: Engagement Center uses assigned scheduler from scheduler settings
-                    SOURCE MARKER: Scheduler settings fallback is Unassigned Engagement Queue */}
-                <div
-                  className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 text-[10px]"
-                  data-testid="admin-review-scheduler-routing-chip"
-                  data-scheduler-state={
-                    engagementAssignmentQuery.data?.scheduler
-                      ? "assigned"
-                      : engagementAssignmentQuery.data
-                        ? "unassigned"
-                        : "pending"
-                  }
-                  data-settings-source={
-                    engagementAssignmentQuery.data?.scheduler
-                      ? "outreach-schedulers-table"
-                      : "missing"
-                  }
-                >
-                  <ShieldCheck className="w-3 h-3" />
-                  {engagementAssignmentQuery.isLoading
-                    ? "Loading scheduler routing…"
-                    : engagementAssignmentQuery.data?.scheduler
-                      ? `Scheduler: ${engagementAssignmentQuery.data.scheduler.name}`
-                      : engagementAssignmentQuery.data
-                        ? "Unassigned / Engagement Queue"
-                        : "Scheduler routes on approval"}
-                </div>
-                <div
-                  className="text-[10px] text-slate-500"
-                  data-testid="admin-review-scheduler-settings-source"
-                  data-source-state={
-                    engagementAssignmentQuery.data?.scheduler
-                      ? "outreach-schedulers-table"
-                      : "missing"
-                  }
-                >
-                  {engagementAssignmentQuery.data?.scheduler ? (
-                    <span data-testid="admin-review-assigned-by-scheduler-settings">
-                      Assigned by Scheduler Settings · outreach_schedulers
-                    </span>
-                  ) : (
-                    <span>
-                      Scheduler settings source missing; using current scheduler runtime fallback
-                    </span>
-                  )}
-                </div>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-
-
-
-                  </div>
-                </div>
-
               </div>
             </ScrollArea>
 
-            {/* Updates — premium glass panel occupying the bottom half */}
+            {/* Updates — flat section occupying the bottom half (no nested tile) */}
             <div
-              className="mx-3 mb-2 flex min-h-0 flex-1 basis-0 flex-col overflow-hidden rounded-2xl border border-white/70 bg-gradient-to-b from-white/85 to-white/45 shadow-[0_12px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl"
+              className="mx-3 mb-2 flex min-h-0 flex-1 basis-0 flex-col overflow-hidden border-t border-slate-200/70"
               data-testid="admin-review-updates-group"
             >
               <div
-                className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-white/60 bg-white/40"
+                className="flex items-center justify-between gap-2 px-1 py-2 border-b border-slate-200/60"
                 data-record-helper="admin-review-record-update"
               >
                 <div className="flex items-center gap-2">
@@ -4204,29 +4007,34 @@ export function AdminReviewDialog({
                     {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
                   </span>
                 </div>
-                {needsRegeneration && (
-                  <button
-                    type="button"
-                    onClick={() => void regeneratePending()}
-                    disabled={regenChangedInFlight}
-                    aria-label="Regenerate"
-                    title={sourceDataSaved
+                <button
+                  type="button"
+                  onClick={() => void regeneratePending()}
+                  disabled={regenChangedInFlight || !needsRegeneration}
+                  aria-label="Regenerate"
+                  title={needsRegeneration
+                    ? (sourceDataSaved
                       ? "Regenerate all ancillaries with updated source data"
                       : `Regenerate: ${staleTargetIds
                           .map(ancillaryLabelForTargetId)
-                          .join(", ")}`}
-                    data-testid="admin-review-regenerate-changed"
-                    data-stale-count={staleTargetIds.length}
-                    className="inline-flex items-center gap-1 h-6 px-2.5 rounded-full bg-gradient-to-b from-slate-800 to-slate-900 hover:from-slate-700 hover:to-slate-900 text-white text-[10px] font-semibold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {regenChangedInFlight ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <RefreshCw className="w-3 h-3" />
-                    )}
-                    Regenerate
-                  </button>
-                )}
+                          .join(", ")}`)
+                    : "No changes pending — regeneration not needed"}
+                  data-testid="admin-review-regenerate-changed"
+                  data-stale-count={staleTargetIds.length}
+                  data-needs-regeneration={needsRegeneration ? "true" : "false"}
+                  className={`inline-flex items-center gap-1 h-6 px-2.5 rounded-full text-[10px] font-semibold shadow-sm disabled:cursor-not-allowed transition-colors ${
+                    needsRegeneration
+                      ? "bg-gradient-to-b from-emerald-400 to-emerald-500 hover:from-emerald-400 hover:to-emerald-600 text-white disabled:opacity-50"
+                      : "border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 disabled:opacity-100"
+                  }`}
+                >
+                  {regenChangedInFlight ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-3 h-3" />
+                  )}
+                  Regenerate
+                </button>
               </div>
               <ScrollArea className="min-h-0 flex-1">
                 <div className="px-4 py-3" data-testid="admin-review-updates-made-box">
@@ -4282,57 +4090,99 @@ export function AdminReviewDialog({
               </ScrollArea>
             </div>
 
-            {/* Decision — floating glass action bar */}
+            {/* Decision footer — sibling nav centered, decision buttons right (no tile) */}
             <div
-              className="mx-3 mb-3 rounded-2xl border border-white/70 bg-white/65 p-2.5 shadow-[0_16px_48px_rgba(15,23,42,0.14)] backdrop-blur-xl"
+              className="mx-3 mb-3 flex items-center gap-2 px-1"
               data-testid="admin-review-decision-group"
             >
-              <Button
-                type="button"
-                disabled={approvalMutation.isPending}
-                onClick={() => {
-                  approvalMutation.mutate({ status: "approved" });
-                  recordAdminReviewUpdate("approval_approved", "Approved review");
-                }}
-                data-testid="admin-review-approve-button"
-                data-bar-testid={`admin-review-button-approve-${patient.id}`}
-                className="w-full h-10 rounded-xl bg-gradient-to-b from-emerald-400 to-emerald-500 text-white font-semibold shadow-[0_8px_20px_rgba(16,185,129,0.35)] hover:from-emerald-400 hover:to-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {approvalMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="w-4 h-4 mr-1.5" />
-                )}
-                {isUnder16 ? "Admin Override Approve" : "Approve"}
-              </Button>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <Button
+              <div className="flex-1" />
+              {siblings && siblings.length >= 1 && (
+                <div
+                  className="inline-flex items-center gap-1.5"
+                  data-testid="admin-review-sibling-nav"
+                  data-active-index={activeIndex}
+                  data-total={totalSiblings}
+                  data-approve-pending={approvalMutation.isPending ? "true" : "false"}
+                >
+                  <button
+                    type="button"
+                    onClick={() => goToSibling(-1)}
+                    disabled={!hasPrev || approvalMutation.isPending}
+                    aria-label="Previous patient"
+                    title="Previous patient"
+                    data-testid="admin-review-sibling-prev"
+                    className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span
+                    className="text-[10px] font-medium text-slate-500 whitespace-nowrap leading-none tabular-nums"
+                    data-testid="admin-review-sibling-count"
+                  >
+                    {activeIndex + 1} of {totalSiblings}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => goToSibling(1)}
+                    disabled={!hasNext || approvalMutation.isPending}
+                    aria-label="Next patient"
+                    title={hasNext ? "Next patient" : "No more patients"}
+                    data-testid="admin-review-sibling-next"
+                    className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+              <div className="flex-1 flex items-center justify-end gap-2">
+                <button
                   type="button"
-                  variant="ghost"
+                  disabled={approvalMutation.isPending}
+                  onClick={() => {
+                    approvalMutation.mutate({ status: "approved" });
+                    recordAdminReviewUpdate("approval_approved", "Approved review");
+                  }}
+                  aria-label={isUnder16 ? "Admin Override Approve" : "Approve"}
+                  title={isUnder16 ? "Admin Override Approve" : "Approve"}
+                  data-testid="admin-review-approve-button"
+                  data-bar-testid={`admin-review-button-approve-${patient.id}`}
+                  className="inline-flex flex-1 items-center justify-center h-11 rounded-xl bg-emerald-600 text-white shadow-[0_8px_20px_rgba(5,150,105,0.4)] hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {approvalMutation.isPending ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Check className="w-5 h-5" strokeWidth={3} />
+                  )}
+                </button>
+                <button
+                  type="button"
                   disabled={approvalMutation.isPending}
                   onClick={() => {
                     approvalMutation.mutate({ status: "needs_info" });
                     recordAdminReviewUpdate("approval_pended", "Pended review");
                   }}
+                  aria-label="Pend"
+                  title="Pend"
                   data-testid="admin-review-pend-button"
                   data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
-                  className="h-8 rounded-lg text-amber-700 hover:bg-amber-100/70 hover:text-amber-800"
+                  className="inline-flex flex-1 items-center justify-center h-11 rounded-xl bg-amber-500 text-white shadow-[0_8px_20px_rgba(217,119,6,0.4)] hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  Pend
-                </Button>
-                <Button
+                  <Clock className="w-5 h-5" strokeWidth={2.5} />
+                </button>
+                <button
                   type="button"
-                  variant="ghost"
                   disabled={approvalMutation.isPending}
                   onClick={() => {
                     approvalMutation.mutate({ status: "rejected" });
                     recordAdminReviewUpdate("approval_rejected", "Rejected review");
                   }}
+                  aria-label="Reject"
+                  title="Reject"
                   data-testid={`admin-review-button-reject-${patient.id}`}
-                  className="h-8 rounded-lg text-rose-600 hover:bg-rose-100/70 hover:text-rose-700"
+                  className="inline-flex flex-1 items-center justify-center h-11 rounded-xl bg-rose-600 text-white shadow-[0_8px_20px_rgba(225,29,72,0.4)] hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  Reject
-                </Button>
+                  <XCircle className="w-5 h-5" strokeWidth={2.5} />
+                </button>
               </div>
             </div>
           </aside>
