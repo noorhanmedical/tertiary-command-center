@@ -24,3 +24,4 @@ export * from "./analysisJobs.repo";
 export * from "./plexus.repo";
 export * from "./marketingMaterials.repo";
 export * from "./documentLibrary.repo";
+export * from "./directMessages.repo";

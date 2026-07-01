@@ -74,7 +74,7 @@ import { type CanonicalMonthCellSummary } from "@/calendar";
 // Task #643 — upgraded Tools workspace: launcher dock, communication
 // tray, Playground floating widgets + drag-and-drop, and in-session
 // workspace settings.
-import { ToolDock, type DockTool } from "@/components/portal/tools/ToolDock";
+import { ToolDock, type DockTool, type DockGroup } from "@/components/portal/tools/ToolDock";
 import { CommunicationTray } from "@/components/portal/tools/CommunicationTray";
 import { WorkspaceSettingsDialog } from "@/components/portal/tools/WorkspaceSettingsDialog";
 import { useWorkspacePrefs, type TrayTab } from "@/components/portal/tools/workspacePrefs";
@@ -1114,7 +1114,7 @@ export function TeamPortalShell({
     addWidget: addPlaygroundWidget,
     updateWidget: updatePlaygroundWidget,
     removeWidget: removePlaygroundWidget,
-  } = useWorkspaceWidgets(currentUser?.username ?? "you");
+  } = useWorkspaceWidgets(currentUser?.username ?? "you", currentUserId ?? null);
   // --- Hover-only panels (task #628) ---
   // The Tools (left) and Work Queue (right) panels always REST ASIDE (slid
   // mostly off-screen at ~50% opacity, leaving a visible edge) and reveal to
@@ -2101,10 +2101,10 @@ export function TeamPortalShell({
                 onUpdate={updatePlaygroundWidget}
                 onRemove={removePlaygroundWidget}
                 onOpenEmail={(ctx) => {
-                  setTrayTab("email");
                   if (ctx?.patientScreeningId) {
                     setSelectedPatientId(ctx.patientScreeningId);
                   }
+                  openPortalTab("email");
                 }}
               />
             )}
@@ -2585,8 +2585,6 @@ export function TeamPortalShell({
                     <CommunicationTray
                       activeTab={trayTab}
                       onTabChange={setTrayTab}
-                      selectedPatient={traySelectedPatient}
-                      currentUsername={currentUser?.username ?? "you"}
                       currentUserId={currentUser?.id ?? null}
                       teamTasks={trayTeamTasks}
                     />
@@ -2670,133 +2668,166 @@ export function TeamPortalShell({
                     metrics dashboards, no outreach call-list queue
                     (that belongs to the right rail). */}
                 {(() => {
-                  // Premium launcher dock (Task #643). Communication tools
-                  // (Messages/Team Chat/Email) drive the tray tab below;
-                  // Email/Team Chat/Sticky Notes tiles are also draggable
-                  // onto the Playground to spawn floating widgets. Calendar
-                  // honours the Settings pref (Playground vs quick-schedule).
-                  const dockTools: DockTool[] = [
+                  // Premium launcher dock (Task #655). Tools are organized
+                  // into labeled, color-tinted frosted-glass GROUPS:
+                  //   - Messaging: Direct + Team drive the tray tabs below;
+                  //     Email opens the real composer in the Playground and
+                  //     is draggable to spawn a floating widget.
+                  //   - Notes & Docs: Sticky Notes (persisted, draggable),
+                  //     Quick Note, Documents, Scripts, Proof/PDFs.
+                  //   - Work: Calendar (honours Settings pref), Tasks,
+                  //     Calls, Contacts, Patient Search.
+                  //   - System: Settings.
+                  const dockGroups: DockGroup[] = [
                     {
-                      id: "messages",
-                      label: "Messages",
-                      icon: MessageSquare,
-                      onClick: () => setTrayTab("patient"),
-                      active: trayTab === "patient",
-                      testId: "left-rail-tool-messages",
+                      id: "messaging",
+                      label: "Messaging",
+                      tint: "sky",
+                      tools: [
+                        {
+                          id: "direct",
+                          label: "Direct",
+                          icon: MessageSquare,
+                          onClick: () => setTrayTab("direct"),
+                          active: trayTab === "direct",
+                          testId: "left-rail-tool-direct",
+                        },
+                        {
+                          id: "teamChat",
+                          label: "Team Chat",
+                          icon: Users,
+                          onClick: () => setTrayTab("team"),
+                          active: trayTab === "team",
+                          testId: "left-rail-tool-team-chat",
+                        },
+                        {
+                          id: "email",
+                          label: "Email",
+                          icon: Mail,
+                          onClick: () => openPortalTab("email"),
+                          active: activeKind === "email",
+                          draggableWidget: "email",
+                          testId: "left-rail-tool-email",
+                        },
+                      ],
                     },
                     {
-                      id: "teamChat",
-                      label: "Team Chat",
-                      icon: Users,
-                      onClick: () => setTrayTab("team"),
-                      active: trayTab === "team",
-                      draggableWidget: "teamChat",
-                      testId: "left-rail-tool-team-chat",
+                      id: "notesDocs",
+                      label: "Notes & Docs",
+                      tint: "amber",
+                      tools: [
+                        {
+                          id: "sticky",
+                          label: "Sticky Notes",
+                          icon: StickyNote,
+                          onClick: addStickyNote,
+                          draggableWidget: "sticky",
+                          testId: "left-rail-tool-sticky-notes",
+                        },
+                        {
+                          id: "quickNote",
+                          label: "Quick Note",
+                          icon: NotebookPen,
+                          onClick: () => openPortalTab("quickNote"),
+                          active: activeKind === "quickNote",
+                          testId: "left-rail-tool-quick-note",
+                        },
+                        {
+                          id: "documents",
+                          label: "Documents",
+                          icon: FileText,
+                          onClick: () => openPortalTab("documentLibrary"),
+                          active: activeKind === "documentLibrary",
+                          testId: "left-rail-tool-document-library",
+                        },
+                        {
+                          id: "resources",
+                          label: "Scripts",
+                          icon: BookOpen,
+                          onClick: () => openPortalTab("resources"),
+                          active: activeKind === "resources",
+                          testId: "left-rail-tool-resources",
+                        },
+                        {
+                          id: "marketing",
+                          label: "Proof/PDFs",
+                          icon: Megaphone,
+                          onClick: () => openPortalTab("marketing"),
+                          active: activeKind === "marketing",
+                          testId: "left-rail-tool-marketing",
+                        },
+                      ],
                     },
                     {
-                      id: "email",
-                      label: "Email",
-                      icon: Mail,
-                      onClick: () => setTrayTab("email"),
-                      active: trayTab === "email",
-                      draggableWidget: "email",
-                      testId: "left-rail-tool-email",
+                      id: "work",
+                      label: "Work",
+                      tint: "emerald",
+                      tools: [
+                        {
+                          id: "calendar",
+                          label: "Calendar",
+                          icon: CalendarDays,
+                          onClick: handleCalendarTool,
+                          // Active when the calendar view is open in the
+                          // Playground OR the quick-schedule pop-up it
+                          // launches is showing, so the tool reads as
+                          // engaged either way.
+                          active:
+                            centerMode === "calendar" || !!calendarQuickScheduleDate,
+                          testId: "left-rail-tool-calendar",
+                        },
+                        {
+                          id: "tasks",
+                          label: "Tasks",
+                          icon: ClipboardList,
+                          onClick: () => openPortalTab("plexusTasks"),
+                          active: activeKind === "plexusTasks",
+                          badge: taskCount > 0 ? taskCount : undefined,
+                          testId: "left-rail-tool-tasks",
+                        },
+                        {
+                          id: "calls",
+                          label: "Calls",
+                          icon: PhoneCall,
+                          onClick: () => openPortalTab("calls"),
+                          active: activeKind === "calls",
+                          testId: "left-rail-tool-calls",
+                        },
+                        {
+                          id: "contacts",
+                          label: "Contacts",
+                          icon: Phone,
+                          onClick: () => openPortalTab("internalContacts"),
+                          active: activeKind === "internalContacts",
+                          testId: "left-rail-tool-internal-contacts",
+                        },
+                        {
+                          id: "patientSearch",
+                          label: "Patient Search",
+                          icon: Search,
+                          onClick: () => openPortalTab("patientSearch"),
+                          active: activeKind === "patientSearch",
+                          testId: "left-rail-tool-patient-search",
+                        },
+                      ],
                     },
                     {
-                      id: "calendar",
-                      label: "Calendar",
-                      icon: CalendarDays,
-                      onClick: handleCalendarTool,
-                      // Active when the calendar view is open in the
-                      // Playground OR the quick-schedule pop-up it launches
-                      // is showing, so the tool reads as engaged either way.
-                      active:
-                        centerMode === "calendar" || !!calendarQuickScheduleDate,
-                      testId: "left-rail-tool-calendar",
-                    },
-                    {
-                      id: "sticky",
-                      label: "Sticky Notes",
-                      icon: StickyNote,
-                      onClick: addStickyNote,
-                      draggableWidget: "sticky",
-                      testId: "left-rail-tool-sticky-notes",
-                    },
-                    {
-                      id: "documents",
-                      label: "Documents",
-                      icon: FileText,
-                      onClick: () => openPortalTab("documentLibrary"),
-                      active: activeKind === "documentLibrary",
-                      testId: "left-rail-tool-document-library",
-                    },
-                    {
-                      id: "resources",
-                      label: "Scripts",
-                      icon: BookOpen,
-                      onClick: () => openPortalTab("resources"),
-                      active: activeKind === "resources",
-                      testId: "left-rail-tool-resources",
-                    },
-                    {
-                      id: "marketing",
-                      label: "Proof/PDFs",
-                      icon: Megaphone,
-                      onClick: () => openPortalTab("marketing"),
-                      active: activeKind === "marketing",
-                      testId: "left-rail-tool-marketing",
-                    },
-                    {
-                      id: "tasks",
-                      label: "Tasks",
-                      icon: ClipboardList,
-                      onClick: () => openPortalTab("plexusTasks"),
-                      active: activeKind === "plexusTasks",
-                      badge: taskCount > 0 ? taskCount : undefined,
-                      testId: "left-rail-tool-tasks",
-                    },
-                    {
-                      id: "patientSearch",
-                      label: "Patient Search",
-                      icon: Search,
-                      onClick: () => openPortalTab("patientSearch"),
-                      active: activeKind === "patientSearch",
-                      testId: "left-rail-tool-patient-search",
-                    },
-                    {
-                      id: "quickNote",
-                      label: "Quick Note",
-                      icon: NotebookPen,
-                      onClick: () => openPortalTab("quickNote"),
-                      active: activeKind === "quickNote",
-                      testId: "left-rail-tool-quick-note",
-                    },
-                    {
-                      id: "contacts",
-                      label: "Contacts",
-                      icon: Phone,
-                      onClick: () => openPortalTab("internalContacts"),
-                      active: activeKind === "internalContacts",
-                      testId: "left-rail-tool-internal-contacts",
-                    },
-                    {
-                      id: "calls",
-                      label: "Calls",
-                      icon: PhoneCall,
-                      onClick: () => openPortalTab("calls"),
-                      active: activeKind === "calls",
-                      testId: "left-rail-tool-calls",
-                    },
-                    {
-                      id: "settings",
-                      label: "Settings",
-                      icon: SettingsIcon,
-                      onClick: () => setWorkspaceSettingsOpen(true),
-                      active: workspaceSettingsOpen,
-                      testId: "left-rail-tool-settings",
+                      id: "system",
+                      label: "System",
+                      tint: "slate",
+                      tools: [
+                        {
+                          id: "settings",
+                          label: "Settings",
+                          icon: SettingsIcon,
+                          onClick: () => setWorkspaceSettingsOpen(true),
+                          active: workspaceSettingsOpen,
+                          testId: "left-rail-tool-settings",
+                        },
+                      ],
                     },
                   ];
-                  return <ToolDock tools={dockTools} compact={leftNarrow} />;
+                  return <ToolDock groups={dockGroups} compact={leftNarrow} />;
                 })()}
                 </div>
 
@@ -2808,8 +2839,6 @@ export function TeamPortalShell({
                     <CommunicationTray
                       activeTab={trayTab}
                       onTabChange={setTrayTab}
-                      selectedPatient={traySelectedPatient}
-                      currentUsername={currentUser?.username ?? "you"}
                       currentUserId={currentUser?.id ?? null}
                       teamTasks={trayTeamTasks}
                     />

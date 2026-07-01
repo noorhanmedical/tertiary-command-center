@@ -1,9 +1,9 @@
-// Playground floating widgets + sticky notes (Task #643).
+// Playground floating widgets + sticky notes (Task #655).
 //
-// SESSION/LOCAL STATE ONLY. Widgets live in React state for the current
-// session and are intentionally NOT persisted — no DB table, no endpoint.
-// Every widget renders a visible "not saved" indicator so operators are
-// never misled. The shape is serializable so a future pass can persist it.
+// PERSISTED PER USER. Widgets are stored in localStorage keyed by the
+// logged-in user id, so sticky notes and their positions survive a page
+// refresh. The shape is serializable; a future pass can move this to a DB
+// table without touching call sites.
 //
 // Three widget types share one draggable-card system:
 //   - sticky:   post-it note (editable text, six colors, collapsible)
@@ -13,7 +13,7 @@
 // Widgets can be created from the Sticky Notes tool (top-of-playground)
 // or by dragging a tool tile from the dock onto the Playground surface.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Mail, MessageSquare, StickyNote, X, ChevronDown, ChevronUp, GripVertical } from "lucide-react";
 
 export type WidgetColor = "yellow" | "pink" | "blue" | "green" | "purple" | "gray";
@@ -73,8 +73,94 @@ function nextWidgetId() {
   return `w${Date.now()}_${widgetSeq}`;
 }
 
-export function useWorkspaceWidgets(createdBy: string) {
+function lsKey(storageKey: string) {
+  return `plexus.portal.widgets.${storageKey}`;
+}
+
+const WIDGET_TYPES: PlaygroundWidgetType[] = ["sticky", "email", "teamChat"];
+
+// Defensive validation of a persisted payload — never trust localStorage blindly.
+function parseStoredWidgets(raw: string | null): PlaygroundWidget[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter(
+      (w): w is PlaygroundWidget =>
+        !!w &&
+        typeof w.id === "string" &&
+        WIDGET_TYPES.includes(w.type) &&
+        typeof w.x === "number" &&
+        typeof w.y === "number",
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Playground widgets, persisted per user.
+ *
+ * @param createdBy   Display name stamped on new widgets (attribution).
+ * @param storageKey  Stable per-user key (the logged-in user id). When set,
+ *                    widgets are loaded from and saved to localStorage so
+ *                    they survive a page refresh. Until it resolves, widgets
+ *                    live in memory and are persisted once the key is known.
+ */
+export function useWorkspaceWidgets(createdBy: string, storageKey?: string | null) {
   const [widgets, setWidgets] = useState<PlaygroundWidget[]>([]);
+  const keyRef = useRef<string | null>(storageKey ?? null);
+  const loadedForKey = useRef<string | null>(null);
+
+  // Bind to a user's storage bucket. On every key change we resolve state
+  // FROM that key's saved data (or empty) so one user's widgets can never
+  // bleed into another's bucket. The only carry-forward is the very first
+  // bind (null -> first key), which adopts any pre-auth ephemeral widgets.
+  useEffect(() => {
+    if (!storageKey || loadedForKey.current === storageKey) {
+      keyRef.current = storageKey ?? null;
+      return;
+    }
+    const firstBind = loadedForKey.current === null;
+    loadedForKey.current = storageKey;
+    keyRef.current = storageKey;
+    const loaded = parseStoredWidgets(localStorage.getItem(lsKey(storageKey)));
+    setWidgets((prev) => {
+      if (loaded) return loaded;
+      if (firstBind && prev.length > 0) {
+        // Adopt pre-auth ephemeral widgets into this user's bucket once.
+        try {
+          localStorage.setItem(lsKey(storageKey), JSON.stringify(prev));
+        } catch {
+          /* ignore quota errors */
+        }
+        return prev;
+      }
+      return [];
+    });
+  }, [storageKey]);
+
+  // Write-through persistence. No-op until we've bound to a user key.
+  const persist = useCallback((next: PlaygroundWidget[]) => {
+    const k = keyRef.current;
+    if (!k) return;
+    try {
+      localStorage.setItem(lsKey(k), JSON.stringify(next));
+    } catch {
+      /* ignore quota errors */
+    }
+  }, []);
+
+  const mutate = useCallback(
+    (updater: (prev: PlaygroundWidget[]) => PlaygroundWidget[]) => {
+      setWidgets((prev) => {
+        const next = updater(prev);
+        persist(next);
+        return next;
+      });
+    },
+    [persist],
+  );
 
   const addWidget = useCallback(
     (input: {
@@ -84,33 +170,42 @@ export function useWorkspaceWidgets(createdBy: string) {
       color?: WidgetColor;
       patientContext?: WidgetPatientContext;
     }) => {
-      const stagger = widgets.length % 6;
-      const widget: PlaygroundWidget = {
-        id: nextWidgetId(),
-        type: input.type,
-        x: input.x ?? 24 + stagger * 18,
-        y: input.y ?? 16 + stagger * 18,
-        color: input.color ?? (input.type === "teamChat" ? "purple" : "yellow"),
-        text: "",
-        collapsed: false,
-        patientContext: input.patientContext ?? null,
-        createdBy,
-      };
-      setWidgets((prev) => [...prev, widget]);
-      return widget.id;
+      const id = nextWidgetId();
+      mutate((prev) => {
+        const stagger = prev.length % 6;
+        const widget: PlaygroundWidget = {
+          id,
+          type: input.type,
+          x: input.x ?? 24 + stagger * 18,
+          y: input.y ?? 16 + stagger * 18,
+          color: input.color ?? (input.type === "teamChat" ? "purple" : "yellow"),
+          text: "",
+          collapsed: false,
+          patientContext: input.patientContext ?? null,
+          createdBy,
+        };
+        return [...prev, widget];
+      });
+      return id;
     },
-    [widgets.length, createdBy],
+    [mutate, createdBy],
   );
 
-  const updateWidget = useCallback((id: string, patch: Partial<PlaygroundWidget>) => {
-    setWidgets((prev) => prev.map((w) => (w.id === id ? { ...w, ...patch } : w)));
-  }, []);
+  const updateWidget = useCallback(
+    (id: string, patch: Partial<PlaygroundWidget>) => {
+      mutate((prev) => prev.map((w) => (w.id === id ? { ...w, ...patch } : w)));
+    },
+    [mutate],
+  );
 
-  const removeWidget = useCallback((id: string) => {
-    setWidgets((prev) => prev.filter((w) => w.id !== id));
-  }, []);
+  const removeWidget = useCallback(
+    (id: string) => {
+      mutate((prev) => prev.filter((w) => w.id !== id));
+    },
+    [mutate],
+  );
 
-  const clearWidgets = useCallback(() => setWidgets([]), []);
+  const clearWidgets = useCallback(() => mutate(() => []), [mutate]);
 
   return { widgets, addWidget, updateWidget, removeWidget, clearWidgets } as const;
 }
@@ -271,7 +366,7 @@ function WidgetCard({
 
           <div className="mt-2 flex items-center justify-between text-[9px] text-slate-400">
             <span>By {widget.createdBy || "you"}</span>
-            <span className="italic">Not saved</span>
+            <span className="italic">Saved</span>
           </div>
         </div>
       )}

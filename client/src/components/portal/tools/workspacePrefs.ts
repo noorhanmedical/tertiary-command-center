@@ -8,7 +8,7 @@
 
 import { useCallback, useState } from "react";
 
-export type TrayTab = "patient" | "team" | "email" | "notes";
+export type TrayTab = "direct" | "team";
 export type PlaygroundLayout = "docked" | "split";
 export type CalendarBehavior = "playground" | "quickSchedule";
 
@@ -28,7 +28,7 @@ export type WorkspacePrefs = {
 };
 
 export const DEFAULT_WORKSPACE_PREFS: WorkspacePrefs = {
-  defaultTrayTab: "email",
+  defaultTrayTab: "direct",
   stickyNotesVisible: true,
   toolsPinnedByDefault: false,
   workQueuePinnedByDefault: false,

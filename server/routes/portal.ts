@@ -21,6 +21,8 @@ import {
 } from "@shared/platformSettings";
 import { derivePatientType } from "@shared/patientType";
 import { listAssignableTeamMembers, resolveViewAsRosterMember } from "../services/teamMemberScope";
+import { directMessagesRepository } from "../repositories/directMessages.repo";
+import { insertDirectMessageSchema } from "@shared/schema/directMessages";
 
 type ConsentDoc = { id: number; sourceNotes: string | null; createdAt: Date | string; kind: string };
 
@@ -995,6 +997,77 @@ export function registerPortalRoutes(app: Express) {
       res.json({ workspace, teamMembers: rows });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to list team members" });
+    }
+  });
+
+  // ─── Direct (1:1) messaging ────────────────────────────────────────────
+  // Real person-to-person chat between logged-in team members. Sender is
+  // always resolved from the session, never trusted from the client.
+
+  // Roster of people the current user can message: every active login user
+  // except themselves. Includes an unread count per person.
+  app.get("/api/portal/direct-messages/roster", requirePortalRole, async (req, res) => {
+    try {
+      const me = req.session.userId!;
+      const [users, unread] = await Promise.all([
+        storage.getAllUsers(),
+        directMessagesRepository.unreadBySender(me),
+      ]);
+      const unreadMap = new Map(unread.map((u) => [u.fromUserId, u.count]));
+      const roster = users
+        .filter((u) => u.id !== me && u.active !== false)
+        .map((u) => ({
+          id: u.id,
+          username: u.username,
+          role: u.role ?? null,
+          unread: unreadMap.get(u.id) ?? 0,
+        }))
+        .sort((a, b) => a.username.localeCompare(b.username));
+      res.json({ roster });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to load messaging roster" });
+    }
+  });
+
+  // Conversation with one other user (oldest-first). Marks their messages read.
+  app.get("/api/portal/direct-messages/:otherUserId", requirePortalRole, async (req, res) => {
+    try {
+      const me = req.session.userId!;
+      const other = String(req.params.otherUserId);
+      if (!other || other === me) {
+        return res.status(400).json({ error: "Invalid conversation partner" });
+      }
+      const messages = await directMessagesRepository.listConversation(me, other);
+      await directMessagesRepository.markConversationRead(me, other);
+      res.json({ messages });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to load conversation" });
+    }
+  });
+
+  // Send a direct message. Sender = session user.
+  app.post("/api/portal/direct-messages", requirePortalRole, async (req, res) => {
+    try {
+      const me = req.session.userId!;
+      const parsed = insertDirectMessageSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid message", code: "VALIDATION" });
+      }
+      if (parsed.data.recipientUserId === me) {
+        return res.status(400).json({ error: "Cannot message yourself" });
+      }
+      const recipient = await storage.getUser(parsed.data.recipientUserId);
+      if (!recipient) {
+        return res.status(404).json({ error: "Recipient not found" });
+      }
+      const message = await directMessagesRepository.send({
+        senderUserId: me,
+        recipientUserId: parsed.data.recipientUserId,
+        body: parsed.data.body,
+      });
+      res.status(201).json({ message });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to send message" });
     }
   });
 }

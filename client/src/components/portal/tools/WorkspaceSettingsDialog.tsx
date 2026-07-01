@@ -75,10 +75,8 @@ export function WorkspaceSettingsDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="z-[95]">
-                <SelectItem value="patient">Patient Messages</SelectItem>
+                <SelectItem value="direct">Direct Messages</SelectItem>
                 <SelectItem value="team">Team Chat</SelectItem>
-                <SelectItem value="email">Email</SelectItem>
-                <SelectItem value="notes">Notes</SelectItem>
               </SelectContent>
             </Select>
           </Row>
