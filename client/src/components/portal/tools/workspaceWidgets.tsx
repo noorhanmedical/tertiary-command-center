@@ -1,9 +1,10 @@
-// Playground floating widgets + sticky notes (Task #655).
+// Playground floating widgets + sticky notes (Task #655, #657).
 //
-// PERSISTED PER USER. Widgets are stored in localStorage keyed by the
-// logged-in user id, so sticky notes and their positions survive a page
-// refresh. The shape is serializable; a future pass can move this to a DB
-// table without touching call sites.
+// PERSISTED PER USER IN THE DATABASE. Widgets are stored in the
+// `portal_widgets` table (scoped to the logged-in user) via a small CRUD
+// endpoint, so sticky notes and their positions survive a page refresh AND
+// sync across devices/browsers. The whole set is written back on every
+// mutation (debounced), mirroring the previous localStorage semantics.
 //
 // Three widget types share one draggable-card system:
 //   - sticky:   post-it note (editable text, six colors, collapsible)
@@ -73,88 +74,285 @@ function nextWidgetId() {
   return `w${Date.now()}_${widgetSeq}`;
 }
 
-function lsKey(storageKey: string) {
-  return `plexus.portal.widgets.${storageKey}`;
-}
-
 const WIDGET_TYPES: PlaygroundWidgetType[] = ["sticky", "email", "teamChat"];
 
-// Defensive validation of a persisted payload — never trust localStorage blindly.
-function parseStoredWidgets(raw: string | null): PlaygroundWidget[] | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    return parsed.filter(
-      (w): w is PlaygroundWidget =>
+// Debounce window for write-through persistence. Sticky-note typing and
+// drag-to-move fire rapidly, so we coalesce them into one PUT.
+const PERSIST_DEBOUNCE_MS = 600;
+
+// Defensive validation of a server payload — never trust the wire blindly.
+function parseWidgetRows(rows: unknown): PlaygroundWidget[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter(
+      (w): w is Record<string, unknown> =>
         !!w &&
-        typeof w.id === "string" &&
-        WIDGET_TYPES.includes(w.type) &&
-        typeof w.x === "number" &&
-        typeof w.y === "number",
-    );
-  } catch {
-    return null;
-  }
+        typeof (w as any).id === "string" &&
+        WIDGET_TYPES.includes((w as any).type) &&
+        typeof (w as any).x === "number" &&
+        typeof (w as any).y === "number",
+    )
+    .map((w) => ({
+      id: w.id as string,
+      type: w.type as PlaygroundWidgetType,
+      x: w.x as number,
+      y: w.y as number,
+      color: (w.color as WidgetColor) ?? "yellow",
+      text: typeof w.text === "string" ? (w.text as string) : "",
+      collapsed: Boolean(w.collapsed),
+      patientContext: (w.patientContext as WidgetPatientContext) ?? null,
+      createdBy: typeof w.createdBy === "string" ? (w.createdBy as string) : "",
+    }));
 }
 
 /**
- * Playground widgets, persisted per user.
+ * Reconcile local widget state with what the server returned once the initial
+ * GET for a user key resolves. Pure so the hydration race can be unit-tested.
+ *
+ * - `wasDirty` (user mutated during the load window): merge the server set with
+ *   the local set — local wins on id conflict — so neither existing DB widgets
+ *   nor the just-made edits are lost, and persist the union.
+ * - otherwise adopt the server set; on the very first bind with no server
+ *   widgets, adopt any pre-auth ephemeral local widgets and persist them once.
+ */
+export function reconcileWidgetsOnHydration(opts: {
+  serverWidgets: PlaygroundWidget[];
+  localWidgets: PlaygroundWidget[];
+  wasDirty: boolean;
+  firstBind: boolean;
+}): { nextState: PlaygroundWidget[]; toPersist: PlaygroundWidget[] | null } {
+  const { serverWidgets, localWidgets, wasDirty, firstBind } = opts;
+  if (wasDirty) {
+    const byId = new Map(serverWidgets.map((w) => [w.id, w]));
+    for (const w of localWidgets) byId.set(w.id, w);
+    const nextState = Array.from(byId.values());
+    return { nextState, toPersist: nextState };
+  }
+  if (serverWidgets.length > 0) return { nextState: serverWidgets, toPersist: null };
+  if (firstBind && localWidgets.length > 0) {
+    return { nextState: localWidgets, toPersist: localWidgets };
+  }
+  return { nextState: serverWidgets, toPersist: null };
+}
+
+/**
+ * Decide what the key-binding effect should do for a given transition. Pure so
+ * the logout→same-user-login sequence can be regression-tested without a DOM.
+ *
+ * - `unbind`: no key (logout). Caller must reset ALL per-key hydration refs so
+ *   the next bind re-hydrates from the DB before writes are unblocked.
+ * - `already-bound`: this key already hydrated/hydrating (a plain re-render);
+ *   do nothing.
+ * - `hydrate`: a new/rebound key; run the GET and block writes until it lands.
+ *
+ * The regression this guards: after `unbind` resets `loadedForKey` to null, a
+ * later login as the SAME user must return `hydrate` (not `already-bound`), so
+ * hydration is never skipped and the first PUT can't clobber the DB baseline.
+ */
+export type WidgetBindingDecision = "unbind" | "already-bound" | "hydrate";
+
+export function decideWidgetBinding(
+  nextKey: string | null,
+  loadedForKey: string | null,
+): WidgetBindingDecision {
+  if (!nextKey) return "unbind";
+  if (loadedForKey === nextKey) return "already-bound";
+  return "hydrate";
+}
+
+/**
+ * Playground widgets, persisted per user in the database.
  *
  * @param createdBy   Display name stamped on new widgets (attribution).
  * @param storageKey  Stable per-user key (the logged-in user id). When set,
- *                    widgets are loaded from and saved to localStorage so
- *                    they survive a page refresh. Until it resolves, widgets
- *                    live in memory and are persisted once the key is known.
+ *                    widgets are loaded from and saved to the `portal_widgets`
+ *                    table so they survive a refresh and sync across devices.
+ *                    Until it resolves, widgets live in memory and are
+ *                    persisted once the key is known.
  */
 export function useWorkspaceWidgets(createdBy: string, storageKey?: string | null) {
   const [widgets, setWidgets] = useState<PlaygroundWidget[]>([]);
   const keyRef = useRef<string | null>(storageKey ?? null);
   const loadedForKey = useRef<string | null>(null);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRef = useRef<PlaygroundWidget[] | null>(null);
+  // The key whose initial GET has completed. Until keyRef.current matches
+  // this, we are "hydrating": local mutations are held (never written) so a
+  // preload snapshot can't clobber existing server widgets, and they are
+  // merged with the server set once the GET resolves.
+  const hydratedRef = useRef<string | null>(null);
+  // Set when the user mutates during the hydration window for the active key.
+  const dirtyDuringHydrationRef = useRef(false);
+  // Mirror of `widgets` so post-fetch reconciliation can read the latest local
+  // state without depending on a stale render closure.
+  const widgetsRef = useRef<PlaygroundWidget[]>([]);
 
-  // Bind to a user's storage bucket. On every key change we resolve state
-  // FROM that key's saved data (or empty) so one user's widgets can never
-  // bleed into another's bucket. The only carry-forward is the very first
-  // bind (null -> first key), which adopts any pre-auth ephemeral widgets.
+  // Flush any queued write for the CURRENT session immediately (used on
+  // unmount / navigate-away so an in-flight debounced edit isn't lost). The
+  // write is attributed by the session cookie, so it is only ever called
+  // while keyRef still matches the authenticated user.
+  const flushPersist = useCallback((next: PlaygroundWidget[]) => {
+    if (persistTimer.current) {
+      clearTimeout(persistTimer.current);
+      persistTimer.current = null;
+    }
+    pendingRef.current = null;
+    fetch("/api/portal/widgets", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ widgets: next }),
+      keepalive: true,
+    }).catch(() => {
+      /* best-effort; next mutation retries */
+    });
+  }, []);
+
+  // Discard any queued write without sending it. Used on user-key swaps: the
+  // session may already point at the NEW user, so flushing the outgoing user's
+  // pending edits could misattribute them. We trade at most one debounce
+  // window of unsaved edits for a hard no-cross-user-bleed guarantee.
+  const discardPending = useCallback(() => {
+    if (persistTimer.current) {
+      clearTimeout(persistTimer.current);
+      persistTimer.current = null;
+    }
+    pendingRef.current = null;
+  }, []);
+
+  // Bind to a user's server bucket. On every key change we resolve state FROM
+  // the server (or empty) so one user's widgets can never bleed into another's.
+  // The only carry-forward is the very first bind (null -> first key), which
+  // adopts any pre-auth ephemeral widgets into that user's set.
   useEffect(() => {
-    if (!storageKey || loadedForKey.current === storageKey) {
-      keyRef.current = storageKey ?? null;
+    const key: string | null = storageKey ?? null;
+    const prevKey = keyRef.current;
+    const isSwitch = !!prevKey && prevKey !== key;
+    if (isSwitch) {
+      // On an actual user switch, drop the outgoing user's pending write rather
+      // than flushing it under a possibly-changed session, and clear the
+      // display immediately so the previous user's widgets never linger.
+      discardPending();
+      dirtyDuringHydrationRef.current = false;
+      widgetsRef.current = [];
+      setWidgets([]);
+    }
+
+    const decision = decideWidgetBinding(key, loadedForKey.current);
+    if (decision === "unbind") {
+      // Logout / unbind. Reset ALL per-key hydration state so the next login —
+      // even as the SAME user (same storageKey) — re-runs the GET and blocks
+      // writes until it lands. Without clearing loadedForKey the decision above
+      // would return "already-bound" and skip hydration, and without clearing
+      // hydratedRef the persist gate would treat writes as hydrated and let the
+      // first PUT (full-set replace) clobber the DB baseline.
+      discardPending();
+      loadedForKey.current = null;
+      hydratedRef.current = null;
+      dirtyDuringHydrationRef.current = false;
+      widgetsRef.current = [];
+      setWidgets([]);
+      keyRef.current = null;
+      return;
+    }
+    if (decision === "already-bound") {
+      keyRef.current = key;
       return;
     }
     const firstBind = loadedForKey.current === null;
-    loadedForKey.current = storageKey;
-    keyRef.current = storageKey;
-    const loaded = parseStoredWidgets(localStorage.getItem(lsKey(storageKey)));
-    setWidgets((prev) => {
-      if (loaded) return loaded;
-      if (firstBind && prev.length > 0) {
-        // Adopt pre-auth ephemeral widgets into this user's bucket once.
-        try {
-          localStorage.setItem(lsKey(storageKey), JSON.stringify(prev));
-        } catch {
-          /* ignore quota errors */
-        }
-        return prev;
-      }
-      return [];
-    });
-  }, [storageKey]);
+    loadedForKey.current = key;
+    keyRef.current = key;
+    // Entering the hydration window for this key: block writes until GET lands.
+    dirtyDuringHydrationRef.current = false;
 
-  // Write-through persistence. No-op until we've bound to a user key.
+    let cancelled = false;
+    (async () => {
+      // Fail CLOSED: we only ever hydrate (and thereby unblock writes) after a
+      // SUCCESSFUL read. A transient GET failure must never be treated as an
+      // empty server set — otherwise the next debounced PUT (a full-set
+      // replace) would wipe the user's existing DB widgets. So we retry with
+      // capped backoff and keep writes blocked (mutations are held as dirty)
+      // until a read succeeds; the eventual reconcile merges any edits made
+      // during the outage with the server set.
+      let attempt = 0;
+      while (!cancelled) {
+        let loaded: PlaygroundWidget[] | null = null;
+        try {
+          const res = await fetch("/api/portal/widgets", { credentials: "include" });
+          if (res.ok) loaded = parseWidgetRows(await res.json());
+        } catch {
+          loaded = null;
+        }
+        if (cancelled) return;
+
+        if (loaded !== null) {
+          const { nextState, toPersist } = reconcileWidgetsOnHydration({
+            serverWidgets: loaded,
+            localWidgets: widgetsRef.current,
+            wasDirty: dirtyDuringHydrationRef.current,
+            firstBind,
+          });
+          // Mark hydrated BEFORE flushing so the write path is unblocked.
+          hydratedRef.current = key;
+          widgetsRef.current = nextState;
+          setWidgets(nextState);
+          if (toPersist) flushPersist(toPersist);
+          return;
+        }
+
+        // Read failed — back off and retry, leaving the key un-hydrated so
+        // persist() stays blocked and cannot clobber the unknown baseline.
+        attempt += 1;
+        const delay = Math.min(10000, 500 * 2 ** Math.min(attempt, 5));
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storageKey, flushPersist, discardPending]);
+
+  // Flush on unmount so an in-flight debounced edit isn't lost.
+  useEffect(() => {
+    return () => {
+      if (keyRef.current && pendingRef.current) flushPersist(pendingRef.current);
+    };
+  }, [flushPersist]);
+
+  // Debounced write-through persistence. No-op until we've bound to a user key.
+  // While the active key is still hydrating, we record the intent (dirty +
+  // pending) but do NOT write — the post-GET reconciliation persists the merge.
   const persist = useCallback((next: PlaygroundWidget[]) => {
     const k = keyRef.current;
     if (!k) return;
-    try {
-      localStorage.setItem(lsKey(k), JSON.stringify(next));
-    } catch {
-      /* ignore quota errors */
+    pendingRef.current = next;
+    if (hydratedRef.current !== k) {
+      dirtyDuringHydrationRef.current = true;
+      return;
     }
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      persistTimer.current = null;
+      const widgetsToSave = pendingRef.current;
+      pendingRef.current = null;
+      if (!widgetsToSave) return;
+      fetch("/api/portal/widgets", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ widgets: widgetsToSave }),
+      }).catch(() => {
+        /* best-effort; next mutation retries */
+      });
+    }, PERSIST_DEBOUNCE_MS);
   }, []);
 
   const mutate = useCallback(
     (updater: (prev: PlaygroundWidget[]) => PlaygroundWidget[]) => {
       setWidgets((prev) => {
         const next = updater(prev);
+        widgetsRef.current = next;
         persist(next);
         return next;
       });

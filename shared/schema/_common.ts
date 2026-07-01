@@ -3,6 +3,7 @@
 export { sql } from "drizzle-orm";
 export {
   pgTable,
+  primaryKey,
   serial,
   text,
   varchar,

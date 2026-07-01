@@ -61,4 +61,5 @@ export * from "./projectedInvoices";
 export * from "./ancillaryDocumentTemplates";
 export * from "./clinicianPortal";
 export * from "./directMessages";
+export * from "./portalWidgets";
 export * from "../models/chat";

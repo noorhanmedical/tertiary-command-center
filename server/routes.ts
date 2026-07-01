@@ -38,6 +38,7 @@ import { registerGlobalScheduleRoutes } from "./routes/globalSchedule";
 import { registerAcsWorkflowRoutes } from "./routes/acsWorkflow";
 import { registerPatientNotesRoutes } from "./routes/patientNotes";
 import { registerContactsRoutes } from "./routes/contacts";
+import { registerPortalWidgetsRoutes } from "./routes/portalWidgets";
 import { registerBillingPolicyRoutes } from "./routes/billingPolicy";
 import { registerInvoiceReadinessRoutes } from "./routes/invoiceReadiness";
 import { registerInvoiceBatchRoutes } from "./routes/invoiceBatches";
@@ -270,6 +271,7 @@ export async function registerRoutes(
   registerAcsWorkflowRoutes(app);
   registerPatientNotesRoutes(app);
   registerContactsRoutes(app);
+  registerPortalWidgetsRoutes(app);
   registerBillingPolicyRoutes(app);
   registerInvoiceReadinessRoutes(app);
   registerInvoiceBatchRoutes(app);
