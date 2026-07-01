@@ -41,6 +41,7 @@ import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel
 import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
 import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
+import { EngagementBaskets } from "@/components/engagement/EngagementBaskets";
 import {
   type BoardResponse,
   type BoardRow,
@@ -95,7 +96,7 @@ export default function EngagementCenterPage() {
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [smartFilter, setSmartFilter] = useState<SmartFilterKey>("all");
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
-  const [view, setView] = useState<"repository" | "distribution" | "callSettings" | "liveMetrics">("repository");
+  const [view, setView] = useState<"baskets" | "repository" | "distribution" | "callSettings" | "liveMetrics">("baskets");
 
   const board = useQuery<BoardResponse>({
     queryKey: ["/api/engagement/assignment-board", "command"],
@@ -288,6 +289,18 @@ export default function EngagementCenterPage() {
           >
             <button
               type="button"
+              onClick={() => setView("baskets")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                view === "baskets"
+                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+              data-testid="button-view-baskets"
+            >
+              Baskets
+            </button>
+            <button
+              type="button"
               onClick={() => setView("repository")}
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                 view === "repository"
@@ -408,7 +421,17 @@ export default function EngagementCenterPage() {
         ) : null}
       </header>
 
-      {view === "callSettings" ? (
+      {view === "baskets" ? (
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+          <div className="mx-auto max-w-7xl">
+            <EngagementBaskets
+              schedulers={schedulers}
+              assigning={assignMutation.isPending}
+              onAssign={handleAssign}
+            />
+          </div>
+        </main>
+      ) : view === "callSettings" ? (
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="mx-auto max-w-6xl">
             <EngagementCallSettings />
