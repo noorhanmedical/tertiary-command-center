@@ -58,7 +58,7 @@ export function CompactCallRow({
 }: CompactCallRowProps) {
   return (
     <div
-      className="glass-tile glass-tile-interactive !rounded-xl border-l-4 border-l-sky-400/80 px-2 py-2"
+      className="!rounded-xl border border-blue-100/60 border-l-4 border-l-sky-400/80 bg-blue-50/40 px-2 py-1.5 backdrop-blur-sm transition-all hover:bg-blue-100/50 hover:shadow-[0_0_12px_rgba(72,99,160,0.18)]"
       data-testid={`workspace-call-compact-${testIdKey}`}
     >
       <button
@@ -142,7 +142,7 @@ export function CompactClinicRow({
     <button
       type="button"
       onClick={onClick}
-      className="glass-tile glass-tile-interactive !rounded-xl flex w-full items-center gap-2 px-2 py-1.5 text-left"
+      className="glass-tile glass-tile-interactive !rounded-xl flex w-full items-center gap-2 px-2 py-1 text-left"
       data-testid={`patient-row-compact-${testIdKey}`}
     >
       <span className="inline-flex shrink-0 items-center rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-sky-700">
@@ -185,7 +185,7 @@ export function CompactAncillaryRow({
     <button
       type="button"
       onClick={onClick}
-      className="glass-tile glass-tile-interactive !rounded-xl flex w-full items-center gap-2 px-2 py-1.5 text-left"
+      className="glass-tile glass-tile-interactive !rounded-xl flex w-full items-center gap-2 px-2 py-1 text-left"
       data-testid={`workspace-ancillary-compact-${testIdKey}`}
     >
       <span className="inline-flex shrink-0 items-center rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-violet-700">

@@ -87,6 +87,7 @@ export type SchedulePatientDialogProps = {
   onOpenChange: (open: boolean) => void;
   patient: SchedulePatientDialogPatient | null;
   defaultDate?: string | null;
+  defaultTime?: string | null;
   onOpenInPlayground?: (payload: {
     patient: SchedulePatientDialogPatient;
     selectedDate: string;
@@ -256,6 +257,7 @@ export function SchedulePatientDialog({
   onOpenChange,
   patient,
   defaultDate,
+  defaultTime,
   onOpenInPlayground,
 }: SchedulePatientDialogProps) {
   const queryClient = useQueryClient();
@@ -264,6 +266,8 @@ export function SchedulePatientDialog({
     defaultDate && /^\d{4}-\d{2}-\d{2}/.test(defaultDate)
       ? defaultDate.slice(0, 10)
       : todayIso();
+  const initialTime =
+    defaultTime && /^\d{1,2}:\d{2}$/.test(defaultTime) ? defaultTime : "";
   const [selectedDate, setSelectedDate] = useState<string>(initialDate);
   const [serviceType, setServiceType] = useState<string>(
     patient?.serviceType ?? "",
@@ -272,7 +276,7 @@ export function SchedulePatientDialog({
     APPOINTMENT_TYPES[0],
   );
   const [location, setLocation] = useState<string>("");
-  const [time, setTime] = useState<string>("");
+  const [time, setTime] = useState<string>(initialTime);
   const [note, setNote] = useState<string>("");
 
   // Reset form when a new patient is opened.
@@ -282,7 +286,7 @@ export function SchedulePatientDialog({
       setServiceType(patient?.serviceType ?? "");
       setAppointmentType(APPOINTMENT_TYPES[0]);
       setLocation(patient?.facilityId ?? "");
-      setTime("");
+      setTime(initialTime);
       setNote("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

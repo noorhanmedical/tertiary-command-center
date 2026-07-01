@@ -51,6 +51,7 @@ import {
   SchedulePatientDialog,
   type SchedulePatientDialogPatient,
 } from "@/components/portal/SchedulePatientDialog";
+import { CalendarQuickScheduleDialog } from "@/components/portal/CalendarQuickScheduleDialog";
 import { DispositionSheet } from "@/components/outreach/DispositionSheet";
 import { CallRowQuickActions } from "@/components/portal/CallRowQuickActions";
 import {
@@ -1040,6 +1041,17 @@ export function TeamPortalShell({
   const [teamPortalCalendarOpen, setTeamPortalCalendarOpen] = useState(false);
   const [schedulePatientPlaygroundContext, setSchedulePatientPlaygroundContext] =
     useState<{ patient: SchedulePatientDialogPatient; selectedDate: string } | null>(null);
+  // Optional pre-fill date/time carried into the SchedulePatientDialog from the
+  // left-rail Calendar quick-schedule pop-up (task #635). Null falls back to
+  // selectedDate / no preset time.
+  const [schedulePatientDialogDefaultDate, setSchedulePatientDialogDefaultDate] =
+    useState<string | null>(null);
+  const [schedulePatientDialogDefaultTime, setSchedulePatientDialogDefaultTime] =
+    useState<string | null>(null);
+  // Left-rail Calendar quick-schedule pop-up (task #635). Holds the pre-filled
+  // date string while open; null = closed.
+  const [calendarQuickScheduleDate, setCalendarQuickScheduleDate] =
+    useState<string | null>(null);
   // Quick-call popup for the right-panel call list. Reuses the canonical
   // DispositionSheet (posts /api/engagement-center/call-result). Holds the
   // selected call-list row so we can also offer Push-to-Playground.
@@ -1138,6 +1150,31 @@ export function TeamPortalShell({
   }, [isTouchDevice, leftRailPeek, rightRailPeek]);
   const leftRailSize = "normal" as RailSize;
   const rightRailSize = "normal" as RailSize;
+  // Collapse the hover-peek only when the pointer genuinely leaves the rail's
+  // full bounding box (task #635). The panel body translates in/out on peek,
+  // so a naive onMouseLeave on the body fires spuriously as the element slides
+  // under a stationary cursor at the panel edge — checking against the stable
+  // outer ref rect stops the flicker loop.
+  const makeRailPeekLeaveHandler =
+    (
+      ref: React.RefObject<HTMLDivElement>,
+      setPeek: (v: boolean) => void,
+    ) =>
+    (e: React.MouseEvent) => {
+      const rect = ref.current?.getBoundingClientRect();
+      if (rect) {
+        const { clientX, clientY } = e;
+        if (
+          clientX >= rect.left &&
+          clientX <= rect.right &&
+          clientY >= rect.top &&
+          clientY <= rect.bottom
+        ) {
+          return;
+        }
+      }
+      setPeek(false);
+    };
   const [aiMinimized, setAiMinimized] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiDraft, setAiDraft] = useState("");
@@ -1436,8 +1473,13 @@ export function TeamPortalShell({
     setScheduleDialogPatient(p);
   }
 
-  function openSchedulePatientDialog(input: SchedulePatientDialogPatient) {
+  function openSchedulePatientDialog(
+    input: SchedulePatientDialogPatient,
+    opts?: { date?: string | null; time?: string | null },
+  ) {
     if (input.patientScreeningId != null) setSelectedPatientId(input.patientScreeningId);
+    setSchedulePatientDialogDefaultDate(opts?.date ?? null);
+    setSchedulePatientDialogDefaultTime(opts?.time ?? null);
     setSchedulePatientDialog(input);
     // Persist the patient as the active scheduling context so the
     // left-rail PatientMiniCalendar switches its header to
@@ -2407,7 +2449,11 @@ export function TeamPortalShell({
               aside. Independent of the right rail. */}
           <div
             onMouseEnter={isTouchDevice ? undefined : () => setLeftRailPeek(true)}
-            onMouseLeave={isTouchDevice ? undefined : () => setLeftRailPeek(false)}
+            onMouseLeave={
+              isTouchDevice
+                ? undefined
+                : makeRailPeekLeaveHandler(leftRailRef, setLeftRailPeek)
+            }
             onClick={
               isTouchDevice
                 ? () => {
@@ -2426,10 +2472,10 @@ export function TeamPortalShell({
           >
             <div className="flex h-full flex-col">
             {/* Blue header band (step 1). */}
-            <div className="flex items-center justify-between gap-1.5 border-b border-white/20 bg-[#4863A0] px-3 py-2 text-white">
+            <div className="flex items-center justify-between gap-1.5 border-b border-white/20 bg-[#4863A0] px-3 py-1.5 text-white">
               <div className="flex items-center gap-1.5">
-                <Wrench className="h-3.5 w-3.5 text-white/80" />
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-white/90">Tools</span>
+                <Wrench className="h-3 w-3 text-white/80" />
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-white/90">Tools</span>
               </div>
               <button
                 type="button"
@@ -2472,11 +2518,10 @@ export function TeamPortalShell({
                     active={false}
                     compact={leftNarrow}
                     onClick={() => {
-                      // Pull the full canonical scheduling calendar into
-                      // the center canvas via the "calendar" centerMode so
-                      // operators get the full month view + scheduling.
-                      setCenterMode("calendar");
-                      setCenterTitle(`Calendar — ${globalCalendarDate}`);
+                      // Open the quick-schedule pop-up seeded with the current
+                      // calendar date (task #635). The full month view stays
+                      // reachable via the mini-calendar's expand-to-canvas button.
+                      setCalendarQuickScheduleDate(globalCalendarDate);
                     }}
                     testId="left-rail-tool-calendar"
                   />
@@ -2564,7 +2609,12 @@ export function TeamPortalShell({
                 {!leftNarrow && (
                   <LeftRailCompactCalendar
                     selectedDate={globalCalendarDate}
-                    onSelectDate={(d) => setGlobalCalendarDate(d)}
+                    onSelectDate={(d) => {
+                      // Clicking a date both moves the mini-calendar cursor and
+                      // opens the quick-schedule pop-up pre-filled with it (#635).
+                      setGlobalCalendarDate(d);
+                      setCalendarQuickScheduleDate(d);
+                    }}
                     onExpandToCanvas={() => {
                       setCenterMode("calendar");
                       setCenterTitle(`Calendar — ${globalCalendarDate}`);
@@ -2590,7 +2640,11 @@ export function TeamPortalShell({
               aside. Mirrors the left rail; independent of it. */}
           <div
             onMouseEnter={isTouchDevice ? undefined : () => setRightRailPeek(true)}
-            onMouseLeave={isTouchDevice ? undefined : () => setRightRailPeek(false)}
+            onMouseLeave={
+              isTouchDevice
+                ? undefined
+                : makeRailPeekLeaveHandler(rightRailRef, setRightRailPeek)
+            }
             onClick={
               isTouchDevice
                 ? () => {
@@ -2613,9 +2667,9 @@ export function TeamPortalShell({
                     the scroll region so it's reachable while the patient
                     list below scrolls. Selection is UI-only; the body
                     renders the same canonical content per mode. */}
-                <div className="sticky top-0 z-10 border-b border-white/10 bg-[#4863A0] px-3 pb-2.5 pt-2.5 backdrop-blur-xl">
+                <div className="sticky top-0 z-10 border-b border-white/10 bg-[#4863A0] px-3 pb-1.5 pt-1.5 backdrop-blur-xl">
                   <div className="mb-1.5 flex items-center justify-between px-0.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-white/70">Work Queue</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-white/70">Work Queue</span>
                     <div className="flex items-center gap-1.5">
                       <span className="text-[10px] text-white/70">{selectedDate === todayIso() ? "Today" : selectedDate}</span>
                       <button
@@ -2653,7 +2707,7 @@ export function TeamPortalShell({
                 {patients.length === 0 ? (
                   <div className="text-xs text-slate-600 py-4 text-center">No patients scheduled.</div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     {patients.map((p) => {
                       const isSelected = p.patientScreeningId === selectedPatientId;
                       // Phase 1 Slice 1.1: consent / screening flags come
@@ -2678,7 +2732,7 @@ export function TeamPortalShell({
                       return (
                         <div
                           key={(p.patientScreeningId ?? p.name) + ""}
-                          className={`relative rounded-xl border border-l-4 px-2.5 py-2 text-slate-900 shadow-sm transition-colors ${
+                          className={`relative rounded-xl border border-l-4 px-2 py-1.5 text-slate-900 shadow-sm transition-colors ${
                             consentDone ? "border-l-emerald-400" : "border-l-amber-400"
                           } ${
                             isSelected && centerMode === "patient" ? "bg-indigo-50 border-indigo-300" : "bg-white hover:bg-slate-50"
@@ -2694,7 +2748,7 @@ export function TeamPortalShell({
                             <div className="flex items-center justify-between gap-2">
                               <div className="min-w-0">
                                 <div className="text-sm font-medium truncate">{p.name}</div>
-                                <div className="text-[11px] text-slate-500">
+                                <div className="text-[10px] text-slate-500">
                                   {formatTime(p.time)} · {p.appointments.length} test{p.appointments.length === 1 ? "" : "s"}
                                 </div>
                               </div>
@@ -2810,7 +2864,7 @@ export function TeamPortalShell({
                 )}
 
                 {activeWorkspaceMode === "callList" && (
-                  <div className="space-y-2" data-testid="workspace-mode-body-callList">
+                  <div className="space-y-1" data-testid="workspace-mode-body-callList">
                     {workspaceCallListLoading ? (
                       <div className="text-xs text-slate-600 py-4 text-center">Loading call list…</div>
                     ) : workspaceCallList.length === 0 ? (
@@ -2839,7 +2893,7 @@ export function TeamPortalShell({
                         return (
                         <div
                           key={`${row.id ?? idx}`}
-                          className="rounded-xl border border-white/40 bg-white/70 px-2.5 py-2 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.10)] backdrop-blur-md transition-colors hover:bg-white/85"
+                          className="rounded-xl border border-blue-100/60 bg-blue-50/40 px-2 py-1.5 text-slate-900 shadow-sm backdrop-blur-sm transition-all hover:bg-blue-100/50 hover:shadow-[0_0_12px_rgba(72,99,160,0.18)]"
                           data-testid={`workspace-call-${row.id ?? idx}`}
                         >
                           {/* Minimal card: just the patient name + a circular
@@ -2849,7 +2903,7 @@ export function TeamPortalShell({
                             <button
                               type="button"
                               onClick={() => openCallRowPatient(row)}
-                              className="block min-w-0 flex-1 truncate text-left text-sm font-medium text-slate-900 hover:text-[#4863A0] hover:underline"
+                              className="block min-w-0 flex-1 truncate text-left text-sm font-medium text-slate-900"
                               title={`Open ${row.patientName ?? "patient"} in Playground`}
                               data-testid={`button-call-patient-${row.id ?? idx}`}
                             >
@@ -2871,7 +2925,7 @@ export function TeamPortalShell({
                 )}
 
                 {activeWorkspaceMode === "ancillarySchedule" && (
-                  <div className="space-y-2" data-testid="workspace-mode-body-ancillarySchedule">
+                  <div className="space-y-1" data-testid="workspace-mode-body-ancillarySchedule">
                     {workspaceAncillaryLoading ? (
                       <div className="text-xs text-slate-600 py-4 text-center">Loading ancillary schedule…</div>
                     ) : filteredAncillarySchedule.length === 0 ? (
@@ -2915,10 +2969,10 @@ export function TeamPortalShell({
                         return (
                         <div
                           key={`${row.id ?? idx}`}
-                          className={`overflow-hidden rounded-xl border border-white/40 border-l-4 border-l-violet-400/80 bg-white/80 px-2.5 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.12)] backdrop-blur-md transition-all duration-300 ${
+                          className={`overflow-hidden rounded-xl border border-white/40 border-l-4 border-l-violet-400/80 bg-white/80 px-2 text-slate-900 shadow-[0_4px_18px_rgba(15,23,42,0.12)] backdrop-blur-md transition-all duration-300 ${
                             removing
                               ? "max-h-0 -translate-y-2 border-transparent py-0 opacity-0"
-                              : "max-h-[400px] py-2 opacity-100 hover:bg-white/90"
+                              : "max-h-[400px] py-1.5 opacity-100 hover:bg-white/90"
                           }`}
                           data-testid={`workspace-ancillary-${row.id ?? idx}`}
                         >
@@ -2927,7 +2981,7 @@ export function TeamPortalShell({
                               <div className="text-sm font-medium truncate">
                                 {row.patientName ?? "Unnamed patient"}
                               </div>
-                              <div className="text-[11px] text-slate-500 truncate">
+                              <div className="text-[10px] text-slate-500 truncate">
                                 {row.serviceType ?? "Ancillary"}
                                 {row.startsAt
                                   ? ` · ${new Date(row.startsAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
@@ -3219,8 +3273,42 @@ export function TeamPortalShell({
           if (!o) setSchedulePatientDialog(null);
         }}
         patient={schedulePatientDialog}
-        defaultDate={selectedDate}
+        defaultDate={schedulePatientDialogDefaultDate ?? selectedDate}
+        defaultTime={schedulePatientDialogDefaultTime}
         onOpenInPlayground={(payload) => openSchedulePatientPlayground(payload)}
+      />
+
+      {/* Left-rail Calendar quick-schedule pop-up (task #635). Opened from the
+          Calendar tool button and from clicking a date in the mini-calendar.
+          Collects date + time + service + optional patient name, then hands off
+          to the full SchedulePatientDialog (Schedule) or the Playground
+          (Open in Playground) with the selection pre-filled. */}
+      <CalendarQuickScheduleDialog
+        open={!!calendarQuickScheduleDate}
+        date={calendarQuickScheduleDate}
+        onOpenChange={(o) => {
+          if (!o) setCalendarQuickScheduleDate(null);
+        }}
+        onSchedule={({ date, time, service, patientName }) => {
+          setCalendarQuickScheduleDate(null);
+          openSchedulePatientDialog(
+            {
+              patientName: patientName || null,
+              serviceType: service || null,
+            },
+            { date, time },
+          );
+        }}
+        onOpenInPlayground={({ date, service, patientName }) => {
+          setCalendarQuickScheduleDate(null);
+          openSchedulePatientPlayground({
+            patient: {
+              patientName: patientName || null,
+              serviceType: service || null,
+            },
+            selectedDate: date,
+          });
+        }}
       />
 
       {/* Quick-call popup for the right-panel call list. Posts the canonical
