@@ -175,7 +175,11 @@ export function useWorkspaceWidgets(createdBy: string, storageKey?: string | nul
   const keyRef = useRef<string | null>(storageKey ?? null);
   const loadedForKey = useRef<string | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRef = useRef<PlaygroundWidget[] | null>(null);
+  // Accumulated per-widget changes awaiting the next debounced flush. Only the
+  // widgets that actually changed on THIS device are tracked, so a save never
+  // touches notes another device created or edited (Task #661).
+  const pendingUpserts = useRef<Map<string, PlaygroundWidget>>(new Map());
+  const pendingDeletes = useRef<Set<string>>(new Set());
   // The key whose initial GET has completed. Until keyRef.current matches
   // this, we are "hydrating": local mutations are held (never written) so a
   // preload snapshot can't clobber existing server widgets, and they are
@@ -187,37 +191,55 @@ export function useWorkspaceWidgets(createdBy: string, storageKey?: string | nul
   // state without depending on a stale render closure.
   const widgetsRef = useRef<PlaygroundWidget[]>([]);
 
-  // Flush any queued write for the CURRENT session immediately (used on
-  // unmount / navigate-away so an in-flight debounced edit isn't lost). The
-  // write is attributed by the session cookie, so it is only ever called
-  // while keyRef still matches the authenticated user.
-  const flushPersist = useCallback((next: PlaygroundWidget[]) => {
-    if (persistTimer.current) {
-      clearTimeout(persistTimer.current);
-      persistTimer.current = null;
-    }
-    pendingRef.current = null;
-    fetch("/api/portal/widgets", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ widgets: next }),
-      keepalive: true,
-    }).catch(() => {
-      /* best-effort; next mutation retries */
-    });
-  }, []);
+  // Low-level incremental write. Sends only the changed widgets (`upserts`) and
+  // removed ids (`deletes`) so a save never overwrites notes another device
+  // touched. A no-op when there is nothing to send.
+  const sendChanges = useCallback(
+    (upserts: PlaygroundWidget[], deletes: string[], keepalive: boolean) => {
+      if (upserts.length === 0 && deletes.length === 0) return;
+      fetch("/api/portal/widgets", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ upserts, deletes }),
+        keepalive,
+      }).catch(() => {
+        /* best-effort; next mutation retries */
+      });
+    },
+    [],
+  );
 
-  // Discard any queued write without sending it. Used on user-key swaps: the
-  // session may already point at the NEW user, so flushing the outgoing user's
-  // pending edits could misattribute them. We trade at most one debounce
+  // Flush the accumulated per-widget changes for the CURRENT session
+  // immediately (used on unmount / navigate-away so an in-flight debounced edit
+  // isn't lost). The write is attributed by the session cookie, so it is only
+  // ever called while keyRef still matches the authenticated user.
+  const flushPending = useCallback(
+    (keepalive: boolean) => {
+      if (persistTimer.current) {
+        clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+      }
+      const upserts = Array.from(pendingUpserts.current.values());
+      const deletes = Array.from(pendingDeletes.current);
+      pendingUpserts.current.clear();
+      pendingDeletes.current.clear();
+      sendChanges(upserts, deletes, keepalive);
+    },
+    [sendChanges],
+  );
+
+  // Discard any queued changes without sending them. Used on user-key swaps:
+  // the session may already point at the NEW user, so flushing the outgoing
+  // user's pending edits could misattribute them. We trade at most one debounce
   // window of unsaved edits for a hard no-cross-user-bleed guarantee.
   const discardPending = useCallback(() => {
     if (persistTimer.current) {
       clearTimeout(persistTimer.current);
       persistTimer.current = null;
     }
-    pendingRef.current = null;
+    pendingUpserts.current.clear();
+    pendingDeletes.current.clear();
   }, []);
 
   // Bind to a user's server bucket. On every key change we resolve state FROM
@@ -296,7 +318,10 @@ export function useWorkspaceWidgets(createdBy: string, storageKey?: string | nul
           hydratedRef.current = key;
           widgetsRef.current = nextState;
           setWidgets(nextState);
-          if (toPersist) flushPersist(toPersist);
+          // The reconciled set is a UNION (server ∪ local edits), so persist it
+          // as upserts with no deletes — this never removes a widget another
+          // device may have created concurrently.
+          if (toPersist) sendChanges(toPersist, [], false);
           return;
         }
 
@@ -311,53 +336,65 @@ export function useWorkspaceWidgets(createdBy: string, storageKey?: string | nul
     return () => {
       cancelled = true;
     };
-  }, [storageKey, flushPersist, discardPending]);
+  }, [storageKey, sendChanges, discardPending]);
 
   // Flush on unmount so an in-flight debounced edit isn't lost.
   useEffect(() => {
     return () => {
-      if (keyRef.current && pendingRef.current) flushPersist(pendingRef.current);
+      if (keyRef.current) flushPending(true);
     };
-  }, [flushPersist]);
+  }, [flushPending]);
 
-  // Debounced write-through persistence. No-op until we've bound to a user key.
-  // While the active key is still hydrating, we record the intent (dirty +
-  // pending) but do NOT write — the post-GET reconciliation persists the merge.
-  const persist = useCallback((next: PlaygroundWidget[]) => {
-    const k = keyRef.current;
-    if (!k) return;
-    pendingRef.current = next;
-    if (hydratedRef.current !== k) {
-      dirtyDuringHydrationRef.current = true;
-      return;
-    }
-    if (persistTimer.current) clearTimeout(persistTimer.current);
-    persistTimer.current = setTimeout(() => {
-      persistTimer.current = null;
-      const widgetsToSave = pendingRef.current;
-      pendingRef.current = null;
-      if (!widgetsToSave) return;
-      fetch("/api/portal/widgets", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ widgets: widgetsToSave }),
-      }).catch(() => {
-        /* best-effort; next mutation retries */
-      });
-    }, PERSIST_DEBOUNCE_MS);
-  }, []);
+  // Record a mutation as a set of per-widget changes and debounce the flush.
+  // Instead of persisting the whole array (last-write-wins, which lets a second
+  // device clobber notes), we diff prev→next by widget id — using reference
+  // equality since mutations are immutable — and queue only the widgets that
+  // actually changed (upserts) and the ids that were removed (deletes).
+  // No-op until we've bound to a user key. While the active key is still
+  // hydrating, we only flag dirtiness and hold writes — the post-GET
+  // reconciliation persists the merged union.
+  const recordChanges = useCallback(
+    (prev: PlaygroundWidget[], next: PlaygroundWidget[]) => {
+      const k = keyRef.current;
+      if (!k) return;
+      if (hydratedRef.current !== k) {
+        dirtyDuringHydrationRef.current = true;
+        return;
+      }
+      const prevMap = new Map(prev.map((w) => [w.id, w]));
+      const nextMap = new Map(next.map((w) => [w.id, w]));
+      for (const [id, w] of nextMap) {
+        if (prevMap.get(id) !== w) {
+          pendingUpserts.current.set(id, w);
+          pendingDeletes.current.delete(id);
+        }
+      }
+      for (const id of prevMap.keys()) {
+        if (!nextMap.has(id)) {
+          pendingDeletes.current.add(id);
+          pendingUpserts.current.delete(id);
+        }
+      }
+      if (pendingUpserts.current.size === 0 && pendingDeletes.current.size === 0) return;
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+      persistTimer.current = setTimeout(() => {
+        persistTimer.current = null;
+        flushPending(false);
+      }, PERSIST_DEBOUNCE_MS);
+    },
+    [flushPending],
+  );
 
   const mutate = useCallback(
     (updater: (prev: PlaygroundWidget[]) => PlaygroundWidget[]) => {
       setWidgets((prev) => {
         const next = updater(prev);
         widgetsRef.current = next;
-        persist(next);
+        recordChanges(prev, next);
         return next;
       });
     },
-    [persist],
+    [recordChanges],
   );
 
   const addWidget = useCallback(

@@ -2,7 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import {
   listWidgetsForUser,
-  replaceWidgetsForUser,
+  applyWidgetChangesForUser,
 } from "../repositories/portalWidgets.repo";
 
 // Per-user Team Portal Playground widgets (Task #657). Any authenticated
@@ -36,9 +36,21 @@ const widgetSchema = z.object({
   createdBy: z.string().max(200),
 });
 
-const replaceSchema = z.object({
-  widgets: z.array(widgetSchema).max(200),
-});
+// Incremental change payload. `upserts` are widgets to create/update, `deletes`
+// are widget ids to remove. Only these rows are touched, so two devices editing
+// different notes no longer overwrite each other (Task #661). The legacy
+// full-array `{ widgets }` shape is still accepted (treated as an upsert of the
+// whole set with no deletes) for backward compatibility.
+const changeSchema = z
+  .object({
+    upserts: z.array(widgetSchema).max(200).optional(),
+    deletes: z.array(z.string().min(1).max(128)).max(200).optional(),
+    widgets: z.array(widgetSchema).max(200).optional(),
+  })
+  .refine(
+    (v) => v.upserts !== undefined || v.deletes !== undefined || v.widgets !== undefined,
+    { message: "Provide upserts, deletes, or widgets" },
+  );
 
 export function registerPortalWidgetsRoutes(app: Express) {
   app.get("/api/portal/widgets", requireAuth, async (req, res) => {
@@ -52,13 +64,14 @@ export function registerPortalWidgetsRoutes(app: Express) {
 
   app.put("/api/portal/widgets", requireAuth, async (req, res) => {
     try {
-      const parsed = replaceSchema.safeParse(req.body);
+      const parsed = changeSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
       }
-      const rows = await replaceWidgetsForUser(
+      const upsertSource = parsed.data.upserts ?? parsed.data.widgets ?? [];
+      const rows = await applyWidgetChangesForUser(
         req.session.userId!,
-        parsed.data.widgets.map((w) => ({
+        upsertSource.map((w) => ({
           id: w.id,
           type: w.type,
           x: w.x,
@@ -69,6 +82,7 @@ export function registerPortalWidgetsRoutes(app: Express) {
           patientContext: w.patientContext ?? null,
           createdBy: w.createdBy,
         })),
+        parsed.data.deletes ?? [],
       );
       res.json(rows);
     } catch (error: any) {
