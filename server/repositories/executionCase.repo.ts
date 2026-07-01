@@ -685,3 +685,41 @@ export async function listJourneyEvents(
     ? query.where(and(...conditions)).orderBy(desc(patientJourneyEvents.createdAt)).limit(safeLimit)
     : query.orderBy(desc(patientJourneyEvents.createdAt)).limit(safeLimit);
 }
+
+/** A single call-result journey event, reduced to the fields the team-metrics
+ *  read model needs (attribution + outcome + dedup key). */
+export type CallResultLoggedEvent = {
+  actorUserId: string | null;
+  patientScreeningId: number | null;
+  metadata: unknown;
+  createdAt: Date | null;
+};
+
+/**
+ * List EVERY `call_result_logged` journey event in a time range — the
+ * canonical per-call log for the engagement-center call-result path (the
+ * default portal write). Unlike {@link listJourneyEvents}, this is NOT capped
+ * at 500 rows: team metrics must reflect every portal call, so a high-volume
+ * day cannot silently drop calls. Only the minimal columns are selected so
+ * materializing a full day of calls stays cheap.
+ */
+export async function listCallResultLoggedEventsInRange(
+  start: Date,
+  end: Date,
+): Promise<CallResultLoggedEvent[]> {
+  return db
+    .select({
+      actorUserId: patientJourneyEvents.actorUserId,
+      patientScreeningId: patientJourneyEvents.patientScreeningId,
+      metadata: patientJourneyEvents.metadata,
+      createdAt: patientJourneyEvents.createdAt,
+    })
+    .from(patientJourneyEvents)
+    .where(
+      and(
+        eq(patientJourneyEvents.eventType, "call_result_logged"),
+        sql`${patientJourneyEvents.createdAt} >= ${start}`,
+        sql`${patientJourneyEvents.createdAt} <= ${end}`,
+      ),
+    );
+}

@@ -2,6 +2,7 @@ import { and, count, eq, inArray, isNotNull, notInArray } from "drizzle-orm";
 import { db } from "../../db";
 import { patientExecutionCases } from "@shared/schema/executionCase";
 import { storage } from "../../storage";
+import { listCallResultLoggedEventsInRange } from "../../repositories/executionCase.repo";
 import { engagementCallSettingsRepository } from "../../repositories/engagementCallSettings.repo";
 import {
   computeCallTargets,
@@ -19,7 +20,16 @@ import {
 //
 // An admin-facing rollup of TODAY's engagement activity, derived ONLY from
 // data we actually have:
-//   • the call log (outreach_calls) for disposition counts, and
+//   • the call activity log for disposition counts, unified across BOTH
+//     write paths so no portal call is dropped:
+//       – legacy outreach_calls rows (attributed by schedulerUserId), and
+//       – canonical `call_result_logged` patient-journey events (attributed
+//         by actorUserId). The engagement-center call-result endpoint is the
+//         DEFAULT portal write path and updates the execution-case spine +
+//         journey log WITHOUT writing outreach_calls, so reading only
+//         outreach_calls would miss essentially every current portal call
+//         (the split-brain this service resolves). Both metric surfaces
+//         (this rollup + engagement baskets) share mapOutcomeToDisposition.
 //   • the execution-case spine (patient_execution_cases) for active queue and
 //     carryover.
 // Targets/KPIs are NOT re-derived here — they reuse the exact call-settings
@@ -90,6 +100,18 @@ const OUTCOME_TO_DISPOSITION: Record<string, DispositionCategory> = {
 /** Pure: map a raw call outcome string to its disposition category. */
 export function mapOutcomeToDisposition(outcome: string): DispositionCategory {
   return OUTCOME_TO_DISPOSITION[outcome] ?? "other";
+}
+
+/** Pure: extract the logged outcome from a `call_result_logged` journey
+ *  event's metadata bag. Both the legacy and canonical call-result paths
+ *  persist the raw outcome under `callResult`; we fall back to a couple of
+ *  aliases so a metadata-shape change can't silently drop the call. Returns
+ *  null when no outcome is recorded (the call then can't be bucketed). */
+export function outcomeFromJourneyMetadata(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const m = metadata as Record<string, unknown>;
+  const raw = m.callResult ?? m.callDisposition ?? m.outcome;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw : null;
 }
 
 /** Pure: an all-zero disposition breakdown. */
@@ -282,11 +304,17 @@ export async function getTeamMetrics(
   const startOfToday = startOfTodayUtc(now);
   const endOfToday = endOfTodayUtc(now);
 
-  const [carryoverBySched, activeQueueBySched, calls] = await Promise.all([
-    getCarryoverCounts(schedulerIds, startOfToday),
-    getActiveQueueCounts(schedulerIds),
-    storage.listOutreachCallsInRange(startOfToday, endOfToday),
-  ]);
+  const [carryoverBySched, activeQueueBySched, calls, callResultEvents] =
+    await Promise.all([
+      getCarryoverCounts(schedulerIds, startOfToday),
+      getActiveQueueCounts(schedulerIds),
+      storage.listOutreachCallsInRange(startOfToday, endOfToday),
+      // Canonical per-call log from the engagement-center call-result path
+      // (the default portal write). See the header note on the split-brain.
+      // Uncapped by design — every portal call must be counted, so a
+      // high-volume day cannot silently drop calls past a row limit.
+      listCallResultLoggedEventsInRange(startOfToday, endOfToday),
+    ]);
 
   const userIds = schedulers
     .map((s) => s.userId)
@@ -294,17 +322,56 @@ export async function getTeamMetrics(
   const ptoUserIds = await getPtoUserIdsForToday(userIds);
   const calendarAvailable = userIds.length > 0;
 
-  // Group today's calls by the user who logged them.
+  // Group today's calls by the user who logged them, unifying the two
+  // disjoint write paths (legacy outreach_calls + canonical journey events).
   const outcomesByUser = new Map<string, string[]>();
   let unattributedCalls = 0;
-  for (const c of calls) {
-    if (!c.schedulerUserId) {
+
+  const recordCall = (userId: string | null, outcome: string) => {
+    if (!userId) {
       unattributedCalls += 1;
-      continue;
+      return;
     }
-    const list = outcomesByUser.get(c.schedulerUserId) ?? [];
-    list.push(c.outcome);
-    outcomesByUser.set(c.schedulerUserId, list);
+    const list = outcomesByUser.get(userId) ?? [];
+    list.push(outcome);
+    outcomesByUser.set(userId, list);
+  };
+
+  // Dedup guard for the rollback dual-write (LEGACY_DISPOSITION_WRITE_ENABLED),
+  // where a single call can land BOTH an outreach_calls row (primary) and a
+  // mirrored journey event. Keyed by (patientScreeningId, outcome, minute).
+  // Built from outreach_calls only, so distinct journey calls are never
+  // dropped against each other — only journey mirrors of an outreach primary.
+  const callMinute = (at: Date): number => Math.floor(at.getTime() / 60000);
+  const outreachCallKeys = new Set<string>();
+
+  // 1) Legacy call log — the historical source of truth; wins on dedup.
+  for (const c of calls) {
+    if (c.startedAt) {
+      const startedAt = new Date(c.startedAt as unknown as string);
+      if (!Number.isNaN(startedAt.getTime())) {
+        outreachCallKeys.add(
+          `${c.patientScreeningId ?? "?"}|${c.outcome}|${callMinute(startedAt)}`,
+        );
+      }
+    }
+    recordCall(c.schedulerUserId ?? null, c.outcome);
+  }
+
+  // 2) Canonical engagement path — `call_result_logged` journey events,
+  //    attributed to the acting team member (actorUserId). Skip any event
+  //    that duplicates an outreach_calls row (rollback dual-write guard).
+  for (const e of callResultEvents) {
+    const outcome = outcomeFromJourneyMetadata(e.metadata);
+    if (!outcome) continue; // no outcome recorded → cannot bucket.
+    const createdAt = e.createdAt
+      ? new Date(e.createdAt as unknown as string)
+      : null;
+    if (createdAt && !Number.isNaN(createdAt.getTime())) {
+      const key = `${e.patientScreeningId ?? "?"}|${outcome}|${callMinute(createdAt)}`;
+      if (outreachCallKeys.has(key)) continue;
+    }
+    recordCall(e.actorUserId ?? null, outcome);
   }
   // Track which users mapped to a roster member so the remainder is honest.
   const attributedUserIds = new Set<string>();

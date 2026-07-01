@@ -17,6 +17,7 @@
 import {
   DISPOSITION_CATEGORIES,
   mapOutcomeToDisposition,
+  outcomeFromJourneyMetadata,
   emptyDispositionBreakdown,
   summarizeDispositions,
   computeRemainingKpi,
@@ -67,6 +68,53 @@ assertEqual(
 );
 assertEqual('empty outcome → other', mapOutcomeToDisposition(""), "other");
 
+// ─── outcomeFromJourneyMetadata: canonical journey-event outcome extraction ──
+// The engagement-center call-result path (the DEFAULT portal write) records
+// each call as a `call_result_logged` journey event with the raw outcome under
+// metadata.callResult. Team metrics reads these to avoid the split-brain, so
+// the extractor must recover the outcome — and every extractable outcome must
+// still map to a non-"other" disposition.
+assertEqual(
+  "journey metadata: callResult extracted",
+  outcomeFromJourneyMetadata({ callResult: "voicemail" }),
+  "voicemail",
+);
+assertEqual(
+  "journey metadata: callDisposition alias extracted",
+  outcomeFromJourneyMetadata({ callDisposition: "scheduled" }),
+  "scheduled",
+);
+assertEqual(
+  "journey metadata: outcome alias extracted",
+  outcomeFromJourneyMetadata({ outcome: "no_answer" }),
+  "no_answer",
+);
+assertEqual(
+  "journey metadata: callResult wins over aliases",
+  outcomeFromJourneyMetadata({ callResult: "declined", outcome: "reached" }),
+  "declined",
+);
+assertEqual("journey metadata: null → null", outcomeFromJourneyMetadata(null), null);
+assertEqual(
+  "journey metadata: missing outcome → null",
+  outcomeFromJourneyMetadata({ note: "hi" }),
+  null,
+);
+assertEqual(
+  "journey metadata: blank outcome → null",
+  outcomeFromJourneyMetadata({ callResult: "   " }),
+  null,
+);
+// Every canonical outcome, once round-tripped through a journey-event metadata
+// bag, still buckets to a known (non-"other") disposition.
+for (const outcome of CALL_RESULT_OUTCOMES) {
+  const extracted = outcomeFromJourneyMetadata({ callResult: outcome });
+  assert(
+    `journey-logged "${outcome}" extracts + maps to a known disposition`,
+    extracted !== null && mapOutcomeToDisposition(extracted) !== "other",
+  );
+}
+
 // ─── summarizeDispositions: counts always sum to total ──────────────────────
 const allOutcomes = [...OUTREACH_CALL_OUTCOMES, ...CALL_RESULT_OUTCOMES];
 const summary = summarizeDispositions(allOutcomes);
@@ -105,6 +153,40 @@ assertEqual(
 assert(
   "summarize repeated: the unknown outcome lands in other",
   repeatedSummary.breakdown.other >= 1,
+);
+
+// High-volume regression: a day with far more than the old 500-row journey-event
+// cap must still count EVERY call. teamMetricsService now reads via the uncapped
+// listCallResultLoggedEventsInRange, so aggregation must scale linearly with no
+// silent truncation. (End-to-end DB coverage of the query itself is follow-up.)
+const HIGH_VOLUME = 2000;
+const bulkOutcomes: string[] = [];
+for (let i = 0; i < HIGH_VOLUME; i++) {
+  const outcome = CALL_RESULT_OUTCOMES[i % CALL_RESULT_OUTCOMES.length];
+  // Round-trip through the journey-metadata extractor, mirroring the real read.
+  const extracted = outcomeFromJourneyMetadata({ callResult: outcome });
+  if (extracted) bulkOutcomes.push(extracted);
+}
+assertEqual(
+  "high-volume: every journey outcome survived extraction",
+  bulkOutcomes.length,
+  HIGH_VOLUME,
+);
+const bulkSummary = summarizeDispositions(bulkOutcomes);
+assertEqual(
+  "high-volume: no calls dropped past the old 500 cap",
+  bulkSummary.total,
+  HIGH_VOLUME,
+);
+assertEqual(
+  "high-volume: disposition counts still sum to total",
+  DISPOSITION_CATEGORIES.reduce((acc, c) => acc + bulkSummary.breakdown[c], 0),
+  bulkSummary.total,
+);
+assertEqual(
+  "high-volume: nothing leaked into other",
+  bulkSummary.breakdown.other,
+  0,
 );
 
 // ─── computeRemainingKpi = max(0, target − completed) ───────────────────────
