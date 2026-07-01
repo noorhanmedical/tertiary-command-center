@@ -1,0 +1,435 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+If this Replit workspace cannot switch branches or push, report that clearly and continue implementing in the active workspace. I will push from the Replit Git pane.
+
+Before editing, run and report if available:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+Before editing:
+1. Identify exact files/routes/components that will be touched.
+2. Confirm whether this is frontend-only, backend-only, or full-stack.
+3. Confirm no unrelated architecture will be changed.
+
+TASK:
+
+Build Engagement Center unassigned basket, daily call-list distribution visibility, call-result metrics by team member, and premium documents/report-upload workflow.
+
+Core requirements:
+1. Engagement Center must NOT automatically send every approved patient to team member call lists.
+2. Approved patients from Admin Review should first enter an Engagement repository / unassigned basket.
+3. Team member call lists should receive patients based on admin Call Settings and daily distribution logic.
+4. Engagement Center must show call results by team member.
+5. When a report is uploaded, the platform should generate the order note, procedure note, and billing document where supported.
+6. Documents / ancillary documents / upload UI should be premium, organized, and operationally clear.
+
+Architecture rules:
+- Admin Review approves patients/tests.
+- Approved cases enter Engagement Center repository first.
+- Engagement Center holds unassigned work until daily distribution.
+- patient_execution_cases remains the source of truth for assigned operational work.
+- patient_journey_events remains the timeline/history source.
+- Team Member Portal remains where ACS/PCS works assigned call lists.
+- Engagement Center is the repository, distribution, and metrics layer.
+- Do not use Google Calendar.
+- Use platform calendar / TeamOps calendar only if schedule/availability is needed.
+- Do not use /api/scheduler-assignments for Engagement-assigned call work.
+- Do not resurrect old Outreach Center.
+- Do not create fake call results.
+- Do not create fake document generation.
+- Do not change schema unless absolutely required. If schema is required, add a proper migration.
+
+PART 1 — Inspect current flow
+
+Before editing, inspect and report:
+- how Admin Review-approved patients currently enter Engagement
+- whether they are automatically assigned to team members
+- how patient_execution_cases are created/updated
+- where assignedTeamMemberId is set
+- how Team Member Portal reads assigned call list items
+- current Engagement Center components/routes
+- current call result endpoint/data model
+- current patient_journey_events call-result structure
+- current document upload components/routes
+- current report upload workflow
+- current note generation workflow for order note, procedure note, billing document
+- current documents/ancillary documents UI files
+- exact files to be touched
+
+PART 2 — Engagement unassigned basket
+
+Add or formalize an Engagement Center basket called:
+
+Unassigned
+
+This basket should contain approved patient/test cases that are ready for engagement but not yet assigned to a team member.
+
+Each row/card should show:
+- patient name
+- patientId
+- executionCaseId
+- clinic/facility
+- approved ancillary/test
+- call reason
+- visit vs outreach type if available
+- priority
+- cooldown/outreach eligibility if available
+- Clinician PDF status
+- Plexus PDF status
+- report/document status if available
+- Admin Review approval status
+- current case status
+- created/approved date
+- next recommended action
+
+Rules:
+- Admin Review-approved patients should land here if they are not assigned.
+- Do not automatically send all patients to team member call lists.
+- Do not assign a team member until distribution/apply assignment occurs.
+- If a patient is already assigned, it should not appear in Unassigned unless unassigned/recalled.
+
+PART 3 — Engagement baskets / tiles
+
+Add clear Engagement Center baskets/tiles:
+
+Required:
+- Unassigned
+- Assigned Today
+- Carryover
+- Completed Conversations
+- Scheduled
+- Voicemail Left
+- No Answer
+- Follow-up Needed
+- Declined
+
+These should use real data from:
+- patient_execution_cases
+- patient_journey_events
+- existing call result records
+
+Do not fake counts.
+
+If data source is not available, show honest empty state.
+
+PART 4 — Daily call-list distribution behavior
+
+Call-list assignment must be controlled by Call Settings.
+
+Do not automatically push all unassigned patients to call lists.
+
+Distribution should respect:
+- team member working status from Call Settings / platform calendar if wired
+- daily completed-call KPI
+- visit/outreach split
+- carryover incomplete calls
+- remaining capacity
+- facility coverage
+- priority
+- cooldown eligibility
+
+Formula:
+new calls allowed today = daily call target minus active incomplete carryover
+
+Example:
+target 30
+carryover 12
+new assignment capacity 18
+
+Rules:
+- If workingToday is false, assign 0 new calls.
+- If callWorkdayPercent is 0%, assign 0 new calls.
+- Voicemail/no-answer do not count as completed conversations.
+- Carryover incomplete calls reduce how many new patients can be assigned.
+- Distribution should preview before applying if distribution engine exists or is being built.
+- Apply distribution should update patient_execution_cases.
+
+PART 5 — Call Results / Team Metrics workspace
+
+Add a Call Results / Team Metrics tile or workspace inside Engagement Center.
+
+This should show by team member:
+
+- team member name
+- role/team: PCS or ACS
+- facility coverage
+- assigned today
+- carryover incomplete
+- active queue
+- calls attempted today
+- completed conversations today
+- voicemail left
+- no answer
+- scheduled patients
+- declined
+- follow-up needed
+- unable to contact
+- wrong number if available
+- remaining completed-call KPI
+- remaining scheduled-patient KPI
+- visit calls completed
+- outreach calls completed
+- conversion percentage
+- last activity time
+
+Important definitions:
+- completed conversation means the patient was reached and discussion occurred
+- voicemail does not count as completed conversation
+- no answer does not count as completed conversation
+- missed/failed calls do not count as completed conversation
+- scheduled patients count toward scheduled-patient KPI
+
+The admin should be able to see these metrics in Engagement Center without logging into individual Team Member Portals.
+
+PART 6 — Call result mapping
+
+Use existing canonical call-result flow.
+
+Call results should come from:
+- POST /api/engagement-center/call-result if this is the canonical endpoint
+- patient_execution_cases current state
+- patient_journey_events timeline
+- RingCentral events only if truly wired
+
+Do not fake RingCentral events.
+
+Map call outcomes into metrics:
+
+completed conversation:
+- reached
+- scheduled, if patient was reached
+- completed or equivalent existing outcome
+
+voicemail:
+- left_voicemail
+
+no answer:
+- no_answer
+
+declined:
+- declined
+
+follow-up:
+- needs_follow_up
+- callback_scheduled if available
+
+unable:
+- unable_to_contact
+- wrong_number
+
+If exact outcome constants differ, inspect and map existing constants.
+
+PART 7 — Report upload triggers generated notes/documents
+
+When a report is uploaded for a patient/case/ancillary, the platform should trigger or expose generation for:
+
+- order note
+- procedure note
+- billing document
+
+Requirements:
+- report upload should attach to the correct patient and execution case
+- report upload should attach to the correct ancillary/test
+- generated documents should be linked to the same patient/case
+- document statuses should update after generation
+- do not generate fake notes if source data is missing
+- if generation fails, show a clear error state
+- if generation is not wired yet, show an honest action boundary such as “Generate procedure note” rather than pretending it happened
+
+Generated document states:
+- not generated
+- generating
+- generated
+- failed
+- needs review
+- signed/finalized if existing workflow supports it
+
+PART 8 — Documents / Ancillary Documents premium UI
+
+Redesign or improve the Documents section UI to be premium and operational.
+
+This includes:
+- ancillary documents
+- document upload
+- uploaded reports
+- generated notes
+- order note
+- procedure note
+- billing document
+- Clinician PDF
+- Plexus PDF
+- missing documents
+- billing readiness documents
+
+Preferred layout:
+- document status summary at top
+- grouped document categories
+- upload zone
+- generated documents panel
+- missing requirements panel
+- per-ancillary document grouping
+
+Suggested categories:
+1. Required for Scheduling
+2. Required for Testing
+3. Reports Uploaded
+4. Generated Notes
+5. Billing Documents
+6. Proof Packets
+7. Missing / Needs Attention
+
+Each document row/card should show:
+- document type
+- patient/case/ancillary
+- status
+- uploaded/generated date
+- owner/source
+- actions:
+  preview
+  download
+  regenerate
+  replace
+  mark reviewed if supported
+
+PART 9 — Ancillary document grouping
+
+Documents should be grouped by ancillary/test where possible:
+
+Example:
+BrainWave
+- order note
+- procedure note
+- report
+- billing document
+- Clinician PDF
+- Plexus PDF
+
+VitalWave
+- order note
+- procedure note
+- report
+- billing document
+- Clinician PDF
+- Plexus PDF
+
+Ultrasound
+- order note
+- procedure note
+- report
+- billing document
+- Clinician PDF
+- Plexus PDF
+
+Do not mix documents across patients or cases.
+
+PART 10 — UI style
+
+Engagement Center:
+- premium
+- clean
+- iOS-like
+- operational
+- clear baskets
+- clear metrics
+- no clutter
+- no giant fake bucket wall
+- no old Outreach Center style
+
+Documents:
+- premium
+- clear grouped sections
+- no plain upload dump
+- no clutter
+- no fake success states
+- strong status hierarchy
+
+PART 11 — Validation
+
+Verify:
+
+Scenario A:
+Admin Review approves 20 patients.
+Expected: they appear in Engagement Unassigned basket if not assigned.
+
+Scenario B:
+Unassigned patients are not automatically pushed to Team Member Portal call lists.
+
+Scenario C:
+Distribution assigns only allowed daily capacity based on Call Settings and carryover.
+
+Scenario D:
+Team member with 12 carryover and target 30 receives at most 18 new assignments.
+
+Scenario E:
+Engagement Call Results shows by team member:
+- attempted
+- completed conversations
+- voicemail
+- no answer
+- scheduled
+- declined
+- follow-up
+
+Scenario F:
+Voicemail and no-answer do not count as completed conversations.
+
+Scenario G:
+Admin can see team metrics without opening staff portal.
+
+Scenario H:
+Upload report for a patient/case.
+Expected: document workflow exposes/generates order note, procedure note, and billing document if supported.
+
+Scenario I:
+Generated documents appear in Documents section under correct patient/case/ancillary.
+
+Scenario J:
+Documents UI groups ancillary documents clearly.
+
+Scenario K:
+No Google Calendar references added.
+
+Scenario L:
+npm run check passes.
+
+Scenario M:
+npm run build passes.
+
+DO NOT:
+- Do not automatically assign all approved patients to team members.
+- Do not fake call result metrics.
+- Do not fake RingCentral events.
+- Do not fake document generation.
+- Do not mix documents between patients/cases.
+- Do not use old Outreach Center.
+- Do not use scheduler cards.
+- Do not use /api/scheduler-assignments for Engagement-assigned call work.
+- Do not change unrelated modules.
+- Do not merge to main.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA if available
+   - risks
+   - whether I need to push from the Replit Git pane
+
+Commit message:
+Add Engagement baskets metrics and document workflow

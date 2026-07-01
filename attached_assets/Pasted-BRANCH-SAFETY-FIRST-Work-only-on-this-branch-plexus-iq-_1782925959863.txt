@@ -1,0 +1,382 @@
+BRANCH SAFETY FIRST:
+
+Work only on this branch:
+plexus-iq-admin-review-persistence-fix
+
+This branch corresponds to PR #299 and is my Replit workbench branch.
+
+If this Replit workspace cannot switch branches or push, report that clearly and continue implementing in the active workspace. I will push from the Replit Git pane.
+
+Before editing, run and report if available:
+git branch --show-current
+git status --short
+git log -1 --oneline
+
+Do NOT work on main.
+Do NOT merge to main.
+Do NOT push to main.
+Do NOT create a new branch unless I explicitly ask.
+Do NOT reset, rebase, force push, or delete unrelated work.
+Do NOT touch unrelated files.
+
+TASK:
+
+Upgrade the ACS/PCS Team Member Portal left Tools panel into a robust premium productivity tool dock and workspace system.
+
+Current problem:
+The left Tools panel currently opens ugly, disconnected tool UIs into the Playground. For example, Email looks bad and does not feel like a premium integrated communication tool. Some tools, like Calendar, should not render a full calendar inside the left panel. The left panel should be a launcher/dock, and tools should be able to open inside the Playground as premium docked/floating/split panels.
+
+Goal:
+Create a premium, robust Tools system in the ACS/PCS Team Member Portal.
+
+The left panel should be:
+- a tool launcher
+- a communication tray
+- a sticky note launcher
+- a drag-and-drop source for Playground widgets
+
+The Playground should support:
+- patient-centered workspace
+- docked tool panels
+- split screen layouts
+- floating sticky notes
+- user-customizable layout settings
+
+Architecture rules:
+- Team Member Portal remains where ACS/PCS work call lists.
+- Playground remains the patient/case operational workspace.
+- Patient Directory remains the canonical patient chart.
+- patient_execution_cases remains the source of truth for assigned work.
+- patient_journey_events remains the timeline/audit source.
+- Do not use old Outreach Center.
+- Do not use scheduler cards.
+- Do not use Google Calendar.
+- Use platform calendar only where scheduling is needed.
+- Do not create fake messages/emails.
+- Do not create fake send success.
+- Do not break Work Queue behavior.
+- Do not break right-panel call list behavior.
+- Do not change schema unless absolutely required. If schema is required, add a migration.
+
+PART 1 — Inspect current Tools panel
+
+Before editing, inspect and report:
+- Team Member Portal route/page/component files
+- left Tools panel component files
+- current tool buttons/icons
+- current Email tool/component
+- current Messages/Communication tool/component if any
+- current Calendar tool/component behavior
+- current Playground center-mode/component model
+- current patient tab model
+- current user/session model
+- whether user preferences/settings exist
+- whether internal chat/team chat exists
+- whether email sending/drafting endpoints exist
+- whether sticky notes exist anywhere
+- exact files to be touched
+- whether this is frontend-only or full-stack
+
+PART 2 — Tools panel should be a dock, not a dumping ground
+
+Redesign the left Tools panel as a premium tool dock.
+
+The panel should include icon/buttons for:
+- Messages
+- Team Chat
+- Email
+- Calendar
+- Sticky Notes
+- Documents
+- Scripts / Call Guide
+- PDFs / Proof
+- Tasks
+- Settings
+
+Do not render a full calendar inside the left panel by default.
+Calendar should be an icon/action only from the Tools panel.
+
+Clicking a tool should support:
+- open inside left panel if it is a lightweight tool
+- open as docked panel in Playground
+- open as floating panel over Playground
+- open as split-screen panel
+- drag into Playground if drag/drop is implemented
+
+PART 3 — Communication tray
+
+Add or redesign the bottom half of the Tools panel as a communication tray.
+
+It should feel like:
+- iMessage-style interface
+- purple and gray message bubbles instead of blue and gray
+- premium Plexus styling
+- tied to logged-in team member
+
+Communication tray tabs:
+- Patient Messages
+- Team Chat
+- Email
+- Notes
+
+Patient Messages:
+- show selected patient/case context if available
+- message bubbles:
+  - incoming/external = gray
+  - outgoing/Plexus/team member = purple
+- quick reply box
+- templates if available
+- attachment area if available
+- clear disabled state if patient messaging is not wired
+
+Team Chat:
+- tied to logged-in team member
+- show internal team chat thread if available
+- support patient/case context if opened from patient workspace
+- show role/name of each sender
+- support message composer if backend exists
+- if backend not wired, show clear integration boundary, not fake messages
+
+Email:
+- make it premium and modern
+- do not render an ugly old email form
+- support:
+  - To
+  - Subject
+  - Message
+  - templates
+  - attach Clinician PDF
+  - attach Plexus PDF
+  - attach report/document
+  - send
+  - save draft
+- if email sending is not wired, show “Email integration required” or “Draft only” state
+- do not fake sent emails
+
+Notes:
+- quick text notes tied to patient/case or private user notes if available
+
+PART 4 — Playground tool modes
+
+Tools should not only be stuck in the left panel.
+
+Each tool should be able to open in the Playground in one of these modes:
+- docked left inside Playground
+- docked right inside Playground
+- split screen
+- floating window
+- full workspace tab if needed
+
+Examples:
+- Email can open as a right-side docked panel inside the Playground.
+- Team Chat can open as a bottom split panel.
+- Calendar can open as a full schedule panel.
+- Documents can open as a document drawer.
+- Sticky Notes can float anywhere.
+
+If full drag-and-drop is too large for this pass:
+- implement a simple “Open in Playground” action per tool first
+- leave drag-and-drop as a clearly marked next step
+
+PART 5 — Drag and drop tool widgets
+
+Add a foundation for dragging tools from the left panel into the Playground.
+
+Desired behavior:
+- user drags Email icon into Playground
+- Email opens as a docked/floating widget
+- user drags Team Chat icon into Playground
+- Team Chat opens in selected area
+- user drags Sticky Note icon into Playground
+- new sticky note appears where dropped
+
+If full drag/drop is implemented:
+- preserve widget type
+- preserve patient/case context
+- preserve logged-in user
+- allow repositioning
+- save layout if settings are implemented
+
+If not implemented in this phase:
+- create clean architecture so it can be added later
+- do not fake drag/drop
+
+PART 6 — Sticky Notes / Post-it notes
+
+Add Sticky Notes tool.
+
+Behavior:
+- Sticky Notes icon looks like a Post-it note.
+- Clicking it creates a new sticky note on the Playground.
+- New note defaults to the top of the Playground.
+- User can drag the note anywhere.
+- User can edit the note text.
+- User can choose note color.
+- User can delete the note.
+- User can collapse/minimize the note.
+
+Colors:
+- yellow
+- pink
+- blue
+- green
+- purple
+- gray
+
+Scope options:
+- private to logged-in user
+- attached to current patient/case
+- shared with team if supported
+
+If persistence exists:
+- save notes to backend.
+
+If persistence does not exist:
+- do not pretend notes are saved permanently.
+- show local/session-only state clearly, or add a small backend persistence model if approved/needed.
+
+This should feel like iAnnotate / Post-it notes inside the Playground.
+
+PART 7 — User workspace settings
+
+Add or prepare user-level workspace settings.
+
+Settings should allow a team member to configure:
+- default Tools panel state
+- default Work Queue state
+- default communication tray tab
+- default Calendar behavior
+- default Email behavior
+- default split-screen layout
+- sticky notes visible by default
+- preferred tool dock positions
+- saved Playground layout
+
+Preferred settings location:
+- Tools panel Settings button
+- or Team Member Portal settings menu
+
+If user preferences infrastructure exists, use it.
+
+If not:
+- add frontend-only settings if this is purely UI preference and acceptable for now
+- for production-critical persistence, use backend settings with migration if required
+
+PART 8 — Calendar tool behavior
+
+Calendar in the left Tools panel should be an icon/button only.
+
+Clicking Calendar from Tools should:
+- open schedule tool in the Playground
+- not render a full calendar inside the left panel
+- preserve patient/case context if one is active
+- allow full scheduler or quick schedule depending on current context
+
+Do not clutter the left Tools panel with a full calendar.
+
+PART 9 — Visual design
+
+Make the Tools system feel:
+- premium
+- bright
+- bold
+- iOS-like
+- polished
+- integrated
+- not random
+- not old Windows-style
+- not a cheap form dump
+
+Use:
+- clean icon buttons
+- strong spacing
+- subtle panel surfaces
+- smooth transitions
+- purple and gray message bubbles
+- clear tabs
+- docked/floating panels with premium chrome
+- consistent typography
+
+Avoid:
+- ugly email forms
+- random calendar blocks in the left panel
+- cluttered tiny tools
+- dead buttons
+- fake messages
+- fake sent emails
+- disconnected widgets
+- old Outreach Center UI
+
+PART 10 — Preserve Work Queue / side panel behavior
+
+Do not break existing side panel behavior.
+
+Rules:
+- Tools controls Tools only.
+- Work Queue controls Work Queue only.
+- Opening Tools does not make Work Queue disappear.
+- Opening Work Queue does not make Tools disappear.
+- Clicking Playground can move both side panels aside.
+- Side panels should remain recoverable.
+- Tool state should not reset when panels slide aside.
+
+PART 11 — Security and identity
+
+Everything must be tied to the logged-in team member.
+
+For messages, notes, email drafts, and team chat:
+- record/associate logged-in user if backend supports it
+- do not falsely attribute admin actions to another user
+- admin view-as should not make messages appear as if sent by the viewed-as user unless explicitly impersonation-enabled
+- normal ACS/PCS users should not see other users’ private notes/messages
+
+PART 12 — Validation
+
+Verify and report:
+
+1. Left Tools panel shows premium tool icons/buttons.
+2. Calendar is only an icon/action in the left Tools panel, not a full calendar.
+3. Communication tray exists in the bottom half of the Tools panel.
+4. Communication tray has Patient Messages, Team Chat, Email, Notes tabs.
+5. Message UI uses purple and gray bubbles.
+6. Email composer is premium and not an ugly form.
+7. Email does not fake send success if not wired.
+8. Team Chat is tied to logged-in user or shows integration boundary.
+9. Sticky Notes button creates a Post-it-style note on Playground.
+10. Sticky note defaults to top of Playground.
+11. Sticky notes support multiple colors.
+12. Sticky notes can be dragged.
+13. Tool can open into Playground as docked/floating/split panel or has a clear first-step implementation.
+14. User settings exist or are prepared for layout preferences.
+15. Work Queue behavior is not broken.
+16. Side panels remain independent.
+17. npm run check passes.
+18. npm run build passes.
+
+DO NOT:
+- Do not use old Outreach Center.
+- Do not use scheduler cards.
+- Do not use Google Calendar.
+- Do not fake messages.
+- Do not fake sent emails.
+- Do not fake saved sticky notes.
+- Do not break Team Member Portal call list.
+- Do not break patient-centered Playground tabs.
+- Do not break Work Queue panel behavior.
+- Do not expose private user notes/messages to other users.
+- Do not change schema unless absolutely required.
+- Do not merge to main.
+
+After implementation:
+1. Run npm run check.
+2. Run npm run build.
+3. Report:
+   - files changed
+   - what changed
+   - check/build result
+   - latest commit SHA if available
+   - risks
+   - whether I need to push from the Replit Git pane
+
+Commit message:
+Upgrade Team Portal Tools workspace

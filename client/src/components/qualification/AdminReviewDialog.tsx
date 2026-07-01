@@ -3469,14 +3469,13 @@ export function AdminReviewDialog({
             className="flex min-h-0 w-[320px] flex-none flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/45 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
             data-testid="admin-review-action-panel"
           >
-            <ScrollArea className="min-h-0 flex-1 basis-0">
-              <div className="space-y-4 p-4">
+            <div className="shrink-0 space-y-3 p-3" data-testid="admin-review-reference-scroll">
+              <div className="mb-1 flex items-center gap-2" data-testid="admin-review-workbench-header">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Review Workbench</span>
+                <span className="h-px flex-1 bg-slate-200/70" />
+              </div>
                     {/* Reference surfaces — split into top-of-rail buttons */}
                     <div data-testid="admin-review-reference-buttons-group">
-                      <div className="mb-2 flex items-center gap-2">
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Reference</span>
-                        <span className="h-px flex-1 bg-slate-200" />
-                      </div>
                       <div className="grid grid-cols-2 gap-2">
                         {/* Source data */}
                         <Popover>
@@ -3987,24 +3986,23 @@ export function AdminReviewDialog({
                   </section>
                 </div>
 
-              </div>
-            </ScrollArea>
+            </div>
 
-            {/* Updates — flat section occupying the bottom half (no nested tile) */}
+            {/* Changes — flex-1 tinted workbench card; fills remaining height */}
             <div
-              className="mx-3 mb-2 flex min-h-0 flex-1 basis-0 flex-col overflow-hidden border-t border-slate-200/70"
+              className="mx-3 mb-2 flex min-h-0 flex-1 basis-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/70"
               data-testid="admin-review-updates-group"
             >
               <div
-                className="flex items-center justify-between gap-2 px-1 py-2 border-b border-slate-200/60"
+                className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-200/60"
                 data-record-helper="admin-review-record-update"
               >
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
-                    Updates
+                    Changes
                   </span>
                   <span className="text-[10px] text-slate-400 tabular-nums">
-                    {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
+                    {updatesLog.length} {updatesLog.length === 1 ? "change" : "changes"}
                   </span>
                 </div>
                 <button
@@ -4042,10 +4040,16 @@ export function AdminReviewDialog({
                     const groups = groupUpdatesByAncillary(updatesLog);
                     if (groups.length === 0) {
                       return (
-                        <div className="text-[11px] text-slate-400 italic">
-                          {sourceDataSaved
-                            ? "Source data edited — regenerate to apply across all ancillaries."
-                            : "Changes you make will appear here, grouped by ancillary."}
+                        <div
+                          className="flex flex-col items-center justify-center gap-1 py-4 text-center"
+                          data-testid="admin-review-updates-empty"
+                        >
+                          <RefreshCw className="h-4 w-4 text-slate-300" />
+                          <div className="max-w-[220px] text-[11px] italic text-slate-400">
+                            {sourceDataSaved
+                              ? "Source data edited — regenerate to apply across all ancillaries."
+                              : "Changes you make will appear here, grouped by ancillary."}
+                          </div>
                         </div>
                       );
                     }
@@ -4092,7 +4096,7 @@ export function AdminReviewDialog({
 
             {/* Decision footer — sibling nav centered, decision buttons right (no tile) */}
             <div
-              className="mx-3 mb-3 flex items-center gap-2 px-1"
+              className="mx-2 mb-3 flex shrink-0 items-center gap-1.5 px-1"
               data-testid="admin-review-decision-group"
             >
               <div className="flex-1" />
@@ -4111,7 +4115,7 @@ export function AdminReviewDialog({
                     aria-label="Previous patient"
                     title="Previous patient"
                     data-testid="admin-review-sibling-prev"
-                    className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    className="inline-flex items-center justify-center h-10 w-10 rounded-full border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                   >
                     <ChevronLeft className="w-4 h-4" />
                   </button>
@@ -4128,13 +4132,13 @@ export function AdminReviewDialog({
                     aria-label="Next patient"
                     title={hasNext ? "Next patient" : "No more patients"}
                     data-testid="admin-review-sibling-next"
-                    className="inline-flex items-center justify-center h-7 w-7 rounded-full border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    className="inline-flex items-center justify-center h-10 w-10 rounded-full border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                   >
                     <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
               )}
-              <div className="flex-1 flex items-center justify-end gap-2">
+              <div className="flex-1 flex items-center justify-end gap-1.5">
                 <button
                   type="button"
                   disabled={approvalMutation.isPending}
@@ -4146,7 +4150,7 @@ export function AdminReviewDialog({
                   title={isUnder16 ? "Admin Override Approve" : "Approve"}
                   data-testid="admin-review-approve-button"
                   data-bar-testid={`admin-review-button-approve-${patient.id}`}
-                  className="inline-flex flex-1 items-center justify-center h-11 rounded-xl bg-emerald-600 text-white shadow-[0_8px_20px_rgba(5,150,105,0.4)] hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex w-11 items-center justify-center h-11 rounded-full bg-emerald-600 text-white shadow-[0_8px_20px_rgba(5,150,105,0.4)] hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {approvalMutation.isPending ? (
                     <Loader2 className="w-5 h-5 animate-spin" />
@@ -4165,7 +4169,7 @@ export function AdminReviewDialog({
                   title="Pend"
                   data-testid="admin-review-pend-button"
                   data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
-                  className="inline-flex flex-1 items-center justify-center h-11 rounded-xl bg-amber-500 text-white shadow-[0_8px_20px_rgba(217,119,6,0.4)] hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex w-11 items-center justify-center h-11 rounded-full bg-amber-500 text-white shadow-[0_8px_20px_rgba(217,119,6,0.4)] hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <Clock className="w-5 h-5" strokeWidth={2.5} />
                 </button>
@@ -4179,7 +4183,7 @@ export function AdminReviewDialog({
                   aria-label="Reject"
                   title="Reject"
                   data-testid={`admin-review-button-reject-${patient.id}`}
-                  className="inline-flex flex-1 items-center justify-center h-11 rounded-xl bg-rose-600 text-white shadow-[0_8px_20px_rgba(225,29,72,0.4)] hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex w-11 items-center justify-center h-11 rounded-full bg-rose-600 text-white shadow-[0_8px_20px_rgba(225,29,72,0.4)] hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <XCircle className="w-5 h-5" strokeWidth={2.5} />
                 </button>
