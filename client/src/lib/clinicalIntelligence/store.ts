@@ -1,345 +1,189 @@
-// Clinical Intelligence & Governance — localStorage-backed prototype store.
+// Clinical Intelligence & Governance — server-backed store.
 //
-// Pattern mirrors plexusIqBatchSession.ts: a single storage key + a
-// CustomEvent so every mounted consumer (Admin Review drawer, the
-// governance page) stays in sync within the tab, plus the `storage`
-// event for cross-tab sync. Prototype only — no server persistence.
+// Replaces the localStorage prototype (key `plexusIq.clinicalIntelligence.v1`)
+// with the `/api/clinical-intelligence` API so learning items, rules,
+// evidence decisions, and audit entries are shared across devices and team
+// members. The mutation functions keep the same names/parameters as the
+// prototype but are now async (they resolve with the server-persisted
+// entity). Every mutation invalidates the single state query so all mounted
+// consumers (Admin Review drawer, governance page) stay in sync.
+//
+// Any legacy per-browser localStorage data is migrated to the server once
+// (insert-only; the server skips browser-local seed rules) and the key is
+// then cleared.
 
-import { useCallback, useEffect, useState } from "react";
-import {
-  ciId,
-  CI_ANCILLARY_LABELS,
-  CI_SCOPE_LABELS,
-  type CiAuditEntry,
-  type CiEvidenceRecord,
-  type CiLearningItem,
-  type CiLearningStatus,
-  type CiRule,
-  type CiRuleStatus,
-  type CiStoreState,
+import { useCallback, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import type {
+  CiEvidenceRecord,
+  CiLearningItem,
+  CiLearningStatus,
+  CiRule,
+  CiRuleStatus,
+  CiStoreState,
 } from "./types";
-import { seededRules } from "./seeds";
 
-const STORAGE_KEY = "plexusIq.clinicalIntelligence.v1";
-const CHANGED_EVENT = "plexusIq:clinicalIntelligenceChanged";
+const CI_QUERY_KEY = ["/api/clinical-intelligence"];
+const LEGACY_STORAGE_KEY = "plexusIq.clinicalIntelligence.v1";
 
 const EMPTY: CiStoreState = { learningItems: [], rules: [], evidence: [], audit: [] };
 
-function safeParse(raw: string | null): CiStoreState | null {
-  if (!raw) return null;
+function invalidate(): void {
+  queryClient.invalidateQueries({ queryKey: CI_QUERY_KEY });
+}
+
+async function ciApi<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await apiRequest(method, path, body);
+  const json = (await res.json()) as T;
+  invalidate();
+  return json;
+}
+
+// ───── Mutations (server-persisted) ─────────────────────────────────────
+
+export async function ciAddLearningItem(
+  item: Omit<CiLearningItem, "id" | "createdAt">,
+): Promise<CiLearningItem> {
+  return ciApi<CiLearningItem>("POST", "/api/clinical-intelligence/learning-items", item);
+}
+
+export async function ciUpdateLearningItem(
+  id: string,
+  by: string,
+  patch: Partial<CiLearningItem>,
+): Promise<void> {
+  await ciApi("PATCH", `/api/clinical-intelligence/learning-items/${encodeURIComponent(id)}`, {
+    by,
+    patch,
+  });
+}
+
+export async function ciSetLearningStatus(
+  id: string,
+  by: string,
+  status: CiLearningStatus,
+): Promise<void> {
+  await ciApi("POST", `/api/clinical-intelligence/learning-items/${encodeURIComponent(id)}/status`, {
+    by,
+    status,
+  });
+}
+
+export async function ciAddRule(
+  rule: Omit<CiRule, "id" | "createdAt" | "updatedAt" | "version" | "usageCount" | "history">,
+): Promise<CiRule> {
+  return ciApi<CiRule>("POST", "/api/clinical-intelligence/rules", rule);
+}
+
+export async function ciUpdateRule(
+  id: string,
+  by: string,
+  patch: Partial<CiRule>,
+  changeSummary = "Rule updated",
+): Promise<void> {
+  await ciApi("PATCH", `/api/clinical-intelligence/rules/${encodeURIComponent(id)}`, {
+    by,
+    patch,
+    changeSummary,
+  });
+}
+
+export async function ciSetRuleStatus(id: string, by: string, status: CiRuleStatus): Promise<void> {
+  return ciUpdateRule(id, by, { status }, `Status → ${status}`);
+}
+
+export async function ciConvertLearningToRule(
+  learningId: string,
+  by: string,
+  overrides: Partial<CiRule> = {},
+): Promise<CiRule | null> {
   try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    return {
-      learningItems: Array.isArray(parsed.learningItems) ? parsed.learningItems : [],
-      rules: Array.isArray(parsed.rules) ? parsed.rules : [],
-      evidence: Array.isArray(parsed.evidence) ? parsed.evidence : [],
-      audit: Array.isArray(parsed.audit) ? parsed.audit : [],
-    };
+    return await ciApi<CiRule>(
+      "POST",
+      `/api/clinical-intelligence/learning-items/${encodeURIComponent(learningId)}/convert`,
+      { by, overrides },
+    );
   } catch {
     return null;
   }
 }
 
-export function readCiState(): CiStoreState {
-  try {
-    const stored = safeParse(localStorage.getItem(STORAGE_KEY));
-    if (stored) return stored;
-    // First load — seed the rule library with example governance rules so
-    // the prototype is workable out of the box. Seeds are editable like
-    // any other rule and marked `seeded: true`.
-    const initial: CiStoreState = { ...EMPTY, rules: seededRules() };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
-    return initial;
-  } catch {
-    return { ...EMPTY };
-  }
-}
-
-function writeCiState(next: CiStoreState): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    /* localStorage unavailable; prototype state is session-only then */
-  }
-  try {
-    window.dispatchEvent(new CustomEvent(CHANGED_EVENT));
-  } catch {
-    /* noop */
-  }
-}
-
-function mutate(fn: (state: CiStoreState) => CiStoreState): CiStoreState {
-  const next = fn(readCiState());
-  writeCiState(next);
-  return next;
-}
-
-function auditEntry(
-  by: string,
-  action: string,
-  entityType: CiAuditEntry["entityType"],
-  entityId: string,
-  entityName: string,
-  detail?: string,
-): CiAuditEntry {
-  return {
-    id: ciId("aud"),
-    at: new Date().toISOString(),
-    by,
-    action,
-    entityType,
-    entityId,
-    entityName,
-    detail,
-  };
-}
-
-// ───── Mutations ────────────────────────────────────────────────────────
-
-export function ciAddLearningItem(
-  item: Omit<CiLearningItem, "id" | "createdAt">,
-): CiLearningItem {
-  const full: CiLearningItem = {
-    ...item,
-    id: ciId("learn"),
-    createdAt: new Date().toISOString(),
-  };
-  mutate((s) => ({
-    ...s,
-    learningItems: [full, ...s.learningItems],
-    audit: [
-      auditEntry(
-        item.createdBy,
-        "learning_item_created",
-        "learning_item",
-        full.id,
-        full.ruleName || full.instruction.slice(0, 60),
-        `Scope: ${CI_SCOPE_LABELS[full.scope]} · Ancillary: ${CI_ANCILLARY_LABELS[full.affectedAncillary]}`,
-      ),
-      ...s.audit,
-    ],
-  }));
-  return full;
-}
-
-export function ciUpdateLearningItem(
-  id: string,
-  by: string,
-  patch: Partial<CiLearningItem>,
-): void {
-  mutate((s) => {
-    const item = s.learningItems.find((l) => l.id === id);
-    if (!item) return s;
-    return {
-      ...s,
-      learningItems: s.learningItems.map((l) => (l.id === id ? { ...l, ...patch } : l)),
-      audit: [
-        auditEntry(by, "learning_item_updated", "learning_item", id, item.ruleName || item.instruction.slice(0, 60)),
-        ...s.audit,
-      ],
-    };
-  });
-}
-
-export function ciSetLearningStatus(id: string, by: string, status: CiLearningStatus): void {
-  mutate((s) => {
-    const item = s.learningItems.find((l) => l.id === id);
-    if (!item) return s;
-    return {
-      ...s,
-      learningItems: s.learningItems.map((l) => (l.id === id ? { ...l, status } : l)),
-      audit: [
-        auditEntry(
-          by,
-          `learning_item_${status}`,
-          "learning_item",
-          id,
-          item.ruleName || item.instruction.slice(0, 60),
-          `Status → ${status}`,
-        ),
-        ...s.audit,
-      ],
-    };
-  });
-}
-
-export function ciAddRule(
-  rule: Omit<CiRule, "id" | "createdAt" | "updatedAt" | "version" | "usageCount" | "history">,
-): CiRule {
-  const now = new Date().toISOString();
-  const full: CiRule = {
-    ...rule,
-    id: ciId("rule"),
-    version: 1,
-    usageCount: 0,
-    createdAt: now,
-    updatedAt: now,
-    history: [
-      { version: 1, at: now, by: rule.createdBy, summary: "Rule created", status: rule.status },
-    ],
-  };
-  mutate((s) => ({
-    ...s,
-    rules: [full, ...s.rules],
-    audit: [auditEntry(rule.createdBy, "rule_created", "rule", full.id, full.name), ...s.audit],
-  }));
-  return full;
-}
-
-export function ciUpdateRule(
-  id: string,
-  by: string,
-  patch: Partial<CiRule>,
-  changeSummary = "Rule updated",
-): void {
-  const now = new Date().toISOString();
-  mutate((s) => {
-    const rule = s.rules.find((r) => r.id === id);
-    if (!rule) return s;
-    const nextVersion = rule.version + 1;
-    const nextStatus = (patch.status ?? rule.status) as CiRuleStatus;
-    return {
-      ...s,
-      rules: s.rules.map((r) =>
-        r.id === id
-          ? {
-              ...r,
-              ...patch,
-              version: nextVersion,
-              updatedAt: now,
-              history: [
-                ...r.history,
-                { version: nextVersion, at: now, by, summary: changeSummary, status: nextStatus },
-              ],
-            }
-          : r,
-      ),
-      audit: [auditEntry(by, "rule_updated", "rule", id, rule.name, changeSummary), ...s.audit],
-    };
-  });
-}
-
-export function ciSetRuleStatus(id: string, by: string, status: CiRuleStatus): void {
-  ciUpdateRule(id, by, { status }, `Status → ${status}`);
-}
-
-export function ciConvertLearningToRule(
-  learningId: string,
-  by: string,
-  overrides: Partial<CiRule> = {},
-): CiRule | null {
-  const state = readCiState();
-  const item = state.learningItems.find((l) => l.id === learningId);
-  if (!item) return null;
-  const rule = ciAddRule({
-    name: item.ruleName || `Rule from learning: ${item.instruction.slice(0, 40)}`,
-    description: item.instruction,
-    triggerSource: item.triggerSource,
-    targetAncillary: item.affectedAncillary,
-    targetOutputs: item.affectedOutputs,
-    evidenceRequirement: item.evidenceRequirement,
-    scope: item.scope,
-    approvalRequirement: item.approvalRequirement,
-    status: "draft",
-    conflictFlags: [],
-    sourceLearningItemId: item.id,
-    sourceEvidence: item.sourceContext?.evidenceLabels ?? [],
-    createdBy: by,
-    ...overrides,
-  });
-  mutate((s) => ({
-    ...s,
-    learningItems: s.learningItems.map((l) =>
-      l.id === learningId ? { ...l, status: "converted", convertedRuleId: rule.id } : l,
-    ),
-  }));
-  return rule;
-}
-
-export function ciRecordEvidence(
+export async function ciRecordEvidence(
   record: Omit<CiEvidenceRecord, "id" | "at" | "usedInRuleIds">,
-): CiEvidenceRecord {
-  const full: CiEvidenceRecord = {
-    ...record,
-    id: ciId("ev"),
-    at: new Date().toISOString(),
-    usedInRuleIds: [],
-  };
-  mutate((s) => {
-    // Dedupe: same patient + label + sourceType keeps the latest decision,
-    // but merges forward the prior assigned ancillary and rule usage so an
-    // approve after an attach (or vice versa) never loses traceability.
-    const prior = s.evidence.find(
-      (e) =>
-        e.patientId === full.patientId &&
-        e.label.toLowerCase() === full.label.toLowerCase() &&
-        e.sourceType === full.sourceType,
-    );
-    if (prior) {
-      full.usedInRuleIds = prior.usedInRuleIds;
-      if (!full.assignedAncillary) full.assignedAncillary = prior.assignedAncillary;
+): Promise<CiEvidenceRecord> {
+  return ciApi<CiEvidenceRecord>("POST", "/api/clinical-intelligence/evidence", record);
+}
+
+export async function ciMarkEvidenceUsedInRule(evidenceId: string, ruleId: string): Promise<void> {
+  await ciApi(
+    "POST",
+    `/api/clinical-intelligence/evidence/${encodeURIComponent(evidenceId)}/used-in-rule`,
+    { ruleId },
+  );
+}
+
+// ───── One-time legacy localStorage migration ───────────────────────────
+
+let migrationAttempted = false;
+
+function migrateLegacyLocalState(): void {
+  if (migrationAttempted) return;
+  migrationAttempted = true;
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+  } catch {
+    return;
+  }
+  if (!raw) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Unreadable legacy data — drop it so we don't retry forever.
+    try {
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    } catch {
+      /* noop */
     }
-    const rest = s.evidence.filter(
-      (e) =>
-        !(
-          e.patientId === full.patientId &&
-          e.label.toLowerCase() === full.label.toLowerCase() &&
-          e.sourceType === full.sourceType
-        ),
-    );
-    return {
-      ...s,
-      evidence: [full, ...rest],
-      audit: [
-        auditEntry(
-          record.decidedBy,
-          record.status === "approved" ? "evidence_approved" : "evidence_rejected",
-          "evidence",
-          full.id,
-          full.label,
-          `${full.sourceType} · ${full.patientName}`,
-        ),
-        ...s.audit,
-      ],
-    };
-  });
-  return full;
+    return;
+  }
+  if (!parsed || typeof parsed !== "object") return;
+  const state = parsed as Partial<CiStoreState>;
+  const payload = {
+    learningItems: Array.isArray(state.learningItems) ? state.learningItems : [],
+    rules: Array.isArray(state.rules) ? state.rules : [],
+    evidence: Array.isArray(state.evidence) ? state.evidence : [],
+    audit: Array.isArray(state.audit) ? state.audit : [],
+  };
+  apiRequest("POST", "/api/clinical-intelligence/import", payload)
+    .then(() => {
+      try {
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      } catch {
+        /* noop */
+      }
+      invalidate();
+    })
+    .catch(() => {
+      // Leave the key in place and allow a retry on next page load.
+      migrationAttempted = false;
+    });
 }
 
-export function ciMarkEvidenceUsedInRule(evidenceId: string, ruleId: string): void {
-  mutate((s) => ({
-    ...s,
-    evidence: s.evidence.map((e) =>
-      e.id === evidenceId && !e.usedInRuleIds.includes(ruleId)
-        ? { ...e, usedInRuleIds: [...e.usedInRuleIds, ruleId] }
-        : e,
-    ),
-  }));
-}
-
-// ───── React hook ───────────────────────────────────────────────────────
+// ───── React hooks ──────────────────────────────────────────────────────
 
 export function useClinicalIntelligence(): CiStoreState {
-  const [state, setState] = useState<CiStoreState>(() => readCiState());
   useEffect(() => {
-    const sync = () => setState(readCiState());
-    window.addEventListener(CHANGED_EVENT, sync);
-    window.addEventListener("storage", sync);
-    return () => {
-      window.removeEventListener(CHANGED_EVENT, sync);
-      window.removeEventListener("storage", sync);
-    };
+    migrateLegacyLocalState();
   }, []);
-  return state;
+  const { data } = useQuery<CiStoreState>({ queryKey: CI_QUERY_KEY });
+  return data ?? EMPTY;
 }
 
 export function useCiRefresh(): () => void {
   return useCallback(() => {
-    try {
-      window.dispatchEvent(new CustomEvent(CHANGED_EVENT));
-    } catch {
-      /* noop */
-    }
+    invalidate();
   }, []);
 }

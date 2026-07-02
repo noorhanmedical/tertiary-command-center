@@ -62,4 +62,5 @@ export * from "./ancillaryDocumentTemplates";
 export * from "./clinicianPortal";
 export * from "./directMessages";
 export * from "./portalWidgets";
+export * from "./clinicalIntelligence";
 export * from "../models/chat";

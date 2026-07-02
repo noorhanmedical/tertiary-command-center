@@ -197,8 +197,8 @@ export function ChipEvidenceMenuExtras({
     toast({ title: "Evidence approved", description: CI_DOWNSTREAM_LANGUAGE });
   };
 
-  const createRule = () => {
-    const rule = ciAddRule({
+  const createRule = async () => {
+    const rule = await ciAddRule({
       name: `Evidence rule: ${label}`,
       description: `IF ${source} includes "${label}" THEN surface it as supporting evidence for admin review and use approved source-linked evidence in downstream documentation.`,
       triggerSource: source,
@@ -212,8 +212,8 @@ export function ChipEvidenceMenuExtras({
       sourceEvidence: [label],
       createdBy: "Admin",
     });
-    const ev = ciRecordEvidence({ ...baseRecord(), status: "approved" });
-    ciMarkEvidenceUsedInRule(ev.id, rule.id);
+    const ev = await ciRecordEvidence({ ...baseRecord(), status: "approved" });
+    await ciMarkEvidenceUsedInRule(ev.id, rule.id);
     toast({ title: "Draft rule created", description: "Review it in the Rule Library." });
   };
 
@@ -393,10 +393,10 @@ export function AdminReviewAiLogicDrawer({
     onOpenChange(false);
   };
 
-  const createRule = () => {
+  const createRule = async () => {
     if (!requireInstruction()) return;
-    const item = ciAddLearningItem(buildItem());
-    const rule = ciConvertLearningToRule(item.id, "Admin");
+    const item = await ciAddLearningItem(buildItem());
+    const rule = await ciConvertLearningToRule(item.id, "Admin");
     toast({
       title: rule ? "Draft rule created" : "Saved as AI logic",
       description: rule
@@ -730,8 +730,8 @@ export function AiEvidenceBubblesRow({
     setOpenId(null);
   };
 
-  const createRule = (item: AiEvidenceItem) => {
-    const rule = ciAddRule({
+  const createRule = async (item: AiEvidenceItem) => {
+    const rule = await ciAddRule({
       name: `Evidence rule: ${labelOf(item)}`,
       description: `IF ${item.source} includes "${labelOf(item)}" THEN surface it as supporting evidence for admin review and use approved source-linked evidence in downstream documentation.`,
       triggerSource: item.source,
@@ -747,7 +747,7 @@ export function AiEvidenceBubblesRow({
     });
     // Rule creation is itself an evidence approval — record it and link the
     // evidence to the rule so Evidence Traceability shows the full chain.
-    const ev = ciRecordEvidence({
+    const ev = await ciRecordEvidence({
       patientId: context.patientId,
       patientName: context.patientName,
       facility: context.facility ?? null,
@@ -760,7 +760,7 @@ export function AiEvidenceBubblesRow({
       status: "approved",
       decidedBy: "Admin",
     });
-    ciMarkEvidenceUsedInRule(ev.id, rule.id);
+    await ciMarkEvidenceUsedInRule(ev.id, rule.id);
     toast({ title: "Draft rule created", description: "Review it in the Rule Library." });
     setOpenId(null);
   };
@@ -984,7 +984,7 @@ export function AiLogicSavePrompt({
 }) {
   const { toast } = useToast();
 
-  const save = (
+  const save = async (
     kind: "patient_only" | "draft_rule" | "knowledge_tile" | "test_first",
   ) => {
     const base = {
@@ -1003,8 +1003,8 @@ export function AiLogicSavePrompt({
       ciAddLearningItem({ ...base, scope: "patient_only", status: "approved" });
       toast({ title: "Saved for this patient only" });
     } else if (kind === "draft_rule") {
-      const item = ciAddLearningItem({ ...base, scope: "clinic_draft", status: "draft" });
-      ciConvertLearningToRule(item.id, "Admin");
+      const item = await ciAddLearningItem({ ...base, scope: "clinic_draft", status: "draft" });
+      await ciConvertLearningToRule(item.id, "Admin");
       toast({ title: "Draft rule saved", description: "Review it in the Rule Library." });
     } else if (kind === "knowledge_tile") {
       ciAddLearningItem({ ...base, scope: "clinic_draft", status: "pending_review" });

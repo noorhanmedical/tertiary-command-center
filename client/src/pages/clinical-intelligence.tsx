@@ -292,8 +292,8 @@ function LearningCenter() {
                     size="sm"
                     variant="outline"
                     className="h-6 text-[11px]"
-                    onClick={() => {
-                      const rule = ciConvertLearningToRule(item.id, "Admin");
+                    onClick={async () => {
+                      const rule = await ciConvertLearningToRule(item.id, "Admin");
                       toast({
                         title: rule ? "Converted to draft rule" : "Conversion failed",
                         description: rule ? `"${rule.name}" added to the Rule Library.` : undefined,

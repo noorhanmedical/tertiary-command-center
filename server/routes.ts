@@ -67,6 +67,8 @@ import { registerHomeStatsRoutes } from "./routes/homeStats";
 import { registerClinicianPortalRoutes } from "./routes/clinicianPortal";
 import { registerMissionControlRoutes } from "./routes/missionControl";
 import { registerPhysicianPortalRoutes } from "./routes/physicianPortal";
+import { registerClinicalIntelligenceRoutes } from "./routes/clinicalIntelligence";
+import { seedCiRulesIfEmpty } from "./repositories/clinicalIntelligence.repo";
 import { setupVite } from "./vite";
 import { serveStatic } from "./static";
 
@@ -301,6 +303,16 @@ export async function registerRoutes(
   registerClinicianPortalRoutes(app);
   registerMissionControlRoutes(app, requireRole);
   registerPhysicianPortalRoutes(app);
+  registerClinicalIntelligenceRoutes(app);
+
+  // Seed the Clinical Intelligence rule library once (empty table only) so
+  // the governance page is workable out of the box, mirroring the old
+  // localStorage prototype's first-load seeding.
+  try {
+    await seedCiRulesIfEmpty();
+  } catch (seedErr: any) {
+    console.error("[clinical-intelligence] Failed to seed rule library:", seedErr.message);
+  }
 
   // ─── First-boot seed: create admin/admin if no users exist ────────────────
   try {

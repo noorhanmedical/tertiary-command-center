@@ -2,16 +2,16 @@
 //
 // Static library content for the governance modules (diagnosis mapping,
 // symptom library, medication evidence, findings, reasoning + order-note
-// templates, CMS watch, EMR wiring, guardrails, knowledge objects) plus
-// the initial seeded rules written into the localStorage store on first
-// load. All content is prototype/example material for governance review —
-// it does not alter the live qualification engine.
+// templates, CMS watch, EMR wiring, guardrails, knowledge objects).
+// The seeded governance rules now live server-side (see
+// server/repositories/clinicalIntelligence.repo.ts) and are inserted into
+// the ci_rules table on first boot. All content is prototype/example
+// material for governance review — it does not alter the live
+// qualification engine.
 
 import {
-  ciId,
   type CiAncillaryTarget,
   type CiConfidence,
-  type CiRule,
 } from "./types";
 
 // ───── Diagnosis Mapping ────────────────────────────────────────────────
@@ -690,91 +690,3 @@ export const KNOWLEDGE_OBJECTS: CiKnowledgeObject[] = [
   { id: "ko-mn-template", kind: "template", name: "Medical necessity statement", connections: ["All ancillaries", "Order note", "Audit packet"] },
   { id: "ko-rule-dmneuro", kind: "rule_concept", name: "Diabetic neuropathy → VitalWave", connections: ["Diabetes mellitus", "Neuropathy", "Gabapentin", "VitalWave"] },
 ];
-
-// ───── Seeded rules written into the store on first load ────────────────
-
-export function seededRules(): CiRule[] {
-  const now = new Date().toISOString();
-  const base = {
-    version: 1,
-    usageCount: 0,
-    conflictFlags: [] as string[],
-    createdAt: now,
-    updatedAt: now,
-    createdBy: "System (seed)",
-    seeded: true,
-  };
-  const mk = (
-    r: Omit<CiRule, "id" | "version" | "usageCount" | "conflictFlags" | "createdAt" | "updatedAt" | "createdBy" | "history" | "seeded">,
-  ): CiRule => ({
-    ...base,
-    ...r,
-    id: ciId("rule"),
-    history: [{ version: 1, at: now, by: "System (seed)", summary: "Seeded example rule", status: r.status }],
-  });
-  return [
-    mk({
-      name: "Diabetic neuropathy → VitalWave support",
-      description:
-        "IF diagnosis includes diabetic neuropathy AND symptom includes burning feet or leg pain OR medication includes gabapentin THEN suggest VitalWave AND use approved source-linked evidence in downstream documentation AND require Admin Review before finalization.",
-      triggerSource: "DX + HX + RX",
-      triggerCondition: "diagnosis: diabetic neuropathy AND (symptom: burning feet | leg pain OR medication: gabapentin)",
-      diagnosisTrigger: "Diabetic neuropathy (E11.42)",
-      symptomTrigger: "Burning feet, leg pain",
-      medicationTrigger: "Gabapentin",
-      targetAncillary: "vitalwave",
-      targetOutputs: ["ancillary_assignment", "medical_necessity", "order_note", "audit_support"],
-      evidenceRequirement: "At least one source-linked HX/DX/RX item",
-      confidenceThreshold: "medium",
-      scope: "global_draft",
-      approvalRequirement: "Admin Review before finalization",
-      status: "active",
-    }),
-    mk({
-      name: "Cerebrovascular history → BrainWave support",
-      description:
-        "IF history includes stroke or TIA AND symptom includes dizziness, memory change, or falls THEN suggest BrainWave with source-linked evidence, requiring Admin Review.",
-      triggerSource: "HX + DX",
-      triggerCondition: "history: stroke | TIA AND symptom: dizziness | memory change | falls",
-      diagnosisTrigger: "Stroke history (Z86.73)",
-      symptomTrigger: "Dizziness, memory change, falls",
-      targetAncillary: "brainwave",
-      targetOutputs: ["ancillary_assignment", "medical_necessity", "order_note", "audit_support"],
-      evidenceRequirement: "Documented cerebrovascular history",
-      confidenceThreshold: "medium",
-      scope: "global_draft",
-      approvalRequirement: "Admin Review before finalization",
-      status: "active",
-    }),
-    mk({
-      name: "Claudication → lower-extremity arterial duplex support",
-      description:
-        "IF symptom includes claudication or exertional leg pain THEN suggest Lower Extremity Arterial Doppler with documented symptom detail (distance, laterality) per LCD expectations.",
-      triggerSource: "HX",
-      triggerCondition: "symptom: claudication | exertional leg pain",
-      symptomTrigger: "Claudication, exertional leg pain",
-      targetAncillary: "ultrasound",
-      targetOutputs: ["ancillary_assignment", "medical_necessity", "order_note", "evidence_traceability"],
-      evidenceRequirement: "Symptom detail incl. distance/laterality",
-      confidenceThreshold: "high",
-      scope: "global_draft",
-      approvalRequirement: "Physician review",
-      status: "pending_physician_review",
-    }),
-    mk({
-      name: "Donepezil → cognitive assessment context",
-      description:
-        "IF medication includes donepezil or memantine THEN treat as memory/cognitive diagnosis clue supporting BrainWave context; requires corroborating HX/DX before assignment.",
-      triggerSource: "RX",
-      triggerCondition: "medication: donepezil | memantine",
-      medicationTrigger: "Donepezil, memantine",
-      targetAncillary: "brainwave",
-      targetOutputs: ["diagnosis_mapping", "evidence_traceability"],
-      evidenceRequirement: "Corroborating HX or DX required",
-      confidenceThreshold: "medium",
-      scope: "clinic_draft",
-      approvalRequirement: "Compliance review",
-      status: "pending_compliance_review",
-    }),
-  ];
-}
