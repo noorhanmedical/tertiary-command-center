@@ -310,6 +310,10 @@ export async function fetchPatientScheduleDayContext(params: {
 export async function schedulePatientAncillary(input: {
   executionCaseId?: number | null;
   patientScreeningId?: number | null;
+  // For brand-new patients with no case yet: the server creates a minimal
+  // execution case stub when neither id resolves but a name is provided.
+  patientName?: string | null;
+  patientDob?: string | null;
   serviceType: string;
   startsAt: string;
   endsAt?: string | null;
@@ -325,6 +329,8 @@ export async function schedulePatientAncillary(input: {
     body: JSON.stringify({
       executionCaseId: input.executionCaseId ?? null,
       patientScreeningId: input.patientScreeningId ?? null,
+      patientName: input.patientName ?? null,
+      patientDob: input.patientDob ?? null,
       serviceType: input.serviceType,
       startsAt: input.startsAt,
       endsAt: input.endsAt ?? null,

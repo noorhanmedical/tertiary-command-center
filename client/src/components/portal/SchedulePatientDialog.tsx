@@ -326,9 +326,16 @@ export function SchedulePatientDialog({
       enabled: open && !!patient,
     });
 
+  // Name-only patients (walk-ins / not yet screened) are schedulable:
+  // the server creates a minimal execution case stub from patientName
+  // when neither id resolves. Either an id OR a non-empty name is enough.
   const canSubmit = useMemo(() => {
     if (!patient) return false;
-    if (!(patient.patientScreeningId ?? patient.executionCaseId)) return false;
+    const hasIdentity =
+      patient.patientScreeningId != null ||
+      patient.executionCaseId != null ||
+      !!patient.patientName?.trim();
+    if (!hasIdentity) return false;
     if (!serviceType.trim()) return false;
     return !!combineLocalDateAndTimeToIso(selectedDate, time);
   }, [patient, serviceType, selectedDate, time]);
@@ -341,6 +348,8 @@ export function SchedulePatientDialog({
       return schedulePatientAncillary({
         executionCaseId: patient.executionCaseId ?? null,
         patientScreeningId: patient.patientScreeningId ?? null,
+        patientName: patient.patientName ?? null,
+        patientDob: patient.patientDob ?? null,
         serviceType: serviceType.trim(),
         startsAt,
         facilityId: patient.facilityId ?? null,

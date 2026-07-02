@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc, sql, inArray, notInArray } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, notInArray, isNull } from "drizzle-orm";
 import { publishLiveActivity } from "../services/engagement/liveActivityBus";
 import {
   patientExecutionCases,
@@ -252,6 +252,63 @@ export async function listExecutionCases(
   return conditions.length > 0
     ? query.where(and(...conditions)).orderBy(desc(patientExecutionCases.createdAt)).limit(safeLimit)
     : query.orderBy(desc(patientExecutionCases.createdAt)).limit(safeLimit);
+}
+
+// Looks up an existing QUICK-SCHEDULE STUB case so double-submits of the
+// same name-only patient reuse one stub instead of spawning duplicates.
+// Deliberately narrow to avoid hijacking an unrelated patient's case:
+// - only cases created by quick-schedule (source='quick_schedule')
+// - exact patientName AND exact patientDob (DOB is required — without it
+//   a common-name collision could cross-link operational data)
+// - same facility (both null counts as a match)
+export async function getQuickScheduleStubCase(
+  patientName: string,
+  patientDob: string,
+  facilityId: string | null,
+): Promise<PatientExecutionCase | undefined> {
+  const conditions = [
+    eq(patientExecutionCases.source, "quick_schedule"),
+    eq(patientExecutionCases.patientName, patientName),
+    eq(patientExecutionCases.patientDob, patientDob),
+    facilityId === null
+      ? isNull(patientExecutionCases.facilityId)
+      : eq(patientExecutionCases.facilityId, facilityId),
+  ];
+  const [result] = await db
+    .select()
+    .from(patientExecutionCases)
+    .where(and(...conditions))
+    .orderBy(desc(patientExecutionCases.createdAt))
+    .limit(1);
+  return result;
+}
+
+// Quick-schedule stub: creates a minimal execution case for a brand-new
+// patient who has no screening yet (walk-in / not-yet-screened). The case
+// is honest about its provenance (source=quick_schedule, unscreened) so
+// downstream views can distinguish it from system-generated cases.
+export async function createQuickScheduleExecutionCase(input: {
+  patientName: string;
+  patientDob?: string | null;
+  facilityId?: string | null;
+  serviceType?: string | null;
+}): Promise<PatientExecutionCase> {
+  const [created] = await db
+    .insert(patientExecutionCases)
+    .values({
+      patientScreeningId: null,
+      patientName: input.patientName,
+      patientDob: input.patientDob ?? undefined,
+      facilityId: input.facilityId ?? undefined,
+      source: "quick_schedule",
+      engagementBucket: "visit",
+      qualificationStatus: "unscreened",
+      lifecycleStatus: "active",
+      engagementStatus: "new",
+      selectedServices: input.serviceType ? [input.serviceType] : undefined,
+    })
+    .returning();
+  return created;
 }
 
 export async function getExecutionCaseById(id: number): Promise<PatientExecutionCase | undefined> {
