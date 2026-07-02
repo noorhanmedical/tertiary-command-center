@@ -13,7 +13,7 @@ import {
   type DocumentKind,
   type AncillaryAppointment,
 } from "@shared/schema";
-import { and, eq, gte, lte, inArray } from "drizzle-orm";
+import { and, eq, gte, lte, inArray, sql } from "drizzle-orm";
 import {
   PORTAL_OUTREACH_BASE_CAP,
   PORTAL_OUTREACH_HEAVY_LOAD_THRESHOLD,
@@ -1068,6 +1068,161 @@ export function registerPortalRoutes(app: Express) {
       res.status(201).json({ message });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to send message" });
+    }
+  });
+
+  // ── Left-rail tool: Patient Search ─────────────────────────────────────────
+  // Name / DOB / phone / insurance lookup constrained to the user's assigned
+  // facilities (admins see everything). Effective facility is the screening's
+  // own facility with the batch facility as fallback — same rule as
+  // patientFacility() above.
+  app.get("/api/portal/patient-search", requirePortalRole, async (req, res) => {
+    try {
+      const query = String(req.query.query ?? "").trim();
+      if (query.length < 2) return res.json([]);
+      const facilityFilter = String(req.query.facility ?? "").trim();
+      const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 100);
+
+      const allowed = await allowedFacilities(req);
+      if (facilityFilter) {
+        const denied = ensureFacility(allowed, facilityFilter);
+        if (denied) return res.status(403).json({ error: denied });
+      }
+      if (!allowed.all && allowed.facilities.size === 0) return res.json([]);
+
+      const like = `%${query}%`;
+      const facilityConds = facilityFilter
+        ? sql`AND COALESCE(ps.facility, sb.facility) = ${facilityFilter}`
+        : allowed.all
+          ? sql``
+          : sql`AND COALESCE(ps.facility, sb.facility) IN (${sql.join([...allowed.facilities].map((f) => sql`${f}`), sql`, `)})`;
+
+      const result = await db.execute<{
+        id: number;
+        name: string;
+        dob: string | null;
+        facility: string | null;
+        insurance: string | null;
+        phone: string | null;
+        appointment_status: string | null;
+        commit_status: string | null;
+      }>(sql`
+        SELECT ps.id, ps.name, ps.dob,
+               COALESCE(ps.facility, sb.facility) AS facility,
+               ps.insurance, ps.phone_number AS phone,
+               ps.appointment_status, ps.commit_status
+        FROM patient_screenings ps
+        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
+        WHERE ps.deleted_at IS NULL
+          AND (
+            ps.name ILIKE ${like}
+            OR ps.dob ILIKE ${like}
+            OR ps.phone_number ILIKE ${like}
+            OR ps.insurance ILIKE ${like}
+          )
+          ${facilityConds}
+        ORDER BY ps.name ASC, ps.id DESC
+        LIMIT ${limit}
+      `);
+
+      res.json(result.rows.map((r) => ({
+        patientScreeningId: r.id,
+        name: r.name,
+        dob: r.dob,
+        facility: r.facility,
+        insurance: r.insurance,
+        phone: r.phone,
+        appointmentStatus: r.appointment_status,
+        commitStatus: r.commit_status,
+      })));
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Patient search failed" });
+    }
+  });
+
+  // ── Left-rail tool: My Patients ────────────────────────────────────────────
+  // Patients the session user has touched recently — sourced from
+  // outreach_calls (scheduler_user_id = me) and patient_journey_events
+  // (actor_user_id = me), newest activity first. Facility-scoped like
+  // patient-search so a technician/liaison never sees outside their clinics.
+  app.get("/api/portal/my-patients", requirePortalRole, async (req, res) => {
+    try {
+      const me = req.session.userId!;
+      const query = String(req.query.query ?? "").trim();
+      const facilityFilter = String(req.query.facility ?? "").trim();
+      const limit = Math.min(parseInt(String(req.query.limit ?? "100"), 10) || 100, 200);
+
+      const allowed = await allowedFacilities(req);
+      if (facilityFilter) {
+        const denied = ensureFacility(allowed, facilityFilter);
+        if (denied) return res.status(403).json({ error: denied });
+      }
+      if (!allowed.all && allowed.facilities.size === 0) return res.json([]);
+
+      const facilityConds = facilityFilter
+        ? sql`AND COALESCE(ps.facility, sb.facility) = ${facilityFilter}`
+        : allowed.all
+          ? sql``
+          : sql`AND COALESCE(ps.facility, sb.facility) IN (${sql.join([...allowed.facilities].map((f) => sql`${f}`), sql`, `)})`;
+      const queryConds = query
+        ? sql`AND (ps.name ILIKE ${`%${query}%`} OR ps.dob ILIKE ${`%${query}%`})`
+        : sql``;
+
+      const result = await db.execute<{
+        id: number;
+        name: string;
+        dob: string | null;
+        facility: string | null;
+        appointment_status: string | null;
+        commit_status: string | null;
+        last_at: string | null;
+        last_type: string | null;
+        last_summary: string | null;
+      }>(sql`
+        WITH touches AS (
+          SELECT oc.patient_screening_id AS pid, oc.started_at AS at,
+                 'call'::text AS type, oc.outcome AS summary
+          FROM outreach_calls oc
+          WHERE oc.scheduler_user_id = ${me}
+          UNION ALL
+          SELECT pje.patient_screening_id, pje.created_at,
+                 pje.event_type, pje.summary
+          FROM patient_journey_events pje
+          WHERE pje.actor_user_id = ${me}
+            AND pje.patient_screening_id IS NOT NULL
+        ),
+        latest AS (
+          SELECT DISTINCT ON (pid) pid, at, type, summary
+          FROM touches
+          ORDER BY pid, at DESC
+        )
+        SELECT ps.id, ps.name, ps.dob,
+               COALESCE(ps.facility, sb.facility) AS facility,
+               ps.appointment_status, ps.commit_status,
+               l.at AS last_at, l.type AS last_type, l.summary AS last_summary
+        FROM latest l
+        JOIN patient_screenings ps ON ps.id = l.pid AND ps.deleted_at IS NULL
+        LEFT JOIN screening_batches sb ON sb.id = ps.batch_id
+        WHERE TRUE
+          ${facilityConds}
+          ${queryConds}
+        ORDER BY l.at DESC
+        LIMIT ${limit}
+      `);
+
+      res.json(result.rows.map((r) => ({
+        patientScreeningId: r.id,
+        name: r.name,
+        dob: r.dob,
+        facility: r.facility,
+        appointmentStatus: r.appointment_status,
+        commitStatus: r.commit_status,
+        lastActivityAt: r.last_at,
+        lastActivityType: r.last_type,
+        lastActivitySummary: r.last_summary,
+      })));
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to load my patients" });
     }
   });
 }

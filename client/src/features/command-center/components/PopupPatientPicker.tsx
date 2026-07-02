@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Search, X } from "lucide-react";
-import { searchPatientDirectory, type SearchHit } from "@/lib/patientDirectoryApi";
+import { searchPatients, type PatientSearchRow } from "@/lib/portal/commandCenterApi";
 
 export type PickedPatient = {
   patientScreeningId: number;
@@ -22,9 +22,9 @@ export function PopupPatientPicker({
 }) {
   const [q, setQ] = useState("");
 
-  const { data: hits = [], isFetching } = useQuery<ReadonlyArray<SearchHit>>({
+  const { data: hits = [], isFetching } = useQuery<ReadonlyArray<PatientSearchRow>>({
     queryKey: ["popup-patient-search", q],
-    queryFn: () => searchPatientDirectory(q),
+    queryFn: () => searchPatients({ query: q.trim(), limit: 25 }),
     enabled: q.trim().length >= 2,
     staleTime: 10_000,
   });
@@ -84,7 +84,7 @@ export function PopupPatientPicker({
                       onPick({
                         patientScreeningId: h.patientScreeningId,
                         name: h.name,
-                        phoneNumber: h.phoneNumber,
+                        phoneNumber: h.phone,
                       })
                     }
                     className="w-full px-3 py-1.5 text-left text-xs hover:bg-white"
