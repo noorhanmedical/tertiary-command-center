@@ -899,7 +899,8 @@ function Analytics() {
 // ───── Traceability + Audit ─────────────────────────────────────────────
 
 function Traceability() {
-  const { evidence } = useClinicalIntelligence();
+  const { evidence, rules } = useClinicalIntelligence();
+  const ruleName = (id: string) => rules.find((r) => r.id === id)?.name ?? id;
   return (
     <SectionCard
       title="Evidence Traceability"
@@ -923,6 +924,16 @@ function Traceability() {
                 </Pill>
                 <span className="font-semibold text-slate-800">{e.label}</span>
                 <Pill tone="bg-slate-50 text-slate-600 border-slate-200">{e.sourceType}</Pill>
+                {e.assignedAncillary && (
+                  <Pill tone="bg-violet-50 text-violet-700 border-violet-200">
+                    → {e.assignedAncillary}
+                  </Pill>
+                )}
+                {e.usedInRuleIds.length > 0 && (
+                  <Pill tone="bg-sky-50 text-sky-700 border-sky-200">
+                    Used in {e.usedInRuleIds.length} rule{e.usedInRuleIds.length === 1 ? "" : "s"}
+                  </Pill>
+                )}
                 <span className="ml-auto text-[10px] text-slate-400">
                   {e.decidedBy} · {fmtDate(e.at)}
                 </span>
@@ -933,7 +944,16 @@ function Traceability() {
                 {e.scheduleDate ? ` · ${e.scheduleDate}` : ""}
                 {e.sourceText && e.sourceText !== e.label ? ` · Source text: “${e.sourceText}”` : ""}
                 {` · Confidence: ${e.confidence}`}
+                {` · Assigned ancillary: ${e.assignedAncillary ?? "none yet"}`}
               </div>
+              {e.usedInRuleIds.length > 0 && (
+                <div
+                  className="mt-1 text-[10px] text-sky-700"
+                  data-testid={`text-evidence-rules-${e.id}`}
+                >
+                  Rules: {e.usedInRuleIds.map((rid) => ruleName(rid)).join(", ")}
+                </div>
+              )}
               {e.status === "approved" && (
                 <p className="mt-1.5 text-[10px] leading-snug text-violet-700/80">{CI_DOWNSTREAM_LANGUAGE}</p>
               )}

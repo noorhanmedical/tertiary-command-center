@@ -267,7 +267,19 @@ export function ciRecordEvidence(
     usedInRuleIds: [],
   };
   mutate((s) => {
-    // Dedupe: same patient + label + sourceType keeps the latest decision.
+    // Dedupe: same patient + label + sourceType keeps the latest decision,
+    // but merges forward the prior assigned ancillary and rule usage so an
+    // approve after an attach (or vice versa) never loses traceability.
+    const prior = s.evidence.find(
+      (e) =>
+        e.patientId === full.patientId &&
+        e.label.toLowerCase() === full.label.toLowerCase() &&
+        e.sourceType === full.sourceType,
+    );
+    if (prior) {
+      full.usedInRuleIds = prior.usedInRuleIds;
+      if (!full.assignedAncillary) full.assignedAncillary = prior.assignedAncillary;
+    }
     const rest = s.evidence.filter(
       (e) =>
         !(

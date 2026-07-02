@@ -75,6 +75,10 @@ import {
   AdminReviewAiLogicDrawer,
   AiEvidenceBubblesRow,
   AiLogicSavePrompt,
+  ChipEvidenceMenuExtras,
+  CONF_DOT,
+  SOURCE_BADGE_TONE,
+  useCiChipDecision,
   type AiAttachTarget,
   type AiEvidenceItem,
   type AiLogicPatientContext,
@@ -3975,6 +3979,7 @@ export function AdminReviewDialog({
                             ultrasoundTests={ultrasoundTests}
                             isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                             onAssign={(target) => assignToTarget(target, b)}
+                            evidenceContext={aiLogicContext}
                           />
                         )}
                       />
@@ -3997,6 +4002,7 @@ export function AdminReviewDialog({
                             ultrasoundTests={ultrasoundTests}
                             isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                             onAssign={(target) => assignToTarget(target, b)}
+                            evidenceContext={aiLogicContext}
                           />
                         )}
                       />
@@ -4040,6 +4046,7 @@ export function AdminReviewDialog({
                             ultrasoundTests={ultrasoundTests}
                             isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                             onAssign={(target) => assignToTarget(target, b)}
+                            evidenceContext={aiLogicContext}
                           />
                         )}
                       />
@@ -4077,6 +4084,7 @@ export function AdminReviewDialog({
                             ultrasoundTests={ultrasoundTests}
                             isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                             onAssign={(target) => assignToTarget(target, b)}
+                            evidenceContext={aiLogicContext}
                           />
                         )}
                       />
@@ -4150,6 +4158,7 @@ export function AdminReviewDialog({
                                     ultrasoundTests={ultrasoundTests}
                                     isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                                     onAssign={(target) => assignToTarget(target, b)}
+                                    evidenceContext={aiLogicContext}
                                   />
                                 )}
                               />
@@ -4533,16 +4542,33 @@ function AvailableButtonsRow({
   );
 }
 
+// Human-readable label for the first ancillary this button is already
+// assigned to, so chip-level evidence records carry the assigned ancillary.
+function assignedAncillaryLabel(
+  isAlreadyAssigned: (target: AssignmentTarget) => boolean,
+  ultrasoundTests: string[],
+): string | null {
+  if (isAlreadyAssigned({ type: "ancillary", ancillaryId: "brainwave" })) return "BrainWave";
+  if (isAlreadyAssigned({ type: "ancillary", ancillaryId: "vitalwave" })) return "VitalWave";
+  if (isAlreadyAssigned({ type: "ultrasound-parent" })) return "Ultrasound Studies";
+  for (const t of ultrasoundTests) {
+    if (isAlreadyAssigned({ type: "ultrasound-test", testName: t })) return t;
+  }
+  return null;
+}
+
 function AssignMenu({
   btn,
   ultrasoundTests,
   isAlreadyAssigned,
   onAssign,
+  evidenceContext,
 }: {
   btn: SupportingButton;
   ultrasoundTests: string[];
   isAlreadyAssigned: (target: AssignmentTarget) => boolean;
   onAssign: (target: AssignmentTarget) => void;
+  evidenceContext?: AiLogicPatientContext | null;
 }) {
   function row(
     target: AssignmentTarget,
@@ -4634,7 +4660,53 @@ function AssignMenu({
         "admin-review-assign-all",
         "hover:bg-slate-100 font-semibold",
       )}
+      {evidenceContext && (
+        <ChipEvidenceMenuExtras
+          context={evidenceContext}
+          label={btn.label}
+          source={btn.source}
+          sourceText={btn.sourceText}
+          confidence={btn.confidence}
+          assignedAncillary={assignedAncillaryLabel(isAlreadyAssigned, ultrasoundTests)}
+          testIdSuffix={btn.id}
+        />
+      )}
     </PopoverContent>
+  );
+}
+
+// Shared chip decorations for the knowledge-layer prototype: source badge
+// (DX/HX/RX), confidence dot, and a check when the evidence has been
+// approved. Purely visual — assignment behavior is untouched.
+function ChipEvidenceBadges({
+  btn,
+  evidenceContext,
+  sourceBadge,
+}: {
+  btn: SupportingButton;
+  evidenceContext?: AiLogicPatientContext | null;
+  sourceBadge: string;
+}) {
+  const decision = useCiChipDecision(evidenceContext, btn.label, btn.source);
+  return (
+    <>
+      <span
+        className={`inline-flex items-center rounded-full border px-1 text-[9px] font-semibold ${
+          SOURCE_BADGE_TONE[sourceBadge] ?? "bg-slate-100 text-slate-600 border-slate-200"
+        }`}
+        data-testid={`chip-source-badge-${btn.id}`}
+      >
+        {sourceBadge}
+      </span>
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${CONF_DOT[btn.confidence ?? "medium"]}`}
+        title={`Confidence: ${btn.confidence ?? "medium"}`}
+        data-testid={`chip-confidence-${btn.id}`}
+      />
+      {decision === "approved" && (
+        <Check className="w-3 h-3 text-emerald-600" data-testid={`chip-approved-${btn.id}`} />
+      )}
+    </>
   );
 }
 
@@ -4643,16 +4715,18 @@ function IcdDiseaseButton({
   ultrasoundTests,
   isAlreadyAssigned,
   onAssign,
+  evidenceContext,
 }: {
   btn: SupportingButton;
   ultrasoundTests: string[];
   isAlreadyAssigned: (target: AssignmentTarget) => boolean;
   onAssign: (target: AssignmentTarget) => void;
+  evidenceContext?: AiLogicPatientContext | null;
 }) {
-  // Diagnoses without an ICD code are still assignable — the visible
-  // label is just the diagnosis name. The internal requiresIcd flag
-  // stays so the rule engine still surfaces the gap on the blocking
-  // panel; no visible ICD-status tag is rendered on the chip.
+  // Diagnoses without an ICD code are still assignable — the internal
+  // requiresIcd flag keeps the rule engine surfacing the gap on the
+  // blocking panel. The chip now also shows a compact DX badge,
+  // ICD-present/missing status, and confidence (knowledge-layer spec).
   if (btn.requiresIcd) {
     return (
       <Popover>
@@ -4665,7 +4739,9 @@ function IcdDiseaseButton({
             data-icd-needed-assignable="admin-review-icd-needed-diagnosis-assignable"
             data-requires-icd="true"
           >
+            <ChipEvidenceBadges btn={btn} evidenceContext={evidenceContext} sourceBadge="DX" />
             <span>{btn.label}</span>
+            <span className="text-[9px] font-medium text-rose-500">ICD missing</span>
             <Plus className="w-3 h-3 opacity-60" />
           </button>
         </PopoverTrigger>
@@ -4674,6 +4750,7 @@ function IcdDiseaseButton({
           ultrasoundTests={ultrasoundTests}
           isAlreadyAssigned={isAlreadyAssigned}
           onAssign={onAssign}
+          evidenceContext={evidenceContext}
         />
       </Popover>
     );
@@ -4688,7 +4765,12 @@ function IcdDiseaseButton({
           data-derived={btn.source === "Dx" ? "admin-review-dx-derived-diagnosis" : undefined}
           data-assigned="admin-review-icd-disease-assigned"
         >
-          {btn.icdCode && <span className="font-mono opacity-80">{btn.icdCode}</span>}
+          <ChipEvidenceBadges btn={btn} evidenceContext={evidenceContext} sourceBadge="DX" />
+          {btn.icdCode ? (
+            <span className="font-mono opacity-80">{btn.icdCode}</span>
+          ) : (
+            <span className="text-[9px] font-medium text-rose-500">ICD missing</span>
+          )}
           <span>· {btn.label}</span>
           <Plus className="w-3 h-3 opacity-60" />
         </button>
@@ -4698,6 +4780,7 @@ function IcdDiseaseButton({
         ultrasoundTests={ultrasoundTests}
         isAlreadyAssigned={isAlreadyAssigned}
         onAssign={onAssign}
+        evidenceContext={evidenceContext}
       />
     </Popover>
   );
@@ -4711,6 +4794,7 @@ function SupportingChipButton({
   ultrasoundTests,
   isAlreadyAssigned,
   onAssign,
+  evidenceContext,
 }: {
   btn: SupportingButton;
   testId: string;
@@ -4719,6 +4803,7 @@ function SupportingChipButton({
   ultrasoundTests: string[];
   isAlreadyAssigned: (target: AssignmentTarget) => boolean;
   onAssign: (target: AssignmentTarget) => void;
+  evidenceContext?: AiLogicPatientContext | null;
 }) {
   const toneClass =
     tone === "purple"
@@ -4732,6 +4817,8 @@ function SupportingChipButton({
       : btn.source === "Hx"
         ? "admin-review-hx-derived-symptom"
         : undefined;
+  const sourceBadge =
+    btn.source === "Rx" ? "RX" : btn.source === "Hx" ? "HX" : prefix.toUpperCase();
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -4741,7 +4828,11 @@ function SupportingChipButton({
           data-testid={testId}
           data-derived={derived}
         >
-          <span className="font-mono opacity-70">{prefix}</span>
+          <ChipEvidenceBadges
+            btn={btn}
+            evidenceContext={evidenceContext}
+            sourceBadge={sourceBadge}
+          />
           <span>{btn.label}</span>
           <Plus className="w-3 h-3 opacity-60" />
         </button>
@@ -4751,6 +4842,7 @@ function SupportingChipButton({
         ultrasoundTests={ultrasoundTests}
         isAlreadyAssigned={isAlreadyAssigned}
         onAssign={onAssign}
+        evidenceContext={evidenceContext}
       />
     </Popover>
   );

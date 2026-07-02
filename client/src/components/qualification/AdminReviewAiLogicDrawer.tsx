@@ -69,6 +69,7 @@ import {
   ciAddLearningItem,
   ciAddRule,
   ciConvertLearningToRule,
+  ciMarkEvidenceUsedInRule,
   ciRecordEvidence,
   useClinicalIntelligence,
 } from "@/lib/clinicalIntelligence/store";
@@ -120,17 +121,154 @@ function normalizeSourceType(source: string): CiSourceType {
   return "HX";
 }
 
-const SOURCE_BADGE_TONE: Record<string, string> = {
+export const SOURCE_BADGE_TONE: Record<string, string> = {
   DX: "bg-sky-100 text-sky-800 border-sky-200",
   RX: "bg-indigo-100 text-indigo-800 border-indigo-200",
   HX: "bg-amber-100 text-amber-800 border-amber-200",
 };
 
-const CONF_DOT: Record<CiConfidence, string> = {
+export const CONF_DOT: Record<CiConfidence, string> = {
   high: "bg-emerald-500",
   medium: "bg-amber-500",
   low: "bg-rose-500",
 };
+
+// Persisted evidence decision (if any) for a chip/bubble, keyed the same
+// way ciRecordEvidence dedupes: patient + label + normalized source type.
+export function useCiChipDecision(
+  context: AiLogicPatientContext | null | undefined,
+  label: string,
+  source: string,
+): "approved" | "rejected" | undefined {
+  const ci = useClinicalIntelligence();
+  return useMemo(() => {
+    if (!context) return undefined;
+    const sourceType = normalizeSourceType(source);
+    const rec = ci.evidence.find(
+      (e) =>
+        e.patientId === context.patientId &&
+        e.sourceType === sourceType &&
+        e.label.toLowerCase() === label.toLowerCase(),
+    );
+    return rec?.status;
+  }, [ci.evidence, context, label, source]);
+}
+
+// Extra evidence actions appended to the existing HX/DX/RX chip assign
+// popovers (spec: approve evidence / create rule / save as AI logic on the
+// chips themselves, without duplicating them or changing assignment
+// behavior). Downstream documentation use is automatic on approval — the
+// admin never picks clinician vs patient reasoning manually.
+export function ChipEvidenceMenuExtras({
+  context,
+  label,
+  source,
+  sourceText,
+  confidence,
+  assignedAncillary,
+  testIdSuffix,
+}: {
+  context: AiLogicPatientContext;
+  label: string;
+  source: string;
+  sourceText?: string | null;
+  confidence?: CiConfidence;
+  assignedAncillary?: string | null;
+  testIdSuffix: string;
+}) {
+  const { toast } = useToast();
+  const decision = useCiChipDecision(context, label, source);
+
+  const baseRecord = () => ({
+    patientId: context.patientId,
+    patientName: context.patientName,
+    facility: context.facility ?? null,
+    scheduleDate: context.scheduleDate ?? null,
+    sourceType: normalizeSourceType(source),
+    sourceText: sourceText ?? label,
+    label,
+    confidence: confidence ?? ("medium" as CiConfidence),
+    assignedAncillary: assignedAncillary ?? null,
+    decidedBy: "Admin",
+  });
+
+  const approve = () => {
+    ciRecordEvidence({ ...baseRecord(), status: "approved" });
+    toast({ title: "Evidence approved", description: CI_DOWNSTREAM_LANGUAGE });
+  };
+
+  const createRule = () => {
+    const rule = ciAddRule({
+      name: `Evidence rule: ${label}`,
+      description: `IF ${source} includes "${label}" THEN surface it as supporting evidence for admin review and use approved source-linked evidence in downstream documentation.`,
+      triggerSource: source,
+      triggerCondition: `${source}: ${label}`,
+      targetAncillary: "general_documentation",
+      targetOutputs: ["evidence_traceability", "audit_support"],
+      scope: "clinic_draft",
+      approvalRequirement: "Admin Review before finalization",
+      status: "draft",
+      conflictFlags: [],
+      sourceEvidence: [label],
+      createdBy: "Admin",
+    });
+    const ev = ciRecordEvidence({ ...baseRecord(), status: "approved" });
+    ciMarkEvidenceUsedInRule(ev.id, rule.id);
+    toast({ title: "Draft rule created", description: "Review it in the Rule Library." });
+  };
+
+  const saveAsLogic = () => {
+    ciAddLearningItem({
+      instruction: `Treat "${label}" (${source}) as supporting clinical evidence.`,
+      triggerSource: source,
+      scope: "patient_only",
+      affectedAncillary: "general_documentation",
+      affectedOutputs: ["evidence_traceability", "audit_support"],
+      status: "draft",
+      sourcePatientId: context.patientId,
+      sourcePatientName: context.patientName,
+      sourceFacility: context.facility ?? null,
+      sourceDate: context.scheduleDate ?? null,
+      sourceContext: { evidenceLabels: [label] },
+      createdBy: "Admin",
+    });
+    toast({ title: "Saved as AI logic", description: "Draft added to the AI Learning Center." });
+  };
+
+  return (
+    <div className="mt-1 border-t border-slate-100 pt-1">
+      <button
+        type="button"
+        onClick={approve}
+        disabled={decision === "approved"}
+        className="w-full flex items-center gap-2 rounded px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+        data-testid={`chip-evidence-approve-${testIdSuffix}`}
+      >
+        <Check className="w-3 h-3" />
+        {decision === "approved" ? "Evidence approved" : "Approve evidence"}
+      </button>
+      <button
+        type="button"
+        onClick={createRule}
+        className="w-full flex items-center gap-2 rounded px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+        data-testid={`chip-evidence-create-rule-${testIdSuffix}`}
+      >
+        <GitBranch className="w-3 h-3" /> Create rule from this item
+      </button>
+      <button
+        type="button"
+        onClick={saveAsLogic}
+        className="w-full flex items-center gap-2 rounded px-2 py-1 text-[11px] text-violet-700 hover:bg-violet-50"
+        data-testid={`chip-evidence-save-logic-${testIdSuffix}`}
+      >
+        <Sparkles className="w-3 h-3" /> Save as AI logic
+      </button>
+      <p className="mt-1 px-2 text-[9px] leading-snug text-violet-700/70">
+        {CI_DOWNSTREAM_LANGUAGE}
+      </p>
+    </div>
+  );
+}
 
 // ───── 1) AI Logic drawer ───────────────────────────────────────────────
 
@@ -593,7 +731,7 @@ export function AiEvidenceBubblesRow({
   };
 
   const createRule = (item: AiEvidenceItem) => {
-    ciAddRule({
+    const rule = ciAddRule({
       name: `Evidence rule: ${labelOf(item)}`,
       description: `IF ${item.source} includes "${labelOf(item)}" THEN surface it as supporting evidence for admin review and use approved source-linked evidence in downstream documentation.`,
       triggerSource: item.source,
@@ -607,12 +745,43 @@ export function AiEvidenceBubblesRow({
       sourceEvidence: [labelOf(item)],
       createdBy: "Admin",
     });
+    // Rule creation is itself an evidence approval — record it and link the
+    // evidence to the rule so Evidence Traceability shows the full chain.
+    const ev = ciRecordEvidence({
+      patientId: context.patientId,
+      patientName: context.patientName,
+      facility: context.facility ?? null,
+      scheduleDate: context.scheduleDate ?? null,
+      sourceType: normalizeSourceType(item.source),
+      sourceText: item.sourceText ?? item.label,
+      label: labelOf(item),
+      confidence: item.confidence ?? "medium",
+      assignedAncillary: null,
+      status: "approved",
+      decidedBy: "Admin",
+    });
+    ciMarkEvidenceUsedInRule(ev.id, rule.id);
     toast({ title: "Draft rule created", description: "Review it in the Rule Library." });
     setOpenId(null);
   };
 
   const attach = (item: AiEvidenceItem, target: AiAttachTarget, targetLabel: string) => {
     onAttach(item, target);
+    // Attaching is an approval + ancillary assignment in one step — persist
+    // the evidence record with the assigned ancillary for traceability.
+    ciRecordEvidence({
+      patientId: context.patientId,
+      patientName: context.patientName,
+      facility: context.facility ?? null,
+      scheduleDate: context.scheduleDate ?? null,
+      sourceType: normalizeSourceType(item.source),
+      sourceText: item.sourceText ?? item.label,
+      label: labelOf(item),
+      confidence: item.confidence ?? "medium",
+      assignedAncillary: targetLabel,
+      status: "approved",
+      decidedBy: "Admin",
+    });
     toast({ title: `Attached to ${targetLabel}`, description: labelOf(item) });
     setOpenId(null);
   };
@@ -760,14 +929,19 @@ export function AiEvidenceBubblesRow({
                     </div>
                   )}
                   <div className="border-t border-slate-100 my-1" />
-                  <button
-                    type="button"
-                    onClick={() => record(item, "approved")}
-                    className="w-full flex items-center gap-2 rounded px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
-                    data-testid={`action-bubble-downstream-${item.id}`}
+                  {/* Downstream documentation is automatic on approval — no
+                      manual action. Show the status so the admin knows. */}
+                  <div
+                    className="flex items-start gap-2 px-2 py-1 text-[10px] leading-snug text-violet-700/80"
+                    data-testid={`status-bubble-downstream-${item.id}`}
                   >
-                    <BookOpen className="w-3 h-3" /> Use in downstream documentation
-                  </button>
+                    <BookOpen className="mt-0.5 w-3 h-3 shrink-0" />
+                    <span>
+                      {decision === "approved"
+                        ? CI_DOWNSTREAM_LANGUAGE
+                        : "Once approved, this evidence flows automatically into downstream documentation — clinician reasoning, patient explanation, order note support, and audit traceability."}
+                    </span>
+                  </div>
                   <button
                     type="button"
                     onClick={() => createRule(item)}
