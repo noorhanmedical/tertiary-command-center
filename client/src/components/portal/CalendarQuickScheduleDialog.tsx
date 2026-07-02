@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Check, Loader2, Search, X } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarDays,
+  CalendarClock,
+  Check,
+  Loader2,
+  Search,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +32,11 @@ import {
   prettyTime,
   combineLocalDateAndTimeToIso,
 } from "@/components/portal/SchedulePatientDialog";
-import { schedulePatientAncillary } from "@/lib/workflow/teamMemberWorkspaceApi";
+import {
+  fetchPatientScheduleDayContext,
+  schedulePatientAncillary,
+  type PatientScheduleDayContext,
+} from "@/lib/workflow/teamMemberWorkspaceApi";
 import { invalidateTeamPortalScheduleQueries } from "@/lib/portal/scheduleInvalidations";
 import { useToast } from "@/hooks/use-toast";
 
@@ -69,6 +81,24 @@ async function searchPatientsByName(
     dob: r.dob ?? null,
     insurance: r.insurance ?? null,
   }));
+}
+
+// Minimal shape of a global-schedule event needed to summarize a patient's
+// existing bookings for the chosen day.
+type QuickScheduleDayEvent = {
+  id?: number | string;
+  eventType?: string | null;
+  serviceType?: string | null;
+  startsAt?: string | null;
+  status?: string | null;
+  facilityId?: string | null;
+};
+
+function fmtEventTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 export type CalendarQuickSchedulePayload = {
@@ -133,6 +163,42 @@ export function CalendarQuickScheduleDialog({
     queryFn: () => searchPatientsByName(searchTerm),
     enabled: open && !resolvedPatient && searchOpen && searchTerm.length >= 2,
   });
+
+  // Existing appointments for the resolved patient on the chosen day —
+  // same day-context read the full SchedulePatientDialog uses, so the
+  // operator sees potential double-bookings before confirming.
+  const { data: dayContext, isFetching: dayContextLoading } =
+    useQuery<PatientScheduleDayContext>({
+      queryKey: [
+        "calendar-quick-schedule-day-context",
+        facility ?? null,
+        resolvedPatient?.patientScreeningId ?? null,
+        selectedDate,
+      ],
+      queryFn: () =>
+        fetchPatientScheduleDayContext({
+          facilityId: facility ?? null,
+          patientScreeningId: resolvedPatient?.patientScreeningId ?? null,
+          selectedDate,
+        }),
+      enabled: open && !!resolvedPatient && !!selectedDate,
+    });
+
+  const patientDayEvents = useMemo(
+    () => (dayContext?.patientEvents ?? []) as QuickScheduleDayEvent[],
+    [dayContext],
+  );
+
+  // Same-service duplicate on the same day → visible warning (not a block).
+  const duplicateServiceEvent = useMemo(() => {
+    const svc = service.trim().toLowerCase();
+    if (!svc) return null;
+    return (
+      patientDayEvents.find(
+        (e) => (e.serviceType ?? "").trim().toLowerCase() === svc,
+      ) ?? null
+    );
+  }, [patientDayEvents, service]);
 
   const payload: CalendarQuickSchedulePayload = {
     date: selectedDate,
@@ -351,6 +417,71 @@ export function CalendarQuickScheduleDialog({
                         ))}
                       </ul>
                     )}
+                  </div>
+                )}
+              </div>
+            )}
+            {resolvedPatient && selectedDate && (
+              <div
+                className="space-y-1.5 rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2"
+                data-testid="section-quick-schedule-day-context"
+              >
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  <CalendarClock className="h-3 w-3" />
+                  Existing appointments · {selectedDate}
+                </div>
+                {dayContextLoading ? (
+                  <div className="flex items-center gap-1.5 text-[11px] italic text-slate-500">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Checking this patient's day…
+                  </div>
+                ) : patientDayEvents.length === 0 ? (
+                  <div
+                    className="text-[11px] text-slate-500"
+                    data-testid="text-quick-schedule-no-existing"
+                  >
+                    No existing appointments for {resolvedPatient.name} on this
+                    day.
+                  </div>
+                ) : (
+                  <ul
+                    className="space-y-1"
+                    data-testid="list-quick-schedule-existing-appointments"
+                  >
+                    {patientDayEvents.map((evt, i) => (
+                      <li
+                        key={evt.id ?? i}
+                        className="flex items-center gap-2 text-[11px] text-slate-700"
+                        data-testid={`row-quick-schedule-existing-${evt.id ?? i}`}
+                      >
+                        <span className="font-medium">
+                          {fmtEventTime(evt.startsAt) || "Time TBD"}
+                        </span>
+                        <span className="truncate">
+                          {evt.serviceType || evt.eventType || "Appointment"}
+                        </span>
+                        {evt.status ? (
+                          <span className="text-slate-400">· {evt.status}</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {duplicateServiceEvent && (
+                  <div
+                    className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800"
+                    data-testid="warning-quick-schedule-duplicate-service"
+                  >
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                    <span>
+                      {resolvedPatient.name} already has{" "}
+                      <span className="font-semibold">{service.trim()}</span>{" "}
+                      scheduled on this day
+                      {fmtEventTime(duplicateServiceEvent.startsAt)
+                        ? ` at ${fmtEventTime(duplicateServiceEvent.startsAt)}`
+                        : ""}
+                      . Booking again will create a duplicate.
+                    </span>
                   </div>
                 )}
               </div>
