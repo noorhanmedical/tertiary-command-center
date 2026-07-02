@@ -73,6 +73,14 @@ import {
   useClinicalIntelligence,
 } from "@/lib/clinicalIntelligence/store";
 import {
+  canManageGovernance,
+  canReviewRuleStatus,
+  canTransitionRule,
+  ciActorName,
+  requiredReviewerLabel,
+} from "@/lib/clinicalIntelligence/permissions";
+import { useCurrentUser } from "@/hooks/api/auth";
+import {
   ANCILLARY_MAPPING,
   CMS_UPDATES,
   DIAGNOSIS_MAPPINGS,
@@ -204,6 +212,9 @@ function fmtDate(iso: string): string {
 function LearningCenter() {
   const { learningItems } = useClinicalIntelligence();
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
+  const actor = ciActorName(currentUser ?? null);
+  const canManage = canManageGovernance(currentUser ?? null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
 
@@ -251,7 +262,7 @@ function LearningCenter() {
                       size="sm"
                       className="h-6 text-[11px]"
                       onClick={() => {
-                        ciUpdateLearningItem(item.id, "Admin", { instruction: editText });
+                        ciUpdateLearningItem(item.id, actor, { instruction: editText });
                         setEditingId(null);
                         toast({ title: "Learning item updated" });
                       }}
@@ -274,7 +285,12 @@ function LearningCenter() {
                 {" · Outputs: "}
                 {item.affectedOutputs.map((o) => CI_OUTPUT_LABELS[o]).join(", ") || "—"}
               </div>
-              {item.status !== "converted" && (
+              {item.status !== "converted" && !canManage && (
+                <div className="mt-2 text-[10px] text-slate-400" data-testid={`note-readonly-learning-${item.id}`}>
+                  Read-only — reviewing learning items requires an admin or clinician role.
+                </div>
+              )}
+              {item.status !== "converted" && canManage && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <Button
                     size="sm"
@@ -293,7 +309,7 @@ function LearningCenter() {
                     variant="outline"
                     className="h-6 text-[11px]"
                     onClick={async () => {
-                      const rule = await ciConvertLearningToRule(item.id, "Admin");
+                      const rule = await ciConvertLearningToRule(item.id, actor);
                       toast({
                         title: rule ? "Converted to draft rule" : "Conversion failed",
                         description: rule ? `"${rule.name}" added to the Rule Library.` : undefined,
@@ -309,7 +325,7 @@ function LearningCenter() {
                       variant="outline"
                       className="h-6 text-[11px] text-emerald-700"
                       onClick={() => {
-                        ciSetLearningStatus(item.id, "Admin", "approved");
+                        ciSetLearningStatus(item.id, actor, "approved");
                         toast({ title: "Learning item approved" });
                       }}
                       data-testid={`button-approve-learning-${item.id}`}
@@ -323,7 +339,7 @@ function LearningCenter() {
                       variant="outline"
                       className="h-6 text-[11px] text-rose-700"
                       onClick={() => {
-                        ciSetLearningStatus(item.id, "Admin", "rejected");
+                        ciSetLearningStatus(item.id, actor, "rejected");
                         toast({ title: "Learning item rejected" });
                       }}
                       data-testid={`button-reject-learning-${item.id}`}
@@ -337,7 +353,7 @@ function LearningCenter() {
                       variant="ghost"
                       className="h-6 text-[11px] text-slate-500"
                       onClick={() => {
-                        ciSetLearningStatus(item.id, "Admin", "disabled");
+                        ciSetLearningStatus(item.id, actor, "disabled");
                         toast({ title: "Learning item disabled" });
                       }}
                       data-testid={`button-disable-learning-${item.id}`}
@@ -362,6 +378,9 @@ function LearningCenter() {
 
 function RuleBuilder() {
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
+  const actor = ciActorName(currentUser ?? null);
+  const canManage = canManageGovernance(currentUser ?? null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [dxTrig, setDxTrig] = useState("");
@@ -403,7 +422,7 @@ function RuleBuilder() {
       effectiveDate: effectiveDate || null,
       status,
       conflictFlags: [],
-      createdBy: "Admin",
+      createdBy: actor,
     });
     toast({ title: "Rule saved", description: `"${name.trim()}" added to the Rule Library.` });
     setName("");
@@ -528,8 +547,13 @@ function RuleBuilder() {
           </Select>
         </div>
       </div>
-      <div className="mt-4 flex justify-end">
-        <Button size="sm" onClick={save} data-testid="button-save-rule">
+      <div className="mt-4 flex items-center justify-end gap-2">
+        {!canManage && (
+          <span className="text-[10px] text-slate-400" data-testid="note-readonly-rule-builder">
+            Read-only — creating rules requires an admin or clinician role.
+          </span>
+        )}
+        <Button size="sm" onClick={save} disabled={!canManage} data-testid="button-save-rule">
           <GitBranch className="mr-1.5 w-3.5 h-3.5" /> Save rule
         </Button>
       </div>
@@ -550,6 +574,16 @@ const RULE_STATUS_TRANSITIONS: Record<CiRuleStatus, CiRuleStatus[]> = {
 
 function RuleCard({ rule, expanded, onToggle }: { rule: CiRule; expanded: boolean; onToggle: () => void }) {
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
+  const user = currentUser ?? null;
+  const actor = ciActorName(user);
+  const allowedTransitions = RULE_STATUS_TRANSITIONS[rule.status].filter((next) =>
+    canTransitionRule(user, rule.status, next),
+  );
+  const blockedActivation =
+    RULE_STATUS_TRANSITIONS[rule.status].includes("active") &&
+    !allowedTransitions.includes("active") &&
+    (rule.status === "pending_physician_review" || rule.status === "pending_compliance_review");
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3" data-testid={`card-rule-${rule.id}`}>
       <button type="button" className="w-full text-left" onClick={onToggle}>
@@ -580,15 +614,15 @@ function RuleCard({ rule, expanded, onToggle }: { rule: CiRule; expanded: boolea
           {rule.sourceEvidence && rule.sourceEvidence.length > 0 && (
             <div className="text-[10px] text-slate-500">Source evidence: {rule.sourceEvidence.join(", ")}</div>
           )}
-          <div className="flex flex-wrap gap-1.5 pt-1">
-            {RULE_STATUS_TRANSITIONS[rule.status].map((next) => (
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            {allowedTransitions.map((next) => (
               <Button
                 key={next}
                 size="sm"
                 variant="outline"
                 className="h-6 text-[10px]"
                 onClick={() => {
-                  ciSetRuleStatus(rule.id, "Admin", next);
+                  ciSetRuleStatus(rule.id, actor, next);
                   toast({ title: `Rule → ${CI_RULE_STATUS_LABELS[next]}`, description: rule.name });
                 }}
                 data-testid={`button-rule-${rule.id}-to-${next}`}
@@ -596,6 +630,16 @@ function RuleCard({ rule, expanded, onToggle }: { rule: CiRule; expanded: boolea
                 {next === "active" ? "Approve & activate" : `Move to ${CI_RULE_STATUS_LABELS[next]}`}
               </Button>
             ))}
+            {blockedActivation && (
+              <span className="text-[10px] text-slate-400" data-testid={`note-rule-${rule.id}-approval-restricted`}>
+                Approval requires {requiredReviewerLabel(rule.status)}.
+              </span>
+            )}
+            {allowedTransitions.length === 0 && !blockedActivation && RULE_STATUS_TRANSITIONS[rule.status].length > 0 && (
+              <span className="text-[10px] text-slate-400" data-testid={`note-rule-${rule.id}-readonly`}>
+                Read-only — managing rules requires an admin or clinician role.
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -651,6 +695,8 @@ function RuleLibrary() {
 
 function Sandbox() {
   const { rules } = useClinicalIntelligence();
+  const { data: currentUser } = useCurrentUser();
+  const actor = ciActorName(currentUser ?? null);
   const [ruleId, setRuleId] = useState<string>("");
   const [sample, setSample] = useState("");
   const [result, setResult] = useState<{ matched: string[]; missed: string[] } | null>(null);
@@ -666,7 +712,7 @@ function Sandbox() {
     const matched = tokens.filter((t) => text.includes(t));
     const missed = tokens.filter((t) => !text.includes(t));
     setResult({ matched, missed });
-    if (matched.length > 0) ciUpdateRule(rule.id, "Admin", {}, "Sandbox simulation run (matched)");
+    if (matched.length > 0) ciUpdateRule(rule.id, actor, {}, "Sandbox simulation run (matched)");
   };
 
   return (
@@ -761,6 +807,10 @@ function VersionHistory() {
 function ApprovalQueue() {
   const { rules, learningItems } = useClinicalIntelligence();
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
+  const user = currentUser ?? null;
+  const actor = ciActorName(user);
+  const canManage = canManageGovernance(user);
   const pendingRules = rules.filter(
     (r) => r.status === "pending_physician_review" || r.status === "pending_compliance_review",
   );
@@ -775,38 +825,47 @@ function ApprovalQueue() {
         <EmptyNote text="No rules pending review." />
       ) : (
         <div className="space-y-2">
-          {pendingRules.map((r) => (
-            <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
-              <Pill tone={RULE_STATUS_TONE[r.status]}>{CI_RULE_STATUS_LABELS[r.status]}</Pill>
-              <span className="text-xs font-semibold text-slate-800">{r.name}</span>
-              <div className="ml-auto flex gap-1.5">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 text-[10px] text-emerald-700"
-                  onClick={() => {
-                    ciSetRuleStatus(r.id, r.status === "pending_physician_review" ? "Physician" : "Compliance", "active");
-                    toast({ title: "Rule approved & activated", description: r.name });
-                  }}
-                  data-testid={`button-queue-approve-${r.id}`}
-                >
-                  <Check className="mr-1 w-3 h-3" /> Approve
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 text-[10px] text-rose-700"
-                  onClick={() => {
-                    ciSetRuleStatus(r.id, r.status === "pending_physician_review" ? "Physician" : "Compliance", "draft");
-                    toast({ title: "Rule returned to draft", description: r.name });
-                  }}
-                  data-testid={`button-queue-return-${r.id}`}
-                >
-                  <X className="mr-1 w-3 h-3" /> Return to draft
-                </Button>
+          {pendingRules.map((r) => {
+            const canReview = canReviewRuleStatus(user, r.status);
+            return (
+              <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
+                <Pill tone={RULE_STATUS_TONE[r.status]}>{CI_RULE_STATUS_LABELS[r.status]}</Pill>
+                <span className="text-xs font-semibold text-slate-800">{r.name}</span>
+                {canReview ? (
+                  <div className="ml-auto flex gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 text-[10px] text-emerald-700"
+                      onClick={() => {
+                        ciSetRuleStatus(r.id, actor, "active");
+                        toast({ title: "Rule approved & activated", description: r.name });
+                      }}
+                      data-testid={`button-queue-approve-${r.id}`}
+                    >
+                      <Check className="mr-1 w-3 h-3" /> Approve
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 text-[10px] text-rose-700"
+                      onClick={() => {
+                        ciSetRuleStatus(r.id, actor, "draft");
+                        toast({ title: "Rule returned to draft", description: r.name });
+                      }}
+                      data-testid={`button-queue-return-${r.id}`}
+                    >
+                      <X className="mr-1 w-3 h-3" /> Return to draft
+                    </Button>
+                  </div>
+                ) : (
+                  <span className="ml-auto text-[10px] text-slate-400" data-testid={`note-queue-readonly-${r.id}`}>
+                    Read-only — approval requires {requiredReviewerLabel(r.status)}.
+                  </span>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       <h3 className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
@@ -819,32 +878,38 @@ function ApprovalQueue() {
           {pendingLearning.map((l) => (
             <div key={l.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
               <span className="min-w-0 flex-1 truncate text-xs text-slate-700">{l.ruleName || l.instruction}</span>
-              <div className="flex gap-1.5">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 text-[10px] text-emerald-700"
-                  onClick={() => {
-                    ciSetLearningStatus(l.id, "Admin", "approved");
-                    toast({ title: "Learning item approved" });
-                  }}
-                  data-testid={`button-queue-approve-learning-${l.id}`}
-                >
-                  <Check className="mr-1 w-3 h-3" /> Approve
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 text-[10px] text-rose-700"
-                  onClick={() => {
-                    ciSetLearningStatus(l.id, "Admin", "rejected");
-                    toast({ title: "Learning item rejected" });
-                  }}
-                  data-testid={`button-queue-reject-learning-${l.id}`}
-                >
-                  <ThumbsDown className="mr-1 w-3 h-3" /> Reject
-                </Button>
-              </div>
+              {canManage ? (
+                <div className="flex gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[10px] text-emerald-700"
+                    onClick={() => {
+                      ciSetLearningStatus(l.id, actor, "approved");
+                      toast({ title: "Learning item approved" });
+                    }}
+                    data-testid={`button-queue-approve-learning-${l.id}`}
+                  >
+                    <Check className="mr-1 w-3 h-3" /> Approve
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[10px] text-rose-700"
+                    onClick={() => {
+                      ciSetLearningStatus(l.id, actor, "rejected");
+                      toast({ title: "Learning item rejected" });
+                    }}
+                    data-testid={`button-queue-reject-learning-${l.id}`}
+                  >
+                    <ThumbsDown className="mr-1 w-3 h-3" /> Reject
+                  </Button>
+                </div>
+              ) : (
+                <span className="text-[10px] text-slate-400" data-testid={`note-queue-readonly-learning-${l.id}`}>
+                  Read-only — requires an admin or clinician role.
+                </span>
+              )}
             </div>
           ))}
         </div>

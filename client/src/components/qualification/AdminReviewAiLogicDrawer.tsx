@@ -73,6 +73,8 @@ import {
   ciRecordEvidence,
   useClinicalIntelligence,
 } from "@/lib/clinicalIntelligence/store";
+import { ciActorName } from "@/lib/clinicalIntelligence/permissions";
+import { useCurrentUser } from "@/hooks/api/auth";
 
 // ───── Shared shapes ────────────────────────────────────────────────────
 
@@ -177,6 +179,8 @@ export function ChipEvidenceMenuExtras({
   testIdSuffix: string;
 }) {
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
+  const actor = ciActorName(currentUser ?? null);
   const decision = useCiChipDecision(context, label, source);
 
   const baseRecord = () => ({
@@ -189,7 +193,7 @@ export function ChipEvidenceMenuExtras({
     label,
     confidence: confidence ?? ("medium" as CiConfidence),
     assignedAncillary: assignedAncillary ?? null,
-    decidedBy: "Admin",
+    decidedBy: actor,
   });
 
   const approve = () => {
@@ -210,7 +214,7 @@ export function ChipEvidenceMenuExtras({
       status: "draft",
       conflictFlags: [],
       sourceEvidence: [label],
-      createdBy: "Admin",
+      createdBy: actor,
     });
     const ev = await ciRecordEvidence({ ...baseRecord(), status: "approved" });
     await ciMarkEvidenceUsedInRule(ev.id, rule.id);
@@ -230,7 +234,7 @@ export function ChipEvidenceMenuExtras({
       sourceFacility: context.facility ?? null,
       sourceDate: context.scheduleDate ?? null,
       sourceContext: { evidenceLabels: [label] },
-      createdBy: "Admin",
+      createdBy: actor,
     });
     toast({ title: "Saved as AI logic", description: "Draft added to the AI Learning Center." });
   };
@@ -304,6 +308,8 @@ export function AdminReviewAiLogicDrawer({
   context: AiLogicPatientContext;
 }) {
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
+  const actor = ciActorName(currentUser ?? null);
   const [instruction, setInstruction] = useState("");
   const [ruleName, setRuleName] = useState("");
   const [triggerSource, setTriggerSource] = useState<string>("HX");
@@ -349,7 +355,7 @@ export function AdminReviewAiLogicDrawer({
       adminNotes: context.adminNotes ?? null,
       approvalState: context.approvalState ?? null,
     },
-    createdBy: "Admin",
+    createdBy: actor,
     ...overrides,
   });
 
@@ -396,7 +402,7 @@ export function AdminReviewAiLogicDrawer({
   const createRule = async () => {
     if (!requireInstruction()) return;
     const item = await ciAddLearningItem(buildItem());
-    const rule = await ciConvertLearningToRule(item.id, "Admin");
+    const rule = await ciConvertLearningToRule(item.id, actor);
     toast({
       title: rule ? "Draft rule created" : "Saved as AI logic",
       description: rule
@@ -667,6 +673,8 @@ export function AiEvidenceBubblesRow({
   onEvidenceDecision?: (item: AiEvidenceItem, decision: "approved" | "rejected") => void;
 }) {
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
+  const actor = ciActorName(currentUser ?? null);
   const ci = useClinicalIntelligence();
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [openId, setOpenId] = useState<string | null>(null);
@@ -700,7 +708,7 @@ export function AiEvidenceBubblesRow({
       confidence: item.confidence ?? "medium",
       assignedAncillary: null,
       status,
-      decidedBy: "Admin",
+      decidedBy: actor,
     });
     toast({
       title: status === "approved" ? "Evidence approved" : "Evidence rejected",
@@ -724,7 +732,7 @@ export function AiEvidenceBubblesRow({
       sourceFacility: context.facility ?? null,
       sourceDate: context.scheduleDate ?? null,
       sourceContext: { evidenceLabels: [labelOf(item)] },
-      createdBy: "Admin",
+      createdBy: actor,
     });
     toast({ title: "Saved as AI logic", description: "Draft added to the AI Learning Center." });
     setOpenId(null);
@@ -743,7 +751,7 @@ export function AiEvidenceBubblesRow({
       status: "draft",
       conflictFlags: [],
       sourceEvidence: [labelOf(item)],
-      createdBy: "Admin",
+      createdBy: actor,
     });
     // Rule creation is itself an evidence approval — record it and link the
     // evidence to the rule so Evidence Traceability shows the full chain.
@@ -758,7 +766,7 @@ export function AiEvidenceBubblesRow({
       confidence: item.confidence ?? "medium",
       assignedAncillary: null,
       status: "approved",
-      decidedBy: "Admin",
+      decidedBy: actor,
     });
     await ciMarkEvidenceUsedInRule(ev.id, rule.id);
     toast({ title: "Draft rule created", description: "Review it in the Rule Library." });
@@ -780,7 +788,7 @@ export function AiEvidenceBubblesRow({
       confidence: item.confidence ?? "medium",
       assignedAncillary: targetLabel,
       status: "approved",
-      decidedBy: "Admin",
+      decidedBy: actor,
     });
     toast({ title: `Attached to ${targetLabel}`, description: labelOf(item) });
     setOpenId(null);
@@ -983,6 +991,8 @@ export function AiLogicSavePrompt({
   onDismiss: () => void;
 }) {
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
+  const actor = ciActorName(currentUser ?? null);
 
   const save = async (
     kind: "patient_only" | "draft_rule" | "knowledge_tile" | "test_first",
@@ -997,14 +1007,14 @@ export function AiLogicSavePrompt({
       sourceFacility: context.facility ?? null,
       sourceDate: context.scheduleDate ?? null,
       sourceContext: { evidenceLabels: [itemLabel] },
-      createdBy: "Admin",
+      createdBy: actor,
     };
     if (kind === "patient_only") {
       ciAddLearningItem({ ...base, scope: "patient_only", status: "approved" });
       toast({ title: "Saved for this patient only" });
     } else if (kind === "draft_rule") {
       const item = await ciAddLearningItem({ ...base, scope: "clinic_draft", status: "draft" });
-      await ciConvertLearningToRule(item.id, "Admin");
+      await ciConvertLearningToRule(item.id, actor);
       toast({ title: "Draft rule saved", description: "Review it in the Rule Library." });
     } else if (kind === "knowledge_tile") {
       ciAddLearningItem({ ...base, scope: "clinic_draft", status: "pending_review" });
