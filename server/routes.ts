@@ -39,6 +39,7 @@ import { registerAcsWorkflowRoutes } from "./routes/acsWorkflow";
 import { registerPatientNotesRoutes } from "./routes/patientNotes";
 import { registerContactsRoutes } from "./routes/contacts";
 import { registerPortalWidgetsRoutes } from "./routes/portalWidgets";
+import { registerPortalPrefsRoutes } from "./routes/portalPrefs";
 import { registerBillingPolicyRoutes } from "./routes/billingPolicy";
 import { registerInvoiceReadinessRoutes } from "./routes/invoiceReadiness";
 import { registerInvoiceBatchRoutes } from "./routes/invoiceBatches";
@@ -274,6 +275,7 @@ export async function registerRoutes(
   registerPatientNotesRoutes(app);
   registerContactsRoutes(app);
   registerPortalWidgetsRoutes(app);
+  registerPortalPrefsRoutes(app);
   registerBillingPolicyRoutes(app);
   registerInvoiceReadinessRoutes(app);
   registerInvoiceBatchRoutes(app);

@@ -1,9 +1,8 @@
-// Workspace settings dialog (Task #643).
+// Workspace settings dialog.
 //
-// Exposes in-session workspace preferences. IMPORTANT: preferences apply
-// for the current session only — there is no persistence wired in this
-// pass. The dialog says so explicitly. The prefs shape is serializable so
-// a future pass can persist without changing this UI.
+// Exposes workspace preferences. Preferences are saved automatically to the
+// server (per user) as they change — see useWorkspacePrefs — so they persist
+// across reloads and sync across devices.
 
 import {
   Dialog,
@@ -61,8 +60,8 @@ export function WorkspaceSettingsDialog({
           <DialogTitle>Workspace Settings</DialogTitle>
         </DialogHeader>
 
-        <div className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
-          Preferences apply to this session only. Saving across reloads is a next step.
+        <div className="rounded-lg bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700" data-testid="settings-saved-note">
+          Preferences are saved automatically and apply everywhere you sign in.
         </div>
 
         <div className="divide-y divide-slate-100">

@@ -1100,9 +1100,13 @@ export function TeamPortalShell({
   // change the facility, or affect activeWorkspaceMode.
   const [globalCalendarDate, setGlobalCalendarDate] = useState<string>(todayIso());
   // ── Task #643: upgraded Tools workspace ──────────────────────────
-  // In-session workspace preferences (Settings). Not persisted this pass.
-  const { prefs: workspacePrefs, updatePref: updateWorkspacePref, resetPrefs: resetWorkspacePrefs } =
-    useWorkspacePrefs();
+  // Workspace preferences (Settings), persisted per user in the DB.
+  const {
+    prefs: workspacePrefs,
+    hydrated: workspacePrefsHydrated,
+    updatePref: updateWorkspacePref,
+    resetPrefs: resetWorkspacePrefs,
+  } = useWorkspacePrefs(currentUserId ?? null);
   const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
   // Communication tray tab (bottom half of Tools panel).
   const [trayTab, setTrayTab] = useState<TrayTab>(workspacePrefs.defaultTrayTab);
@@ -1139,11 +1143,12 @@ export function TeamPortalShell({
     setRightRailPinned(workspacePrefs.workQueuePinnedByDefault);
   }, [workspacePrefs.workQueuePinnedByDefault]);
   useEffect(() => {
-    // Only seed the tray tab from the default once; user tab clicks win after.
-    if (trayTabInitRef.current) return;
+    // Seed the tray tab from the persisted default ONCE, after the saved
+    // prefs have hydrated from the server; user tab clicks win after that.
+    if (trayTabInitRef.current || !workspacePrefsHydrated) return;
     trayTabInitRef.current = true;
     setTrayTab(workspacePrefs.defaultTrayTab);
-  }, [workspacePrefs.defaultTrayTab]);
+  }, [workspacePrefs.defaultTrayTab, workspacePrefsHydrated]);
   const leftRailRef = useRef<HTMLDivElement>(null);
   // Task #643 — Playground surface ref for drop-point math (drag tool → widget).
   const playgroundSurfaceRef = useRef<HTMLDivElement>(null);

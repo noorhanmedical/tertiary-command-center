@@ -17,9 +17,14 @@ playground via MIME `WIDGET_DND_MIME` to spawn floating widgets; the
 playground surface needs a ref + onDragOver/onDrop for drop-point math.
 
 **Why / constraints that will bite again:**
-- Persistence is intentionally session/local only — NO DB tables. Every
-  surface shows a "Not saved" indicator. Shapes are serializable so a
-  later pass can persist without touching call sites (follow-ups exist).
+- Widgets AND workspace prefs are now persisted per user in the DB
+  (`portal_widgets` table; `workspace_prefs` jsonb row via
+  `/api/portal/workspace-prefs`). Both hooks hydrate fail-closed: writes
+  are BLOCKED until the initial GET succeeds so a defaults snapshot can
+  never clobber the saved row; edits made during the load window are
+  merged over the server state and persisted once. Prefs expose a
+  `hydrated` flag — one-shot consumers (tray-tab seeding) must wait for
+  it or the persisted default is silently skipped. Notes tab = session-only.
 - Honest boundaries per tab: Email = live sender (reuses
   `PortalEmailComposerTab`). **Team = REAL Plexus task-message threads**
   (pick a task from your `/api/portal/my-tasks`, read + POST via

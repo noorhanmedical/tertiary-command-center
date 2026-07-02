@@ -63,4 +63,5 @@ export * from "./clinicianPortal";
 export * from "./directMessages";
 export * from "./portalWidgets";
 export * from "./clinicalIntelligence";
+export * from "./portalPrefs";
 export * from "../models/chat";
