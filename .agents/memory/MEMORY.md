@@ -33,3 +33,4 @@
 - [Per-user localStorage key-switch](per-user-localstorage-keyswitch.md) — reset state from the new user key's bucket (or empty) on every key change or data leaks across users; carry-forward only on first null→key bind.
 - [Engagement Documents view](engagement-documents-view.md) — note/billing lanes unlock only on passing report status; portal uploads 404 for soft-deleted screenings and are role-gated.
 - [Admin Review mobile rail](admin-review-mobile-rail.md) — right-rail content must sit in one min-h-0 scroll zone above the footer, or short viewports clip the footer; stack panels below md.
+- [Team Portal e2e testing recipe](team-portal-e2e-testing.md) — pin rails first, session-only calendarBehavior pref gates the quick-schedule pop-up, free-text patient can't submit (needs screening id), use view-as for call rows.
