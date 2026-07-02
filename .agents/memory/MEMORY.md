@@ -31,3 +31,4 @@
 - [Team Portal Tools workspace](team-portal-tools-workspace.md) — dock+tray split panel: dock scrolls top, CommunicationTray bottom (hidden when leftNarrow); widgets/prefs session-only, attributed to real currentUser.username not view-as.
 - [Team metrics call-log split-brain](team-metrics-call-log-split-brain.md) — Engagement team metrics must union outreach_calls + `call_result_logged` journey events (default portal write skips outreach_calls); read the journey log UNCAPPED (generic helper clamps to 500), attribute by actor, converge on READ not writes.
 - [Per-user localStorage key-switch](per-user-localstorage-keyswitch.md) — reset state from the new user key's bucket (or empty) on every key change or data leaks across users; carry-forward only on first null→key bind.
+- [Engagement Documents view](engagement-documents-view.md) — note/billing lanes unlock only on passing report status; portal uploads 404 for soft-deleted screenings and are role-gated.

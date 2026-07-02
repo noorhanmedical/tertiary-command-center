@@ -42,6 +42,7 @@ import { EngagementCallSettings } from "@/components/engagement/EngagementCallSe
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
 import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
 import { EngagementBaskets } from "@/components/engagement/EngagementBaskets";
+import { EngagementDocuments } from "@/components/engagement/EngagementDocuments";
 import {
   type BoardResponse,
   type BoardRow,
@@ -96,7 +97,7 @@ export default function EngagementCenterPage() {
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [smartFilter, setSmartFilter] = useState<SmartFilterKey>("all");
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
-  const [view, setView] = useState<"baskets" | "repository" | "distribution" | "callSettings" | "liveMetrics">("baskets");
+  const [view, setView] = useState<"baskets" | "documents" | "repository" | "distribution" | "callSettings" | "liveMetrics">("baskets");
 
   const board = useQuery<BoardResponse>({
     queryKey: ["/api/engagement/assignment-board", "command"],
@@ -301,6 +302,18 @@ export default function EngagementCenterPage() {
             </button>
             <button
               type="button"
+              onClick={() => setView("documents")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                view === "documents"
+                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+              data-testid="button-view-documents"
+            >
+              Documents
+            </button>
+            <button
+              type="button"
               onClick={() => setView("repository")}
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                 view === "repository"
@@ -429,6 +442,12 @@ export default function EngagementCenterPage() {
               assigning={assignMutation.isPending}
               onAssign={handleAssign}
             />
+          </div>
+        </main>
+      ) : view === "documents" ? (
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+          <div className="mx-auto max-w-7xl">
+            <EngagementDocuments />
           </div>
         </main>
       ) : view === "callSettings" ? (
