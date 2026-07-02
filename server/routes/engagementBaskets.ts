@@ -16,6 +16,7 @@ import type {
   BasketReadinessStatus,
 } from "@shared/contracts/engagementBaskets";
 import { BASKET_DEFS } from "@shared/contracts/engagementBaskets";
+import { basketsForCase } from "../services/engagement/basketRules";
 
 // ─── Engagement baskets read model ──────────────────────────────────────────
 //
@@ -35,8 +36,6 @@ import { BASKET_DEFS } from "@shared/contracts/engagementBaskets";
 //
 // Honest counts: a basket with no matching cases reports 0. Nothing is
 // fabricated and no case is invented.
-
-const TERMINAL_ENGAGEMENT_STATUSES = new Set(["scheduled", "completed"]);
 
 function startOfTodayUtc(now = new Date()): Date {
   const d = new Date(now);
@@ -113,46 +112,8 @@ function cooldownNames(c: unknown): string[] {
   return [];
 }
 
-// Which baskets does a single enriched case belong to? A case can appear in
-// more than one tile (e.g. an assigned overdue voicemail is both Carryover and
-// Voicemail Left) — the tiles are filters, not a partition.
-function basketsForCase(args: {
-  isAssigned: boolean;
-  isActive: boolean;
-  engagementStatus: string | null;
-  disposition: string | null;
-  nextActionAt: Date | null;
-  startToday: Date;
-  endToday: Date;
-}): EngagementBasketKey[] {
-  const keys: EngagementBasketKey[] = [];
-  const status = (args.engagementStatus ?? "").toLowerCase();
-  const isTerminalStatus = TERMINAL_ENGAGEMENT_STATUSES.has(status);
-
-  if (!args.isAssigned && args.isActive && !isTerminalStatus) {
-    keys.push("unassigned");
-  }
-  if (args.isAssigned && args.isActive && !isTerminalStatus) {
-    if (args.nextActionAt && args.nextActionAt < args.startToday) {
-      keys.push("carryover");
-    } else if (
-      args.nextActionAt &&
-      args.nextActionAt >= args.startToday &&
-      args.nextActionAt <= args.endToday
-    ) {
-      keys.push("assignedToday");
-    }
-  }
-  if (args.disposition === "completed") keys.push("completedConversations");
-  if (status === "scheduled" || args.disposition === "scheduled") {
-    keys.push("scheduled");
-  }
-  if (args.disposition === "voicemail") keys.push("voicemailLeft");
-  if (args.disposition === "noAnswer") keys.push("noAnswer");
-  if (args.disposition === "followUp") keys.push("followUpNeeded");
-  if (args.disposition === "declined") keys.push("declined");
-  return keys;
-}
+// Basket membership rules live in ../services/engagement/basketRules (pure,
+// unit-tested in tests/unit/engagementBaskets.test.ts).
 
 // Map a document-readiness status onto the compact basket status the card
 // shows. Anything unrecognised (or absent) reads as "not generated" — an
