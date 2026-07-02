@@ -1,0 +1,1300 @@
+REPLIT PROMPT — BUILD COMPLETE PLEXUS BANK FINANCIAL OPERATING SYSTEM
+
+Create a full Replit UI prototype for a new main tile called:
+
+Plexus Bank
+
+This should become the complete financial operating system for Plexus.
+
+IMPORTANT:
+This is a Replit UI prototype with workable front-end behavior.
+Use mock data, local state, and localStorage where needed.
+Do not connect real banks, cards, payroll, payment processors, or clearinghouses yet.
+Do not store raw card numbers.
+Do not remove existing platform functionality.
+Do not rebuild unrelated modules.
+Add this as a new major tile and interior workspace.
+
+CORE CONCEPT
+
+Plexus Bank should combine all financial, billing, payment, audit, payroll, vendor, pricing, and compensation workflows into one unified financial system.
+
+It should organize:
+
+- executive financial dashboard
+- billing center
+- billing auditor
+- invoicing center
+- team member invoice desk monitoring
+- fee schedule manager
+- RVU and Plex Factor compensation
+- P&L and profitability
+- clinic profitability
+- region profitability
+- expenses
+- vendor payments
+- payroll
+- secure bank/card connection placeholders
+- reports
+- approvals
+- audit logs
+- settings and role-based permissions
+
+MAIN TILE
+
+Add a new main tile called:
+
+Plexus Bank
+
+This tile should open into an interior workspace.
+
+Use a premium enterprise financial layout with:
+
+- left-side module navigation or top tabs
+- global filters
+- summary cards
+- tables
+- drawers
+- modals
+- status badges
+- audit trail drawers
+- settings panels
+
+MAIN PLEXUS BANK MODULES
+
+Create these modules:
+
+1. Dashboard
+2. Billing Center
+3. Billing Auditor
+4. Invoicing Center
+5. Team Invoice Desk Monitor
+6. Fee Schedule Manager
+7. RVU & Plex Factor Compensation
+8. P&L / Profitability
+9. Expenses
+10. Vendors / Vendor Pay
+11. Payroll
+12. Banking / Card Connections
+13. Reports
+14. Approvals
+15. Audit Logs
+16. Settings & Permissions
+
+GLOBAL FILTERS
+
+Global filters should apply across modules where relevant:
+
+- clinic
+- region
+- state
+- provider
+- payer
+- plan
+- ancillary
+- service
+- CPT/HCPCS
+- date range
+- invoice status
+- claim status
+- payment status
+- vendor
+- employee
+- contractor
+- technician
+- remote team member
+- billing owner
+- approval status
+
+DASHBOARD
+
+Create the Plexus Bank Dashboard.
+
+It should show executive financial visibility.
+
+Dashboard cards:
+
+- total revenue
+- total collections
+- outstanding AR
+- pending invoices
+- unpaid invoices
+- overdue invoices
+- denied claims
+- payroll due
+- vendor bills due
+- RVU compensation due
+- Plex Factor bonus due
+- clinic profitability
+- region profitability
+- cash on hand placeholder
+- monthly P&L snapshot
+- urgent alerts
+- billing red flags
+- approval queue count
+
+Dashboard widgets:
+
+- revenue by clinic
+- collections by payer
+- invoice aging
+- claim denial trend
+- payroll due
+- vendor pay due
+- RVU by service
+- Plex Factor activations
+- profit by clinic
+- cashflow placeholder
+- top red flags
+
+BILLING CENTER
+
+Create a billing workspace.
+
+It should show:
+
+- claims billed
+- claims pending
+- claims denied
+- claims paid
+- ERA/EOB tracking
+- remittance tracking
+- payer issues
+- CPT/service revenue
+- insurance verification status
+- billing task status
+- denial follow-up status
+- payment posting status
+
+Billing row fields:
+
+- patient
+- clinic
+- region
+- provider
+- payer
+- plan
+- service
+- CPT/HCPCS
+- billed amount
+- allowed amount
+- paid amount
+- patient responsibility
+- claim status
+- denial reason
+- assigned billing owner
+- last updated
+- notes
+
+Billing actions:
+
+- view claim
+- update status
+- add note
+- flag for audit
+- send to Billing Auditor
+- mark ready
+- mark hold
+- view EOB/ERA placeholder
+- create follow-up task
+
+BILLING AUDITOR
+
+Create a robust Billing Auditor module.
+
+Purpose:
+Prevent billing errors before claims or invoices go out.
+
+It should check:
+
+- clinic/facility in-network status
+- provider in-network status
+- provider in-network but facility out-of-network
+- facility in-network but provider out-of-network
+- both out-of-network
+- unknown network status
+- billing NPI
+- rendering provider NPI
+- facility NPI
+- TIN
+- payer-specific billing rules
+- place of service
+- CPT coverage
+- prior auth requirement
+- eligibility verification
+- deductible/OOP status
+- modifier requirements
+- medical necessity support
+- claim readiness
+- denial risk
+
+Network Matrix table columns:
+
+- payer
+- plan
+- clinic
+- region
+- state
+- facility NPI
+- provider
+- provider NPI
+- billing entity
+- TIN
+- network status
+- effective date
+- verification source
+- verified by
+- notes
+
+Network status options:
+
+- Provider + facility in-network
+- Provider in-network / facility out-of-network
+- Facility in-network / provider out-of-network
+- Both out-of-network
+- Unknown / needs verification
+- Credentialing pending
+- Contract pending
+
+Claim Readiness Score:
+
+- Green: ready to bill
+- Yellow: needs review
+- Red: hold claim
+
+Show clear reasons:
+
+- Provider in-network but facility out-of-network
+- Prior auth missing
+- Payer requires different billing NPI
+- Medical necessity support incomplete
+- CPT not verified for this plan
+- Eligibility not verified
+- Incorrect place of service
+- Modifier needed
+- Claim lacks required documentation
+
+Billing Auditor actions:
+
+- approve billing readiness
+- hold claim
+- request verification
+- upload payer proof placeholder
+- add payer note
+- create issue
+- send back to Billing Center
+- add audit log entry
+
+INVOICING CENTER
+
+Create an invoicing module.
+
+It should show:
+
+- create invoice
+- send invoice
+- resend invoice
+- invoice status
+- paid invoices
+- unpaid invoices
+- overdue invoices
+- patient invoices
+- clinic invoices
+- vendor invoices if needed
+- invoice batches
+- payment links
+- payment plan support
+- invoice history
+
+Invoice fields:
+
+- invoice number
+- patient/customer
+- clinic
+- region
+- service
+- CPT/HCPCS if applicable
+- fee schedule used
+- amount
+- discount
+- balance
+- due date
+- payment status
+- sent by
+- sent date
+- notes
+
+Invoice actions:
+
+- create invoice
+- send invoice
+- resend link
+- mark paid
+- mark void
+- create payment plan
+- apply discount
+- request approval
+- view audit trail
+
+TEAM INVOICE DESK MONITOR
+
+Team members should have a limited invoice function in their Team Member Portal, but they should not have full Plexus Bank access.
+
+Inside Plexus Bank, create a monitoring module for team invoice activity.
+
+Admin should see:
+
+- team member who sent invoice
+- patient
+- clinic
+- region
+- service
+- amount
+- payment link status
+- payment status
+- sent date/time
+- resend history
+- contact notes
+- failed payments
+- refunds/adjustments
+- audit trail
+
+Team member limited permissions:
+
+Can:
+- send patient invoices
+- resend patient invoice links
+- view invoice status for assigned patients
+- add patient contact notes
+- mark patient contacted
+
+Cannot see:
+- P&L
+- payroll
+- vendor payments
+- bank/card connections
+- company revenue
+- clinic profitability
+- owner reports
+- finance settings
+- all clinics unless assigned
+
+Important:
+This is the same invoice system underneath, but different role-based UI.
+
+Team Member Portal should have a left-panel button called:
+
+Patient Invoices
+
+or
+
+Invoice Desk
+
+That button should open only the restricted invoice workflow, not the full Plexus Bank.
+
+FEE SCHEDULE MANAGER
+
+Create a configurable Fee Schedule Manager.
+
+This controls service pricing.
+
+Pricing can vary by:
+
+- global default
+- region
+- state
+- clinic
+- payer
+- provider if needed
+- patient type
+- self-pay/cash pay
+- contracted rate
+- patient-specific override if permissioned
+
+Pricing hierarchy:
+
+Global Default Price
+→ Region Price
+→ State Price
+→ Clinic Price
+→ Payer Contract Price
+→ Patient-Specific Override
+
+Fee schedule fields:
+
+- service name
+- service category
+- ancillary type
+- CPT/HCPCS code
+- default price
+- regional price
+- state price
+- clinic-specific price
+- payer contracted rate
+- self-pay price
+- discount rules
+- active/inactive
+- effective date
+- end date
+- created by
+- approved by
+- last updated
+- notes
+
+Fee schedule actions:
+
+- add service
+- edit price
+- clone schedule
+- create regional override
+- create state override
+- create clinic override
+- create payer override
+- request approval
+- approve change
+- retire price
+- view version history
+- run pricing test
+
+Fee schedules should feed into:
+
+- patient invoices
+- team invoice desk
+- admin invoicing center
+- billing estimates
+- good faith estimates
+- P&L projections
+- clinic profitability
+- revenue forecasting
+- payment plans
+- clinic/Plexus split calculations
+
+RVU & PLEX FACTOR COMPENSATION
+
+Create a full module called:
+
+RVU & Plex Factor Compensation
+
+This manages operational productivity, team payouts, payout rules, and Plex Factor bonus logic.
+
+Submodules:
+
+1. RVU Dashboard
+2. Service RVU Settings
+3. Plex Factor Rules
+4. Role Payout Rates
+5. Clinic / Region Overrides
+6. Service Event Ledger
+7. Compensation Calculator
+8. Payout Review
+9. Payroll Integration
+10. RVU Audit Log
+
+Default RVU values:
+
+- BrainWave: 9 RVUs
+- VitalWave: 6 RVUs
+- Ultrasound: 4 RVUs
+- EKG: 3 RVUs
+- Urinalysis: 2 RVUs
+- PGx: 5 RVUs
+
+Default payout rates:
+
+Technician:
+- base payout: $1.00 per RVU
+- Plex Factor payout: $2.00 per RVU
+
+Remote team:
+- base payout: $0.10 per RVU
+- Plex Factor payout: $0.20 per RVU
+
+Plex Factor default logic:
+
+Plex Factor activates when:
+
+- same patient
+- same service date or encounter
+- 2 or more eligible ancillary services completed
+
+Default Plex Factor multiplier:
+
+- 2x
+
+Eligible services by default:
+
+- BrainWave
+- VitalWave
+- Ultrasound
+- EKG
+- Urinalysis
+- PGx
+
+Important:
+Plex Factor is not just a label.
+It must behave like real calculation logic in the prototype.
+
+Plex Factor calculation steps:
+
+1. Identify patient
+2. Identify service date / encounter date
+3. Count completed eligible services
+4. If count is greater than or equal to threshold, activate Plex Factor
+5. Apply multiplier to eligible services only
+6. Calculate technician payout
+7. Calculate remote team payout
+8. Store calculation with audit detail
+
+Example:
+
+Patient receives BrainWave + VitalWave same day.
+
+BrainWave = 9 RVUs
+VitalWave = 6 RVUs
+Total = 15 RVUs
+
+Without Plex Factor:
+Technician payout = 15 × $1 = $15
+Remote payout = 15 × $0.10 = $1.50
+
+With Plex Factor:
+Technician payout = 15 × $2 = $30
+Remote payout = 15 × $0.20 = $3.00
+
+Service Event Ledger:
+
+Every completed ancillary service should create a service event record.
+
+Fields:
+
+- patient ID
+- patient name
+- clinic
+- region
+- provider
+- technician
+- remote team member
+- service type
+- service date
+- encounter ID
+- completion status
+- report uploaded status
+- report signed status
+- billing-ready status
+- claim submitted status
+- claim paid status
+- RVU value at time of service
+- technician rate at time of service
+- remote rate at time of service
+- Plex Factor eligible
+- Plex Factor applied
+- Plex Factor group ID
+- Plex Factor multiplier
+- technician payout
+- remote payout
+- calculation timestamp
+
+Plex Factor Group ID:
+
+Create a group when multiple qualifying services are completed for the same patient/date.
+
+Example:
+
+Patient: John Smith
+Date: 07/02/2026
+Services: BrainWave, VitalWave, EKG
+Total services: 3
+Total RVUs: 18
+Plex Factor: Active
+Multiplier: 2x
+
+Payment status rules:
+
+Separate:
+
+- operational RVUs
+- payable RVUs
+- collected RVUs
+- final compensation
+
+Support different payout rules by payment status.
+
+Example configurable rates:
+
+Technician:
+- paid claim rate: $1.00/RVU
+- unpaid/pending rate: $0.25/RVU
+
+Remote team:
+- paid claim rate: $0.10/RVU
+- unpaid/pending rate: $0.00/RVU
+
+Admin can configure payout trigger:
+
+- completed
+- report uploaded
+- provider signed
+- billing ready
+- claim submitted
+- claim paid
+
+Recommended default:
+
+Track RVUs once completed.
+Release full payout once billable-ready or claim-paid depending on company policy.
+
+RVU Settings:
+
+Admin should configure:
+
+- service name
+- service code/key
+- RVU value
+- active/inactive
+- eligible for Plex Factor
+- default technician payout rate
+- default remote payout rate
+- billing category
+- clinic availability
+- effective start date
+- effective end date
+
+Plex Factor Settings:
+
+Admin should configure:
+
+- enabled yes/no
+- minimum service count
+- multiplier value
+- maximum multiplier cap
+- eligible services
+- whether all services multiply or only additional services
+- activation window:
+  - same day
+  - same encounter
+  - same appointment
+  - 24-hour window
+  - billing DOS
+- applies by:
+  - patient
+  - clinic
+  - provider
+  - technician
+  - encounter
+- applies to technician payout
+- applies to remote payout
+- applies to both
+- payout trigger status
+
+Clinic / Region Overrides:
+
+Allow hierarchy:
+
+Global default
+→ Region
+→ State
+→ Clinic
+→ Service line
+→ Technician / role override if needed
+
+Example:
+
+Global BrainWave RVU = 9
+Arizona BrainWave RVU = 9
+Taylor Family Practice BrainWave RVU = 10
+
+Taylor should use 10.
+
+Effective Dates:
+
+Rates must be date-based.
+
+If BrainWave changes from 9 RVUs to 10 RVUs on August 1, prior services should keep the old 9 RVU value.
+
+Do not recalculate old payouts unless admin intentionally runs recalculation.
+
+RVU Dashboard:
+
+Show:
+
+- RVUs by service
+- RVUs by clinic
+- RVUs by region
+- RVUs by technician
+- RVUs by remote team
+- RVUs by date range
+- Plex Factor activations
+- base compensation
+- Plex Factor bonus compensation
+- total compensation
+- paid compensation
+- pending compensation
+
+Filters:
+
+- region
+- state
+- clinic
+- provider
+- technician
+- remote team member
+- service
+- date range
+- payment status
+- Plex Factor status
+
+Compensation Calculator:
+
+Admin can input:
+
+- patient
+- clinic
+- date
+- services performed
+- payment status
+- technician
+- remote team member
+
+System outputs:
+
+- total RVUs
+- Plex Factor active yes/no
+- base payout
+- Plex Factor payout
+- bonus amount
+- final payout
+- explanation
+
+Example explanation:
+
+BrainWave completed on 07/02/2026.
+Base RVU: 9.
+Patient also completed VitalWave same day.
+Plex Factor activated because 2 eligible services were completed.
+Multiplier: 2x.
+Technician payout: 9 × $2.00 = $18.
+
+RVU Audit Log:
+
+Track:
+
+- who changed RVU value
+- old value
+- new value
+- reason
+- effective date
+- timestamp
+- who approved
+- payout recalculation history
+
+Every payout calculation must be explainable.
+
+Payroll Connection:
+
+RVU/Plex Factor should feed into Payroll.
+
+Payroll should show:
+
+- base pay
+- RVU payout
+- Plex Factor bonus
+- pending payout
+- held payout
+- paid payout
+- payroll period
+- approval status
+
+P&L / PROFITABILITY
+
+Create a P&L module.
+
+Show profitability by:
+
+- clinic
+- region
+- state
+- provider
+- ancillary
+- payer
+- service
+- month
+- date range
+
+Show:
+
+- gross revenue
+- collections
+- refunds
+- adjustments
+- write-offs
+- payroll expense
+- RVU compensation expense
+- Plex Factor bonus expense
+- vendor expense
+- equipment cost
+- software cost
+- legal/compliance cost
+- billing cost
+- admin overhead
+- gross profit
+- net profit
+- Plexus share
+- clinic share
+
+P&L should pull from:
+
+- billing revenue
+- invoices
+- fee schedules
+- paid claims
+- expenses
+- vendor pay
+- payroll
+- RVU/Plex Factor compensation
+- adjustments
+- refunds
+- write-offs
+
+EXPENSES
+
+Create an expense module.
+
+Track:
+
+- clinic expenses
+- corporate expenses
+- software expenses
+- equipment expenses
+- payroll expenses
+- RVU compensation expenses
+- legal/compliance expenses
+- travel expenses
+- vendor expenses
+- marketing expenses
+- miscellaneous overhead
+
+Expense fields:
+
+- vendor
+- category
+- clinic
+- region
+- amount
+- date
+- recurring/non-recurring
+- payment method
+- approval status
+- receipt upload placeholder
+- notes
+
+Expense actions:
+
+- add expense
+- categorize expense
+- attach receipt placeholder
+- submit for approval
+- approve
+- mark paid
+- send to P&L
+- view audit trail
+
+VENDORS / VENDOR PAY
+
+Create a vendor payment module.
+
+Track:
+
+- vendor list
+- vendor bills
+- due dates
+- payment status
+- recurring bills
+- contracts
+- W9 upload placeholder
+- invoice upload placeholder
+- ACH/card/check tracking
+- approval workflow
+- vendor aging report
+
+Vendor fields:
+
+- vendor name
+- category
+- contact
+- payment method
+- amount due
+- due date
+- status
+- assigned approver
+- notes
+
+Vendor actions:
+
+- add vendor
+- add bill
+- approve payment
+- mark paid
+- schedule recurring payment
+- upload invoice placeholder
+- upload W9 placeholder
+- view vendor aging
+
+PAYROLL
+
+Create a payroll module.
+
+Track:
+
+- employees
+- contractors
+- role
+- clinic assignment
+- region
+- hours
+- shifts
+- base pay
+- RVU payout
+- Plex Factor bonus
+- commissions if applicable
+- reimbursement
+- deductions placeholder
+- payroll run
+- payroll approval
+- payroll history
+- payroll expense by clinic/region
+
+Payroll should pull from:
+
+- base pay entries
+- RVU & Plex Factor Compensation module
+- approved bonuses
+- approved reimbursements
+
+Payroll actions:
+
+- create payroll run
+- review payroll
+- approve payroll
+- hold payout
+- mark paid
+- export placeholder
+- view audit trail
+
+BANKING / CARD CONNECTIONS
+
+Create a secure Banking / Card Connections module.
+
+Prototype only.
+
+Show:
+
+- connected bank accounts
+- connected credit cards
+- transaction imports
+- transaction categorization
+- reconciliation status
+- card spend tracking
+- payment method management
+- access log
+
+Security language:
+
+- tokenized connections only
+- no raw card numbers stored
+- role-restricted access
+- all access logged
+- all changes audited
+
+Actions:
+
+- connect bank placeholder
+- connect card placeholder
+- import transactions placeholder
+- categorize transaction
+- reconcile transaction
+- flag suspicious transaction
+
+REPORTS
+
+Create a reporting module.
+
+Reports should include:
+
+- daily financial report
+- EOD billing report
+- weekly collections report
+- monthly P&L
+- clinic profitability report
+- region profitability report
+- vendor aging report
+- payroll report
+- RVU report
+- Plex Factor bonus report
+- denial report
+- cashflow report
+- invoice aging report
+- team invoice activity report
+- billing audit report
+- fee schedule report
+- owner/investor report
+
+Each report should support filters:
+
+- date range
+- clinic
+- region
+- provider
+- payer
+- service
+- employee/team member
+- payment status
+
+Reports actions:
+
+- preview report
+- export placeholder
+- save report
+- schedule report placeholder
+- send to owner/admin placeholder
+
+APPROVALS
+
+Create approvals module for:
+
+- invoice approvals
+- fee schedule changes
+- patient-specific price overrides
+- vendor payments
+- payroll runs
+- RVU payout overrides
+- Plex Factor exceptions
+- refunds
+- write-offs
+- payer contract changes
+- billing audit exceptions
+- bank/card access requests
+
+Approval card fields:
+
+- request type
+- requested by
+- amount impact
+- clinic
+- region
+- reason
+- status
+- approver
+- created date
+- decision date
+
+Approval actions:
+
+- approve
+- reject
+- request more info
+- add note
+- view audit
+
+AUDIT LOGS
+
+Create an audit log module.
+
+Track:
+
+- who created invoice
+- who sent invoice
+- who edited invoice
+- who approved payment
+- who changed fee schedule
+- who changed RVU setting
+- who changed Plex Factor setting
+- who changed vendor payment
+- who accessed banking/card section
+- who changed payroll
+- who overrode pricing
+- who approved claim readiness
+- who changed network matrix
+- who marked vendor paid
+- who marked payroll paid
+- timestamp
+- old value
+- new value
+- reason/note
+
+SETTINGS & PERMISSIONS
+
+Create settings for role-based access.
+
+Roles:
+
+- Owner/Admin
+- Finance Manager
+- Billing Staff
+- Billing Auditor
+- Team Member
+- Payroll Manager
+- Read-only Auditor
+
+Permission examples:
+
+Owner/Admin:
+- full Plexus Bank access
+
+Finance Manager:
+- billing, invoices, reports, expenses, vendors, payroll, fee schedules, RVU/Plex Factor
+
+Billing Staff:
+- billing, invoices, AR, claim follow-up
+
+Billing Auditor:
+- network matrix, payer rules, claim readiness, denial risk, audit reports
+
+Team Member:
+- only patient invoice desk in Team Member Portal
+- no full Plexus Bank access
+
+Payroll Manager:
+- payroll, RVU payout review, compensation reports
+
+Read-only Auditor:
+- view reports and audit logs only
+
+TEAM MEMBER PORTAL CONNECTION
+
+Add a limited Team Member Portal button called:
+
+Patient Invoices
+
+or
+
+Invoice Desk
+
+This should not open full Plexus Bank.
+
+Team member view can:
+
+- send patient invoice
+- resend invoice link
+- view invoice status for assigned patient
+- add contact note
+- mark patient contacted
+
+All actions should flow into Plexus Bank:
+
+Team Member Invoice Desk
+→ Invoicing Center
+→ Audit Logs
+→ Reports
+→ Dashboard
+
+DATA WIRING CONCEPT
+
+For prototype, use mock data and localStorage.
+
+Show intended future wiring clearly in the UI.
+
+Inputs into Plexus Bank:
+
+- patient data from Plexus IQ
+- completed services from ancillary workflow
+- invoice events from Team Member Portal
+- claims/remittance data from Billing Center
+- fee schedules from Fee Schedule Manager
+- service events from RVU/Plex Factor module
+- payroll data from Payroll
+- vendor bills from Vendor Pay
+- bank/card transactions from Banking module
+- billing audit results from Billing Auditor
+- payment status updates from invoices/claims
+
+Outputs from Plexus Bank:
+
+- invoices
+- payment status
+- payroll runs
+- vendor payments
+- financial reports
+- clinic profitability
+- RVU payout reports
+- Plex Factor bonus reports
+- audit logs
+- claim readiness flags
+- dashboard alerts
+- approval tasks
+
+SOURCE OF TRUTH RULES
+
+Define these source-of-truth concepts in the prototype:
+
+- Fee Schedule Manager controls service pricing.
+- Billing Auditor controls claim readiness.
+- Invoicing Center controls patient/clinic invoices.
+- Team Invoice Desk feeds invoice actions into Invoicing Center.
+- RVU & Plex Factor module controls compensation logic.
+- Payroll pulls approved payouts.
+- Vendor Pay controls vendor bills.
+- Banking/Card Connections only tokenizes and reconciles; it does not store raw card data.
+- P&L pulls revenue, expenses, payroll, vendor payments, and RVU compensation.
+- Audit Logs record every meaningful financial action.
+- Settings & Permissions control who can see or act on each module.
+
+LOCALSTORAGE WORKABILITY
+
+Minimum workable prototype behavior:
+
+- create invoice
+- send/resend invoice
+- create fee schedule item
+- create clinic override
+- create billing audit flag
+- update claim readiness score
+- create vendor bill
+- mark vendor bill paid
+- create payroll run
+- create RVU service event
+- calculate RVU payout
+- apply Plex Factor when patient has 2+ eligible services same date
+- create approval request
+- approve/reject request
+- write audit log entry
+- filter dashboard by clinic/region/date
+- persist changes in localStorage
+
+DESIGN STYLE
+
+Use premium enterprise finance UI:
+
+- clean white / slate background
+- navy accents
+- subtle green for collections/payments
+- amber for warnings
+- red for holds/denials
+- violet/blue for RVU/Plex Factor
+- cards
+- tables
+- status badges
+- filters
+- drawers
+- modals
+- charts placeholders
+- executive dashboard feel
+- clean navigation
+
+IMPORTANT SECURITY/COMPLIANCE NOTES
+
+This is a prototype.
+
+Do not connect real financial accounts.
+Do not store raw card numbers.
+Use tokenized-connection language only.
+Protect banking/payroll modules behind role-based access.
+Log all simulated financial actions.
+Team members must not access full Plexus Bank.
+
+FINAL REQUIREMENT
+
+Create one unified Plexus Bank tile with all modules above.
+
+Make it feel navigable, clickable, and partially functional using mock/localStorage data.
+
+The prototype should demonstrate how Plexus Bank becomes the central financial system for clinics, billing, invoices, fee schedules, vendors, payroll, RVU/Plex Factor compensation, P&L, reporting, approvals, and audit control.
