@@ -75,6 +75,7 @@ import { type CanonicalMonthCellSummary } from "@/calendar";
 // tray, Playground floating widgets + drag-and-drop, and in-session
 // workspace settings.
 import { ToolDock, type DockTool, type DockGroup } from "@/components/portal/tools/ToolDock";
+import { LeftRailCompactCalendar } from "@/components/portal/leftRail/LeftRailCompactCalendar";
 import { CommunicationTray } from "@/components/portal/tools/CommunicationTray";
 import { WorkspaceSettingsDialog } from "@/components/portal/tools/WorkspaceSettingsDialog";
 import { useWorkspacePrefs, type TrayTab } from "@/components/portal/tools/workspacePrefs";
@@ -1935,16 +1936,26 @@ export function TeamPortalShell({
     };
   }
 
-  // Calendar tool action honours the in-session Settings preference.
+  // Calendar tool action honours the Settings preference. Default (task
+  // #698) is the Quick Schedule pop-up; "playground" is the opt-out that
+  // opens the full calendar view instead.
   function handleCalendarTool() {
-    if (workspacePrefs.calendarBehavior === "quickSchedule") {
-      setCalendarQuickScheduleDate(globalCalendarDate);
+    if (workspacePrefs.calendarBehavior === "playground") {
+      // Opt-out: open the calendar in the Playground, preserving the active
+      // patient/case context (we never clear selectedPatientId here).
+      setCenterMode("calendar");
+      setCenterTitle(`Calendar — ${globalCalendarDate}`);
       return;
     }
-    // Default: open the calendar in the Playground, preserving the active
-    // patient/case context (we never clear selectedPatientId here).
-    setCenterMode("calendar");
-    setCenterTitle(`Calendar — ${globalCalendarDate}`);
+    setCalendarQuickScheduleDate(globalCalendarDate);
+  }
+
+  // Task #698 — clicking a day on any portal calendar opens the Quick
+  // Schedule pop-up pre-filled with that date, in addition to updating the
+  // selected date for the work queue / day views.
+  function openQuickScheduleForDate(date: string) {
+    setGlobalCalendarDate(date);
+    setCalendarQuickScheduleDate(date);
   }
 
   // Drop a fresh sticky note at the top of the Playground.
@@ -2492,6 +2503,9 @@ export function TeamPortalShell({
                               setCenterMode("playground");
                               setDockOpenApps((prev) => (prev.includes("schedule") ? prev : [...prev, "schedule"]));
                               setDockActiveApp("schedule");
+                              // Task #698 — day click also opens the Quick
+                              // Schedule pop-up pre-filled with that date.
+                              openQuickScheduleForDate(d);
                             }}
                           />
                         </Card>
@@ -2875,6 +2889,24 @@ export function TeamPortalShell({
                   ];
                   return <ToolDock groups={dockGroups} compact={leftNarrow} />;
                 })()}
+
+                {/* Compact Global Calendar (task #698) — clicking a day
+                    updates the selected date AND opens the Quick Schedule
+                    pop-up pre-filled with that date. Hidden in the narrow
+                    icon rail (too small). */}
+                {!leftNarrow && (
+                  <LeftRailCompactCalendar
+                    selectedDate={selectedDate}
+                    onSelectDate={(iso) => {
+                      setSelectedDate(iso);
+                      openQuickScheduleForDate(iso);
+                    }}
+                    onExpandToCanvas={() => {
+                      setCenterMode("calendar");
+                      setCenterTitle(`Calendar — ${globalCalendarDate}`);
+                    }}
+                  />
+                )}
                 </div>
 
                 {/* Communication tray (Task #643) — bottom half of the

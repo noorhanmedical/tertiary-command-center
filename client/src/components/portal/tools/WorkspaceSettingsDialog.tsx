@@ -81,17 +81,17 @@ export function WorkspaceSettingsDialog({
             </Select>
           </Row>
 
-          <Row label="Calendar behavior" hint="What the Calendar tool does when clicked.">
+          <Row label="Calendar behavior" hint="What the Calendar tool does when clicked. Quick schedule pop-up is the default.">
             <Select
               value={prefs.calendarBehavior}
               onValueChange={(v) => updatePref("calendarBehavior", v as CalendarBehavior)}
             >
-              <SelectTrigger className="h-8 w-[140px] text-xs" data-testid="setting-calendar-behavior">
+              <SelectTrigger className="h-8 w-[170px] text-xs" data-testid="setting-calendar-behavior">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="z-[95]">
-                <SelectItem value="playground">Open in Playground</SelectItem>
-                <SelectItem value="quickSchedule">Quick schedule pop-up</SelectItem>
+                <SelectItem value="quickSchedule">Quick schedule pop-up (default)</SelectItem>
+                <SelectItem value="playground">Open full calendar view</SelectItem>
               </SelectContent>
             </Select>
           </Row>

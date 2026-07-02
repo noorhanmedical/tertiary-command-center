@@ -33,7 +33,9 @@ export const DEFAULT_WORKSPACE_PREFS: WorkspacePrefs = {
   toolsPinnedByDefault: false,
   workQueuePinnedByDefault: false,
   playgroundLayout: "docked",
-  calendarBehavior: "playground",
+  // Task #698 — the Calendar tool opens the Quick Schedule pop-up by
+  // default; "playground" (full calendar view) is the opt-out.
+  calendarBehavior: "quickSchedule",
 };
 
 // Coalesce rapid toggle flips into one PUT.

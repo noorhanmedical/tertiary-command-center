@@ -275,7 +275,7 @@ export function CalendarQuickScheduleDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md" data-testid="dialog-calendar-quick-schedule">
+      <DialogContent className="z-[90] max-w-md" data-testid="dialog-calendar-quick-schedule">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-[#4863A0]">
             <CalendarDays className="h-4 w-4" />
@@ -301,7 +301,7 @@ export function CalendarQuickScheduleDialog({
               <SelectTrigger id="quick-schedule-time" data-testid="select-quick-schedule-time">
                 <SelectValue placeholder="Select a time" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[95]">
                 {TIME_SLOTS.map((slot) => (
                   <SelectItem key={slot} value={slot}>
                     {prettyTime(slot)}
@@ -317,7 +317,7 @@ export function CalendarQuickScheduleDialog({
               <SelectTrigger id="quick-schedule-service" data-testid="select-quick-schedule-service">
                 <SelectValue placeholder="Select a service" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[95]">
                 {SERVICE_OPTIONS.map((opt) => (
                   <SelectItem key={opt} value={opt}>
                     {opt}
