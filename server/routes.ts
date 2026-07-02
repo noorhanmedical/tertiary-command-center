@@ -32,6 +32,7 @@ import { registerTestFixtureRoutes } from "./routes/testFixture";
 import { registerMarketingMaterialRoutes } from "./routes/marketingMaterials";
 import { registerDocumentLibraryRoutes } from "./routes/documentLibrary";
 import { registerPortalRoutes } from "./routes/portal";
+import { registerPatientMessagesRoutes } from "./routes/patientMessages";
 import { registerPortalAssistantRoutes } from "./routes/portalAssistant";
 import { registerExecutionCaseRoutes } from "./routes/executionCases";
 import { registerGlobalScheduleRoutes } from "./routes/globalSchedule";
@@ -178,6 +179,11 @@ export async function registerRoutes(
   });
 
   const requireAuth = (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
+    // Twilio's inbound SMS webhook can't hold a session — it is validated
+    // by X-Twilio-Signature inside the route handler instead (Task #648).
+    if (req.path === "/sms/twilio/inbound" && req.method === "POST") {
+      return next();
+    }
     if (!req.session.userId) {
       return res.status(401).json({ error: "Not authenticated" });
     }
@@ -269,6 +275,7 @@ export async function registerRoutes(
   registerMarketingMaterialRoutes(app);
   registerDocumentLibraryRoutes(app);
   registerPortalRoutes(app);
+  registerPatientMessagesRoutes(app);
   registerPortalAssistantRoutes(app, requireRole);
   registerExecutionCaseRoutes(app);
   registerAcsWorkflowRoutes(app);

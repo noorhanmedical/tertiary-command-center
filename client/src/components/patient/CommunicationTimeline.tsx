@@ -27,10 +27,12 @@ function iconFor(eventType: string, kind: string | undefined) {
   return FileText;
 }
 
-// Phase 2 hardening item 6 — when the metadata kind is the SMS
-// scaffold, we MUST NOT label the row as "sent" — SMS is dormant.
+// Phase 2 hardening item 6 + Task #648 — kind "sms_scaffold" is the
+// dormant/no-provider path and MUST NOT read as "sent". Kind "sms" is a
+// genuine provider-accepted send (written only after Twilio accepts), so
+// its summary displays as-is.
 function labelFor(kind: string | undefined, summary: string | null, fallback: string): string {
-  if (kind === "sms_scaffold" || kind === "sms") {
+  if (kind === "sms_scaffold") {
     return summary ? `${summary} (SMS scaffold — not sent)` : "SMS scaffold (not sent)";
   }
   return summary ?? fallback;

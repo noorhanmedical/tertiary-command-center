@@ -61,6 +61,7 @@ export * from "./projectedInvoices";
 export * from "./ancillaryDocumentTemplates";
 export * from "./clinicianPortal";
 export * from "./directMessages";
+export * from "./patientSms";
 export * from "./portalWidgets";
 export * from "./clinicalIntelligence";
 export * from "./portalPrefs";

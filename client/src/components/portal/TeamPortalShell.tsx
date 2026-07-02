@@ -85,7 +85,7 @@ import {
   type PlaygroundWidgetType,
   type WidgetPatientContext,
 } from "@/components/portal/tools/workspaceWidgets";
-import { MessageSquare, StickyNote, Settings as SettingsIcon } from "lucide-react";
+import { MessageSquare, Smartphone, StickyNote, Settings as SettingsIcon } from "lucide-react";
 
 // The user-facing workspace role lets us distinguish PCS vs ACS for
 // capability gating (procedure-side actions are ACS-only). Legacy
@@ -1457,6 +1457,19 @@ export function TeamPortalShell({
   });
   const directUnread = (dmRosterData?.roster ?? []).reduce((sum, r) => sum + (r.unread ?? 0), 0);
 
+  // Unread inbound patient texts (Task #648) — shares the query cache with
+  // the tray's Patients tab so opening the thread there clears this too.
+  const { data: patientThreadsData } = useQuery<{ threads: { unread: number }[]; unreadTotal: number }>({
+    queryKey: ["/api/portal/patient-messages/threads"],
+    queryFn: async () => {
+      const res = await fetch("/api/portal/patient-messages/threads", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load patient threads");
+      return res.json();
+    },
+    refetchInterval: POLL_MS,
+  });
+  const patientsUnread = patientThreadsData?.unreadTotal ?? 0;
+
   const { data: outreachData } = useQuery<{ patients: OutreachItem[]; heavyDay?: boolean; cap?: number; totalPool?: number }>({
     queryKey: ["/api/portal/outreach-call-list", facility],
     queryFn: async () => {
@@ -2609,6 +2622,7 @@ export function TeamPortalShell({
                       currentUserId={currentUser?.id ?? null}
                       teamTasks={trayTeamTasks}
                       directUnread={directUnread}
+                      patientsUnread={patientsUnread}
                     />
                   </div>
                 </div>
@@ -2706,6 +2720,15 @@ export function TeamPortalShell({
                       label: "Messaging",
                       tint: "sky",
                       tools: [
+                        {
+                          id: "patients",
+                          label: "Patients",
+                          icon: Smartphone,
+                          onClick: () => setTrayTab("patients"),
+                          active: trayTab === "patients",
+                          badge: patientsUnread > 0 ? patientsUnread : undefined,
+                          testId: "left-rail-tool-patients",
+                        },
                         {
                           id: "direct",
                           label: "Direct",
@@ -2865,6 +2888,7 @@ export function TeamPortalShell({
                       currentUserId={currentUser?.id ?? null}
                       teamTasks={trayTeamTasks}
                       directUnread={directUnread}
+                      patientsUnread={patientsUnread}
                     />
                   </div>
                 )}
