@@ -506,3 +506,74 @@ export async function openBulkPatientPackets(
     };
   }
 }
+
+// ─── Journey timeline (shared by case panel + baskets slide-over) ───
+//
+// One journey event as returned by
+// GET /api/engagement/assignment-board/cases/:executionCaseId/journey.
+
+export type JourneyEvent = {
+  id: number;
+  eventType: string;
+  eventSource: string;
+  summary: string;
+  actorName: string | null;
+  createdAt: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+// Dot colour per event-type family — calls vs. assignments vs. docs/billing
+// vs. lifecycle — so the timeline reads at a glance.
+export const JOURNEY_EVENT_TONE: Record<string, string> = {
+  call_result_logged: "bg-indigo-500",
+  engagement_assigned: "bg-emerald-500",
+  engagement_assignment_changed: "bg-emerald-500",
+  scheduler_assigned: "bg-emerald-500",
+  engagement_assignment_cancelled: "bg-rose-500",
+  schedule_cancelled: "bg-rose-500",
+  schedule_no_show: "bg-rose-500",
+  scheduled_ancillary: "bg-sky-500",
+  schedule_rescheduled: "bg-amber-500",
+  schedule_confirmed: "bg-emerald-500",
+  screening_committed: "bg-violet-500",
+  execution_case_created: "bg-violet-500",
+  execution_case_updated: "bg-slate-400",
+  task_created: "bg-amber-500",
+  document_sent: "bg-cyan-500",
+  document_completed: "bg-cyan-500",
+  billing_payment_updated: "bg-teal-500",
+  added_to_invoice: "bg-teal-500",
+  note_added: "bg-amber-400",
+};
+
+// Human label for a journey event-type. Falls back to a humanized form of
+// any unknown kind (the column is plain text and may grow new kinds).
+export function journeyEventLabel(eventType: string): string {
+  const LABELS: Record<string, string> = {
+    call_result_logged: "Call outcome",
+    engagement_assigned: "Assigned",
+    engagement_assignment_changed: "Reassigned",
+    engagement_assignment_cancelled: "Assignment cancelled",
+    scheduler_assigned: "Scheduler assigned",
+    scheduled_ancillary: "Scheduled",
+    schedule_cancelled: "Cancelled",
+    schedule_rescheduled: "Rescheduled",
+    schedule_no_show: "No show",
+    schedule_confirmed: "Confirmed",
+    screening_committed: "Committed",
+    execution_case_created: "Case opened",
+    execution_case_updated: "Case updated",
+    task_created: "Task created",
+    document_sent: "Document sent",
+    document_completed: "Document completed",
+    billing_payment_updated: "Payment updated",
+    added_to_invoice: "Added to invoice",
+    note_added: "Note",
+  };
+  return (
+    LABELS[eventType] ??
+    eventType
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (ch) => ch.toUpperCase())
+  );
+}

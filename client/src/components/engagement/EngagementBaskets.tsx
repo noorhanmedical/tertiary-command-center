@@ -11,7 +11,7 @@
 // reuses the canonical /api/engagement/assignment-board/assign write.
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Inbox,
   CalendarClock,
@@ -26,6 +26,9 @@ import {
   Clock,
   MapPin,
   Stethoscope,
+  Loader2,
+  Plus,
+  Phone,
 } from "lucide-react";
 import {
   Select,
@@ -35,13 +38,30 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import type {
   EngagementBasketsResponse,
   EngagementBasketRow,
   EngagementBasketKey,
   BasketReadinessStatus,
 } from "@shared/contracts/engagementBaskets";
-import type { SchedulerOption, AssignedRole } from "./engagementShared";
+import {
+  type SchedulerOption,
+  type AssignedRole,
+  type JourneyEvent,
+  JOURNEY_EVENT_TONE,
+  journeyEventLabel,
+  fmtRel,
+} from "./engagementShared";
 
 const BASKET_ICON: Record<EngagementBasketKey, typeof Inbox> = {
   unassigned: Inbox,
@@ -140,6 +160,7 @@ function UnassignedCard({
   schedulers,
   assigning,
   onAssign,
+  onOpen,
 }: {
   row: EngagementBasketRow;
   schedulers: SchedulerOption[];
@@ -149,6 +170,7 @@ function UnassignedCard({
     schedulerId: number,
     opts?: { reason?: string; role?: AssignedRole },
   ) => void;
+  onOpen: (row: EngagementBasketRow) => void;
 }) {
   const [picked, setPicked] = useState<string>("");
 
@@ -157,7 +179,16 @@ function UnassignedCard({
 
   return (
     <div
-      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
+      className="cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(row)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(row);
+        }
+      }}
       data-testid={`card-unassigned-${row.executionCaseId}`}
     >
       <div className="flex items-start justify-between gap-3">
@@ -249,8 +280,12 @@ function UnassignedCard({
         <ReadinessChip label="Billing" status={row.readiness.billing} />
       </div>
 
-      {/* Assign control */}
-      <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
+      {/* Assign control — clicks here must not open the journey panel */}
+      <div
+        className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
         <Select value={picked} onValueChange={setPicked}>
           <SelectTrigger
             className="h-8 flex-1 text-xs"
@@ -290,6 +325,283 @@ function UnassignedCard({
   );
 }
 
+// ─── Journey slide-over ─────────────────────────────────────────────
+//
+// Clicking any basket card/row opens this panel with the case's full
+// chronological journey timeline (calls, assignments, notes, scheduling
+// and document events). Reuses the canonical journey endpoint —
+// GET /api/engagement/assignment-board/cases/:id/journey — and the
+// manager-note POST on the same route, so the cache is shared with the
+// repository view's case panel.
+
+function BasketJourneySheet({
+  row,
+  onClose,
+}: {
+  row: EngagementBasketRow | null;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteOpen, setNoteOpen] = useState(false);
+
+  const executionCaseId = row?.executionCaseId ?? null;
+
+  const journeyQuery = useQuery<{ events: JourneyEvent[] }>({
+    queryKey: [
+      "/api/engagement/assignment-board/cases",
+      executionCaseId,
+      "journey",
+    ],
+    enabled: executionCaseId != null,
+  });
+  const journeyEvents = journeyQuery.data?.events ?? [];
+
+  const addNoteMutation = useMutation({
+    mutationFn: async (note: string) => {
+      if (executionCaseId == null) throw new Error("No case selected");
+      const res = await apiRequest(
+        "POST",
+        `/api/engagement/assignment-board/cases/${executionCaseId}/journey`,
+        { note },
+      );
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: [
+          "/api/engagement/assignment-board/cases",
+          executionCaseId,
+          "journey",
+        ],
+      });
+      setNoteDraft("");
+      setNoteOpen(false);
+      toast({ title: "Note added", description: "Saved to the timeline." });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: "Could not add note",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <Sheet
+      open={row != null}
+      onOpenChange={(open) => {
+        if (!open) {
+          setNoteDraft("");
+          setNoteOpen(false);
+          onClose();
+        }
+      }}
+    >
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
+        data-testid="basket-journey-sheet"
+      >
+        {row ? (
+          <>
+            <SheetHeader className="space-y-1 border-b border-slate-200 px-4 py-3 text-left dark:border-slate-800">
+              <SheetTitle
+                className="truncate pr-8 text-base"
+                data-testid="basket-journey-name"
+              >
+                {row.patientName}
+              </SheetTitle>
+              <SheetDescription asChild>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  {row.patientDob ? <span>DOB {row.patientDob}</span> : null}
+                  {row.phoneNumber ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Phone className="h-3 w-3" />
+                      {row.phoneNumber}
+                    </span>
+                  ) : null}
+                  <span className="inline-flex items-center gap-1">
+                    <MapPin className="h-3 w-3" />
+                    {row.facility ?? "No facility"}
+                  </span>
+                </div>
+              </SheetDescription>
+            </SheetHeader>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+              {/* Case context strip */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/40">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    Call reason
+                  </div>
+                  <div className="mt-0.5 font-medium text-slate-800 dark:text-slate-100">
+                    {row.callReason}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/40">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    Assigned to
+                  </div>
+                  <div className="mt-0.5 font-medium text-slate-800 dark:text-slate-100">
+                    {row.assignedName ?? "Unassigned"}
+                  </div>
+                </div>
+              </div>
+
+              {row.ancillary.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {row.ancillary.map((a) => (
+                    <span
+                      key={a}
+                      className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300"
+                    >
+                      {a}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+
+              {/* Timeline header + add note */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  <History className="h-3.5 w-3.5" />
+                  Journey timeline
+                </div>
+                {!noteOpen ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1 text-[11px]"
+                    onClick={() => setNoteOpen(true)}
+                    data-testid="basket-journey-add-note"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Add note
+                  </Button>
+                ) : null}
+              </div>
+
+              {noteOpen && (
+                <div className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50 p-2 dark:border-slate-800 dark:bg-slate-900/40">
+                  <Textarea
+                    value={noteDraft}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    placeholder="Add context to this patient's timeline…"
+                    className="min-h-[56px] text-xs"
+                    autoFocus
+                    data-testid="basket-journey-note-input"
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-[11px]"
+                      disabled={addNoteMutation.isPending}
+                      onClick={() => {
+                        setNoteOpen(false);
+                        setNoteDraft("");
+                      }}
+                      data-testid="basket-journey-note-cancel"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-7 gap-1 text-[11px]"
+                      disabled={addNoteMutation.isPending || !noteDraft.trim()}
+                      onClick={() => addNoteMutation.mutate(noteDraft.trim())}
+                      data-testid="basket-journey-note-save"
+                    >
+                      {addNoteMutation.isPending ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Plus className="h-3 w-3" />
+                      )}
+                      Save note
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {journeyQuery.isLoading ? (
+                <p className="flex items-center gap-1.5 text-xs italic text-slate-400">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading
+                  history…
+                </p>
+              ) : journeyQuery.isError ? (
+                <p className="text-xs italic text-rose-400">
+                  Could not load history.
+                </p>
+              ) : journeyEvents.length ? (
+                <ol
+                  className="relative space-y-3 border-l border-slate-200 pl-4 pr-1 dark:border-slate-800"
+                  data-testid="basket-journey-timeline-list"
+                >
+                  {journeyEvents.map((e, idx) => {
+                    const tone =
+                      JOURNEY_EVENT_TONE[e.eventType] ??
+                      "bg-slate-300 dark:bg-slate-600";
+                    return (
+                      <li
+                        key={e.id}
+                        className="relative"
+                        data-testid={`basket-journey-event-${e.id}`}
+                      >
+                        <span
+                          className={`absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-slate-900 ${
+                            idx === 0 ? tone : `${tone} opacity-70`
+                          }`}
+                        />
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">
+                            {journeyEventLabel(e.eventType)}
+                          </span>
+                        </div>
+                        <div className="text-[11px] font-medium leading-snug text-slate-700 dark:text-slate-200">
+                          {e.summary}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[10px] text-slate-400">
+                          <span
+                            title={
+                              e.createdAt
+                                ? new Date(e.createdAt).toLocaleString()
+                                : undefined
+                            }
+                          >
+                            {fmtRel(e.createdAt)}
+                          </span>
+                          {e.actorName && (
+                            <>
+                              <span aria-hidden>·</span>
+                              <span>{e.actorName}</span>
+                            </>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              ) : (
+                <ol className="relative space-y-3 border-l border-slate-200 pl-4 dark:border-slate-800">
+                  <li className="relative">
+                    <span className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-slate-300 ring-2 ring-white dark:bg-slate-600 dark:ring-slate-900" />
+                    <div className="text-[11px] italic text-slate-400">
+                      No call history recorded yet.
+                    </div>
+                  </li>
+                </ol>
+              )}
+            </div>
+          </>
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 const OUTCOME_TONE: Record<string, string> = {
   completed:
     "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
@@ -303,10 +615,25 @@ const OUTCOME_TONE: Record<string, string> = {
   declined: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300",
 };
 
-function CompactRow({ row }: { row: EngagementBasketRow }) {
+function CompactRow({
+  row,
+  onOpen,
+}: {
+  row: EngagementBasketRow;
+  onOpen: (row: EngagementBasketRow) => void;
+}) {
   return (
     <div
-      className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900"
+      className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 transition-shadow hover:shadow-sm dark:border-slate-800 dark:bg-slate-900"
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(row)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(row);
+        }
+      }}
       data-testid={`row-basket-case-${row.executionCaseId}`}
     >
       <div className="min-w-0">
@@ -356,6 +683,9 @@ export function EngagementBaskets({
   ) => void;
 }) {
   const [active, setActive] = useState<EngagementBasketKey>("unassigned");
+  const [selectedRow, setSelectedRow] = useState<EngagementBasketRow | null>(
+    null,
+  );
 
   const query = useQuery<EngagementBasketsResponse>({
     queryKey: ["/api/engagement/baskets"],
@@ -468,16 +798,27 @@ export function EngagementBaskets({
               schedulers={schedulers}
               assigning={assigning}
               onAssign={onAssign}
+              onOpen={setSelectedRow}
             />
           ))}
         </div>
       ) : (
         <div className="space-y-2">
           {activeRows.map((r) => (
-            <CompactRow key={r.executionCaseId} row={r} />
+            <CompactRow
+              key={r.executionCaseId}
+              row={r}
+              onOpen={setSelectedRow}
+            />
           ))}
         </div>
       )}
+
+      {/* Journey slide-over — opened by clicking any card/row above */}
+      <BasketJourneySheet
+        row={selectedRow}
+        onClose={() => setSelectedRow(null)}
+      />
     </div>
   );
 }
