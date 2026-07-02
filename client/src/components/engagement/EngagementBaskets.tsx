@@ -29,6 +29,8 @@ import {
   Loader2,
   Plus,
   Phone,
+  ExternalLink,
+  UserPlus,
 } from "lucide-react";
 import {
   Select,
@@ -337,13 +339,25 @@ function UnassignedCard({
 function BasketJourneySheet({
   row,
   onClose,
+  schedulers,
+  assigning,
+  onAssign,
 }: {
   row: EngagementBasketRow | null;
   onClose: () => void;
+  schedulers: SchedulerOption[];
+  assigning: boolean;
+  onAssign: (
+    patientScreeningIds: number[],
+    schedulerId: number,
+    opts?: { reason?: string; role?: AssignedRole },
+  ) => void;
 }) {
   const { toast } = useToast();
   const [noteDraft, setNoteDraft] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [reassignPicked, setReassignPicked] = useState<string>("");
 
   const executionCaseId = row?.executionCaseId ?? null;
 
@@ -395,6 +409,8 @@ function BasketJourneySheet({
         if (!open) {
           setNoteDraft("");
           setNoteOpen(false);
+          setReassignOpen(false);
+          setReassignPicked("");
           onClose();
         }
       }}
@@ -463,6 +479,105 @@ function BasketJourneySheet({
                   ))}
                 </div>
               ) : null}
+
+              {/* Quick actions — open the full chart or reassign the call */}
+              <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-800 dark:bg-slate-900/40">
+                <div className="flex flex-wrap items-center gap-2">
+                  {row.patientScreeningId != null ? (
+                    <Button
+                      asChild
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-1.5 text-xs"
+                    >
+                      <a
+                        href={`/patient-directory?patientId=${row.patientScreeningId}`}
+                        data-testid="basket-journey-open-patient"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Open patient
+                      </a>
+                    </Button>
+                  ) : (
+                    <span className="text-[11px] italic text-slate-400">
+                      No linked screening — chart unavailable.
+                    </span>
+                  )}
+                  {row.patientScreeningId != null && !reassignOpen ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-1.5 text-xs"
+                      onClick={() => setReassignOpen(true)}
+                      data-testid="basket-journey-reassign-toggle"
+                    >
+                      <UserPlus className="h-3.5 w-3.5" />
+                      {row.assignedName ? "Reassign" : "Assign"}
+                    </Button>
+                  ) : null}
+                </div>
+
+                {reassignOpen && row.patientScreeningId != null ? (
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={reassignPicked}
+                      onValueChange={setReassignPicked}
+                    >
+                      <SelectTrigger
+                        className="h-8 flex-1 text-xs"
+                        data-testid="basket-journey-reassign-select"
+                      >
+                        <SelectValue placeholder="Assign to team member…" />
+                      </SelectTrigger>
+                      <SelectContent className="z-[95]">
+                        {schedulers.map((s) => (
+                          <SelectItem key={s.id} value={String(s.id)}>
+                            {s.name}
+                            {s.facility ? ` · ${s.facility}` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      size="sm"
+                      className="h-8"
+                      disabled={reassignPicked === "" || assigning}
+                      onClick={() => {
+                        if (
+                          row.patientScreeningId == null ||
+                          reassignPicked === ""
+                        )
+                          return;
+                        onAssign(
+                          [row.patientScreeningId],
+                          Number(reassignPicked),
+                        );
+                        setReassignPicked("");
+                        setReassignOpen(false);
+                      }}
+                      data-testid="basket-journey-reassign-save"
+                    >
+                      {assigning ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        "Assign"
+                      )}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 text-[11px]"
+                      onClick={() => {
+                        setReassignOpen(false);
+                        setReassignPicked("");
+                      }}
+                      data-testid="basket-journey-reassign-cancel"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
 
               {/* Timeline header + add note */}
               <div className="flex items-center justify-between">
@@ -818,6 +933,9 @@ export function EngagementBaskets({
       <BasketJourneySheet
         row={selectedRow}
         onClose={() => setSelectedRow(null)}
+        schedulers={schedulers}
+        assigning={assigning}
+        onAssign={onAssign}
       />
     </div>
   );

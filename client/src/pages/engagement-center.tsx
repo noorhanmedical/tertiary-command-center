@@ -191,6 +191,7 @@ export default function EngagementCenterPage() {
       predicate: (query) =>
         Array.isArray(query.queryKey) &&
         (query.queryKey[0] === "/api/engagement/assignment-board" ||
+          query.queryKey[0] === "/api/engagement/baskets" ||
           query.queryKey[0] === "engagement-assignment" ||
           query.queryKey[0] === "team-workspace-call-list"),
     });
