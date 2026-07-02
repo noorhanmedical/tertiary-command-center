@@ -805,7 +805,7 @@ export function AiEvidenceBubblesRow({
           AI-identified clinical clues
         </span>
       </div>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex max-h-36 flex-wrap gap-1.5 overflow-y-auto md:max-h-none md:overflow-visible">
         {items.map((item) => {
           const decision = decisions.get(
             `${normalizeSourceType(item.source)}::${labelOf(item).toLowerCase()}`,

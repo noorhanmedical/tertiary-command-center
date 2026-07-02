@@ -2958,7 +2958,7 @@ export function AdminReviewDialog({
         </DialogHeader>
         {/* ─── Two-panel body: LEFT ancillaries playground · RIGHT action column ─── */}
         <div
-          className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4"
+          className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2 md:flex-row md:gap-4 md:p-4"
           style={{
             background:
               "radial-gradient(1200px 600px at 0% 0%, #e7eefb 0%, transparent 55%), radial-gradient(1000px 700px at 100% 100%, #eaf2fb 0%, transparent 50%), linear-gradient(135deg, #eef3fb 0%, #f6f9fd 100%)",
@@ -3647,9 +3647,17 @@ export function AdminReviewDialog({
               surfaces (documents, note, scheduler) collapse into popovers so
               the column stays narrow. ─── */}
           <aside
-            className="flex min-h-0 w-[320px] flex-none flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/45 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
+            className="flex min-h-0 w-full flex-[2] md:w-[320px] md:flex-none flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/45 shadow-[0_10px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl"
             data-testid="admin-review-action-panel"
           >
+            {/* Scrollable middle zone — Reference + AI clues + Changes. Keeping
+                this in one min-h-0 scroll region (instead of shrink-0 blocks)
+                guarantees the decision footer below stays visible on short
+                viewports instead of being pushed past the overflow clip. */}
+            <div
+              className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+              data-testid="admin-review-rail-scroll-zone"
+            >
             <div className="shrink-0 space-y-3 p-3" data-testid="admin-review-reference-scroll">
               <div className="mb-1 flex items-center gap-2" data-testid="admin-review-workbench-header">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Review Workbench</span>
@@ -4196,7 +4204,7 @@ export function AdminReviewDialog({
 
             {/* Changes — flex-1 tinted workbench card; fills remaining height */}
             <div
-              className="mx-3 mb-2 flex min-h-0 flex-1 basis-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/70"
+              className="mx-3 mb-2 flex min-h-[140px] flex-1 basis-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/70"
               data-testid="admin-review-updates-group"
             >
               <div
@@ -4298,6 +4306,7 @@ export function AdminReviewDialog({
                   })()}
                 </div>
               </ScrollArea>
+            </div>
             </div>
 
             {/* Decision footer — sibling nav centered, decision buttons right (no tile) */}
@@ -4417,7 +4426,7 @@ export function AdminReviewDialog({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
-          className="flex flex-col w-[calc(100vw-3rem)] max-w-[1040px] h-[min(86vh,760px)] overflow-hidden p-0 gap-0 rounded-3xl border border-white/40 shadow-[0_30px_90px_rgba(15,23,42,0.35)] ring-1 ring-black/5"
+          className="flex flex-col w-[calc(100vw-0.75rem)] md:w-[calc(100vw-3rem)] max-w-[1040px] h-[min(96dvh,760px)] md:h-[min(86vh,760px)] overflow-hidden p-0 gap-0 rounded-3xl border border-white/40 shadow-[0_30px_90px_rgba(15,23,42,0.35)] ring-1 ring-black/5"
           overlayClassName="bg-slate-900/30 backdrop-blur-[2px]"
           hideClose
           data-testid={`dialog-admin-review-${patient.id}`}
