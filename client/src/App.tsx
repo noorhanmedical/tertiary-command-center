@@ -44,6 +44,7 @@ import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
 import PlexusIQPage from "@/pages/plexus-iq";
+import ClinicalIntelligencePage from "@/pages/clinical-intelligence";
 // Temporary design-prototype route — mock data only, not production.
 import PlexusIqPrototypePage from "@/pages/plexus-iq-prototype";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
@@ -210,6 +211,13 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
         <Route path="/plexus-iq">
           <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
             <PlexusIQPage />
+          </SidebarProvider>
+        </Route>
+        {/* Plexus IQ knowledge tile — Clinical Intelligence & Governance
+            (localStorage-backed prototype). */}
+        <Route path="/clinical-intelligence">
+          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+            <ClinicalIntelligencePage />
           </SidebarProvider>
         </Route>
         {/* Temporary design-prototype route — mock data only. */}

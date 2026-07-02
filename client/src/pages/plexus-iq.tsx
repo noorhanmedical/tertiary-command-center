@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Loader2, ShieldCheck, Sparkles } from "lucide-react";
+import { Link } from "wouter";
 import {
   useScreeningBatches,
   useCreateBatch,
@@ -917,6 +918,31 @@ export default function PlexusIQPage() {
           onChangeBatch={() => setBatchFlowOpen(true)}
           onViewBatch={(id, facility) => setFocusBatch({ id, facility })}
         />
+        {/* Clinical Intelligence & Governance knowledge tile (prototype).
+            Pure navigation — no effect on batch/qualification flows. */}
+        <div className="px-4 pt-3">
+          <Link
+            href="/clinical-intelligence"
+            className="group flex items-center gap-3 rounded-2xl border border-violet-200/70 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-4 py-3 shadow-sm transition-shadow hover:shadow-md"
+            data-testid="tile-clinical-intelligence"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+              <Sparkles className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-900">
+                Clinical Intelligence &amp; Governance
+              </span>
+              <span className="block truncate text-xs text-slate-500">
+                AI Logic knowledge layer — learning center, rule library, approvals, and audit. CMS audit-ready
+                and legally defensible.
+              </span>
+            </span>
+            <span className="hidden shrink-0 items-center gap-1 rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-medium text-violet-700 sm:inline-flex">
+              <ShieldCheck className="h-3.5 w-3.5" /> Governance
+            </span>
+          </Link>
+        </div>
         <PlexusIQWorkspace
           summary={summary}
           batches={batches}

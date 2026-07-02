@@ -71,6 +71,14 @@ import {
   blockedAncillariesFromHistory,
   type AncillaryWarning,
 } from "@shared/priorAncillaryHistory";
+import {
+  AdminReviewAiLogicDrawer,
+  AiEvidenceBubblesRow,
+  AiLogicSavePrompt,
+  type AiAttachTarget,
+  type AiEvidenceItem,
+  type AiLogicPatientContext,
+} from "./AdminReviewAiLogicDrawer";
 
 export type AdminReviewDialogProps = {
   open: boolean;
@@ -962,6 +970,10 @@ export function AdminReviewDialog({
     () => seedAssignmentsFromReasoning(reasoningObject),
   );
   const [adminNote, setAdminNote] = useState<string>("");
+  // AI Logic knowledge-layer prototype (localStorage-backed; additive —
+  // never blocks or alters the existing review/approve flow).
+  const [aiLogicOpen, setAiLogicOpen] = useState(false);
+  const [aiPromptLabel, setAiPromptLabel] = useState<string | null>(null);
   const [ancillaryNotes, setAncillaryNotes] = useState<Record<string, string>>({});
   // Manual "Add Ancillary" control state.
   const [addOpen, setAddOpen] = useState(false);
@@ -1857,6 +1869,8 @@ export function AdminReviewDialog({
           ? `Added medication: ${btn.label}`
           : `Added symptom: ${btn.label}`;
     recordAdminReviewUpdate(type, label, { target });
+    // Subtle optional "save as future AI logic?" prompt (prototype).
+    setAiPromptLabel(btn.label);
   }
 
   function unassign(from: AssignmentTarget, btn: SupportingButton) {
@@ -2785,6 +2799,90 @@ export function AdminReviewDialog({
     cooldownBlockedUltrasoundSubtypes.length > 0;
   const canOpenAddMenu = hasAnyAddableAncillary || hasAnyCooldownBlocked;
 
+  // ─── AI Logic knowledge-layer context (prototype) ───
+  // Snapshot of the live review used to prefill the AI Logic drawer and
+  // stamp learning items / evidence records with full traceability.
+  const aiLogicContext: AiLogicPatientContext = useMemo(() => {
+    const summary: string[] = [];
+    if (assignments.brainwave.length > 0) {
+      summary.push(`BrainWave: ${assignments.brainwave.map((b) => b.label).join(", ")}`);
+    }
+    if (assignments.vitalwave.length > 0) {
+      summary.push(`VitalWave: ${assignments.vitalwave.map((b) => b.label).join(", ")}`);
+    }
+    if (assignments.ultrasound.parent.length > 0) {
+      summary.push(`Ultrasound: ${assignments.ultrasound.parent.map((b) => b.label).join(", ")}`);
+    }
+    for (const [testName, chips] of Object.entries(assignments.ultrasound.byTestName)) {
+      if (chips.length > 0) summary.push(`${testName}: ${chips.map((b) => b.label).join(", ")}`);
+    }
+    const evidenceLabels = Array.from(
+      new Set([
+        ...assignments.brainwave.map((b) => b.label),
+        ...assignments.vitalwave.map((b) => b.label),
+        ...assignments.ultrasound.parent.map((b) => b.label),
+        ...Object.values(assignments.ultrasound.byTestName).flat().map((b) => b.label),
+      ]),
+    );
+    return {
+      patientId: patient.id ?? null,
+      patientName: patient.name || "Unnamed patient",
+      facility: patient.facility ?? facility ?? null,
+      scheduleDate: scheduleDate ?? null,
+      hx: localHx || null,
+      dx: localDx || null,
+      rx: localRx || null,
+      qualifyingTests: (patient.qualifyingTests ?? []).map((t) => String(t)),
+      assignmentsSummary: summary,
+      evidenceLabels,
+      adminNotes: adminNote || null,
+      approvalState:
+        (patient as { adminApprovalStatus?: string | null }).adminApprovalStatus ?? null,
+      updatesCount: updatesLog.length,
+    };
+  }, [
+    assignments,
+    patient,
+    facility,
+    scheduleDate,
+    localHx,
+    localDx,
+    localRx,
+    adminNote,
+    updatesLog.length,
+  ]);
+
+  // AI-identified clinical clue bubbles: symptoms/history + medication
+  // clues + diagnoses, straight from the same parsed SupportingButtons
+  // the popover rows use (no duplicate parsing logic).
+  const aiBubbleItems: AiEvidenceItem[] = useMemo(
+    () =>
+      availableButtons
+        .filter(
+          (b) =>
+            b.kind === "symptom" ||
+            b.kind === "history" ||
+            b.kind === "medication" ||
+            b.kind === "icd_disease",
+        )
+        .slice(0, 24)
+        .map((b) => ({
+          id: b.id,
+          label: b.label,
+          source: b.source,
+          kind: b.kind,
+          sourceText: b.sourceText ?? null,
+          icdCode: b.icdCode ?? null,
+          requiresIcd: b.requiresIcd,
+          confidence: b.confidence,
+        })),
+    [availableButtons],
+  );
+
+  // Bridge bubble attach actions onto the existing assignment engine.
+  const findButtonForBubble = (item: AiEvidenceItem): SupportingButton | null =>
+    availableButtons.find((b) => b.id === item.id) ?? null;
+
   const shellChildren = (
     <>
         {/* Smoke header — black at ~70% opacity per Team Portal spec. */}
@@ -2831,6 +2929,16 @@ export function AdminReviewDialog({
             <div className="flex items-center gap-2">
               {/* Sibling navigation moved to the bottom-center footer of
                   the right panel per the Admin Review layout update. */}
+              <button
+                type="button"
+                onClick={() => setAiLogicOpen(true)}
+                aria-label="AI Logic for This Patient"
+                title="AI Logic for This Patient"
+                data-testid="admin-review-ai-logic-button"
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-violet-200/80 hover:text-violet-100 hover:bg-white/15 transition-colors"
+              >
+                <Sparkles className="w-4 h-4" />
+              </button>
               <button
                 type="button"
                 onClick={() => onOpenChange(false)}
@@ -4057,6 +4165,26 @@ export function AdminReviewDialog({
 
             </div>
 
+            {/* AI-identified clinical clue bubbles (knowledge-layer prototype).
+                Attach actions delegate to assignToTarget so the assignment
+                state stays the single source of truth. */}
+            <AiEvidenceBubblesRow
+              items={aiBubbleItems}
+              context={aiLogicContext}
+              ultrasoundTests={ultrasoundTests}
+              onAttach={(item, target) => {
+                const btn = findButtonForBubble(item);
+                if (btn) assignToTarget(target, btn);
+              }}
+              isAttached={(item, target) => {
+                const btn = findButtonForBubble(item);
+                return btn ? isAssignedToTarget(btn, target, assignments) : false;
+              }}
+              onEvidenceDecision={(item, decision) => {
+                if (decision === "approved") setAiPromptLabel(item.label);
+              }}
+            />
+
             {/* Changes — flex-1 tinted workbench card; fills remaining height */}
             <div
               className="mx-3 mb-2 flex min-h-0 flex-1 basis-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/70"
@@ -4260,6 +4388,19 @@ export function AdminReviewDialog({
             </div>
           </aside>
         </div>
+        {/* AI Logic drawer + subtle save-as-logic prompt (prototype). */}
+        <AdminReviewAiLogicDrawer
+          open={aiLogicOpen}
+          onOpenChange={setAiLogicOpen}
+          context={aiLogicContext}
+        />
+        {aiPromptLabel && (
+          <AiLogicSavePrompt
+            itemLabel={aiPromptLabel}
+            context={aiLogicContext}
+            onDismiss={() => setAiPromptLabel(null)}
+          />
+        )}
     </>
   );
 
