@@ -3525,35 +3525,44 @@ export function TeamPortalShell({
         onOpenInPlayground={(payload) => openSchedulePatientPlayground(payload)}
       />
 
-      {/* Left-rail Calendar quick-schedule pop-up (task #635). Opened from the
-          Calendar tool button and from clicking a date in the mini-calendar.
-          Collects date + time + service + optional patient name, then hands off
-          to the full SchedulePatientDialog (Schedule) or the Playground
-          (Open in Playground) with the selection pre-filled. */}
+      {/* Left-rail Calendar quick-schedule pop-up (task #635/#636). Opened from
+          the Calendar tool button and from clicking a date in the mini-calendar.
+          Collects date + time + service + an optional patient (typeahead against
+          real records). With a resolved patient + full selection the dialog books
+          the appointment directly; otherwise it hands off to the full
+          SchedulePatientDialog (Schedule) or the Playground (Open in Playground)
+          with the selection — and any resolved patient identity — pre-filled. */}
       <CalendarQuickScheduleDialog
         open={!!calendarQuickScheduleDate}
         date={calendarQuickScheduleDate}
+        facility={facility || null}
         onOpenChange={(o) => {
           if (!o) setCalendarQuickScheduleDate(null);
         }}
-        onSchedule={({ date, time, service, patientName }) => {
+        onSchedule={({ date, time, service, patientName, resolvedPatient }) => {
           setCalendarQuickScheduleDate(null);
           openSchedulePatientDialog(
             {
-              patientName: patientName || null,
-              facilityId: facility || null,
+              patientName: resolvedPatient?.name ?? (patientName || null),
+              patientDob: resolvedPatient?.dob ?? null,
+              patientScreeningId: resolvedPatient?.patientScreeningId ?? null,
+              facilityId: facility ?? null,
               serviceType: service || null,
+              insurance: resolvedPatient?.insurance ?? null,
             },
             { date, time },
           );
         }}
-        onOpenInPlayground={({ date, service, patientName }) => {
+        onOpenInPlayground={({ date, service, patientName, resolvedPatient }) => {
           setCalendarQuickScheduleDate(null);
           openSchedulePatientPlayground({
             patient: {
-              patientName: patientName || null,
-              facilityId: facility || null,
+              patientName: resolvedPatient?.name ?? (patientName || null),
+              patientDob: resolvedPatient?.dob ?? null,
+              patientScreeningId: resolvedPatient?.patientScreeningId ?? null,
+              facilityId: facility ?? null,
               serviceType: service || null,
+              insurance: resolvedPatient?.insurance ?? null,
             },
             selectedDate: date,
           });
