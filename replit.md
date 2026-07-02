@@ -53,6 +53,8 @@ Frontend component structure has been modularized, breaking down a monolithic `h
 
 **Background-service lifecycle**: Recurring in-process work (`absenceWatcher`, `morningRebuildScheduler`) is started from `server/lifecycle.ts` (`startBackgroundServices()`) after the HTTP server binds, and stopped from the SIGTERM handler via `stopBackgroundServices()`. Each tick acquires a Postgres advisory lock (`server/lib/advisoryLock.ts`) so multiple ECS tasks running in parallel never double-fire. The morning call-list rebuild uses the same lock pattern. (All Google Sheets sync jobs have been removed.)
 
+**Testing**: Vitest (v4, paired with the project's Vite 7) runs client unit tests via `npx vitest run` (config: `vitest.config.ts`, scoped to `client/src/**/__tests__/**/*.test.{ts,tsx}` — server `__tests__` files are standalone tsx scripts, not vitest suites). A registered `test` validation step runs the same command. Current coverage: the Team Portal widget hydration-race tests (`workspaceWidgetsHydration.test.ts`).
+
 **API conventions**: Error responses use `{ error: string, code?: string }` (see `server/middleware/errorHandler.ts`). Auth and user-management routes are zod-validated. The Document Library is mounted only at `/api/documents-library` (the legacy `/api/document-library` alias was removed). Frontend formatters (`formatDate`, `formatTime12`, `formatDateHeader`, `formatCurrency`, `formatPatientNameShort`, `getInitials`) live in `client/src/lib/format.ts`; existing callers will be migrated incrementally.
 
 **Architecture canonicalization (task #308)**: This codebase is mid-way through a multi-phase refactor toward AWS multi-task readiness.

@@ -46,6 +46,10 @@ args = "Start application"
 task = "workflow.run"
 args = "Mockup Preview Server"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "test"
+
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -67,6 +71,17 @@ isCanvasWorkflow = true
 task = "shell.exec"
 args = "cd artifacts/mockup-sandbox && npm install && PORT=8000 BASE_PATH=/__mockup/ NODE_ENV=development npm run dev"
 waitForPort = 8000
+
+[[workflows.workflow]]
+name = "test"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npx vitest run"
+
+[workflows.workflow.metadata]
+isValidation = true
 
 [agent]
 integrations = ["javascript_openai_ai_integrations:2.0.0", "google-sheet:1.0.0", "google-drive:1.0.0"]
