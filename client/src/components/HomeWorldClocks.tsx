@@ -41,80 +41,6 @@ const DEFAULT_CLOCKS: ClockCity[] = [
   { label: "Michigan", timeZone: "America/Detroit" },
 ];
 
-const TIMEZONE_COUNTRY_MAP: Record<string, string> = {
-  "Asia/Manila": "Philippines",
-  "Asia/Dhaka": "Bangladesh",
-  "Asia/Kolkata": "India",
-  "Asia/Karachi": "Pakistan",
-  "Asia/Tokyo": "Japan",
-  "Asia/Seoul": "South Korea",
-  "Asia/Shanghai": "China",
-  "Asia/Hong_Kong": "Hong Kong",
-  "Asia/Singapore": "Singapore",
-  "Asia/Bangkok": "Thailand",
-  "Asia/Jakarta": "Indonesia",
-  "Asia/Kuala_Lumpur": "Malaysia",
-  "Asia/Dubai": "UAE",
-  "Asia/Riyadh": "Saudi Arabia",
-  "Asia/Jerusalem": "Israel",
-  "Asia/Taipei": "Taiwan",
-  "Asia/Ho_Chi_Minh": "Vietnam",
-  "America/Phoenix": "USA",
-  "America/Chicago": "USA",
-  "America/Detroit": "USA",
-  "America/New_York": "USA",
-  "America/Los_Angeles": "USA",
-  "America/Denver": "USA",
-  "America/Anchorage": "USA",
-  "Pacific/Honolulu": "USA",
-  "America/Toronto": "Canada",
-  "America/Vancouver": "Canada",
-  "America/Edmonton": "Canada",
-  "America/Winnipeg": "Canada",
-  "America/Halifax": "Canada",
-  "America/Mexico_City": "Mexico",
-  "America/Sao_Paulo": "Brazil",
-  "America/Argentina/Buenos_Aires": "Argentina",
-  "America/Bogota": "Colombia",
-  "America/Lima": "Peru",
-  "America/Santiago": "Chile",
-  "Europe/London": "UK",
-  "Europe/Dublin": "Ireland",
-  "Europe/Paris": "France",
-  "Europe/Berlin": "Germany",
-  "Europe/Madrid": "Spain",
-  "Europe/Rome": "Italy",
-  "Europe/Amsterdam": "Netherlands",
-  "Europe/Brussels": "Belgium",
-  "Europe/Zurich": "Switzerland",
-  "Europe/Vienna": "Austria",
-  "Europe/Stockholm": "Sweden",
-  "Europe/Oslo": "Norway",
-  "Europe/Copenhagen": "Denmark",
-  "Europe/Helsinki": "Finland",
-  "Europe/Warsaw": "Poland",
-  "Europe/Lisbon": "Portugal",
-  "Europe/Athens": "Greece",
-  "Europe/Istanbul": "Turkey",
-  "Europe/Moscow": "Russia",
-  "Europe/Kyiv": "Ukraine",
-  "Africa/Cairo": "Egypt",
-  "Africa/Lagos": "Nigeria",
-  "Africa/Nairobi": "Kenya",
-  "Africa/Johannesburg": "South Africa",
-  "Africa/Casablanca": "Morocco",
-  "Australia/Sydney": "Australia",
-  "Australia/Melbourne": "Australia",
-  "Australia/Brisbane": "Australia",
-  "Australia/Perth": "Australia",
-  "Pacific/Auckland": "New Zealand",
-  "Pacific/Fiji": "Fiji",
-};
-
-function getCountryForTimezone(tz: string): string | null {
-  return TIMEZONE_COUNTRY_MAP[tz] ?? null;
-}
-
 function getSupportedTimeZones(): string[] {
   try {
     const fn = (Intl as any).supportedValuesOf;
@@ -462,41 +388,33 @@ export function HomeWorldClocks() {
           const time = clock.time;
           const key = `${clock.label}-${clock.timeZone}-${index}`;
           const idBase = clock.label.toLowerCase().replace(/\s+/g, "-");
-          const country = getCountryForTimezone(clock.timeZone);
-          const fullLabel = country ? `${clock.label}, ${country}` : clock.label;
-          const longLabel = fullLabel.length > 16;
           return (
             <div
               key={key}
-              className="flex flex-col items-center gap-1.5"
+              className="flex flex-col items-center gap-1.5 rounded-2xl border border-black bg-black backdrop-blur px-4 py-3 min-w-[110px]"
               data-testid={`clock-${idBase}`}
             >
-              <div className="flex h-[120px] w-[120px] flex-col items-center justify-center rounded-full border border-slate-200 bg-white shadow-md dark:border-slate-300">
+              <div className="text-[12px] font-semibold text-white tracking-tight">
+                {clock.label}
+              </div>
+              <div className="flex flex-col items-center leading-tight">
                 <span
-                  className="text-[20px] font-semibold text-slate-900 tabular-nums leading-tight"
+                  className="text-[20px] font-semibold text-blue-400 tabular-nums"
                   data-testid={`text-clock-time-${idBase}`}
                 >
                   {time.digital}
                 </span>
                 {time.abbr && (
-                  <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wide leading-tight">
+                  <span className="text-[10px] font-medium text-white uppercase tracking-wide">
                     {time.abbr}
                   </span>
                 )}
                 <span
-                  className="text-[11px] font-medium text-slate-600 leading-tight"
+                  className="text-[11px] font-medium text-white"
                   data-testid={`text-clock-date-${idBase}`}
                 >
                   {time.date}
                 </span>
-              </div>
-              <div
-                className={`max-w-[130px] truncate text-center font-semibold tracking-tight text-slate-700 dark:text-slate-200 ${
-                  longLabel ? "text-[10px]" : "text-[12px]"
-                }`}
-                data-testid={`text-clock-label-${idBase}`}
-              >
-                {fullLabel}
               </div>
             </div>
           );
