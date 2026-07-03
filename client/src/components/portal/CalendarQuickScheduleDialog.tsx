@@ -7,6 +7,7 @@ import {
   Check,
   Loader2,
   Search,
+  UserPlus,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -388,8 +389,8 @@ export function CalendarQuickScheduleDialog({
                   >
                     {matches.length === 0 && !searching ? (
                       <div className="px-3 py-2 text-xs italic text-slate-500">
-                        No matching patients — free text will pre-fill the full
-                        dialog instead.
+                        No matching patients — use "New patient" below to enter
+                        their details.
                       </div>
                     ) : (
                       <ul className="max-h-52 overflow-y-auto py-1">
@@ -493,6 +494,19 @@ export function CalendarQuickScheduleDialog({
                   ? "Pick a time and service to book directly, or Schedule to continue in the full dialog."
                   : "Select a patient from the list to book directly; free text opens the full dialog pre-filled."}
             </p>
+            {!resolvedPatient && (
+              <button
+                type="button"
+                disabled={!canProceed || bookMutation.isPending}
+                onClick={() => onSchedule(payload)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-400 hover:bg-slate-50 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Enter a new patient's name, DOB, and facility in the full dialog"
+                data-testid="button-quick-schedule-new-patient"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                New patient — enter name &amp; DOB
+              </button>
+            )}
           </div>
         </div>
 

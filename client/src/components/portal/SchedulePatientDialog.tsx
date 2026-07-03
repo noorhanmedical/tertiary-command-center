@@ -24,6 +24,7 @@ import {
   Bell,
   CheckCircle2,
   MapPin,
+  UserPlus,
   X,
   UserCheck,
   AlertTriangle,
@@ -112,6 +113,10 @@ export type SchedulePatientDialogProps = {
   patient: SchedulePatientDialogPatient | null;
   defaultDate?: string | null;
   defaultTime?: string | null;
+  // Clinic choices for the editable Facility select shown in new-patient
+  // (no-id) mode. When empty/omitted the facility falls back to a free-text
+  // input.
+  facilityOptions?: string[];
   onOpenInPlayground?: (payload: {
     patient: SchedulePatientDialogPatient;
     selectedDate: string;
@@ -282,6 +287,7 @@ export function SchedulePatientDialog({
   patient,
   defaultDate,
   defaultTime,
+  facilityOptions,
   onOpenInPlayground,
 }: SchedulePatientDialogProps) {
   const queryClient = useQueryClient();
@@ -302,6 +308,18 @@ export function SchedulePatientDialog({
   const [location, setLocation] = useState<string>("");
   const [time, setTime] = useState<string>(initialTime);
   const [note, setNote] = useState<string>("");
+
+  // New-patient (walk-in) mode: no screening/case id means the identity is
+  // whatever the staff member types here — Name / DOB / Facility become
+  // editable inputs and the write goes through the existing name-only
+  // server path (execution-case stub from patientName).
+  const isNewPatientEntry =
+    !!patient &&
+    patient.patientScreeningId == null &&
+    patient.executionCaseId == null;
+  const [nameInput, setNameInput] = useState<string>("");
+  const [dobInput, setDobInput] = useState<string>("");
+  const [facilityInput, setFacilityInput] = useState<string>("");
 
   // Composite patient identity. Screening/case ids alone are not enough:
   // quick-schedule name-only patients carry no ids, so switching between
@@ -335,29 +353,44 @@ export function SchedulePatientDialog({
       setNote("");
       setSelectedMatch(null);
       setMatchesDismissed(false);
+      setNameInput(patient?.patientName ?? "");
+      setDobInput(patient?.patientDob ?? "");
+      setFacilityInput(patient?.facilityId ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, patientKey, initialDate, initialTime]);
 
-  // Name-only patient = quick-schedule fallback territory. Only then do
-  // we look up similar existing patients (identified patients already
-  // resolve to their own case server-side).
+  // Effective identity: editable inputs win in new-patient mode; otherwise
+  // the incoming patient record is authoritative.
+  const effectiveName = isNewPatientEntry
+    ? nameInput.trim() || null
+    : (patient?.patientName ?? null);
+  const effectiveDob = isNewPatientEntry
+    ? dobInput.trim() || null
+    : (patient?.patientDob ?? null);
+  const effectiveFacility = isNewPatientEntry
+    ? facilityInput.trim() || null
+    : (patient?.facilityId ?? null);
+
+  // Name-only patient = quick-schedule fallback / walk-in territory. Only
+  // then do we look up similar existing patients (identified patients
+  // already resolve to their own case server-side). Uses the effective
+  // identity so names typed in new-patient mode drive the lookup too.
   const isNameOnlyPatient =
     !!patient &&
     patient.patientScreeningId == null &&
     patient.executionCaseId == null &&
-    !!patient.patientName?.trim();
+    !!effectiveName;
 
   const { data: similarData } = useQuery<{ matches: SimilarPatientMatch[] }>({
     queryKey: [
       "/api/execution-cases/similar",
-      patient?.patientName?.trim() ?? "",
-      patient?.patientDob?.trim() ?? "",
+      effectiveName ?? "",
+      effectiveDob ?? "",
     ],
     queryFn: async () => {
-      const params = new URLSearchParams({ name: patient?.patientName?.trim() ?? "" });
-      const dob = patient?.patientDob?.trim();
-      if (dob) params.set("dob", dob);
+      const params = new URLSearchParams({ name: effectiveName ?? "" });
+      if (effectiveDob) params.set("dob", effectiveDob);
       const res = await fetch(`/api/execution-cases/similar?${params.toString()}`, {
         credentials: "include",
       });
@@ -374,14 +407,14 @@ export function SchedulePatientDialog({
     useQuery<PatientScheduleDayContext>({
       queryKey: [
         "schedule-patient-day-context",
-        patient?.facilityId ?? null,
+        effectiveFacility,
         patient?.patientScreeningId ?? null,
         patient?.executionCaseId ?? null,
         selectedDate,
       ],
       queryFn: () =>
         fetchPatientScheduleDayContext({
-          facilityId: patient?.facilityId ?? null,
+          facilityId: effectiveFacility,
           patientScreeningId: patient?.patientScreeningId ?? null,
           executionCaseId: patient?.executionCaseId ?? null,
           selectedDate,
@@ -397,11 +430,11 @@ export function SchedulePatientDialog({
     const hasIdentity =
       patient.patientScreeningId != null ||
       patient.executionCaseId != null ||
-      !!patient.patientName?.trim();
+      !!effectiveName;
     if (!hasIdentity) return false;
     if (!serviceType.trim()) return false;
     return !!combineLocalDateAndTimeToIso(selectedDate, time);
-  }, [patient, serviceType, selectedDate, time]);
+  }, [patient, effectiveName, serviceType, selectedDate, time]);
 
   const scheduleMutation = useMutation({
     mutationFn: async () => {
@@ -415,11 +448,11 @@ export function SchedulePatientDialog({
           patient.executionCaseId ?? selectedMatch?.id ?? null,
         patientScreeningId:
           patient.patientScreeningId ?? selectedMatch?.patientScreeningId ?? null,
-        patientName: patient.patientName ?? null,
-        patientDob: patient.patientDob ?? null,
+        patientName: effectiveName,
+        patientDob: effectiveDob,
         serviceType: serviceType.trim(),
         startsAt,
-        facilityId: patient.facilityId ?? null,
+        facilityId: effectiveFacility,
         note: buildScheduleNote(note, appointmentType, location),
         metadata: {
           source: "schedule_patient_dialog",
@@ -430,13 +463,13 @@ export function SchedulePatientDialog({
     },
     onSuccess: () => {
       invalidateTeamPortalScheduleQueries(queryClient, {
-        facility: patient?.facilityId ?? null,
+        facility: effectiveFacility,
         selectedDate,
         patientScreeningId: patient?.patientScreeningId ?? null,
       });
       toast({
         title: "Scheduled",
-        description: `${serviceType.trim()} for ${patient?.patientName ?? "patient"}.`,
+        description: `${serviceType.trim()} for ${effectiveName ?? "patient"}.`,
       });
       onOpenChange(false);
     },
@@ -450,7 +483,7 @@ export function SchedulePatientDialog({
     },
   });
 
-  const initials = (patient?.patientName ?? "P")
+  const initials = (effectiveName ?? "P")
     .split(/\s+/)
     .slice(0, 2)
     .map((s) => s[0]?.toUpperCase() ?? "")
@@ -470,7 +503,7 @@ export function SchedulePatientDialog({
         data-testid="dialog-schedule-patient"
       >
         <DialogTitle className="sr-only">
-          Schedule {patient?.patientName ?? "patient"}
+          Schedule {effectiveName ?? "patient"}
         </DialogTitle>
         <DialogDescription className="sr-only">
           Quick-schedule an ancillary appointment for this patient.
@@ -490,11 +523,15 @@ export function SchedulePatientDialog({
                   <CalendarPlus className="h-3 w-3" />
                   Quick Schedule
                 </div>
-                <div className="truncate text-xl font-bold leading-tight">
-                  {patient?.patientName ?? "Patient"}
+                <div
+                  className="truncate text-xl font-bold leading-tight"
+                  data-testid="text-schedule-patient-header-name"
+                >
+                  {effectiveName ??
+                    (isNewPatientEntry ? "New patient" : "Patient")}
                 </div>
                 <div className="mt-0.5 text-xs text-white/75">
-                  {patient?.patientDob ? `DOB ${patient.patientDob}` : ""}
+                  {effectiveDob ? `DOB ${effectiveDob}` : ""}
                 </div>
               </div>
             </div>
@@ -503,7 +540,15 @@ export function SchedulePatientDialog({
                 <button
                   type="button"
                   onClick={() => {
-                    onOpenInPlayground({ patient, selectedDate });
+                    onOpenInPlayground({
+                      patient: {
+                        ...patient,
+                        patientName: effectiveName,
+                        patientDob: effectiveDob,
+                        facilityId: effectiveFacility,
+                      },
+                      selectedDate,
+                    });
                     onOpenChange(false);
                   }}
                   aria-label="Open full scheduler"
@@ -530,7 +575,7 @@ export function SchedulePatientDialog({
           {(patient?.callReason ||
             patient?.serviceType ||
             patient?.patientPhone ||
-            patient?.facilityId ||
+            effectiveFacility ||
             patient?.insurance ||
             nextAction) && (
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -558,11 +603,11 @@ export function SchedulePatientDialog({
                   testId="schedule-patient-chip-phone"
                 />
               )}
-              {patient?.facilityId && (
+              {effectiveFacility && (
                 <ContextChip
                   icon={<Building2 className="h-3 w-3" />}
                   label="Clinic"
-                  value={patient.facilityId}
+                  value={effectiveFacility}
                   testId="schedule-patient-chip-clinic"
                 />
               )}
@@ -671,6 +716,94 @@ export function SchedulePatientDialog({
 
         <div className="grid grid-cols-1 gap-4 p-6 md:grid-cols-2">
           <div className="space-y-3">
+            {isNewPatientEntry && (
+              <div
+                className="space-y-2.5 rounded-2xl border border-slate-200 bg-slate-50/60 p-3"
+                data-testid="section-schedule-patient-details"
+              >
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  <UserPlus className="h-3 w-3" />
+                  Patient details
+                </div>
+                <div>
+                  <Label
+                    htmlFor="schedule-patient-name"
+                    className="text-[10px] font-semibold uppercase tracking-wider text-slate-500"
+                  >
+                    Patient name <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    id="schedule-patient-name"
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    placeholder="First and last name"
+                    className="mt-1 rounded-xl bg-white"
+                    autoComplete="off"
+                    data-testid="input-schedule-patient-name"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label
+                      htmlFor="schedule-patient-dob"
+                      className="text-[10px] font-semibold uppercase tracking-wider text-slate-500"
+                    >
+                      Date of birth
+                    </Label>
+                    <Input
+                      id="schedule-patient-dob"
+                      type="date"
+                      value={dobInput}
+                      onChange={(e) => setDobInput(e.target.value)}
+                      className="mt-1 rounded-xl bg-white"
+                      data-testid="input-schedule-patient-dob"
+                    />
+                  </div>
+                  <div>
+                    <Label
+                      htmlFor="schedule-patient-facility"
+                      className="text-[10px] font-semibold uppercase tracking-wider text-slate-500"
+                    >
+                      Facility
+                    </Label>
+                    {facilityOptions && facilityOptions.length > 0 ? (
+                      <select
+                        id="schedule-patient-facility"
+                        value={facilityInput}
+                        onChange={(e) => setFacilityInput(e.target.value)}
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2"
+                        style={{ ["--tw-ring-color" as string]: ACCENT }}
+                        data-testid="select-schedule-patient-facility"
+                      >
+                        <option value="">— No clinic —</option>
+                        {(facilityInput &&
+                        !facilityOptions.includes(facilityInput)
+                          ? [facilityInput, ...facilityOptions]
+                          : facilityOptions
+                        ).map((f) => (
+                          <option key={f} value={f}>
+                            {f}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Input
+                        id="schedule-patient-facility"
+                        value={facilityInput}
+                        onChange={(e) => setFacilityInput(e.target.value)}
+                        placeholder="Clinic name"
+                        className="mt-1 rounded-xl bg-white"
+                        data-testid="input-schedule-patient-facility"
+                      />
+                    )}
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  No patient record linked — this appointment will be saved
+                  under the name you enter here.
+                </p>
+              </div>
+            )}
             <div>
               <Label
                 htmlFor="schedule-patient-date"

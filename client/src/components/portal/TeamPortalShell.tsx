@@ -3578,6 +3578,7 @@ export function TeamPortalShell({
         patient={schedulePatientDialog}
         defaultDate={schedulePatientDialogDefaultDate ?? selectedDate}
         defaultTime={schedulePatientDialogDefaultTime}
+        facilityOptions={facilities}
         onOpenInPlayground={(payload) => openSchedulePatientPlayground(payload)}
       />
 
