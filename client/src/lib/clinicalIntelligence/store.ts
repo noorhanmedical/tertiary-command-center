@@ -166,8 +166,18 @@ function migrateLegacyLocalState(): void {
       }
       invalidate();
     })
-    .catch(() => {
-      // Leave the key in place and allow a retry on next page load.
+    .catch((err: unknown) => {
+      // Import is gated to admin/clinician server-side. A 403 will never
+      // succeed for this user, so drop the legacy key instead of retrying
+      // forever; any other failure retries on the next page load.
+      if (err instanceof Error && err.message.startsWith("403")) {
+        try {
+          localStorage.removeItem(LEGACY_STORAGE_KEY);
+        } catch {
+          /* noop */
+        }
+        return;
+      }
       migrationAttempted = false;
     });
 }

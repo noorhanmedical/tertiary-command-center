@@ -312,7 +312,7 @@ export async function registerRoutes(
   registerClinicianPortalRoutes(app);
   registerMissionControlRoutes(app, requireRole);
   registerPhysicianPortalRoutes(app);
-  registerClinicalIntelligenceRoutes(app);
+  registerClinicalIntelligenceRoutes(app, requireRole);
 
   // Seed the Clinical Intelligence rule library once (empty table only) so
   // the governance page is workable out of the box, mirroring the old

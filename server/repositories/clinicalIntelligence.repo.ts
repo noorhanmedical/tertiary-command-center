@@ -343,11 +343,45 @@ export async function addRule(input: CiCreateRuleInput): Promise<CiRule> {
   return db.transaction(async (tx) => insertRuleTx(tx, input));
 }
 
+/** Thrown when the acting user's role is not allowed to perform a rule status transition. */
+export class CiForbiddenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CiForbiddenError";
+  }
+}
+
+// Server-side mirror of client/src/lib/clinicalIntelligence/permissions.ts:
+// activating a rule out of a review state requires the matching reviewer
+// role (clinician for physician review, admin for compliance review); all
+// other transitions require governance-manager rights (admin or clinician).
+function assertRuleTransitionAllowed(
+  actorRole: string,
+  from: CiRuleStatus,
+  to: CiRuleStatus,
+): void {
+  if (to === "active" && (from === "pending_physician_review" || from === "pending_compliance_review")) {
+    const requiredRole = from === "pending_physician_review" ? "clinician" : "admin";
+    if (actorRole !== requiredRole) {
+      const label =
+        from === "pending_physician_review"
+          ? "a physician (clinician role)"
+          : "compliance (admin role)";
+      throw new CiForbiddenError(`Only ${label} can approve a rule in ${from}`);
+    }
+    return;
+  }
+  if (actorRole !== "admin" && actorRole !== "clinician") {
+    throw new CiForbiddenError("Governance changes require admin or clinician role");
+  }
+}
+
 export async function updateRule(
   id: string,
   by: string,
   patch: Partial<CiCreateRuleInput>,
   changeSummary = "Rule updated",
+  actorRole?: string,
 ): Promise<CiRule | null> {
   return db.transaction(async (tx) => {
     // Lock the rule row so concurrent updates can't produce duplicate
@@ -358,6 +392,11 @@ export async function updateRule(
       .where(eq(ciRules.id, id))
       .for("update");
     if (!existing) return null;
+    if (actorRole !== undefined && patch.status && patch.status !== existing.status) {
+      // Enforced inside the FOR UPDATE transaction so the check is race-free
+      // against concurrent status changes.
+      assertRuleTransitionAllowed(actorRole, existing.status as CiRuleStatus, patch.status as CiRuleStatus);
+    }
     const now = new Date().toISOString();
     const nextVersion = existing.version + 1;
     const nextStatus = (patch.status ?? existing.status) as CiRuleStatus;
