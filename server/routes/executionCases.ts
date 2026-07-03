@@ -9,6 +9,7 @@ import {
   listExecutionCases,
   getExecutionCaseById,
   getExecutionCaseByScreeningId,
+  findSimilarExecutionCases,
   listJourneyEvents,
   listEngagementCenterCases,
   listSchedulerPortalCases,
@@ -1104,6 +1105,28 @@ export function registerExecutionCaseRoutes(app: Express) {
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/execution-cases/similar?name=…&dob=…&limit=…
+  // Must be registered before /:id to avoid shadowing.
+  // Duplicate-prevention aid for the quick-schedule dialog: returns
+  // existing execution cases whose patient name is an exact (normalized)
+  // or near match ("Jon Smith" vs "John Smith"), optionally strengthened
+  // by a matching DOB. Read-only — never links anything.
+  app.get("/api/execution-cases/similar", async (req, res) => {
+    try {
+      const q = req.query as Record<string, string | undefined>;
+      const name = (q.name ?? "").trim();
+      if (!name) {
+        return res.status(400).json({ error: "name query parameter is required" });
+      }
+      const dob = (q.dob ?? "").trim() || null;
+      const limit = q.limit ? Math.min(parseInt(q.limit, 10) || 5, 20) : 5;
+      const matches = await findSimilarExecutionCases(name, dob, limit);
+      return res.json({ matches });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
     }
   });
 

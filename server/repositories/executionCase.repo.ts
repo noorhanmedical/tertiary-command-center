@@ -254,22 +254,31 @@ export async function listExecutionCases(
     : query.orderBy(desc(patientExecutionCases.createdAt)).limit(safeLimit);
 }
 
+// Normalizes a patient name for identity comparison: trims, collapses
+// internal whitespace runs, and lowercases. "  Jon  Smith " → "jon smith".
+export function normalizePatientName(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 // Looks up an existing QUICK-SCHEDULE STUB case so double-submits of the
 // same name-only patient reuse one stub instead of spawning duplicates.
 // Deliberately narrow to avoid hijacking an unrelated patient's case:
 // - only cases created by quick-schedule (source='quick_schedule')
-// - exact patientName AND exact patientDob (DOB is required — without it
-//   a common-name collision could cross-link operational data)
+// - patientName match is case/whitespace-insensitive (trim + collapse
+//   internal whitespace + lower) so "jon smith " reuses "Jon Smith"
+// - exact patientDob (DOB is required — without it a common-name
+//   collision could cross-link operational data)
 // - same facility (both null counts as a match)
 export async function getQuickScheduleStubCase(
   patientName: string,
   patientDob: string,
   facilityId: string | null,
 ): Promise<PatientExecutionCase | undefined> {
+  const normalized = normalizePatientName(patientName);
   const conditions = [
     eq(patientExecutionCases.source, "quick_schedule"),
-    eq(patientExecutionCases.patientName, patientName),
-    eq(patientExecutionCases.patientDob, patientDob),
+    sql`lower(regexp_replace(trim(${patientExecutionCases.patientName}), '\\s+', ' ', 'g')) = ${normalized}`,
+    eq(patientExecutionCases.patientDob, patientDob.trim()),
     facilityId === null
       ? isNull(patientExecutionCases.facilityId)
       : eq(patientExecutionCases.facilityId, facilityId),
@@ -281,6 +290,106 @@ export async function getQuickScheduleStubCase(
     .orderBy(desc(patientExecutionCases.createdAt))
     .limit(1);
   return result;
+}
+
+// ─── Similar-patient lookup (duplicate-prevention aid) ─────────────────────
+
+/** Levenshtein edit distance — small inputs (patient names) only. */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const curr = [i];
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    prev = curr;
+  }
+  return prev[b.length];
+}
+
+export type SimilarExecutionCaseMatch = {
+  id: number;
+  patientName: string;
+  patientDob: string | null;
+  facilityId: string | null;
+  patientScreeningId: number | null;
+  source: string;
+  qualificationStatus: string;
+  engagementStatus: string;
+  createdAt: Date | null;
+  matchReason: "exact_name" | "similar_name" | "same_dob_similar_name";
+};
+
+/** Finds existing execution cases that likely represent the same patient
+ *  as the supplied name (+optional DOB). Used by the quick-schedule dialog
+ *  to surface "did you mean this existing patient?" before creating a
+ *  duplicate stub. Matching (against normalized names):
+ *    - exact normalized name (case/whitespace-insensitive)
+ *    - similar name: edit distance ≤ 2 (≤ 1 for short names)
+ *    - same DOB + edit distance ≤ 4 (typos + DOB agreement = strong signal)
+ *  Read-only ranking helper — never auto-links; the caller decides. */
+export async function findSimilarExecutionCases(
+  patientName: string,
+  patientDob?: string | null,
+  limit = 5,
+): Promise<SimilarExecutionCaseMatch[]> {
+  const target = normalizePatientName(patientName);
+  if (!target) return [];
+  const dob = (patientDob ?? "").trim() || null;
+
+  // Candidate pool: recent non-archived cases. Names are compared in JS
+  // (edit distance isn't expressible without pg_trgm/fuzzystrmatch).
+  const rows = await db
+    .select()
+    .from(patientExecutionCases)
+    .where(notInArray(patientExecutionCases.lifecycleStatus, [...TERMINAL_LIFECYCLE_STATUSES]))
+    .orderBy(desc(patientExecutionCases.createdAt))
+    .limit(1000);
+
+  const scored: Array<{ row: PatientExecutionCase; reason: SimilarExecutionCaseMatch["matchReason"]; dist: number }> = [];
+  for (const row of rows) {
+    const candidate = normalizePatientName(row.patientName ?? "");
+    if (!candidate) continue;
+    const dist = levenshtein(target, candidate);
+    const sameDob = dob !== null && (row.patientDob ?? "").trim() === dob;
+    const shortName = Math.min(target.length, candidate.length) < 6;
+    if (dist === 0) {
+      scored.push({ row, reason: "exact_name", dist });
+    } else if (sameDob && dist <= 4) {
+      scored.push({ row, reason: "same_dob_similar_name", dist });
+    } else if (dist <= (shortName ? 1 : 2)) {
+      scored.push({ row, reason: "similar_name", dist });
+    }
+  }
+
+  const reasonRank = { exact_name: 0, same_dob_similar_name: 1, similar_name: 2 } as const;
+  scored.sort((a, b) => {
+    if (reasonRank[a.reason] !== reasonRank[b.reason]) return reasonRank[a.reason] - reasonRank[b.reason];
+    if (a.dist !== b.dist) return a.dist - b.dist;
+    const aT = a.row.createdAt ? new Date(a.row.createdAt as unknown as string).getTime() : 0;
+    const bT = b.row.createdAt ? new Date(b.row.createdAt as unknown as string).getTime() : 0;
+    return bT - aT;
+  });
+
+  return scored.slice(0, Math.min(Math.max(1, limit), 20)).map(({ row, reason }) => ({
+    id: row.id,
+    patientName: row.patientName,
+    patientDob: row.patientDob ?? null,
+    facilityId: row.facilityId ?? null,
+    patientScreeningId: row.patientScreeningId ?? null,
+    source: row.source,
+    qualificationStatus: row.qualificationStatus,
+    engagementStatus: row.engagementStatus,
+    createdAt: row.createdAt ?? null,
+    matchReason: reason,
+  }));
 }
 
 // Quick-schedule stub: creates a minimal execution case for a brand-new

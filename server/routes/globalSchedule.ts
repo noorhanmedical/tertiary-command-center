@@ -320,7 +320,9 @@ export function registerGlobalScheduleRoutes(app: Express) {
       // minimal execution case stub so the appointment can persist.
       let createdStubCase = false;
       if (!executionCase) {
-        const stubName = (data.patientName ?? "").trim();
+        // Trim + collapse internal whitespace so "Jon  Smith " stores as
+        // "Jon Smith" (matching stays case-insensitive in the repo).
+        const stubName = (data.patientName ?? "").trim().replace(/\s+/g, " ");
         if (!stubName) {
           return res.status(404).json({
             error: "Could not resolve an execution case from executionCaseId or patientScreeningId (provide patientName to quick-schedule a new patient)",

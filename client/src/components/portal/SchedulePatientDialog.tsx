@@ -25,6 +25,8 @@ import {
   CheckCircle2,
   MapPin,
   X,
+  UserCheck,
+  AlertTriangle,
 } from "lucide-react";
 import {
   fetchPatientScheduleDayContext,
@@ -42,6 +44,28 @@ import { invalidateTeamPortalScheduleQueries } from "@/lib/portal/scheduleInvali
 // keeps the current Playground content intact behind it.
 
 const ACCENT = "#4863A0";
+
+// Shape returned by GET /api/execution-cases/similar — the duplicate-
+// prevention lookup that powers the "did you mean this existing patient?"
+// panel for name-only (walk-in) patients.
+export type SimilarPatientMatch = {
+  id: number;
+  patientName: string;
+  patientDob: string | null;
+  facilityId: string | null;
+  patientScreeningId: number | null;
+  source: string;
+  qualificationStatus: string;
+  engagementStatus: string;
+  createdAt: string | null;
+  matchReason: "exact_name" | "similar_name" | "same_dob_similar_name";
+};
+
+const MATCH_REASON_LABEL: Record<SimilarPatientMatch["matchReason"], string> = {
+  exact_name: "Same name",
+  similar_name: "Similar name",
+  same_dob_similar_name: "Similar name · same DOB",
+};
 
 export const SERVICE_OPTIONS = [
   "BrainWave",
@@ -293,6 +317,12 @@ export function SchedulePatientDialog({
     patient?.facilityId ?? "",
   ].join("|");
 
+  // Duplicate prevention: when the patient carries no ids (name-only
+  // walk-in), staff can link this appointment to a likely existing case
+  // instead of letting the server create a duplicate stub.
+  const [selectedMatch, setSelectedMatch] = useState<SimilarPatientMatch | null>(null);
+  const [matchesDismissed, setMatchesDismissed] = useState(false);
+
   // Reset form when a new patient is opened OR the pre-fill date/time
   // changes (e.g. a hand-off from the quick-schedule pop-up).
   useEffect(() => {
@@ -303,9 +333,42 @@ export function SchedulePatientDialog({
       setLocation(patient?.facilityId ?? "");
       setTime(initialTime);
       setNote("");
+      setSelectedMatch(null);
+      setMatchesDismissed(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, patientKey, initialDate, initialTime]);
+
+  // Name-only patient = quick-schedule fallback territory. Only then do
+  // we look up similar existing patients (identified patients already
+  // resolve to their own case server-side).
+  const isNameOnlyPatient =
+    !!patient &&
+    patient.patientScreeningId == null &&
+    patient.executionCaseId == null &&
+    !!patient.patientName?.trim();
+
+  const { data: similarData } = useQuery<{ matches: SimilarPatientMatch[] }>({
+    queryKey: [
+      "/api/execution-cases/similar",
+      patient?.patientName?.trim() ?? "",
+      patient?.patientDob?.trim() ?? "",
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams({ name: patient?.patientName?.trim() ?? "" });
+      const dob = patient?.patientDob?.trim();
+      if (dob) params.set("dob", dob);
+      const res = await fetch(`/api/execution-cases/similar?${params.toString()}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Similar-patient lookup failed");
+      return res.json();
+    },
+    enabled: open && isNameOnlyPatient,
+    staleTime: 30_000,
+  });
+
+  const similarMatches = isNameOnlyPatient ? (similarData?.matches ?? []) : [];
 
   const { data: dayContext, isLoading: contextLoading } =
     useQuery<PatientScheduleDayContext>({
@@ -346,8 +409,12 @@ export function SchedulePatientDialog({
       const startsAt = combineLocalDateAndTimeToIso(selectedDate, time);
       if (!startsAt) throw new Error("Pick a valid date and time");
       return schedulePatientAncillary({
-        executionCaseId: patient.executionCaseId ?? null,
-        patientScreeningId: patient.patientScreeningId ?? null,
+        // When staff picked a likely existing patient, link to that case
+        // instead of letting the server create a duplicate stub.
+        executionCaseId:
+          patient.executionCaseId ?? selectedMatch?.id ?? null,
+        patientScreeningId:
+          patient.patientScreeningId ?? selectedMatch?.patientScreeningId ?? null,
         patientName: patient.patientName ?? null,
         patientDob: patient.patientDob ?? null,
         serviceType: serviceType.trim(),
@@ -518,6 +585,89 @@ export function SchedulePatientDialog({
             </div>
           )}
         </div>
+
+        {/* Duplicate prevention — likely existing patients for name-only
+            walk-ins. Picking one links the appointment to the existing
+            case instead of creating a duplicate record. */}
+        {isNameOnlyPatient && similarMatches.length > 0 && !matchesDismissed && (
+          <div
+            className="border-b border-amber-200 bg-amber-50/70 px-6 py-3"
+            data-testid="panel-similar-patients"
+          >
+            {selectedMatch ? (
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2 text-sm text-emerald-800">
+                  <UserCheck className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span className="truncate">
+                    Linking to existing patient{" "}
+                    <span className="font-semibold">{selectedMatch.patientName}</span>
+                    {selectedMatch.patientDob ? ` (DOB ${selectedMatch.patientDob})` : ""}
+                    {" — no duplicate record will be created."}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMatch(null)}
+                  className="shrink-0 text-xs font-semibold text-slate-600 underline-offset-2 hover:underline"
+                  data-testid="button-similar-patient-unlink"
+                >
+                  Undo
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-amber-800">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                    Possible existing patient — is this the same person?
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setMatchesDismissed(true)}
+                    className="shrink-0 text-xs font-medium text-amber-700 underline-offset-2 hover:underline"
+                    data-testid="button-similar-patients-dismiss"
+                  >
+                    No, this is a new patient
+                  </button>
+                </div>
+                <ul className="mt-2 space-y-1.5">
+                  {similarMatches.slice(0, 4).map((m) => (
+                    <li
+                      key={m.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-amber-200/70 bg-white px-3 py-1.5"
+                      data-testid={`row-similar-patient-${m.id}`}
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-900">
+                          {m.patientName}
+                        </div>
+                        <div className="truncate text-[11px] text-slate-500">
+                          {[
+                            m.patientDob ? `DOB ${m.patientDob}` : null,
+                            m.facilityId,
+                            MATCH_REASON_LABEL[m.matchReason],
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0 border-amber-300 text-amber-800 hover:bg-amber-100"
+                        onClick={() => setSelectedMatch(m)}
+                        data-testid={`button-similar-patient-use-${m.id}`}
+                      >
+                        Use this patient
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-4 p-6 md:grid-cols-2">
           <div className="space-y-3">
