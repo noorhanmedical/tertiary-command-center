@@ -13,6 +13,8 @@ interface PdfPatientSelectDialogProps {
   patients: PatientScreening[];
   onClose: () => void;
   onGenerate: (selected: PatientScreening[]) => void;
+  /** Keep the caller's patient order instead of re-ordering here. */
+  preserveOrder?: boolean;
 }
 
 export default function PdfPatientSelectDialog({
@@ -21,6 +23,7 @@ export default function PdfPatientSelectDialog({
   patients,
   onClose,
   onGenerate,
+  preserveOrder,
 }: PdfPatientSelectDialogProps) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
@@ -31,7 +34,10 @@ export default function PdfPatientSelectDialog({
   // Phase 1 ordering: outreach alphabetical, visit by appointment time.
   // Same helper as PlexusIQRunOrganizationPanel + the PDF packet group
   // dialog so the order on screen matches the order in the generated PDF.
+  // When `preserveOrder` is set, the caller has already sorted the roster
+  // (e.g. the operating list's active Time/Name sort) and we keep it as-is.
   const ordered = useMemo(() => {
+    if (preserveOrder) return patients;
     const rows = patients.map((p) => ({
       batchId: 0,
       batchCreatedAt: "",
@@ -43,7 +49,7 @@ export default function PdfPatientSelectDialog({
     const orderedRows = orderPatientsWithinRun(rows);
     const byId = new Map(patients.map((p) => [p.id, p]));
     return orderedRows.map((r) => byId.get(r.patientId)!).filter(Boolean);
-  }, [patients]);
+  }, [patients, preserveOrder]);
 
   const allSelected = selected.size === ordered.length && ordered.length > 0;
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(ordered.map(p => p.id)));

@@ -7,6 +7,7 @@ import {
   CalendarDays,
   List,
   Clock,
+  Pencil,
 } from "lucide-react";
 
 // Left "Date" panel for the Plexus IQ operating list.
@@ -48,6 +49,9 @@ export type PlexusIQDatePanelProps = {
   expandedDates: Set<string>;
   onToggleDate: (key: string) => void;
   onSelectBatch: (batchId: number) => void;
+  /** When provided, each batch row shows a pencil affordance that lets the
+      user change the list's schedule date. */
+  onChangeDate?: (batchId: number) => void;
 };
 
 type ViewMode = "list" | "calendar" | "recent";
@@ -73,46 +77,65 @@ function BatchRows({
   batches,
   selectedBatchId,
   onSelectBatch,
+  onChangeDate,
 }: {
   batches: PlexusIQBatchNode[];
   selectedBatchId: number | null;
   onSelectBatch: (id: number) => void;
+  onChangeDate?: (id: number) => void;
 }) {
   return (
     <div className="ml-3 pl-2 border-l border-sky-100 space-y-0.5 mt-0.5">
       {batches.map((b) => {
         const active = b.batchId === selectedBatchId;
         return (
-          <button
-            key={b.batchId}
-            type="button"
-            onClick={() => onSelectBatch(b.batchId)}
-            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
-              active ? "bg-sky-50 ring-1 ring-sky-200" : "hover:bg-sky-50/60"
-            }`}
-            data-testid={`button-batch-node-${b.batchId}`}
-            aria-current={active ? "true" : undefined}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${TONE_DOT[b.statusTone]}`} />
-            <span
-              className={`text-xs font-medium truncate flex-1 ${
-                active ? "text-sky-900" : "text-slate-700"
+          <div key={b.batchId} className="group/batchrow flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => onSelectBatch(b.batchId)}
+              className={`min-w-0 flex-1 flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
+                active ? "bg-sky-50 ring-1 ring-sky-200" : "hover:bg-sky-50/60"
               }`}
+              data-testid={`button-batch-node-${b.batchId}`}
+              aria-current={active ? "true" : undefined}
             >
-              {b.timeLabel}
-            </span>
-            <span
-              className={`inline-flex items-center gap-1 text-[10px] ${
-                active ? "text-sky-700" : "text-slate-400"
-              }`}
-            >
-              {b.statusTone === "running" && (
-                <Loader2 className="h-3 w-3 animate-spin text-sky-500" />
-              )}
-              {b.statusLabel}
-              <span className="tabular-nums">· {b.patientCount}</span>
-            </span>
-          </button>
+              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${TONE_DOT[b.statusTone]}`} />
+              <span
+                className={`text-xs font-medium truncate flex-1 ${
+                  active ? "text-sky-900" : "text-slate-700"
+                }`}
+              >
+                {b.timeLabel}
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 text-[10px] ${
+                  active ? "text-sky-700" : "text-slate-400"
+                }`}
+              >
+                {b.statusTone === "running" && (
+                  <Loader2 className="h-3 w-3 animate-spin text-sky-500" />
+                )}
+                {b.statusLabel}
+                <span className="tabular-nums">· {b.patientCount}</span>
+              </span>
+            </button>
+            {onChangeDate && (
+              <button
+                type="button"
+                onClick={() => onChangeDate(b.batchId)}
+                title="Change date"
+                aria-label="Change date"
+                className={`shrink-0 p-1 rounded-md text-slate-400 hover:text-sky-700 hover:bg-sky-100 transition-all ${
+                  active
+                    ? "opacity-100"
+                    : "opacity-0 group-hover/batchrow:opacity-100 focus-visible:opacity-100"
+                }`}
+                data-testid={`button-change-date-${b.batchId}`}
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+            )}
+          </div>
         );
       })}
     </div>
@@ -127,6 +150,7 @@ function ListView({
   expandedDates,
   onToggleDate,
   onSelectBatch,
+  onChangeDate,
 }: PlexusIQDatePanelProps) {
   const years = useMemo(() => {
     const set = new Set<number>();
@@ -223,6 +247,7 @@ function ListView({
                 batches={group.batches}
                 selectedBatchId={selectedBatchId}
                 onSelectBatch={onSelectBatch}
+                onChangeDate={onChangeDate}
               />
             )}
           </div>
@@ -238,10 +263,12 @@ function CalendarView({
   groups,
   selectedBatchId,
   onSelectBatch,
+  onChangeDate,
 }: {
   groups: PlexusIQDateGroup[];
   selectedBatchId: number | null;
   onSelectBatch: (id: number) => void;
+  onChangeDate?: (id: number) => void;
 }) {
   const today = new Date();
   const [calYear, setCalYear] = useState(today.getFullYear());
@@ -384,6 +411,7 @@ function CalendarView({
             batches={batchDateMap.get(expandedDay)!}
             selectedBatchId={selectedBatchId}
             onSelectBatch={onSelectBatch}
+            onChangeDate={onChangeDate}
           />
         </div>
       )}
@@ -399,6 +427,7 @@ function MostRecentView({
   expandedDates,
   onToggleDate,
   onSelectBatch,
+  onChangeDate,
 }: PlexusIQDatePanelProps) {
   const mostRecent = useMemo(() => {
     if (groups.length === 0) return null;
@@ -469,6 +498,7 @@ function MostRecentView({
             batches={mostRecent.batches}
             selectedBatchId={selectedBatchId}
             onSelectBatch={onSelectBatch}
+            onChangeDate={onChangeDate}
           />
         )}
       </div>
@@ -491,7 +521,7 @@ function readStoredViewMode(): ViewMode {
 }
 
 export function PlexusIQDatePanel(props: PlexusIQDatePanelProps) {
-  const { groups, selectedBatchId, expandedDates, onToggleDate, onSelectBatch } = props;
+  const { groups, selectedBatchId, expandedDates, onToggleDate, onSelectBatch, onChangeDate } = props;
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
 
   useEffect(() => {
@@ -564,6 +594,7 @@ export function PlexusIQDatePanel(props: PlexusIQDatePanelProps) {
           expandedDates={expandedDates}
           onToggleDate={onToggleDate}
           onSelectBatch={onSelectBatch}
+          onChangeDate={onChangeDate}
         />
       )}
       {viewMode === "calendar" && (
@@ -571,6 +602,7 @@ export function PlexusIQDatePanel(props: PlexusIQDatePanelProps) {
           groups={groups}
           selectedBatchId={selectedBatchId}
           onSelectBatch={onSelectBatch}
+          onChangeDate={onChangeDate}
         />
       )}
       {viewMode === "recent" && (
@@ -580,6 +612,7 @@ export function PlexusIQDatePanel(props: PlexusIQDatePanelProps) {
           expandedDates={expandedDates}
           onToggleDate={onToggleDate}
           onSelectBatch={onSelectBatch}
+          onChangeDate={onChangeDate}
         />
       )}
     </div>

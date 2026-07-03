@@ -7,6 +7,8 @@ import {
   Network,
   Sparkles,
   Loader2,
+  Clock,
+  ArrowDownAZ,
 } from "lucide-react";
 
 // Minimal night-sky List bar for the Plexus IQ operating list.
@@ -31,6 +33,10 @@ export type PlexusIQListBarProps = {
   onGenerate: () => void;
   onClinicianPdf: () => void;
   onPlexusPdf: () => void;
+  /** Active list sort. When provided (with onSortModeChange), a Time/Name
+      toggle renders on the left side of the bar. */
+  sortMode?: "time" | "name";
+  onSortModeChange?: (mode: "time" | "name") => void;
 };
 
 export function PlexusIQListBar({
@@ -48,6 +54,8 @@ export function PlexusIQListBar({
   onGenerate,
   onClinicianPdf,
   onPlexusPdf,
+  sortMode,
+  onSortModeChange,
 }: PlexusIQListBarProps) {
   const iconBtn =
     "inline-flex items-center justify-center h-8 w-8 rounded-full bg-white text-slate-900 shadow-sm transition-colors hover:bg-slate-200 disabled:bg-white/30 disabled:text-slate-500 disabled:cursor-not-allowed";
@@ -57,7 +65,47 @@ export function PlexusIQListBar({
       className="flex min-h-[3.5rem] items-center px-3 border-b border-white/10 bg-black"
       data-testid="plexus-iq-list-bar"
     >
-      <div className="flex-1" />
+      <div className="flex flex-1 items-center">
+        {sortMode && onSortModeChange && patientCount > 0 && (
+          <div
+            className="inline-flex items-center rounded-full bg-white/10 p-0.5"
+            role="group"
+            aria-label="Sort patient list"
+            data-testid="toggle-list-sort"
+          >
+            <button
+              type="button"
+              onClick={() => onSortModeChange("time")}
+              aria-pressed={sortMode === "time"}
+              title="Sort by appointment time"
+              className={`inline-flex items-center gap-1 h-7 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
+                sortMode === "time"
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-white/70 hover:text-white"
+              }`}
+              data-testid="button-list-sort-time"
+            >
+              <Clock className="h-3.5 w-3.5" />
+              Time
+            </button>
+            <button
+              type="button"
+              onClick={() => onSortModeChange("name")}
+              aria-pressed={sortMode === "name"}
+              title="Sort by name (A–Z)"
+              className={`inline-flex items-center gap-1 h-7 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
+                sortMode === "name"
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-white/70 hover:text-white"
+              }`}
+              data-testid="button-list-sort-name"
+            >
+              <ArrowDownAZ className="h-3.5 w-3.5" />
+              Name
+            </button>
+          </div>
+        )}
+      </div>
       <div
         className="shrink-0 text-sm font-semibold tracking-widest text-white uppercase"
         data-testid="text-list-bar-title"

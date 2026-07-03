@@ -22,7 +22,9 @@ import {
 import PdfPatientSelectDialog from "@/components/PdfPatientSelectDialog";
 import { isPatientPdfEligible } from "@/lib/pdfPacketGrouping";
 import { computePlexusIqStatus } from "@/lib/plexusIqStatus";
+import { parseAppointmentTimeMinutes } from "@/lib/qualificationRunOrdering";
 import { AdminReviewDialog } from "@/components/qualification/AdminReviewDialog";
+import { PlexusIQAssignDateDialog } from "@/components/plexus-iq/PlexusIQAssignDateDialog";
 import {
   PlexusIQDatePanel,
   type PlexusIQDateGroup,
@@ -312,13 +314,45 @@ export function PlexusIQOperatingList({
     () => (selectedBatchId != null ? batchDetails[selectedBatchId]?.patients ?? [] : []),
     [batchDetails, selectedBatchId],
   );
-  const sortedPatients = useMemo(
+
+  // ── Sort: appointment time (default for visit lists with times) or name ──
+  // "time" puts timed patients first in chronological order; untimed
+  // patients follow, alphabetical among themselves. The default is per-batch:
+  // time when the list has visit patients with parseable appointment times,
+  // name otherwise. A manual toggle in the list bar overrides it.
+  const hasApptTimes = useMemo(
     () =>
-      [...patients].sort((a, b) =>
-        (a.name || "").localeCompare(b.name || ""),
+      patients.some(
+        (p) =>
+          (p.patientType ?? "visit") !== "outreach" &&
+          parseAppointmentTimeMinutes(p.time) != null,
       ),
     [patients],
   );
+  const [sortOverride, setSortOverride] = useState<"time" | "name" | null>(null);
+  useEffect(() => {
+    setSortOverride(null);
+  }, [selectedBatchId]);
+  const sortMode: "time" | "name" = sortOverride ?? (hasApptTimes ? "time" : "name");
+
+  const sortedPatients = useMemo(() => {
+    const byName = (a: PatientScreening, b: PatientScreening) =>
+      (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" });
+    const arr = [...patients];
+    if (sortMode === "time") {
+      arr.sort((a, b) => {
+        const am = parseAppointmentTimeMinutes(a.time);
+        const bm = parseAppointmentTimeMinutes(b.time);
+        if (am != null && bm != null) return am - bm || byName(a, b);
+        if (am != null) return -1;
+        if (bm != null) return 1;
+        return byName(a, b);
+      });
+    } else {
+      arr.sort(byName);
+    }
+    return arr;
+  }, [patients, sortMode]);
 
   const isBatchRunning =
     selectedBatchId != null && runningBatchIds.has(selectedBatchId);
@@ -362,6 +396,64 @@ export function PlexusIQOperatingList({
 
   // ── Review panel ────────────────────────────────────────────────────
   const [reviewPatientId, setReviewPatientId] = useState<number | null>(null);
+
+  // ── Change schedule date (left date panel pencil) ───────────────────
+  // Reuses the same PATCH /api/screening-batches/:id contract as the
+  // unscheduled-batches assign flow on the Plexus IQ page.
+  const queryClient = useQueryClient();
+  const [changeDateTarget, setChangeDateTarget] = useState<{
+    id: number;
+    label: string;
+    currentDate: string | null;
+  } | null>(null);
+  const [changeDatePending, setChangeDatePending] = useState(false);
+
+  const openChangeDate = useCallback(
+    (batchId: number) => {
+      const b = batches.find((x) => x.id === batchId);
+      setChangeDateTarget({
+        id: batchId,
+        label: b
+          ? `${b.name} — currently ${b.scheduleDate ? dateLabelFor(b.scheduleDate) : "unscheduled"}`
+          : `List #${batchId}`,
+        currentDate: b?.scheduleDate ?? null,
+      });
+    },
+    [batches],
+  );
+
+  const handleChangeDate = useCallback(
+    async (batchId: number, isoDate: string) => {
+      setChangeDatePending(true);
+      try {
+        const res = await apiRequest("PATCH", `/api/screening-batches/${batchId}`, {
+          scheduleDate: isoDate,
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error ?? `Failed (${res.status})`);
+        }
+        toast({
+          title: "Date updated",
+          description: `Schedule moved to ${dateLabelFor(isoDate)}`,
+        });
+        queryClient.invalidateQueries({ queryKey: ["/api/screening-batches"] });
+        queryClient.invalidateQueries({
+          queryKey: ["/api/screening-batches/calendar-summary"],
+        });
+        setChangeDateTarget(null);
+      } catch (err) {
+        toast({
+          title: "Could not change date",
+          description: err instanceof Error ? err.message : "Update failed",
+          variant: "destructive",
+        });
+      } finally {
+        setChangeDatePending(false);
+      }
+    },
+    [queryClient, toast],
+  );
 
   // Apply an imperative focus request (e.g. after an import) by switching
   // the facility + batch selection to the requested batch, then clearing
@@ -571,6 +663,7 @@ export function PlexusIQOperatingList({
             setBatchOverride(id);
             setReviewPatientId(null);
           }}
+          onChangeDate={openChangeDate}
         />
 
         {/* Right: the patient list (stays mounted; Admin Review opens as an
@@ -591,6 +684,8 @@ export function PlexusIQOperatingList({
             onGenerate={() => selectedBatchId != null && onGenerateBatch(selectedBatchId)}
             onClinicianPdf={() => runPdf("clinician")}
             onPlexusPdf={() => runPdf("plexus")}
+            sortMode={sortMode}
+            onSortModeChange={setSortOverride}
           />
           <div className="flex-1 min-h-0 overflow-auto bg-slate-50/30">
             <div className="w-full p-3 space-y-1.5">
@@ -654,12 +749,24 @@ export function PlexusIQOperatingList({
         open={pdfMode !== null}
         mode={pdfMode}
         patients={pdfPatients}
+        preserveOrder
         onClose={() => setPdfMode(null)}
         onGenerate={(selected) => {
           const mode = pdfMode;
           setPdfMode(null);
           if (mode) openPreview(mode, selected, "print");
         }}
+      />
+
+      <PlexusIQAssignDateDialog
+        open={changeDateTarget !== null}
+        batchId={changeDateTarget?.id ?? null}
+        batchLabel={changeDateTarget?.label ?? ""}
+        initialDate={changeDateTarget?.currentDate ?? null}
+        title="Change date"
+        onClose={() => setChangeDateTarget(null)}
+        onAssign={handleChangeDate}
+        pending={changeDatePending}
       />
     </div>
   );
