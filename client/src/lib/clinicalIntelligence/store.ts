@@ -182,6 +182,21 @@ export function useClinicalIntelligence(): CiStoreState {
   return data ?? EMPTY;
 }
 
+// Same as useClinicalIntelligence but also reports whether the initial
+// server fetch has resolved. Consumers that reconcile local state into
+// evidence records (e.g. Admin Review on-open reconciliation) must wait
+// for `isLoaded` so they don't re-record entries that already exist.
+export function useClinicalIntelligenceLoaded(): {
+  state: CiStoreState;
+  isLoaded: boolean;
+} {
+  useEffect(() => {
+    migrateLegacyLocalState();
+  }, []);
+  const { data, isSuccess } = useQuery<CiStoreState>({ queryKey: CI_QUERY_KEY });
+  return { state: data ?? EMPTY, isLoaded: isSuccess };
+}
+
 export function useCiRefresh(): () => void {
   return useCallback(() => {
     invalidate();

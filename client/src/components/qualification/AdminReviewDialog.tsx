@@ -79,10 +79,18 @@ import {
   CONF_DOT,
   SOURCE_BADGE_TONE,
   useCiChipDecision,
+  normalizeSourceType,
   type AiAttachTarget,
   type AiEvidenceItem,
   type AiLogicPatientContext,
+  type AiRuleRationale,
 } from "./AdminReviewAiLogicDrawer";
+import {
+  ciRecordEvidence,
+  useClinicalIntelligenceLoaded,
+} from "@/lib/clinicalIntelligence/store";
+import { ciActorName } from "@/lib/clinicalIntelligence/permissions";
+import { useCurrentUser } from "@/hooks/api/auth";
 
 export type AdminReviewDialogProps = {
   open: boolean;
@@ -510,6 +518,18 @@ export function parseSymptomButtonsFromHx(history: string | null | undefined): S
     }
   }
   return out;
+}
+
+// Human label for an assignment target, recorded as `assignedAncillary`
+// on auto-recorded evidence. Matches the labels the bubble attach flow
+// already writes so the server-side dedupe merges them forward cleanly.
+function assignmentTargetLabel(target: AssignmentTarget): string {
+  if (target.type === "ancillary") {
+    return target.ancillaryId === "brainwave" ? "BrainWave" : "VitalWave";
+  }
+  if (target.type === "ultrasound-parent") return "Ultrasound (parent)";
+  if (target.type === "ultrasound-test") return target.testName;
+  return "All ancillaries";
 }
 
 // Merge rule-engine evidence into the parsed buttons, deduped.
@@ -1157,6 +1177,36 @@ export function AdminReviewDialog({
     reasoningAsObject(patient.reasoning),
   );
 
+  // Clinical Intelligence wiring: attaching evidence to an ancillary is
+  // itself an approval, so assignToTarget auto-records the decision in
+  // the knowledge layer (server dedupes by patient + label + sourceType).
+  const { data: ciCurrentUser } = useCurrentUser();
+  const ciActor = ciActorName(ciCurrentUser ?? null);
+  const { state: ciState, isLoaded: ciLoaded } = useClinicalIntelligenceLoaded();
+
+  // Record an approved evidence decision for an attached chip. Fire-and-
+  // forget: the CI layer is a traceability mirror, never a gate on the
+  // attach itself.
+  function recordAttachEvidence(btn: SupportingButton, target: AssignmentTarget) {
+    void ciRecordEvidence({
+      patientId: patient.id ?? null,
+      patientName: patient.name || "Unnamed patient",
+      facility: patient.facility ?? facility ?? null,
+      scheduleDate: scheduleDate ?? null,
+      sourceType: normalizeSourceType(btn.source),
+      sourceText: btn.sourceText ?? btn.label,
+      label: btn.label,
+      confidence: btn.confidence ?? "medium",
+      assignedAncillary: assignmentTargetLabel(target),
+      status: "approved",
+      decidedBy: ciActor,
+    }).catch(() => {
+      // Non-blocking: assignment state is already persisted via
+      // patient.reasoning; a failed mirror write is retried on next open
+      // by the reconcile effect below.
+    });
+  }
+
   useEffect(() => {
     if (!open) return;
     const freshAssignments = seedAssignmentsFromReasoning(
@@ -1235,6 +1285,54 @@ export function AdminReviewDialog({
   useEffect(() => {
     assignmentsRef.current = assignments;
   }, [assignments]);
+
+  // Reconcile-on-open: assignments made before this feature (or whose
+  // mirror write failed) may exist in patient.reasoning without a
+  // matching evidence record. Once the CI store has loaded, record an
+  // approved evidence entry for each assigned chip that has none — the
+  // server dedupes by patient + label + sourceType, and we skip labels
+  // that already have a decision so we never overwrite a rejection or
+  // bump audit timestamps on every open.
+  const evidenceReconciledForPatientRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!open || !ciLoaded || !ciCurrentUser) return;
+    const pid = patient.id ?? null;
+    if (pid == null) return;
+    if (evidenceReconciledForPatientRef.current === pid) return;
+    evidenceReconciledForPatientRef.current = pid;
+
+    const existing = new Set(
+      ciState.evidence
+        .filter((e) => e.patientId === pid)
+        .map((e) => `${e.sourceType}::${e.label.toLowerCase()}`),
+    );
+    const queued = new Set<string>();
+    const reconcile = (btn: SupportingButton, target: AssignmentTarget) => {
+      const key = `${normalizeSourceType(btn.source)}::${btn.label.toLowerCase()}`;
+      if (existing.has(key) || queued.has(key)) return;
+      queued.add(key);
+      recordAttachEvidence(btn, target);
+    };
+    const a = assignmentsRef.current;
+    for (const b of a.brainwave) {
+      reconcile(b, { type: "ancillary", ancillaryId: "brainwave" });
+    }
+    for (const b of a.vitalwave) {
+      reconcile(b, { type: "ancillary", ancillaryId: "vitalwave" });
+    }
+    for (const b of a.ultrasound.parent) {
+      reconcile(b, { type: "ultrasound-parent" });
+    }
+    for (const [testName, list] of Object.entries(a.ultrasound.byTestName)) {
+      for (const b of list ?? []) {
+        reconcile(b, { type: "ultrasound-test", testName });
+      }
+    }
+    // recordAttachEvidence and ciState are intentionally read at run
+    // time only — this effect fires once per patient open, after the
+    // CI store has loaded and the user is known.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, ciLoaded, ciCurrentUser, patient.id]);
 
   // Re-seed the lastWrittenReasoningRef whenever the dialog opens or
   // the patient swaps. The seed useEffect above resets `assignments`
@@ -1458,6 +1556,37 @@ export function AdminReviewDialog({
     for (const c of candidates) map.set(c.ancillaryId, c);
     return map;
   }, [candidates]);
+
+  // Plain-language rationale for each Rule Engine evidence chip, keyed by
+  // lowercase label. Targets come from the rule candidates that cite the
+  // chip's evidence id; the "why" comes from the chip's own detail text.
+  // Surfaced in the AI clue bubble popup so a Rule Engine suggestion is
+  // never a black box — the admin can read which rule fired, what it
+  // supports, and why it matched this patient.
+  const ruleRationaleByLabel = useMemo(() => {
+    const map = new Map<string, AiRuleRationale>();
+    for (const chip of apiEvidence) {
+      const targets = candidates
+        .filter((c) => c.evidenceIds.includes(chip.id))
+        .map((c) => c.label);
+      const kindLabel =
+        chip.kind === "diagnosis" || chip.kind === "icd"
+          ? "Diagnosis"
+          : chip.kind === "medication"
+            ? "Medication"
+            : chip.kind === "prior_test"
+              ? "Prior testing"
+              : "Symptom";
+      map.set(chip.label.toLowerCase(), {
+        name: `${kindLabel} rule: ${chip.label}`,
+        targets,
+        why:
+          chip.detail?.trim() ||
+          `The screening rule engine found "${chip.label}" in this patient's ${chip.source} data.`,
+      });
+    }
+    return map;
+  }, [apiEvidence, candidates]);
 
   const ageNumber: number | null =
     typeof patient.age === "number" ? patient.age : null;
@@ -1822,7 +1951,11 @@ export function AdminReviewDialog({
   // Assignment helper. A missing ICD code does NOT block assignment —
   // every diagnosis from patient.diagnoses is a valid SupportingButton.
   // ICD Search is an optional add-on, not a prerequisite.
-  function assignToTarget(target: AssignmentTarget, btn: SupportingButton) {
+  function assignToTarget(
+    target: AssignmentTarget,
+    btn: SupportingButton,
+    opts?: { skipEvidenceRecord?: boolean },
+  ) {
     // Corrective patch: compute the next snapshot ONCE using the
     // synchronously-tracked ref (not React state) so rapid sequential
     // clicks chain correctly even before React commits.
@@ -1873,6 +2006,13 @@ export function AdminReviewDialog({
           ? `Added medication: ${btn.label}`
           : `Added symptom: ${btn.label}`;
     recordAdminReviewUpdate(type, label, { target });
+    // Attaching IS the approval — auto-record the evidence decision with
+    // its assigned ancillary so no separate "Approve evidence" click is
+    // needed. The bubble attach flow records its own (possibly edited)
+    // label, so it opts out to avoid a duplicate write.
+    if (!opts?.skipEvidenceRecord) {
+      recordAttachEvidence(btn, target);
+    }
     // Subtle optional "save as future AI logic?" prompt (prototype).
     setAiPromptLabel(btn.label);
   }
@@ -2879,8 +3019,12 @@ export function AdminReviewDialog({
           icdCode: b.icdCode ?? null,
           requiresIcd: b.requiresIcd,
           confidence: b.confidence,
+          rule:
+            b.source === "Rule Engine"
+              ? ruleRationaleByLabel.get(b.label.toLowerCase()) ?? null
+              : null,
         })),
-    [availableButtons],
+    [availableButtons, ruleRationaleByLabel],
   );
 
   // Bridge bubble attach actions onto the existing assignment engine.
@@ -4191,7 +4335,10 @@ export function AdminReviewDialog({
               ultrasoundTests={ultrasoundTests}
               onAttach={(item, target) => {
                 const btn = findButtonForBubble(item);
-                if (btn) assignToTarget(target, btn);
+                // skipEvidenceRecord: the bubble attach flow records its
+                // own evidence decision (with any label edits) inside
+                // AiEvidenceBubblesRow — avoid a duplicate write here.
+                if (btn) assignToTarget(target, btn, { skipEvidenceRecord: true });
               }}
               isAttached={(item, target) => {
                 const btn = findButtonForBubble(item);

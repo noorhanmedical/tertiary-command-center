@@ -44,6 +44,7 @@ import {
 import {
   BookOpen,
   Check,
+  ChevronDown,
   ChevronRight,
   FlaskConical,
   GitBranch,
@@ -85,6 +86,16 @@ export type AiAttachTarget =
   | { type: "ultrasound-parent" }
   | { type: "ultrasound-test"; testName: string };
 
+// Plain-language rationale for a Rule Engine-derived clue: which rule
+// matched, what it targets, and why it fired for this patient. Shown in
+// the bubble popup so the admin can defend the suggestion — wording is
+// CMS audit-ready and legally defensible.
+export type AiRuleRationale = {
+  name: string;
+  targets: string[];
+  why: string;
+};
+
 export type AiEvidenceItem = {
   id: string;
   label: string;
@@ -94,6 +105,8 @@ export type AiEvidenceItem = {
   icdCode?: string | null;
   requiresIcd?: boolean;
   confidence?: CiConfidence;
+  // Present only for Rule Engine-derived items.
+  rule?: AiRuleRationale | null;
 };
 
 export type AiLogicPatientContext = {
@@ -112,7 +125,7 @@ export type AiLogicPatientContext = {
   updatesCount: number;
 };
 
-function normalizeSourceType(source: string): CiSourceType {
+export function normalizeSourceType(source: string): CiSourceType {
   const upper = source.toUpperCase();
   if (upper === "DX") return "DX";
   if (upper === "RX") return "RX";
@@ -678,6 +691,9 @@ export function AiEvidenceBubblesRow({
   const ci = useClinicalIntelligence();
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [openId, setOpenId] = useState<string | null>(null);
+  // Collapsed by default so the Changes panel below stays visible —
+  // the admin expands the clue tray only when they want to work it.
+  const [expanded, setExpanded] = useState(false);
 
   // Evidence decisions already recorded for this patient (persisted).
   // Keyed by label + sourceType to match the ciRecordEvidence dedupe key,
@@ -799,13 +815,27 @@ export function AiEvidenceBubblesRow({
       className="mx-3 mb-2 rounded-2xl border border-violet-200/60 bg-violet-50/40 px-3 py-2"
       data-testid="admin-review-ai-bubbles"
     >
-      <div className="flex items-center gap-1.5 mb-1.5">
-        <Lightbulb className="w-3 h-3 text-violet-600" />
+      <button
+        type="button"
+        onClick={() => setExpanded((e) => !e)}
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-1.5 text-left"
+        data-testid="admin-review-ai-clues-toggle"
+        data-clue-count={items.length}
+      >
+        <Lightbulb className="w-3 h-3 text-violet-600 shrink-0" />
         <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-700">
-          AI-identified clinical clues
+          AI clues ({items.length})
         </span>
-      </div>
-      <div className="flex max-h-36 flex-wrap gap-1.5 overflow-y-auto md:max-h-none md:overflow-visible">
+        <ChevronDown
+          className={`ml-auto h-3 w-3 shrink-0 text-violet-500 transition-transform ${
+            expanded ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+      {expanded && (
+        <>
+      <div className="mt-1.5 flex max-h-36 flex-wrap gap-1.5 overflow-y-auto">
         {items.map((item) => {
           const decision = decisions.get(
             `${normalizeSourceType(item.source)}::${labelOf(item).toLowerCase()}`,
@@ -863,6 +893,24 @@ export function AiEvidenceBubblesRow({
                     <span className="block truncate">“{item.sourceText}”</span>
                   ) : null}
                 </div>
+                {item.rule && (
+                  <div
+                    className="mb-2 rounded-lg border border-violet-200 bg-violet-50/70 px-2 py-1.5 space-y-0.5"
+                    data-testid={`bubble-rule-rationale-${item.id}`}
+                  >
+                    <div className="text-[10px] font-semibold text-violet-800">
+                      {item.rule.name}
+                    </div>
+                    {item.rule.targets.length > 0 && (
+                      <div className="text-[10px] text-violet-700">
+                        Supports: {item.rule.targets.join(", ")}
+                      </div>
+                    )}
+                    <div className="text-[10px] leading-snug text-violet-700/80">
+                      Why it matched: {item.rule.why}
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-0.5">
                   <button
                     type="button"
@@ -975,6 +1023,8 @@ export function AiEvidenceBubblesRow({
       <p className="mt-1.5 text-[10px] leading-snug text-violet-700/70">
         {CI_DOWNSTREAM_LANGUAGE}
       </p>
+        </>
+      )}
     </div>
   );
 }
