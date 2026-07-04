@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // recordCallResult — parity test (Batch H Step 1).
 //
 // Runnable via:
@@ -220,10 +221,12 @@ for (const outcome of [
   check(threw, `§8: unknown outcome must throw`);
 }
 
-if (failures.length > 0) {
-  console.error("recordCallResult parity test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("recordCallResult parity test passed.");
-}
+describe("recordCallResult parity test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "recordCallResult parity test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

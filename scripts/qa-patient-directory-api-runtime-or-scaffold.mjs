@@ -109,7 +109,7 @@ requireNotText(SVC, [
 
 // Run the unit test.
 if (failures.length === 0) {
-  try { execSync(`npx tsx ${TEST}`, { cwd: root, stdio: ["ignore", "inherit", "inherit"] }); }
+  try { execSync(`npx vitest run ${TEST}`, { cwd: root, stdio: ["ignore", "inherit", "inherit"] }); }
   catch { failures.push("Patient Directory service test FAILED"); }
 }
 

@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Outreach side-effect matrix parity test (Batch 16).
 
 import { OUTREACH_CALL_RESULT_SIDE_EFFECT_MATRIX } from "../../../../tests/fixtures/outreachCallResultSideEffectMatrix.fixture";
@@ -46,9 +47,12 @@ for (const m of OUTREACH_CALL_RESULT_SIDE_EFFECT_MATRIX) {
   check(!j.includes("PlexusIq"), "§5: matrix has no PlexusIq");
 }
 
-if (failures.length > 0) {
-  console.error("Outreach side-effect matrix test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-}
-console.log("Outreach side-effect matrix test passed.");
+describe("Outreach side-effect matrix test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Outreach side-effect matrix test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

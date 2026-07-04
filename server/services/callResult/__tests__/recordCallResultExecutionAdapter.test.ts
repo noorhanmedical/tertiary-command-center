@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // recordCallResult execution adapter — fake-deps parity test
 // (Batch H Step 5A).
 //
@@ -693,10 +694,12 @@ for (const outcome of [
   check(opts.callbackHours === 24, "§12: callbackHours typed");
 }
 
-if (failures.length > 0) {
-  console.error("recordCallResult execution adapter test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("recordCallResult execution adapter test passed.");
-}
+describe("recordCallResult execution adapter test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "recordCallResult execution adapter test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

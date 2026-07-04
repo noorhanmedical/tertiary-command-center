@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Document / report readiness — parity test (Bundle 26).
 //
 // Runnable via:
@@ -188,10 +189,12 @@ function evaluateReadiness_REFERENCE(
   check(!threw, "§7: evaluator must not mutate input");
 }
 
-if (failures.length > 0) {
-  console.error("Document readiness parity test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Document readiness parity test passed.");
-}
+describe("Document readiness parity test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Document readiness parity test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

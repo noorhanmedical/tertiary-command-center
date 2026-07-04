@@ -246,7 +246,7 @@ requireText(TEST_REL, [
 // 8. Run the fake-deps parity test via tsx.
 if (failures.length === 0) {
   try {
-    execSync(`npx tsx ${TEST_REL}`, {
+    execSync(`npx vitest run ${TEST_REL}`, {
       cwd: root,
       stdio: ["ignore", "inherit", "inherit"],
     });

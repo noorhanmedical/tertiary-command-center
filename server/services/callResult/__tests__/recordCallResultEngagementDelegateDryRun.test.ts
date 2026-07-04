@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Engagement delegation dry-run harness (Batch 11 of split-brain run).
 //
 // Proves that legacy-shaped engagement inputs can be threaded through
@@ -249,9 +250,12 @@ for (const env of CALL_RESULT_PARITY_FIXTURE) {
   check(steps.includes("followUpTaskCreated"), "§3: engagement-owned includes followUpTaskCreated");
 }
 
-if (failures.length > 0) {
-  console.error("Engagement delegate dry-run FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-}
-console.log("Engagement delegate dry-run passed.");
+describe("Engagement delegate dry-run", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Engagement delegate dry-run failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

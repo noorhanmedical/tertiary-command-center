@@ -42,3 +42,4 @@
 - [Admin Review CI evidence mirror](admin-review-ci-evidence-mirror.md) — attach = approval auto-record; dedupe key sourceType::label; fire-and-forget mirror + reconcile-on-open, never gate the attach.
 - [Express middleware params typing](express-middleware-params-typing.md) — adding a middleware arg to app.post/patch flips TS overloads so req.params values become string|string[]; wrap with String() and re-run tsc.
 - [Dev DB migration lag](dev-db-migration-lag.md) — migrations are not auto-applied; older tables can be missing while try/catch event writers silently no-op, faking success.
+- [Server tests are vitest suites](server-tests-vitest.md) — never exec server __tests__ files via tsx (crashes); qa guards use `npx vitest run <file>`; live-DB tests stay tsx scripts in the vitest exclude list.

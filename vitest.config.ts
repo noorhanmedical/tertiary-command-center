@@ -11,8 +11,15 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    // Server __tests__ files are standalone tsx scripts (run via npm scripts),
-    // not vitest suites — only client tests are vitest-based today.
-    include: ["client/src/**/__tests__/**/*.test.{ts,tsx}"],
+    include: [
+      "client/src/**/__tests__/**/*.test.{ts,tsx}",
+      "server/**/__tests__/**/*.test.ts",
+    ],
+    // operational-queue/parity.test.ts is a live-DB script (needs DATABASE_URL
+    // + PARITY_TEST_USER_ID); it stays a standalone tsx script, not a vitest suite.
+    exclude: [
+      "**/node_modules/**",
+      "server/modules/operational-queue/__tests__/parity.test.ts",
+    ],
   },
 });

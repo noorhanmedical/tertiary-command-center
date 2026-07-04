@@ -156,7 +156,7 @@ requireText(TEST, [
 // Run the test.
 if (failures.length === 0) {
   try {
-    execSync(`npx tsx ${TEST}`, { cwd: root, stdio: ["ignore", "inherit", "inherit"] });
+    execSync(`npx vitest run ${TEST}`, { cwd: root, stdio: ["ignore", "inherit", "inherit"] });
   } catch {
     failures.push("Engagement executor test FAILED — see output above");
   }

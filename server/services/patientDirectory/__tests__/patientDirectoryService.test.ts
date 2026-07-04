@@ -1,3 +1,4 @@
+import { it } from "vitest";
 import assert from "node:assert/strict";
 import {
   getPatientDirectorySnapshot,
@@ -98,4 +99,6 @@ async function main() {
   console.log("Patient Directory service test passed.");
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+it("Patient Directory service", async () => {
+  await main();
+});

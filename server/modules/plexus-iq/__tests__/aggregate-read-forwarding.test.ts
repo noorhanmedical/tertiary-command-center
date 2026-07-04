@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Plexus IQ aggregate read forwarding test (Bundle 52).
 //
 // Runnable via:
@@ -237,10 +238,12 @@ function eq<T>(actual: T, expected: T, label: string): void {
   }
 }
 
-if (failures.length > 0) {
-  console.error("Plexus IQ aggregate read forwarding test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Plexus IQ aggregate read forwarding test passed.");
-}
+describe("Plexus IQ aggregate read forwarding test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Plexus IQ aggregate read forwarding test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

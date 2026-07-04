@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Engagement response-shape parity test (Batch 8).
 
 import {
@@ -38,9 +39,12 @@ check(
   `§4: expected 10 supported outcomes, got ${ENGAGEMENT_CALL_RESULT_SUPPORTED_OUTCOMES.length}`,
 );
 
-if (failures.length > 0) {
-  console.error("Engagement response-shape test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-}
-console.log("Engagement response-shape test passed.");
+describe("Engagement response-shape test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Engagement response-shape test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

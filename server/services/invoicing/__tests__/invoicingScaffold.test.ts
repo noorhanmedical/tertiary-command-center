@@ -1,3 +1,4 @@
+import { it } from "vitest";
 import assert from "node:assert/strict";
 import {
   InvoicingScaffoldError,
@@ -85,4 +86,6 @@ async function main() {
   console.log("Invoicing scaffold test passed.");
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+it("Invoicing scaffold", async () => {
+  await main();
+});

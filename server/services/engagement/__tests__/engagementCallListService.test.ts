@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Engagement call-list service — dormant scaffold test (Batch 15).
 //
 // Runnable via:
@@ -101,9 +102,12 @@ function makeFakeDeps(): { deps: EngagementCallListDependencies; lastCallFilters
   check(r.items === sampleItems, "§5: items reference passes through");
 }
 
-if (failures.length > 0) {
-  console.error("Engagement call-list service test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-}
-console.log("Engagement call-list service test passed.");
+describe("Engagement call-list service test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Engagement call-list service test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

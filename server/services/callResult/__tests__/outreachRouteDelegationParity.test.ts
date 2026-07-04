@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Outreach route delegation parity harness (Batch B5 of Phase 1 run).
 //
 // Drives canonical-set outreach outcomes through the outreach executor
@@ -179,9 +180,12 @@ for (const outcome of CANONICAL_OUTREACH_OUTCOMES) {
   }
 }
 
-if (failures.length > 0) {
-  console.error("Outreach route delegation parity FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-}
-console.log("Outreach route delegation parity passed.");
+describe("Outreach route delegation parity", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Outreach route delegation parity failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

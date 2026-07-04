@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Canonical side-effect ownership matrix v2 — parity test (Batch G).
 
 import {
@@ -100,9 +101,12 @@ eq(
   check(!engOwned.includes("outreachCallCreated"), "§8: engagement does NOT own outreach insert");
 }
 
-if (failures.length > 0) {
-  console.error("Side-effect ownership v2 test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-}
-console.log("Side-effect ownership v2 test passed.");
+describe("Side-effect ownership v2 test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Side-effect ownership v2 test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

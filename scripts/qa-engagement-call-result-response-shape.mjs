@@ -58,7 +58,7 @@ requireText(ROUTE, [
 // Run the parity test.
 if (failures.length === 0) {
   try {
-    execSync(`npx tsx ${TEST}`, { cwd: root, stdio: ["ignore", "inherit", "inherit"] });
+    execSync(`npx vitest run ${TEST}`, { cwd: root, stdio: ["ignore", "inherit", "inherit"] });
   } catch {
     failures.push("Engagement response-shape test FAILED");
   }

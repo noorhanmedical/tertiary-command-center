@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Ancillary qualification evidence — fixture verdict test (Bundle 41).
 //
 // Runnable via:
@@ -156,10 +157,12 @@ for (const b of ANCILLARY_QUALIFICATION_FIXTURE_BUNDLES) {
 const _typeProbe: AncillaryNameFixture = "brainwave";
 void _typeProbe;
 
-if (failures.length > 0) {
-  console.error("Ancillary qualification evidence fixture test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Ancillary qualification evidence fixture test passed.");
-}
+describe("Ancillary qualification evidence fixture test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Ancillary qualification evidence fixture test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

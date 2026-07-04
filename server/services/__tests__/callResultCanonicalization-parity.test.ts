@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Call-result canonicalization — parity test (Batch B).
 //
 // Runnable via:
@@ -194,10 +195,12 @@ for (const env of CALL_RESULT_PARITY_FIXTURE) {
 const _typeProbe: CallResultOutcomeFixture = "callback";
 void _typeProbe;
 
-if (failures.length > 0) {
-  console.error("Call-result canonicalization parity test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Call-result canonicalization parity test passed.");
-}
+describe("Call-result canonicalization parity test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Call-result canonicalization parity test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

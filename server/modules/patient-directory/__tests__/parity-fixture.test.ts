@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Patient Directory — parity fixture (Bundle 21).
 //
 // Runnable via:
@@ -319,10 +320,12 @@ const fixtureRows: ScreeningRow[] = [
   }
 }
 
-if (failures.length > 0) {
-  console.error("Patient Directory parity fixture FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Patient Directory parity fixture test passed.");
-}
+describe("Patient Directory parity fixture", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Patient Directory parity fixture failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

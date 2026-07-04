@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Journey-timeline identity-scoping regression test.
 //
 // Runnable via:
@@ -133,10 +134,12 @@ function check(cond: boolean, msg: string): void {
   );
 }
 
-if (failures.length > 0) {
-  console.error("Journey-timeline identity-scoping test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Journey-timeline identity-scoping test passed.");
-}
+describe("Journey-timeline identity-scoping test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Journey-timeline identity-scoping test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

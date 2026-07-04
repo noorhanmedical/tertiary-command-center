@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Outreach executor — fake-deps test (Batch 14).
 
 import {
@@ -197,9 +198,12 @@ check(
   }
 }
 
-if (failures.length > 0) {
-  console.error("Outreach executor test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-}
-console.log("Outreach executor test passed.");
+describe("Outreach executor test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Outreach executor test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

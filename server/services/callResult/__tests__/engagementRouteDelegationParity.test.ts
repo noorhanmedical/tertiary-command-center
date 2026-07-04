@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Engagement route delegation parity harness (Batch 4 of Engagement
 // completion run).
 //
@@ -238,9 +239,12 @@ for (const outcome of CANONICAL_OUTCOMES) {
   eq(r.ownershipUpdated, false, "§2: ownershipUpdated false");
 }
 
-if (failures.length > 0) {
-  console.error("Engagement route delegation parity FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-}
-console.log("Engagement route delegation parity passed.");
+describe("Engagement route delegation parity", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Engagement route delegation parity failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

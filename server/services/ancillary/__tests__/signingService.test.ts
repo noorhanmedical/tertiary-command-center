@@ -1,3 +1,4 @@
+import { it } from "vitest";
 import assert from "node:assert/strict";
 import {
   SIGNING_TRANSITIONS,
@@ -56,4 +57,6 @@ async function main() {
   console.log("Signing service test passed.");
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+it("Signing service", async () => {
+  await main();
+});

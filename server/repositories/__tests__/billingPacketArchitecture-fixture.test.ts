@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Billing packet architecture fixture — import probe (Bundle 28).
 //
 // Runnable via:
@@ -121,10 +122,12 @@ check(
 const _typeProbe: BillingReadinessStatusFixture = "not_ready";
 void _typeProbe;
 
-if (failures.length > 0) {
-  console.error("Billing packet architecture fixture test FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Billing packet architecture fixture test passed.");
-}
+describe("Billing packet architecture fixture test", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Billing packet architecture fixture test failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

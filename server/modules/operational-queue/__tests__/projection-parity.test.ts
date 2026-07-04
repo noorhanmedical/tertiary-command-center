@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Operational queue → SchedulerAssignment projection — parity test
 // (Batch 11d.2 / Bundle 12).
 //
@@ -722,10 +723,12 @@ check(
 }
 
 // ─── Final result ─────────────────────────────────────────────────────
-if (failures.length > 0) {
-  console.error("Operational queue projection parity FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Operational queue projection parity test passed.");
-}
+describe("Operational queue projection parity", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Operational queue projection parity failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});

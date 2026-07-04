@@ -1,3 +1,4 @@
+import { describe, it } from "vitest";
 // Engagement Board v2 — parity fixture (Bundle 22).
 //
 // Runnable via:
@@ -400,10 +401,12 @@ const fixtureCases: ExecCaseRow[] = [
   }
 }
 
-if (failures.length > 0) {
-  console.error("Engagement Board v2 parity fixture FAILED:");
-  for (const f of failures) console.error(`- ${f}`);
-  process.exit(1);
-} else {
-  console.log("Engagement Board v2 parity fixture test passed.");
-}
+describe("Engagement Board v2 parity fixture", () => {
+  it("passes all checks", () => {
+    if (failures.length > 0) {
+      throw new Error(
+        "Engagement Board v2 parity fixture failed:" + "\n" + failures.map((f) => `- ${f}`).join("\n"),
+      );
+    }
+  });
+});
