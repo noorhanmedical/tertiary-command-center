@@ -5,7 +5,7 @@ import {
   Upload, FileText, ChevronLeft, ChevronRight, Check, AlertCircle, ClipboardList,
   Sparkles, Send, Minimize2, Maximize2, FileBarChart, FilePlus, User, Bell, Bot,
   Home, BookOpen, CalendarDays, Mail, ClipboardPen, Pill, History, ShieldCheck, Users, Search, Megaphone,
-  NotebookPen, ChevronDown, Wrench, PhoneCall, Pin, PinOff,
+  NotebookPen, ChevronDown, Wrench, PhoneCall, Pin, PinOff, Landmark,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -45,6 +45,7 @@ import { PortalTemplatesResourcesTab } from "@/components/portal/PortalTemplates
 import { PortalDocumentLibraryTab } from "@/components/portal/PortalDocumentLibraryTab";
 import { QuickNoteTool } from "@/components/portal/QuickNoteTool";
 import { InternalContactsTool } from "@/components/portal/InternalContactsTool";
+import InvoiceDeskPanel from "@/components/portal/InvoiceDeskPanel";
 import {
   SchedulePatientDialog,
   type SchedulePatientDialogPatient,
@@ -177,7 +178,10 @@ type PortalTabKind =
   | "caseOverview"
   // Left-rail Calls tool → center-canvas Calls Repository (worked-call
   // archive + recall + manual add-to-call-list). Steps 6 & 7.
-  | "calls";
+  | "calls"
+  // Task #699 — restricted Invoice Desk over the Plexus Bank mock store
+  // (create/send/resend/status/contact-note only).
+  | "invoiceDesk";
 type PortalTab = {
   id: string;
   kind: PortalTabKind;
@@ -1824,7 +1828,9 @@ export function TeamPortalShell({
                     ? "Marketing"
                     : kind === "calls"
                       ? "Calls"
-                      : "Documents";
+                      : kind === "invoiceDesk"
+                        ? "Invoice Desk"
+                        : "Documents";
 
     const existing = portalTabs.find((t) => t.id === id);
     if (existing) {
@@ -2399,6 +2405,13 @@ export function TeamPortalShell({
                     </div>
                   );
                 }
+                if (activeTab?.kind === "invoiceDesk") {
+                  return (
+                    <div className="h-full rounded-[28px] bg-white shadow-[0_20px_70px_rgba(15,23,42,0.10)] overflow-hidden" data-testid="playground-invoice-desk">
+                      <InvoiceDeskPanel />
+                    </div>
+                  );
+                }
                 // Call-list Playground workflow tabs.
                 if (activeTab?.kind === "call" && activeTab.caseContext) {
                   const ctx = activeTab.caseContext;
@@ -2868,6 +2881,14 @@ export function TeamPortalShell({
                           onClick: () => openPortalTab("patientSearch"),
                           active: activeKind === "patientSearch",
                           testId: "left-rail-tool-patient-search",
+                        },
+                        {
+                          id: "invoiceDesk",
+                          label: "Invoice Desk",
+                          icon: Landmark,
+                          onClick: () => openPortalTab("invoiceDesk"),
+                          active: activeKind === "invoiceDesk",
+                          testId: "left-rail-tool-invoice-desk",
                         },
                       ],
                     },

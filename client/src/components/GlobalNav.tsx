@@ -21,6 +21,7 @@ import {
   ScanLine,
   BarChart3,
   ClipboardCheck,
+  Landmark,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { AuthUser } from "@/App";
@@ -55,6 +56,7 @@ const NAV_ITEMS: NavItemDef[] = [
   // Slice 1.5: legacy duplicate Patient-Directory-live nav item
   // removed. The /patient-directory/live URL still redirects to
   // /patient-directory for back-compat with existing bookmarks.
+  { href: "/plexus-bank",      label: "Plexus Bank",      Icon: Landmark,     roles: ["admin"] },
   { href: "/plexus-tasks",     label: "Plexus Tasks",     Icon: CheckSquare,  roles: ["admin", "clinician", "scheduler", "biller"] },
   { href: "/document-library", label: "Document Library", Icon: Library,      roles: ["admin"] },
   { href: "/clinician-portal", label: "Clinician Portal", Icon: Stethoscope,    roles: ["admin", "clinician"] },

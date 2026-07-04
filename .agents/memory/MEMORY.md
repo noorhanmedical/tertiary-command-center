@@ -37,6 +37,7 @@
 - [Team Portal e2e testing recipe](team-portal-e2e-testing.md) — pin rails first, session-only calendarBehavior pref gates the quick-schedule pop-up, free-text patient can't submit (needs screening id), use view-as for call rows.
 - [Portal patient-search endpoints](portal-patient-search-endpoints.md) — /api/portal/patient-search & command-center reads were never implemented; use /api/plexus/patients/search; logged-in unmatched /api routes return SPA HTML 200.
 - [Patient SMS via Twilio](patient-sms-twilio.md) — gated adapter (null when unconfigured, never fake sends); public webhooks under /api need explicit requireAuth exemptions; the SMS QA guard now enforces enabled-state honesty, not dormancy.
+- [Vitest validation install-prompt hang](vitest-validation-hang.md) — the `test` validation (`npx vitest run`) stalls on npx's install prompt whenever vitest drops out of node_modules; reinstall via the packager, then rerun.
 - [Admin Review CI evidence mirror](admin-review-ci-evidence-mirror.md) — attach = approval auto-record; dedupe key sourceType::label; fire-and-forget mirror + reconcile-on-open, never gate the attach.
 - [Express middleware params typing](express-middleware-params-typing.md) — adding a middleware arg to app.post/patch flips TS overloads so req.params values become string|string[]; wrap with String() and re-run tsc.
 - [Dev DB migration lag](dev-db-migration-lag.md) — migrations are not auto-applied; older tables can be missing while try/catch event writers silently no-op, faking success.
