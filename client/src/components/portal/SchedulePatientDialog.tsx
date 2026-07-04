@@ -11,6 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { CanonicalMonthCalendar } from "@/calendar";
 import { useToast } from "@/hooks/use-toast";
 import {
   Loader2,
@@ -23,11 +29,14 @@ import {
   ShieldCheck,
   Bell,
   CheckCircle2,
+  Check,
   MapPin,
   UserPlus,
   X,
+  XCircle,
   UserCheck,
   AlertTriangle,
+  CalendarDays,
 } from "lucide-react";
 import {
   fetchPatientScheduleDayContext,
@@ -206,6 +215,74 @@ export function buildScheduleNote(
   return parts.length ? parts.join(" · ") : null;
 }
 
+// Per-test booking outcome surfaced after a fan-out confirm so partial
+// failures are never silent.
+export type BookingResult = { service: string; ok: boolean; error?: string };
+
+// Clean, Apple-calendar-style date picker: a trigger button that opens a
+// popover hosting the canonical month grid. Rendered above the z-[80]
+// team-portal overlay (PopoverContent z-[95]). Selecting a day fires
+// onChange and closes the popover.
+function MonthCalendarPopover({
+  value,
+  onChange,
+  testId,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (isoDate: string) => void;
+  testId: string;
+  ariaLabel?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedCell = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? {
+        [value]: {
+          badge: {
+            icon: <Check className="h-2.5 w-2.5" />,
+            className: "bg-plexus-navy-800 text-white",
+            title: "Selected date",
+          },
+        },
+      }
+    : {};
+  const initialMonth = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? new Date(`${value}T00:00:00`)
+    : undefined;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={ariaLabel ?? "Pick a date"}
+          className="mt-1 flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:border-slate-300 focus:outline-none focus:ring-2"
+          style={{ ["--tw-ring-color" as string]: ACCENT }}
+          data-testid={testId}
+        >
+          <CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />
+          <span className="truncate">
+            {value ? prettyDateLong(value) : "Select a date"}
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="z-[95] w-[340px] p-3"
+        data-testid={`${testId}-popover`}
+      >
+        <CanonicalMonthCalendar
+          cells={selectedCell}
+          initialMonth={initialMonth}
+          onSelectDate={(iso) => {
+            onChange(iso);
+            setOpen(false);
+          }}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function ContextChip({
   icon,
   label,
@@ -299,15 +376,26 @@ export function SchedulePatientDialog({
   const initialTime =
     defaultTime && /^\d{1,2}:\d{2}$/.test(defaultTime) ? defaultTime : "";
   const [selectedDate, setSelectedDate] = useState<string>(initialDate);
-  const [serviceType, setServiceType] = useState<string>(
-    patient?.serviceType ?? "",
+  // Multi-test selection — staff can book several ancillary tests in one
+  // pass. Seeds from the incoming target service when present.
+  const [selectedServices, setSelectedServices] = useState<string[]>(
+    patient?.serviceType ? [patient.serviceType] : [],
   );
+  // Optional per-test date/time overrides. A test with no entry uses the
+  // shared selectedDate + time; an entry (even partial) diverges.
+  const [serviceOverrides, setServiceOverrides] = useState<
+    Record<string, { date?: string; time?: string }>
+  >({});
   const [appointmentType, setAppointmentType] = useState<string>(
     APPOINTMENT_TYPES[0],
   );
   const [location, setLocation] = useState<string>("");
   const [time, setTime] = useState<string>(initialTime);
   const [note, setNote] = useState<string>("");
+  // Per-test results from the last confirm; drives the partial-failure panel.
+  const [bookingResults, setBookingResults] = useState<BookingResult[] | null>(
+    null,
+  );
 
   // New-patient (walk-in) mode: no screening/case id means the identity is
   // whatever the staff member types here — Name / DOB / Facility become
@@ -346,7 +434,9 @@ export function SchedulePatientDialog({
   useEffect(() => {
     if (open) {
       setSelectedDate(initialDate);
-      setServiceType(patient?.serviceType ?? "");
+      setSelectedServices(patient?.serviceType ? [patient.serviceType] : []);
+      setServiceOverrides({});
+      setBookingResults(null);
       setAppointmentType(APPOINTMENT_TYPES[0]);
       setLocation(patient?.facilityId ?? "");
       setTime(initialTime);
@@ -422,9 +512,45 @@ export function SchedulePatientDialog({
       enabled: open && !!patient,
     });
 
-  // Name-only patients (walk-ins / not yet screened) are schedulable:
-  // the server creates a minimal execution case stub from patientName
-  // when neither id resolves. Either an id OR a non-empty name is enough.
+  // Effective date/time for a single test: its override wins, else shared.
+  const effectiveFor = (svc: string): { date: string; time: string } => {
+    const ov = serviceOverrides[svc] ?? {};
+    return { date: ov.date || selectedDate, time: ov.time || time };
+  };
+
+  // Test selection helpers.
+  const toggleService = (svc: string) => {
+    setSelectedServices((prev) =>
+      prev.includes(svc) ? prev.filter((s) => s !== svc) : [...prev, svc],
+    );
+    // Drop any override when a test is deselected so it can't leak back.
+    setServiceOverrides((prev) => {
+      if (!prev[svc]) return prev;
+      const next = { ...prev };
+      delete next[svc];
+      return next;
+    });
+  };
+  const enableOverride = (svc: string) =>
+    setServiceOverrides((prev) => ({
+      ...prev,
+      [svc]: { date: selectedDate, time },
+    }));
+  const resetOverride = (svc: string) =>
+    setServiceOverrides((prev) => {
+      const next = { ...prev };
+      delete next[svc];
+      return next;
+    });
+  const patchOverride = (
+    svc: string,
+    patch: { date?: string; time?: string },
+  ) =>
+    setServiceOverrides((prev) => ({
+      ...prev,
+      [svc]: { ...(prev[svc] ?? {}), ...patch },
+    }));
+
   const canSubmit = useMemo(() => {
     if (!patient) return false;
     const hasIdentity =
@@ -432,46 +558,113 @@ export function SchedulePatientDialog({
       patient.executionCaseId != null ||
       !!effectiveName;
     if (!hasIdentity) return false;
-    if (!serviceType.trim()) return false;
-    return !!combineLocalDateAndTimeToIso(selectedDate, time);
-  }, [patient, effectiveName, serviceType, selectedDate, time]);
+    if (selectedServices.length === 0) return false;
+    // Every selected test must resolve to a valid effective date + time.
+    return selectedServices.every((svc) => {
+      const ov = serviceOverrides[svc] ?? {};
+      return !!combineLocalDateAndTimeToIso(
+        ov.date || selectedDate,
+        ov.time || time,
+      );
+    });
+  }, [patient, effectiveName, selectedServices, serviceOverrides, selectedDate, time]);
 
   const scheduleMutation = useMutation({
-    mutationFn: async () => {
+    // Fan out one existing single-test write per selected test. Runs
+    // sequentially so a brand-new (name-only) patient's first booking
+    // creates the stub case and later bookings attach to that same case
+    // (carried forward via the response) instead of duplicating it.
+    mutationFn: async (): Promise<BookingResult[]> => {
       if (!patient) throw new Error("No patient selected");
-      const startsAt = combineLocalDateAndTimeToIso(selectedDate, time);
-      if (!startsAt) throw new Error("Pick a valid date and time");
-      return schedulePatientAncillary({
-        // When staff picked a likely existing patient, link to that case
-        // instead of letting the server create a duplicate stub.
-        executionCaseId:
-          patient.executionCaseId ?? selectedMatch?.id ?? null,
-        patientScreeningId:
-          patient.patientScreeningId ?? selectedMatch?.patientScreeningId ?? null,
-        patientName: effectiveName,
-        patientDob: effectiveDob,
-        serviceType: serviceType.trim(),
-        startsAt,
-        facilityId: effectiveFacility,
-        note: buildScheduleNote(note, appointmentType, location),
-        metadata: {
-          source: "schedule_patient_dialog",
-          appointmentType: appointmentType.trim() || null,
-          location: location.trim() || null,
-        },
-      });
+      if (selectedServices.length === 0)
+        throw new Error("Select at least one test");
+      const results: BookingResult[] = [];
+      let resolvedCaseId: number | null =
+        patient.executionCaseId ?? selectedMatch?.id ?? null;
+      let resolvedScreeningId: number | null =
+        patient.patientScreeningId ??
+        selectedMatch?.patientScreeningId ??
+        null;
+      for (const svc of selectedServices) {
+        const eff = effectiveFor(svc);
+        const startsAt = combineLocalDateAndTimeToIso(eff.date, eff.time);
+        if (!startsAt) {
+          results.push({
+            service: svc,
+            ok: false,
+            error: "Invalid date or time",
+          });
+          continue;
+        }
+        try {
+          const resp = (await schedulePatientAncillary({
+            // When staff picked a likely existing patient, link to that
+            // case instead of letting the server create a duplicate stub.
+            executionCaseId: resolvedCaseId,
+            patientScreeningId: resolvedScreeningId,
+            patientName: effectiveName,
+            patientDob: effectiveDob,
+            serviceType: svc,
+            startsAt,
+            facilityId: effectiveFacility,
+            note: buildScheduleNote(note, appointmentType, location),
+            metadata: {
+              source: "schedule_patient_dialog",
+              appointmentType: appointmentType.trim() || null,
+              location: location.trim() || null,
+            },
+          })) as {
+            executionCase?: {
+              id?: number;
+              patientScreeningId?: number | null;
+            };
+          };
+          if (resp?.executionCase?.id != null) {
+            resolvedCaseId = resp.executionCase.id;
+            if (resp.executionCase.patientScreeningId != null)
+              resolvedScreeningId = resp.executionCase.patientScreeningId;
+          }
+          results.push({ service: svc, ok: true });
+        } catch (err) {
+          results.push({
+            service: svc,
+            ok: false,
+            error: err instanceof Error ? err.message : "Schedule write failed",
+          });
+        }
+      }
+      return results;
     },
-    onSuccess: () => {
+    onSuccess: (results) => {
+      setBookingResults(results);
       invalidateTeamPortalScheduleQueries(queryClient, {
         facility: effectiveFacility,
         selectedDate,
         patientScreeningId: patient?.patientScreeningId ?? null,
       });
-      toast({
-        title: "Scheduled",
-        description: `${serviceType.trim()} for ${effectiveName ?? "patient"}.`,
-      });
-      onOpenChange(false);
+      const okCount = results.filter((r) => r.ok).length;
+      const failed = results.filter((r) => !r.ok);
+      if (failed.length === 0) {
+        toast({
+          title:
+            okCount === 1
+              ? "Scheduled"
+              : `${okCount} tests scheduled`,
+          description: `for ${effectiveName ?? "patient"}.`,
+        });
+        onOpenChange(false);
+      } else {
+        toast({
+          title:
+            okCount > 0
+              ? `${okCount} scheduled · ${failed.length} failed`
+              : "Could not schedule",
+          description: failed
+            .map((f) => `${f.service}: ${f.error ?? "failed"}`)
+            .join(" · "),
+          variant: "destructive",
+        });
+      }
     },
     onError: (err: unknown) => {
       toast({
@@ -714,7 +907,7 @@ export function SchedulePatientDialog({
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 p-6 md:grid-cols-2">
+        <div className="grid max-h-[68vh] grid-cols-1 gap-4 overflow-y-auto p-6 md:grid-cols-2">
           <div className="space-y-3">
             {isNewPatientEntry && (
               <div
@@ -804,23 +997,33 @@ export function SchedulePatientDialog({
                 </p>
               </div>
             )}
-            <div>
-              <Label
-                htmlFor="schedule-patient-date"
-                className="text-[10px] font-semibold uppercase tracking-wider text-slate-500"
-              >
-                Date
-              </Label>
-              <Input
-                id="schedule-patient-date"
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="mt-1 rounded-xl"
-                data-testid="input-schedule-patient-date"
-              />
-              <div className="mt-1 text-[11px] text-slate-400">
-                {prettyDateLong(selectedDate)}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Date
+                </Label>
+                <MonthCalendarPopover
+                  value={selectedDate}
+                  onChange={setSelectedDate}
+                  testId="button-schedule-patient-date"
+                  ariaLabel="Pick appointment date"
+                />
+              </div>
+              <div>
+                <Label
+                  htmlFor="schedule-patient-time"
+                  className="text-[10px] font-semibold uppercase tracking-wider text-slate-500"
+                >
+                  Time
+                </Label>
+                <Input
+                  id="schedule-patient-time"
+                  type="time"
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
+                  className="mt-1 rounded-xl"
+                  data-testid="input-schedule-patient-time"
+                />
               </div>
             </div>
 
@@ -829,7 +1032,7 @@ export function SchedulePatientDialog({
                 <Clock className="h-3 w-3" />
                 Available slots
               </div>
-              <div className="grid max-h-32 grid-cols-3 gap-1.5 overflow-auto pr-0.5">
+              <div className="grid max-h-28 grid-cols-3 gap-1.5 overflow-auto pr-0.5">
                 {TIME_SLOTS.map((slot) => {
                   const active = slot === time;
                   return (
@@ -850,42 +1053,166 @@ export function SchedulePatientDialog({
                   );
                 })}
               </div>
-              <Input
-                id="schedule-patient-time"
-                type="time"
-                value={time}
-                onChange={(e) => setTime(e.target.value)}
-                className="mt-2 rounded-xl"
-                data-testid="input-schedule-patient-time"
-              />
             </div>
 
             <div>
-              <Label
-                htmlFor="schedule-patient-service"
-                className="text-[10px] font-semibold uppercase tracking-wider text-slate-500"
-              >
-                Service type
-              </Label>
-              <select
-                id="schedule-patient-service"
-                value={serviceType}
-                onChange={(e) => setServiceType(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2"
-                style={{ ["--tw-ring-color" as string]: ACCENT }}
-                data-testid="select-schedule-patient-service-type"
-              >
-                <option value="">— Select service —</option>
-                {(serviceType && !SERVICE_OPTIONS.includes(serviceType)
-                  ? [serviceType, ...SERVICE_OPTIONS]
-                  : SERVICE_OPTIONS
-                ).map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <Label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Tests <span className="text-red-500">*</span>
+                </Label>
+                {selectedServices.length > 0 && (
+                  <span
+                    className="text-[11px] font-medium text-slate-400"
+                    data-testid="text-schedule-patient-selected-count"
+                  >
+                    {selectedServices.length} selected
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {SERVICE_OPTIONS.map((svc) => {
+                  const active = selectedServices.includes(svc);
+                  return (
+                    <button
+                      key={svc}
+                      type="button"
+                      onClick={() => toggleService(svc)}
+                      aria-pressed={active}
+                      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                        active
+                          ? "border-transparent text-white shadow-sm"
+                          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                      }`}
+                      style={active ? { backgroundColor: ACCENT } : undefined}
+                      data-testid={`chip-schedule-patient-service-${svc}`}
+                    >
+                      {active && <Check className="h-3 w-3" />}
+                      {svc}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+
+            {selectedServices.length > 0 && (
+              <div
+                className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50/60 p-2.5"
+                data-testid="section-schedule-patient-per-test"
+              >
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  <CalendarDays className="h-3 w-3" />
+                  Per-test schedule
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  All tests use the shared date &amp; time above — override any
+                  test individually.
+                </p>
+                {selectedServices.map((svc) => {
+                  const ov = serviceOverrides[svc] ?? {};
+                  const hasOverride = !!(ov.date || ov.time);
+                  const eff = effectiveFor(svc);
+                  return (
+                    <div
+                      key={svc}
+                      className="rounded-xl border border-slate-200 bg-white p-2"
+                      data-testid={`override-row-${svc}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-xs font-medium text-slate-800">
+                            {svc}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            {prettyDateLong(eff.date)}
+                            {eff.time ? ` · ${prettyTime(eff.time)}` : ""}
+                            {" · "}
+                            {hasOverride ? "custom" : "shared"}
+                          </div>
+                        </div>
+                        {hasOverride ? (
+                          <button
+                            type="button"
+                            onClick={() => resetOverride(svc)}
+                            className="shrink-0 text-[11px] font-semibold text-slate-500 underline-offset-2 hover:underline"
+                            data-testid={`button-override-reset-${svc}`}
+                          >
+                            Use shared
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => enableOverride(svc)}
+                            className="shrink-0 text-[11px] font-semibold underline-offset-2 hover:underline"
+                            style={{ color: ACCENT }}
+                            data-testid={`button-override-enable-${svc}`}
+                          >
+                            Override
+                          </button>
+                        )}
+                      </div>
+                      {hasOverride && (
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <MonthCalendarPopover
+                            value={ov.date || selectedDate}
+                            onChange={(date) => patchOverride(svc, { date })}
+                            testId={`button-override-date-${svc}`}
+                            ariaLabel={`Override date for ${svc}`}
+                          />
+                          <Input
+                            type="time"
+                            value={ov.time || time}
+                            onChange={(e) =>
+                              patchOverride(svc, { time: e.target.value })
+                            }
+                            className="mt-1 rounded-xl"
+                            data-testid={`input-override-time-${svc}`}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {bookingResults && bookingResults.some((r) => !r.ok) && (
+              <div
+                className="space-y-1 rounded-2xl border border-amber-200 bg-amber-50/70 p-2.5"
+                data-testid="panel-schedule-patient-results"
+              >
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+                  Booking results
+                </div>
+                <ul className="space-y-1">
+                  {bookingResults.map((r) => (
+                    <li
+                      key={r.service}
+                      className="flex items-start gap-1.5 text-[11px]"
+                      data-testid={`result-row-${r.service}`}
+                    >
+                      {r.ok ? (
+                        <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-600" />
+                      ) : (
+                        <XCircle className="mt-0.5 h-3 w-3 shrink-0 text-red-500" />
+                      )}
+                      <span className="min-w-0">
+                        <span className="font-medium text-slate-800">
+                          {r.service}
+                        </span>
+                        {r.ok ? (
+                          <span className="text-slate-500"> — scheduled</span>
+                        ) : (
+                          <span className="text-red-600">
+                            {" "}
+                            — {r.error ?? "failed"}
+                          </span>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-2">
               <div>
@@ -1007,7 +1334,9 @@ export function SchedulePatientDialog({
             ) : (
               <CheckCircle2 className="h-4 w-4" />
             )}
-            {time ? `Confirm ${prettyTime(time)}` : "Confirm schedule"}
+            {selectedServices.length > 1
+              ? `Schedule ${selectedServices.length} tests`
+              : "Confirm schedule"}
           </Button>
         </DialogFooter>
       </DialogContent>
