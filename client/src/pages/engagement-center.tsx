@@ -23,8 +23,16 @@
 
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { Search, Shuffle } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -41,8 +49,6 @@ import { EngagementCasePanel } from "@/components/engagement/EngagementCasePanel
 import { EngagementCallSettings } from "@/components/engagement/EngagementCallSettings";
 import { EngagementDistributionPanel } from "@/components/engagement/EngagementDistributionPanel";
 import { EngagementTeamMetrics } from "@/components/engagement/EngagementTeamMetrics";
-import { EngagementBaskets } from "@/components/engagement/EngagementBaskets";
-import { EngagementDocuments } from "@/components/engagement/EngagementDocuments";
 import {
   type BoardResponse,
   type BoardRow,
@@ -97,7 +103,13 @@ export default function EngagementCenterPage() {
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
   const [smartFilter, setSmartFilter] = useState<SmartFilterKey>("all");
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
-  const [view, setView] = useState<"baskets" | "documents" | "repository" | "distribution" | "callSettings" | "liveMetrics">("baskets");
+  // Exactly three tabs. Distribution is an ACTION inside Assignment Pool
+  // (the Auto-Distribute dialog + the per-selection round-robin in the
+  // worklist toolbar), never its own tab.
+  const [view, setView] = useState<"pool" | "callResults" | "callSettings">(
+    "pool",
+  );
+  const [distributeOpen, setDistributeOpen] = useState(false);
 
   const board = useQuery<BoardResponse>({
     queryKey: ["/api/engagement/assignment-board", "command"],
@@ -284,58 +296,34 @@ export default function EngagementCenterPage() {
             </h1>
           </div>
 
-          {/* View switcher */}
+          {/* View switcher — exactly three tabs */}
           <div
             className="ml-auto inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-100 p-0.5 dark:border-slate-800 dark:bg-slate-800"
             data-testid="engagement-view-switcher"
           >
             <button
               type="button"
-              onClick={() => setView("baskets")}
+              onClick={() => setView("pool")}
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                view === "baskets"
+                view === "pool"
                   ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
                   : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
               }`}
-              data-testid="button-view-baskets"
+              data-testid="button-view-assignment-pool"
             >
-              Baskets
+              Assignment Pool
             </button>
             <button
               type="button"
-              onClick={() => setView("documents")}
+              onClick={() => setView("callResults")}
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                view === "documents"
+                view === "callResults"
                   ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
                   : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
               }`}
-              data-testid="button-view-documents"
+              data-testid="button-view-call-results"
             >
-              Documents
-            </button>
-            <button
-              type="button"
-              onClick={() => setView("repository")}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                view === "repository"
-                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
-                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-              }`}
-              data-testid="button-view-repository"
-            >
-              Repository
-            </button>
-            <button
-              type="button"
-              onClick={() => setView("distribution")}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                view === "distribution"
-                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
-                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-              }`}
-              data-testid="button-view-distribution"
-            >
-              Distribution
+              Call Results
             </button>
             <button
               type="button"
@@ -349,22 +337,24 @@ export default function EngagementCenterPage() {
             >
               Call Settings
             </button>
-            <button
-              type="button"
-              onClick={() => setView("liveMetrics")}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                view === "liveMetrics"
-                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
-                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-              }`}
-              data-testid="button-view-live-metrics"
-            >
-              Live Metrics
-            </button>
           </div>
 
+          {/* Distribution as an ACTION inside Assignment Pool */}
+          {view === "pool" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-9 gap-1.5"
+              onClick={() => setDistributeOpen(true)}
+              data-testid="button-open-auto-distribute"
+            >
+              <Shuffle className="h-3.5 w-3.5" />
+              Auto-Distribute
+            </Button>
+          ) : null}
+
           {/* Search */}
-          {view === "repository" ? (
+          {view === "pool" ? (
           <div className="relative w-full max-w-xs">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
             <Input
@@ -378,7 +368,7 @@ export default function EngagementCenterPage() {
           ) : null}
 
           {/* Header filters */}
-          {view === "repository" ? (
+          {view === "pool" ? (
           <>
           <Select value={clinicFilter} onValueChange={setClinicFilter}>
             <SelectTrigger className="h-9 w-[150px] text-xs" data-testid="select-engagement-clinic">
@@ -424,7 +414,7 @@ export default function EngagementCenterPage() {
         </div>
 
         {/* Summary strip */}
-        {view === "repository" ? (
+        {view === "pool" ? (
         <div className="flex flex-wrap gap-2 px-4 pb-3 sm:px-6">
           <HeaderMetric label="Ready to Assign" value={smartCounts.ready_to_assign} tone="indigo" />
           <HeaderMetric label="Due Today" value={smartCounts.due_today} tone="emerald" />
@@ -435,42 +425,20 @@ export default function EngagementCenterPage() {
         ) : null}
       </header>
 
-      {view === "baskets" ? (
-        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-          <div className="mx-auto max-w-7xl">
-            <EngagementBaskets
-              schedulers={schedulers}
-              assigning={assignMutation.isPending}
-              onAssign={handleAssign}
-            />
-          </div>
-        </main>
-      ) : view === "documents" ? (
-        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-          <div className="mx-auto max-w-7xl">
-            <EngagementDocuments />
-          </div>
-        </main>
-      ) : view === "callSettings" ? (
+      {view === "callSettings" ? (
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="mx-auto max-w-6xl">
             <EngagementCallSettings />
           </div>
         </main>
-      ) : view === "distribution" ? (
-        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-          <div className="mx-auto max-w-6xl">
-            <EngagementDistributionPanel />
-          </div>
-        </main>
-      ) : view === "liveMetrics" ? (
+      ) : view === "callResults" ? (
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="mx-auto max-w-6xl">
             <EngagementTeamMetrics />
           </div>
         </main>
       ) : (
-      /* 3-zone body */
+      /* Assignment Pool — Repository-style 3-zone body */
       <div className="flex min-h-0 flex-1">
         {/* Left rail */}
         <aside className="hidden w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-white px-2 py-3 dark:border-slate-800 dark:bg-slate-900 lg:block">
@@ -523,6 +491,21 @@ export default function EngagementCenterPage() {
         </aside>
       </div>
       )}
+
+      {/* Auto-Distribute — the distribution engine surfaced as an action
+          inside the Assignment Pool (not a standalone tab). */}
+      <Dialog open={distributeOpen} onOpenChange={setDistributeOpen}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Auto-Distribute Assignments</DialogTitle>
+            <DialogDescription>
+              Preview and apply a balanced distribution of unassigned cases
+              across your team.
+            </DialogDescription>
+          </DialogHeader>
+          <EngagementDistributionPanel />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

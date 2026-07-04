@@ -13,6 +13,8 @@ import {
   ShieldAlert,
   History,
   Plus,
+  Route,
+  ChevronRight,
   X,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -328,6 +330,72 @@ export function EngagementCasePanel({
             </div>
           </div>
         </div>
+
+        {/* Classification (server-derived taxonomy) + status trail */}
+        <Section icon={Route} title="Classification" testId="engagement-case-panel-classification">
+          <div className="grid grid-cols-3 gap-2 text-[11px]">
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">
+                Category
+              </div>
+              <div className="mt-0.5 font-medium text-slate-700 dark:text-slate-200">
+                {row.category ?? "—"}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">
+                Call type
+              </div>
+              <div className="mt-0.5 font-medium text-slate-700 dark:text-slate-200">
+                {row.callType ?? "—"}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">
+                Source
+              </div>
+              <div className="mt-0.5 font-medium text-slate-700 dark:text-slate-200">
+                {row.source ?? "—"}
+              </div>
+            </div>
+          </div>
+
+          {row.statusTrail?.length ? (
+            <div
+              className="mt-3 flex flex-wrap items-center gap-1"
+              data-testid="engagement-case-panel-status-trail"
+            >
+              {row.statusTrail.map((step, i) => (
+                <span key={`${step}-${i}`} className="flex items-center gap-1">
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${
+                      i === row.statusTrail.length - 1
+                        ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                        : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                    }`}
+                  >
+                    {step}
+                  </span>
+                  {i < row.statusTrail.length - 1 ? (
+                    <ChevronRight className="h-3 w-3 text-slate-300 dark:text-slate-600" />
+                  ) : null}
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="mt-3">
+            <div className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">
+              Last call result
+            </div>
+            <div
+              className="mt-0.5 text-[11px] font-medium text-slate-700 dark:text-slate-200"
+              data-testid="engagement-case-panel-last-result"
+            >
+              {row.lastCallOutcome ?? row.lastActivitySummary ?? "—"}
+            </div>
+          </div>
+        </Section>
 
         {/* Target tests */}
         <Section icon={Stethoscope} title="Target tests" testId="engagement-case-panel-tests">

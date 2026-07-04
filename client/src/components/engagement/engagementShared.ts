@@ -165,35 +165,65 @@ export const ROLE_LABELS: Record<AssignedRole, string> = {
 
 export type SmartFilterKey =
   | "all"
+  // Assignment state (baskets folded in)
   | "ready_to_assign"
+  | "assigned"
+  // Call type (server-derived taxonomy)
+  | "visit_scheduling"
+  | "outreach_scheduling"
+  | "repeat_test_due"
+  // Due windows
   | "due_today"
   | "overdue"
   | "due_soon"
+  // Work state
   | "follow_up"
   | "callbacks"
   | "no_answer"
   | "left_voicemail"
   | "needs_scheduling"
-  | "missing_pdf"
   | "blocked"
   | "declined"
   | "re_eligible";
 
-export const SMART_FILTERS: Array<{ key: SmartFilterKey; label: string }> = [
+export type SmartFilterGroup = "state" | "call_type" | "due" | "work";
+
+export const SMART_FILTER_GROUP_LABELS: Record<SmartFilterGroup, string> = {
+  state: "Assignment",
+  call_type: "Call Type",
+  due: "Due Window",
+  work: "Work State",
+};
+
+export const SMART_FILTER_GROUP_ORDER: SmartFilterGroup[] = [
+  "state",
+  "call_type",
+  "due",
+  "work",
+];
+
+export const SMART_FILTERS: Array<{
+  key: SmartFilterKey;
+  label: string;
+  group?: SmartFilterGroup;
+}> = [
   { key: "all", label: "All cases" },
-  { key: "ready_to_assign", label: "Ready to Assign" },
-  { key: "due_today", label: "Due Today" },
-  { key: "overdue", label: "Overdue" },
-  { key: "due_soon", label: "Due Soon" },
-  { key: "follow_up", label: "Follow-up" },
-  { key: "callbacks", label: "Callbacks" },
-  { key: "no_answer", label: "No Answer" },
-  { key: "left_voicemail", label: "Left Voicemail" },
-  { key: "needs_scheduling", label: "Needs Scheduling" },
-  { key: "missing_pdf", label: "Missing PDF" },
-  { key: "blocked", label: "Blocked" },
-  { key: "declined", label: "Declined" },
-  { key: "re_eligible", label: "Re-Eligible" },
+  { key: "ready_to_assign", label: "Ready to Assign", group: "state" },
+  { key: "assigned", label: "Assigned", group: "state" },
+  { key: "visit_scheduling", label: "Visit Scheduling", group: "call_type" },
+  { key: "outreach_scheduling", label: "Outreach Scheduling", group: "call_type" },
+  { key: "repeat_test_due", label: "Repeat Test Due", group: "call_type" },
+  { key: "due_today", label: "Due Today", group: "due" },
+  { key: "overdue", label: "Overdue", group: "due" },
+  { key: "due_soon", label: "Due Soon", group: "due" },
+  { key: "follow_up", label: "Follow-up", group: "work" },
+  { key: "callbacks", label: "Callbacks", group: "work" },
+  { key: "no_answer", label: "No Answer", group: "work" },
+  { key: "left_voicemail", label: "Left Voicemail", group: "work" },
+  { key: "needs_scheduling", label: "Needs Scheduling", group: "work" },
+  { key: "blocked", label: "Blocked", group: "work" },
+  { key: "declined", label: "Declined", group: "work" },
+  { key: "re_eligible", label: "Re-Eligible", group: "work" },
 ];
 
 // ─── Date / due-bucket helpers ──────────────────────────────────────
@@ -316,6 +346,14 @@ export function matchesSmartFilter(row: BoardRow, key: SmartFilterKey): boolean 
       return true;
     case "ready_to_assign":
       return row.assignedTeamMemberId == null;
+    case "assigned":
+      return row.assignedTeamMemberId != null;
+    case "visit_scheduling":
+      return row.callType === "Visit Patient Scheduling";
+    case "outreach_scheduling":
+      return row.callType === "Outreach Patient Scheduling";
+    case "repeat_test_due":
+      return row.callType === "Repeat Test Due";
     case "due_today":
       return bucket === "today";
     case "overdue":
@@ -335,8 +373,6 @@ export function matchesSmartFilter(row: BoardRow, key: SmartFilterKey): boolean 
         (row.engagementBucket ?? "").toLowerCase() === "scheduling_triage" ||
         /needs? schedul|to schedule|unscheduled/.test(both)
       );
-    case "missing_pdf":
-      return (row.selectedServices?.length ?? 0) === 0;
     case "blocked":
       return (row.missingInfo?.length ?? 0) > 0;
     case "declined":

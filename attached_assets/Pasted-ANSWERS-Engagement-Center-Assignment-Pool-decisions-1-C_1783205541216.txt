@@ -1,0 +1,90 @@
+ANSWERS — Engagement Center / Assignment Pool decisions
+
+1. Category/Call Type backing data:
+Y.
+
+Show Patient Support call types honestly only when real backing data exists.
+Do NOT fabricate Callback Requested, Insurance Question, Consent Needed, Order Issue, Billing Question, Escalation, etc.
+
+If no backing field exists, show:
+Category: —
+Call Type: —
+or leave blank depending on current UI style.
+
+For Ancillary Scheduling:
+- engagementBucket visit → Visit Patient Scheduling
+- engagementBucket outreach → Outreach Patient Scheduling
+- cooldown/re-eligibility → Repeat Test Due
+- Source for visit/outreach approved from Admin Review = Admin Review
+
+2. Status Trail:
+OK.
+
+Show a compact derived Status Trail on each row.
+Show the full chronological timeline in the right detail panel from patient_journey_events.
+
+Do not put the full timeline inline on every row.
+
+Row trail examples:
+- Admin Review Approved → Visit Patient Scheduling → In Assignment Pool → Not Assigned
+- Admin Review Approved → Outreach Patient Scheduling → In Assignment Pool → Not Assigned
+- Assigned → On Call List → Active
+- Assigned → On Call List → Team Member Off → Review Assignment
+- Assigned → Patient Reached → Scheduled
+
+Right panel can show the full timeline/history.
+
+3. Baskets tab:
+FOLD.
+
+Do not keep Baskets as a separate main tab.
+Fold the basket concepts into Assignment Pool smart filters/tiles.
+
+Final main tabs should be:
+- Assignment Pool
+- Call Results
+- Call Settings
+
+4. Documents tab:
+REMOVE from Engagement Center main tabs.
+
+Documents should live in:
+- Documents
+- Patient Directory / Plexus EHR
+- Admin Review
+- case detail panel if needed
+
+Do not show PDF/document status in Assignment Pool rows.
+Do not keep Documents as a main Engagement Center tab.
+
+5. Date grouping:
+KEEP scheduleDate for now.
+
+Use the existing Repository date grouping behavior because it already matches the screenshot.
+
+Keep:
+- actual date groups
+- Unscheduled bucket
+
+If later we add a true Admin Review approved date, we can switch the grouping source then. For now do not force a schema change.
+
+6. Derivation location:
+SERVER.
+
+Derive Category / Call Type / Source server-side in the board/repository endpoint if feasible.
+
+Reason:
+- more consistent
+- easier to test
+- Team Member Portal / Engagement can share the same derived meanings later
+- avoids every frontend component reinventing the logic
+
+But do not do a large schema change just for this. If server-side derivation requires too much backend risk, do minimal server-side mapping and keep gaps honest.
+
+Important:
+Do not fabricate missing data.
+Do not add fake Patient Support call types.
+Do not change schema unless absolutely required.
+Do not break the Repository-style layout.
+Do not create a Distribution tab.
+Distribution stays an action inside Assignment Pool.

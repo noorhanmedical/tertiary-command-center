@@ -108,7 +108,10 @@ async function findConflictingActiveAssignment(
 
 // Board-row shape lives in the shared contract so the client + server
 // agree on one canonical type. See shared/contracts/engagementBoard.ts.
-import type { EngagementBoardRow as BoardRow } from "@shared/contracts/engagementBoard";
+import {
+  type EngagementBoardRow as BoardRow,
+  deriveEngagementTaxonomy,
+} from "@shared/contracts/engagementBoard";
 
 // Decide how to scope a patient's journey-timeline lookup.
 //
@@ -299,6 +302,14 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
           const facility =
             screening?.facility ?? batch?.facility ?? c.facilityId ?? null;
 
+          const taxonomy = deriveEngagementTaxonomy({
+            engagementBucket: c.engagementBucket ?? null,
+            engagementStatus: c.engagementStatus ?? null,
+            lastActivitySummary: latest?.summary ?? null,
+            lastCallOutcome: c.lastCallOutcome ?? null,
+            assignedTeamMemberId: c.assignedTeamMemberId ?? null,
+          });
+
           return {
             patientScreeningId: c.patientScreeningId ?? null,
             executionCaseId: c.id,
@@ -322,10 +333,15 @@ export function registerEngagementAssignmentBoardRoutes(app: Express) {
               ? new Date(latest.createdAt).toISOString()
               : null,
             lastActivitySummary: latest?.summary ?? null,
+            lastCallOutcome: c.lastCallOutcome ?? null,
             missingInfo: computeMissingInfo(screening),
             selectedServices: Array.isArray(c.selectedServices)
               ? (c.selectedServices as string[])
               : [],
+            category: taxonomy.category,
+            callType: taxonomy.callType,
+            source: taxonomy.source,
+            statusTrail: taxonomy.statusTrail,
           };
         });
 

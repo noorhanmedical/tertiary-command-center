@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertCircle,
   Building2,
@@ -7,7 +7,6 @@ import {
   Stethoscope,
   UserCog,
   ExternalLink,
-  FileText,
   Shuffle,
   Trash2,
   X,
@@ -26,12 +25,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import {
   type BoardRow,
@@ -44,9 +37,6 @@ import {
   targetTestOf,
   priorityOf,
   PRIORITY_LABELS,
-  openSinglePatientPacket,
-  openBulkPatientPackets,
-  type BulkPacketRef,
   coverageRelation,
   sortSchedulersByCoverage,
   commonFacility,
@@ -66,6 +56,33 @@ const PRIORITY_TONE: Record<string, string> = {
   medium: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300",
   normal: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300",
 };
+
+// A compact labeled field used in the enriched worklist card grid.
+function CardField({
+  label,
+  icon,
+  children,
+}: {
+  label: string;
+  icon?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+        {label}
+      </div>
+      <div className="mt-0.5 flex items-center gap-1 truncate font-medium text-slate-700 dark:text-slate-200">
+        {icon ? (
+          <span className="shrink-0 text-slate-400 dark:text-slate-500">
+            {icon}
+          </span>
+        ) : null}
+        <span className="truncate">{children}</span>
+      </div>
+    </div>
+  );
+}
 
 // Small "Home" / "Covers" tag rendered next to a member who can serve the
 // case's facility.
@@ -134,6 +151,7 @@ function SchedulerPicker({
   disabled,
   caseFacility,
   memberLoad,
+  keepAssignedName,
 }: {
   schedulers: SchedulerOption[];
   busy: boolean;
@@ -144,6 +162,9 @@ function SchedulerPicker({
   disabled?: boolean;
   caseFacility?: string | null;
   memberLoad?: Map<number, number>;
+  /** When set, the picker offers a dynamic "Keep assigned to {name}" no-op —
+   *  the current assignee's real name, never hardcoded. */
+  keepAssignedName?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState<string>(
@@ -168,6 +189,17 @@ function SchedulerPicker({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[260px] space-y-2 p-2.5">
+        {keepAssignedName ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-full justify-start px-2 text-[11px] text-slate-600 dark:text-slate-300"
+            onClick={() => setOpen(false)}
+            data-testid="engagement-keep-assigned"
+          >
+            Keep assigned to {keepAssignedName}
+          </Button>
+        ) : null}
         <Select value={picked} onValueChange={setPicked}>
           <SelectTrigger className="h-8 text-xs" data-testid="engagement-card-assign-select">
             <SelectValue placeholder="Pick a team member…" />
@@ -348,30 +380,10 @@ function WorklistCard({
   onAssignOne: (schedulerId: number) => void;
   onRemove: () => void;
 }) {
-  const { toast } = useToast();
-  const [pdfBusy, setPdfBusy] = useState<"plexus" | "clinician" | null>(null);
   const priority = priorityOf(row);
   const target = targetTestOf(row);
   const psid = row.patientScreeningId;
-
-  async function handlePdf(mode: "plexus" | "clinician") {
-    if (psid == null) return;
-    setPdfBusy(mode);
-    const result = await openSinglePatientPacket(
-      psid,
-      row.patientName,
-      row.scheduleDate ?? null,
-      mode,
-    );
-    setPdfBusy(null);
-    if (!result.ok) {
-      toast({
-        title: "Could not open packet",
-        description: result.error,
-        variant: "destructive",
-      });
-    }
-  }
+  const lastResult = row.lastCallOutcome ?? row.lastActivitySummary;
 
   return (
     <div
@@ -432,26 +444,59 @@ function WorklistCard({
             ) : null}
           </div>
 
-          {/* Reason + target test */}
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-            <span>{callReasonOf(row)}</span>
-            {target.primary && (
-              <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
-                <Stethoscope className="h-3 w-3" />
-                {target.primary}
-                {target.extra > 0 ? ` +${target.extra}` : ""}
-              </span>
-            )}
-            {row.facility && (
-              <span className="inline-flex items-center gap-1">
-                <Building2 className="h-3 w-3" />
-                {row.facility}
-              </span>
-            )}
+          {/* Taxonomy grid: Clinic · Service · Category · Call Type · Source */}
+          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] sm:grid-cols-3">
+            <CardField label="Clinic" icon={<Building2 className="h-3 w-3" />}>
+              {row.facility ?? "—"}
+            </CardField>
+            <CardField label="Service" icon={<Stethoscope className="h-3 w-3" />}>
+              {target.primary
+                ? `${target.primary}${target.extra > 0 ? ` +${target.extra}` : ""}`
+                : "—"}
+            </CardField>
+            <CardField label="Category">{row.category ?? "—"}</CardField>
+            <CardField label="Call Type">{row.callType ?? "—"}</CardField>
+            <CardField label="Source">{row.source ?? "—"}</CardField>
+            <CardField label="Assigned To">
+              {row.assignedName ? (
+                <span className="text-emerald-700 dark:text-emerald-300">
+                  {row.assignedName}
+                </span>
+              ) : (
+                <span className="text-amber-700 dark:text-amber-400">
+                  Unassigned
+                </span>
+              )}
+            </CardField>
           </div>
 
-          {/* Meta row */}
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]">
+          {/* Status trail */}
+          {row.statusTrail?.length ? (
+            <div
+              className="mt-2 flex flex-wrap items-center gap-1"
+              data-testid="engagement-worklist-status-trail"
+            >
+              {row.statusTrail.map((step, i) => (
+                <span key={`${step}-${i}`} className="flex items-center gap-1">
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${
+                      i === row.statusTrail.length - 1
+                        ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                        : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                    }`}
+                  >
+                    {step}
+                  </span>
+                  {i < row.statusTrail.length - 1 ? (
+                    <ChevronRight className="h-3 w-3 text-slate-300 dark:text-slate-600" />
+                  ) : null}
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          {/* Last call result + next action */}
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
             <span
               className={`rounded-md px-1.5 py-0.5 font-medium ${
                 dueBucketOf(row.nextActionAt) === "overdue"
@@ -460,22 +505,11 @@ function WorklistCard({
               }`}
               data-testid="engagement-worklist-due"
             >
-              {dueLabel(row.nextActionAt)}
+              Next: {dueLabel(row.nextActionAt)}
             </span>
-            {row.assignedName ? (
-              <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
-                {row.assignedName}
-              </span>
-            ) : (
-              <span className="rounded-md bg-amber-50 px-1.5 py-0.5 font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-                Unassigned
-              </span>
-            )}
-            {row.lastActivitySummary && (
-              <span className="truncate text-slate-400">
-                {row.lastActivitySummary} · {fmtRel(row.lastActivityAt)}
-              </span>
-            )}
+            <span className="truncate text-slate-500 dark:text-slate-400">
+              Last call: {lastResult ? `${lastResult} · ${fmtRel(row.lastActivityAt)}` : "—"}
+            </span>
           </div>
         </div>
 
@@ -495,45 +529,8 @@ function WorklistCard({
             testId="engagement-worklist-card-assign"
             caseFacility={row.facility}
             memberLoad={memberLoad}
+            keepAssignedName={row.assignedName}
           />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 w-7 p-0 text-slate-400"
-                disabled={psid == null}
-                aria-label="Packets"
-                data-testid="engagement-worklist-card-pdf"
-              >
-                {pdfBusy ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <FileText className="h-3.5 w-3.5" />
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  handlePdf("plexus");
-                }}
-                data-testid="engagement-worklist-card-plexus-pdf"
-              >
-                <FileText className="h-3.5 w-3.5" /> Plexus PDF
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  handlePdf("clinician");
-                }}
-                data-testid="engagement-worklist-card-clinician-pdf"
-              >
-                <FileText className="h-3.5 w-3.5" /> Clinician PDF
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
           {psid != null && (
             <Button
               asChild
@@ -605,9 +602,6 @@ export function EngagementWorklist({
 }) {
   const { toast } = useToast();
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [bulkPdfBusy, setBulkPdfBusy] = useState<"plexus" | "clinician" | null>(
-    null,
-  );
   // Worklist groups are collapsed by default; clicking a header opens a single
   // right-anchored flyout. Only one group's flyout is open at a time.
   const [openGroupKey, setOpenGroupKey] = useState<string | null>(null);
@@ -793,36 +787,6 @@ export function EngagementWorklist({
     clearSelection();
   }
 
-  async function bulkPdf(mode: "plexus" | "clinician") {
-    const refs: BulkPacketRef[] = Array.from(selectedIds)
-      .map((cid) => rowByCase.get(cid))
-      .filter((r): r is BoardRow => r != null)
-      .map((r) => ({
-        patientScreeningId: r.patientScreeningId,
-        patientName: r.patientName,
-        facility: r.facility ?? null,
-        scheduleDate: r.scheduleDate ?? null,
-      }));
-    if (refs.length === 0) return;
-    setBulkPdfBusy(mode);
-    const result = await openBulkPatientPackets(refs, mode);
-    setBulkPdfBusy(null);
-    if (!result.ok) {
-      toast({
-        title: "Could not open packets",
-        description: result.error,
-        variant: "destructive",
-      });
-      return;
-    }
-    if (result.dropped.length > 0) {
-      toast({
-        title: `Opened ${result.rendered} group${result.rendered === 1 ? "" : "s"}`,
-        description: `Skipped (no content): ${result.dropped.join(", ")}`,
-      });
-    }
-  }
-
   return (
     <div className="space-y-3" data-testid="engagement-worklist">
       {loading ? (
@@ -885,44 +849,6 @@ export function EngagementWorklist({
               caseFacility={selectedFacility}
               memberLoad={effectiveMemberLoad}
             />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 gap-1 px-2 text-[11px]"
-                  disabled={!someSelected || bulkPdfBusy != null}
-                  data-testid="engagement-worklist-bulk-pdf"
-                >
-                  {bulkPdfBusy ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <FileText className="h-3 w-3" />
-                  )}
-                  Packets
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-40">
-                <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    bulkPdf("plexus");
-                  }}
-                  data-testid="engagement-worklist-bulk-plexus-pdf"
-                >
-                  <FileText className="h-3.5 w-3.5" /> Plexus packet
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    bulkPdf("clinician");
-                  }}
-                  data-testid="engagement-worklist-bulk-clinician-pdf"
-                >
-                  <FileText className="h-3.5 w-3.5" /> Clinician packet
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
             <Button
               size="sm"
               variant="outline"
