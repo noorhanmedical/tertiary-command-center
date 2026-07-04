@@ -12,6 +12,9 @@ import {
   Clock,
   Stethoscope,
   CheckCircle2,
+  XCircle,
+  Check,
+  CalendarDays,
   User,
   Phone,
   Building2,
@@ -27,6 +30,7 @@ import {
 } from "@/lib/workflow/teamMemberWorkspaceApi";
 import {
   type SchedulePatientDialogPatient,
+  type BookingResult,
   SERVICE_OPTIONS,
   APPOINTMENT_TYPES,
   TIME_SLOTS,
@@ -185,13 +189,26 @@ export function SchedulePatientPlayground({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [selectedDate, setSelectedDate] = useState<string>(initialDate);
-  const [serviceType, setServiceType] = useState<string>(patient.serviceType ?? "");
+  // Multi-test selection — staff can book several ancillary tests in one
+  // pass. Seeds from the incoming target service when present.
+  const [selectedServices, setSelectedServices] = useState<string[]>(
+    patient.serviceType ? [patient.serviceType] : [],
+  );
+  // Optional per-test date/time overrides. A test with no entry uses the
+  // shared selectedDate + time; an entry (even partial) diverges.
+  const [serviceOverrides, setServiceOverrides] = useState<
+    Record<string, { date?: string; time?: string }>
+  >({});
   const [appointmentType, setAppointmentType] = useState<string>(
     APPOINTMENT_TYPES[0],
   );
   const [location, setLocation] = useState<string>(patient.facilityId ?? "");
   const [time, setTime] = useState<string>("");
   const [note, setNote] = useState<string>("");
+  // Per-test results from the last confirm; drives the partial-failure panel.
+  const [bookingResults, setBookingResults] = useState<BookingResult[] | null>(
+    null,
+  );
 
   const initialMonth = useMemo(() => {
     const d = new Date(`${initialDate}T00:00:00`);
@@ -216,6 +233,45 @@ export function SchedulePatientPlayground({
         }),
     });
 
+  // Effective date/time for a single test: its override wins, else shared.
+  const effectiveFor = (svc: string): { date: string; time: string } => {
+    const ov = serviceOverrides[svc] ?? {};
+    return { date: ov.date || selectedDate, time: ov.time || time };
+  };
+
+  // Test selection helpers.
+  const toggleService = (svc: string) => {
+    setSelectedServices((prev) =>
+      prev.includes(svc) ? prev.filter((s) => s !== svc) : [...prev, svc],
+    );
+    // Drop any override when a test is deselected so it can't leak back.
+    setServiceOverrides((prev) => {
+      if (!prev[svc]) return prev;
+      const next = { ...prev };
+      delete next[svc];
+      return next;
+    });
+  };
+  const enableOverride = (svc: string) =>
+    setServiceOverrides((prev) => ({
+      ...prev,
+      [svc]: { date: selectedDate, time },
+    }));
+  const resetOverride = (svc: string) =>
+    setServiceOverrides((prev) => {
+      const next = { ...prev };
+      delete next[svc];
+      return next;
+    });
+  const patchOverride = (
+    svc: string,
+    patch: { date?: string; time?: string },
+  ) =>
+    setServiceOverrides((prev) => ({
+      ...prev,
+      [svc]: { ...(prev[svc] ?? {}), ...patch },
+    }));
+
   // Name-only patients (walk-ins / not yet screened) are schedulable:
   // the server creates a minimal execution case stub from patientName
   // when neither id resolves. Either an id OR a non-empty name is enough.
@@ -225,42 +281,109 @@ export function SchedulePatientPlayground({
       patient.executionCaseId != null ||
       !!patient.patientName?.trim();
     if (!hasIdentity) return false;
-    if (!serviceType.trim()) return false;
-    return !!combineLocalDateAndTimeToIso(selectedDate, time);
-  }, [patient, serviceType, selectedDate, time]);
+    if (selectedServices.length === 0) return false;
+    // Every selected test must resolve to a valid effective date + time.
+    return selectedServices.every((svc) => {
+      const ov = serviceOverrides[svc] ?? {};
+      return !!combineLocalDateAndTimeToIso(
+        ov.date || selectedDate,
+        ov.time || time,
+      );
+    });
+  }, [patient, selectedServices, serviceOverrides, selectedDate, time]);
 
   const scheduleMutation = useMutation({
-    mutationFn: async () => {
-      const startsAt = combineLocalDateAndTimeToIso(selectedDate, time);
-      if (!startsAt) throw new Error("Pick a valid date and time");
-      return schedulePatientAncillary({
-        executionCaseId: patient.executionCaseId ?? null,
-        patientScreeningId: patient.patientScreeningId ?? null,
-        patientName: patient.patientName ?? null,
-        patientDob: patient.patientDob ?? null,
-        serviceType: serviceType.trim(),
-        startsAt,
-        facilityId: patient.facilityId ?? null,
-        note: buildScheduleNote(note, appointmentType, location),
-        metadata: {
-          source: "schedule_patient_playground",
-          appointmentType: appointmentType.trim() || null,
-          location: location.trim() || null,
-        },
-      });
+    // Fan out one existing single-test write per selected test. Runs
+    // sequentially so a brand-new (name-only) patient's first booking
+    // creates the stub case and later bookings attach to that same case
+    // (carried forward via the response) instead of duplicating it.
+    mutationFn: async (): Promise<BookingResult[]> => {
+      if (selectedServices.length === 0)
+        throw new Error("Select at least one test");
+      const results: BookingResult[] = [];
+      let resolvedCaseId: number | null = patient.executionCaseId ?? null;
+      let resolvedScreeningId: number | null =
+        patient.patientScreeningId ?? null;
+      for (const svc of selectedServices) {
+        const eff = effectiveFor(svc);
+        const startsAt = combineLocalDateAndTimeToIso(eff.date, eff.time);
+        if (!startsAt) {
+          results.push({
+            service: svc,
+            ok: false,
+            error: "Invalid date or time",
+          });
+          continue;
+        }
+        try {
+          const resp = (await schedulePatientAncillary({
+            executionCaseId: resolvedCaseId,
+            patientScreeningId: resolvedScreeningId,
+            patientName: patient.patientName ?? null,
+            patientDob: patient.patientDob ?? null,
+            serviceType: svc,
+            startsAt,
+            facilityId: patient.facilityId ?? null,
+            note: buildScheduleNote(note, appointmentType, location),
+            metadata: {
+              source: "schedule_patient_playground",
+              appointmentType: appointmentType.trim() || null,
+              location: location.trim() || null,
+            },
+          })) as {
+            executionCase?: {
+              id?: number;
+              patientScreeningId?: number | null;
+            };
+          };
+          if (resp?.executionCase?.id != null) {
+            resolvedCaseId = resp.executionCase.id;
+            if (resp.executionCase.patientScreeningId != null)
+              resolvedScreeningId = resp.executionCase.patientScreeningId;
+          }
+          results.push({ service: svc, ok: true });
+        } catch (err) {
+          results.push({
+            service: svc,
+            ok: false,
+            error: err instanceof Error ? err.message : "Schedule write failed",
+          });
+        }
+      }
+      return results;
     },
-    onSuccess: () => {
+    onSuccess: (results) => {
+      setBookingResults(results);
       invalidateTeamPortalScheduleQueries(queryClient, {
         facility: patient.facilityId ?? null,
         selectedDate,
         patientScreeningId: patient.patientScreeningId ?? null,
       });
-      toast({
-        title: "Scheduled",
-        description: `${serviceType.trim()} for ${patient.patientName ?? "patient"}.`,
-      });
-      setTime("");
-      setNote("");
+      const okCount = results.filter((r) => r.ok).length;
+      const failed = results.filter((r) => !r.ok);
+      if (failed.length === 0) {
+        toast({
+          title: okCount === 1 ? "Scheduled" : `${okCount} tests scheduled`,
+          description: `for ${patient.patientName ?? "patient"}.`,
+        });
+        // Full success: clear the transient inputs so the surface is ready
+        // for the next booking without re-opening.
+        setSelectedServices([]);
+        setServiceOverrides({});
+        setTime("");
+        setNote("");
+      } else {
+        toast({
+          title:
+            okCount > 0
+              ? `${okCount} scheduled · ${failed.length} failed`
+              : "Could not schedule",
+          description: failed
+            .map((f) => `${f.service}: ${f.error ?? "failed"}`)
+            .join(" · "),
+          variant: "destructive",
+        });
+      }
     },
     onError: (err: unknown) => {
       toast({
@@ -516,31 +639,175 @@ export function SchedulePatientPlayground({
             {/* Booking form */}
             <div className="space-y-4">
               <div>
-                <Label
-                  htmlFor="sp-pg-service"
-                  className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
-                >
-                  Service type
-                </Label>
-                <select
-                  id="sp-pg-service"
-                  value={serviceType}
-                  onChange={(e) => setServiceType(e.target.value)}
-                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2"
-                  style={{ ["--tw-ring-color" as string]: ACCENT }}
-                  data-testid="select-sp-pg-service-type"
-                >
-                  <option value="">— Select service —</option>
-                  {(serviceType && !SERVICE_OPTIONS.includes(serviceType)
-                    ? [serviceType, ...SERVICE_OPTIONS]
-                    : SERVICE_OPTIONS
-                  ).map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <Label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    Tests <span className="text-red-500">*</span>
+                  </Label>
+                  {selectedServices.length > 0 && (
+                    <span
+                      className="text-[11px] font-medium text-slate-400"
+                      data-testid="text-sp-pg-selected-count"
+                    >
+                      {selectedServices.length} selected
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {(
+                    Array.from(
+                      new Set([
+                        ...selectedServices.filter(
+                          (s) => !SERVICE_OPTIONS.includes(s),
+                        ),
+                        ...SERVICE_OPTIONS,
+                      ]),
+                    )
+                  ).map((svc) => {
+                    const active = selectedServices.includes(svc);
+                    return (
+                      <button
+                        key={svc}
+                        type="button"
+                        onClick={() => toggleService(svc)}
+                        aria-pressed={active}
+                        className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                          active
+                            ? "border-transparent text-white shadow-sm"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                        style={active ? { backgroundColor: ACCENT } : undefined}
+                        data-testid={`chip-sp-pg-service-${svc}`}
+                      >
+                        {active && <Check className="h-3 w-3" />}
+                        {svc}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
+
+              {selectedServices.length > 0 && (
+                <div
+                  className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50/60 p-2.5"
+                  data-testid="section-sp-pg-per-test"
+                >
+                  <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                    <CalendarDays className="h-3 w-3" />
+                    Per-test schedule
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    All tests use the shared date &amp; time from the calendar —
+                    override any test individually.
+                  </p>
+                  {selectedServices.map((svc) => {
+                    const ov = serviceOverrides[svc] ?? {};
+                    const hasOverride = !!(ov.date || ov.time);
+                    const eff = effectiveFor(svc);
+                    return (
+                      <div
+                        key={svc}
+                        className="rounded-xl border border-slate-200 bg-white p-2"
+                        data-testid={`sp-pg-override-row-${svc}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-xs font-medium text-slate-800">
+                              {svc}
+                            </div>
+                            <div className="text-[10px] text-slate-500">
+                              {prettyDateLong(eff.date)}
+                              {eff.time ? ` · ${prettyTime(eff.time)}` : ""}
+                              {" · "}
+                              {hasOverride ? "custom" : "shared"}
+                            </div>
+                          </div>
+                          {hasOverride ? (
+                            <button
+                              type="button"
+                              onClick={() => resetOverride(svc)}
+                              className="shrink-0 text-[11px] font-semibold text-slate-500 underline-offset-2 hover:underline"
+                              data-testid={`button-sp-pg-override-reset-${svc}`}
+                            >
+                              Use shared
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => enableOverride(svc)}
+                              className="shrink-0 text-[11px] font-semibold underline-offset-2 hover:underline"
+                              style={{ color: ACCENT }}
+                              data-testid={`button-sp-pg-override-enable-${svc}`}
+                            >
+                              Override
+                            </button>
+                          )}
+                        </div>
+                        {hasOverride && (
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            <Input
+                              type="date"
+                              value={ov.date || selectedDate}
+                              onChange={(e) =>
+                                patchOverride(svc, { date: e.target.value })
+                              }
+                              className="rounded-xl"
+                              data-testid={`input-sp-pg-override-date-${svc}`}
+                            />
+                            <Input
+                              type="time"
+                              value={ov.time || time}
+                              onChange={(e) =>
+                                patchOverride(svc, { time: e.target.value })
+                              }
+                              className="rounded-xl"
+                              data-testid={`input-sp-pg-override-time-${svc}`}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {bookingResults && bookingResults.some((r) => !r.ok) && (
+                <div
+                  className="space-y-1 rounded-2xl border border-amber-200 bg-amber-50/70 p-2.5"
+                  data-testid="panel-sp-pg-results"
+                >
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+                    Booking results
+                  </div>
+                  <ul className="space-y-1">
+                    {bookingResults.map((r) => (
+                      <li
+                        key={r.service}
+                        className="flex items-start gap-1.5 text-[11px]"
+                        data-testid={`sp-pg-result-row-${r.service}`}
+                      >
+                        {r.ok ? (
+                          <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-600" />
+                        ) : (
+                          <XCircle className="mt-0.5 h-3 w-3 shrink-0 text-red-500" />
+                        )}
+                        <span className="min-w-0">
+                          <span className="font-medium text-slate-800">
+                            {r.service}
+                          </span>
+                          {r.ok ? (
+                            <span className="text-slate-500"> — scheduled</span>
+                          ) : (
+                            <span className="text-red-600">
+                              {" "}
+                              — {r.error ?? "failed"}
+                            </span>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               <div>
                 <Label
@@ -609,6 +876,9 @@ export function SchedulePatientPlayground({
               <span className="font-semibold text-slate-800" data-testid="text-sp-pg-selection">
                 {prettyDateLong(selectedDate)}
                 {time ? ` · ${prettyTime(time)}` : ""}
+                {selectedServices.length > 0
+                  ? ` · ${selectedServices.length} test${selectedServices.length > 1 ? "s" : ""}`
+                  : ""}
               </span>
             </div>
             <Button
@@ -624,7 +894,9 @@ export function SchedulePatientPlayground({
               ) : (
                 <CheckCircle2 className="h-4 w-4" />
               )}
-              {time ? `Confirm ${prettyTime(time)}` : "Confirm schedule"}
+              {selectedServices.length > 1
+                ? `Schedule ${selectedServices.length} tests`
+                : "Confirm schedule"}
             </Button>
           </div>
         </div>
