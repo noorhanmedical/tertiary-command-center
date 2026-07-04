@@ -23,6 +23,7 @@ export interface IOutreachRepository {
   listCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]>;
   listCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]>;
   listCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]>;
+  listCallsInRange(start: Date, end: Date): Promise<OutreachCall[]>;
   latestCallForPatient(patientScreeningId: number): Promise<OutreachCall | undefined>;
 }
 
@@ -113,6 +114,15 @@ export class DbOutreachRepository implements IOutreachRepository {
         eq(outreachCalls.schedulerUserId, schedulerUserId),
         gte(outreachCalls.startedAt, startOfDay),
         lte(outreachCalls.startedAt, endOfDay),
+      ))
+      .orderBy(desc(outreachCalls.startedAt));
+  }
+
+  async listCallsInRange(start: Date, end: Date): Promise<OutreachCall[]> {
+    return db.select().from(outreachCalls)
+      .where(and(
+        gte(outreachCalls.startedAt, start),
+        lte(outreachCalls.startedAt, end),
       ))
       .orderBy(desc(outreachCalls.startedAt));
   }

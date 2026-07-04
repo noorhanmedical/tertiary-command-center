@@ -1,0 +1,305 @@
+2-PANEL ADMIN REVIEW INSTRUCTION
+
+Work only on the existing Plexus IQ Admin Review experience.
+
+Do not create a new route.
+Do not create a prototype.
+Do not create Patient Journey.
+Do not add downstream statuses.
+Do not make Admin Review full-screen.
+Do not remove the existing Admin Review logic.
+Do not fake unsupported actions.
+
+Goal:
+Turn the current Admin Review into a cleaner 2-panel operating layout.
+
+When the user clicks Review on a patient row, the layout should become:
+
+Date panel | Patient name rail | Review panel
+
+The Date panel must remain visible.
+The patient-name rail must remain visible.
+The Review panel should open to the right of the patient-name rail.
+The user should be able to click another patient name in the rail and have Review update to that patient without closing/reopening.
+
+MAIN REVIEW STRUCTURE
+
+Top patient banner:
+
+* Patient name
+* DOB
+* Insurance
+* Phone if available
+* Plexus IQ status
+* Selected date
+* Selected batch/import time
+* Save state if applicable
+* Packet QA/stale warning if applicable
+* X close button
+
+Main body should be exactly 2 panels:
+
+LEFT PANEL:
+Tests / Ancillaries
+
+RIGHT PANEL:
+Source / History / ICD / Engagement tabs
+
+Footer:
+
+* blocker/warning text if applicable
+* Needs Info
+* Reviewed
+* Admin Approve
+
+LEFT PANEL: TESTS / ANCILLARIES
+
+The left panel must preserve the ancillary dropdown concept.
+
+Show meaningful test/ancillary dropdowns only:
+
+* BrainWave
+* VitalWave
+* Ultrasound
+* supported ultrasound subtype if already supported
+
+Do not show empty fake dropdowns.
+Do not show empty BrainWave/VitalWave/Ultrasound sections if there is no meaningful content.
+
+A test/ancillary section is meaningful if it has at least one of:
+
+* eligible/qualified status
+* qualifying factors
+* attached evidence
+* ICD codes
+* clinician understanding
+* patient talking points
+* packet QA blocker
+* stale/regeneration required state
+* prior testing/cooldown warning
+* manually added/held/removed status
+
+Each dropdown should show:
+
+* Test/ancillary name
+* Qualifying status
+* Qualifying factors
+* Attached evidence
+* Clinician understanding
+* Patient talking points
+* ICD codes
+* Packet QA warnings/blockers
+* Regeneration Required state if evidence changed
+* Regenerate button if existing route supports it
+* Remove/hold/needs-info only if existing route supports it
+
+Example left panel:
+
+▾ VitalWave
+Status: Regeneration Required
+
+Qualifying Factors
+• Diabetes mellitus
+• Hypertension
+• Vascular risk factors
+
+Attached Evidence
+• DX: Diabetes mellitus
+• DX: Hypertension
+• RX: Aspirin
+
+Clinician Understanding
+Patient has diabetes and hypertension, increasing vascular risk.
+
+Patient Talking Points
+This test helps evaluate vascular health and circulation.
+
+ICD Codes
+• E11.9
+• I10
+
+Packet QA
+• Blocked until VitalWave is regenerated
+
+[Regenerate VitalWave]
+
+RIGHT PANEL: TABS
+
+The right panel must have tabs:
+
+Source
+History
+ICD
+Engagement
+
+SOURCE TAB
+
+Source tab should show source material grouped into expandable sections:
+
+DX
+HX
+RX
+Prior Testing
+Notes
+
+Each source row should show:
+
+* source type
+* source text
+* current attached test chips
+* Attach action
+
+Example:
+
+DX
+Diabetes mellitus
+Attached to: VitalWave, Ultrasound
+[Attach]
+
+When clicking Attach:
+
+* show supported target picker
+* allow same source/evidence to attach to multiple targets
+* dedupe only per target, not globally
+* after attach, the source row should show the attached target chip
+* the corresponding left-panel target should immediately show the attached evidence
+* the affected target should become Regeneration Required
+* Save state should show Saving, then Saved
+
+HISTORY TAB
+
+History tab should show available historical/contextual information:
+
+* imported clinical history
+* source history
+* prior testing history
+* Admin Review attach/detach events if available
+* regeneration events if available
+* prior notes if available
+
+Do not fake missing history. If not available, show:
+No history available.
+
+ICD TAB
+
+ICD tab should show:
+
+* selected ICD codes
+* ICD codes connected to each test/ancillary if available
+* attach ICD to target only if existing update flow supports it
+
+Do not create fake ICD save behavior.
+
+ENGAGEMENT TAB
+
+Engagement tab may show Plexus IQ handoff context only.
+
+It should not add downstream statuses to the patient row.
+
+Inside the tab, it can show:
+
+* whether patient has been sent to Engagement, if available
+* admin-approved handoff status, if available
+* route/handoff warnings, if available
+
+Do not add Not Sent / Assigned / Distributed / Scheduled / Billing / Invoice to the main Plexus IQ patient row.
+
+SAVE / PERSISTENCE RULES
+
+When attaching or detaching evidence:
+
+* save immediately
+* show Saving...
+* then Saved
+* if failed, show Save Failed
+
+Regeneration is not required for evidence attachment to persist.
+
+If I attach a diagnosis to VitalWave, close Review, and reopen without regenerating:
+
+* the diagnosis must still be attached to VitalWave
+* VitalWave should show Regeneration Required
+
+While saving:
+
+* disable or block X close
+* disable Admin Approve
+* block packet generation
+* show visible Saving state
+
+If save fails:
+
+* show Save Failed
+* warn before close
+* do not pretend the evidence persisted
+
+REGENERATION RULES
+
+When evidence changes:
+
+* affected test/ancillary becomes Regeneration Required
+* Admin Approve is blocked
+* Clinician PDF and Plexus PDF are blocked
+* Packet QA should explain exactly which target is stale
+
+If multiple targets are stale, show:
+Regenerate Changed
+
+Regenerate Changed should:
+
+* regenerate stale targets sequentially
+* preserve all assigned evidence
+* clear stale state for successful targets
+* keep failed targets stale
+* show clear error for failed target
+
+APPROVAL RULE
+
+Admin Approve is allowed only when:
+
+* saves are complete
+* no Save Failed state exists
+* no required regeneration is pending
+* packet QA blockers are cleared
+
+If blocked, show the reason clearly:
+Cannot approve until pending regeneration is completed.
+
+VISUAL STYLE
+
+Keep it clean and operational:
+
+* no giant modal feeling
+* no black full-screen overlay
+* no bubbly cards
+* no unnecessary icons
+* no dashboard tiles
+* compact headers
+* simple rows
+* clear section labels
+* clean borders
+* readable spacing
+
+Do not make this a large redesign. This is a focused Admin Review layout cleanup.
+
+VALIDATION
+
+After changes, run:
+
+npm run check
+npm run build
+
+Report:
+
+1. Files changed
+2. Whether Admin Review opens as Date | patient rail | Review
+3. Whether Review is 2-panel
+4. Whether ancillary dropdowns remain intact
+5. Whether Source/History/ICD/Engagement tabs exist
+6. Whether evidence attachment persists without regeneration
+7. Whether stale/regeneration blocking still works
+8. Whether Admin Approve is blocked when stale
+9. Whether packet QA blocks stale output
+10. check/build results
+
+Do not push until Ali approves.

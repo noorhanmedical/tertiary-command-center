@@ -5,7 +5,7 @@ import { saveBlob, readBlob, deleteBlob, getLatestBlobForOwner } from "../servic
 import { enqueueDriveFile } from "../services/outbox";
 import { db } from "../db";
 import { uploadedDocuments, documents as documentsTable, documentSurfaceAssignments, patientScreenings } from "@shared/schema";
-import { desc, eq, like, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, isNull, like, or, sql } from "drizzle-orm";
 import {
   getExecutionCaseById,
   getExecutionCaseByScreeningId,
@@ -255,6 +255,56 @@ function mountRoutes(app: Express, basePath: string) {
       signatureRequirements: DOCUMENT_SIGNATURE_REQUIREMENTS,
       surfaces: DOCUMENT_SURFACES,
     });
+  });
+
+  // Cross-entity command search: match current (non-superseded, non-deleted)
+  // library documents by title, filename, or description. Used by the
+  // command-rail Search popup alongside the patient and billing searches.
+  // Registered before `:id` so the literal "search" segment is not parsed as
+  // a document id.
+  app.get(`${basePath}/search`, requireAuth, async (req, res) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      const limit = Math.min(parseInt(String(req.query.limit ?? "25"), 10) || 25, 100);
+      if (q.length === 0) return res.json({ rows: [] });
+      const pattern = `%${q}%`;
+      const rows = await db
+        .select({
+          id: documentsTable.id,
+          title: documentsTable.title,
+          kind: documentsTable.kind,
+          filename: documentsTable.filename,
+          facility: documentsTable.facility,
+          contentType: documentsTable.contentType,
+        })
+        .from(documentsTable)
+        .where(
+          and(
+            isNull(documentsTable.supersededByDocumentId),
+            isNull(documentsTable.deletedAt),
+            or(
+              ilike(documentsTable.title, pattern),
+              ilike(documentsTable.filename, pattern),
+              ilike(documentsTable.description, pattern),
+            ),
+          ),
+        )
+        .orderBy(desc(documentsTable.createdAt))
+        .limit(limit);
+      res.json({
+        rows: rows.map((r) => ({
+          id: r.id,
+          title: r.title,
+          kind: r.kind,
+          filename: r.filename,
+          facility: r.facility,
+          contentType: r.contentType,
+          downloadUrl: `${basePath}/${r.id}/file`,
+        })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   app.get(`${basePath}/:id`, requireAuth, async (req, res) => {

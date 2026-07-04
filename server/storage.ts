@@ -212,6 +212,7 @@ export interface IStorage {
   listOutreachCallsForPatient(patientScreeningId: number): Promise<OutreachCall[]>;
   listOutreachCallsForPatients(patientScreeningIds: number[]): Promise<OutreachCall[]>;
   listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string): Promise<OutreachCall[]>;
+  listOutreachCallsInRange(start: Date, end: Date): Promise<OutreachCall[]>;
   latestOutreachCallForPatient(patientScreeningId: number): Promise<OutreachCall | undefined>;
 
   createSchedulerAssignment(record: InsertSchedulerAssignment): Promise<SchedulerAssignment>;
@@ -236,6 +237,13 @@ export interface IStorage {
   updateAnalysisJob(id: number, updates: Partial<InsertAnalysisJob>): Promise<AnalysisJob | undefined>;
   incrementAnalysisJobProgress(jobId: number): Promise<void>;
   getLatestAnalysisJobByBatch(batchId: number): Promise<AnalysisJob | undefined>;
+  /**
+   * Plexus IQ runtime hardening — returns the most recent running job
+   * for the batch (status='running'), or undefined. Used to prevent
+   * duplicate Generate clicks from starting a second loop while the
+   * first is still in flight.
+   */
+  getActiveAnalysisJobByBatch(batchId: number): Promise<AnalysisJob | undefined>;
   getRecentAnalysisJobs(limit: number): Promise<Array<AnalysisJob & { batchName: string }>>;
   failRunningAnalysisJobs(errorMessage: string): Promise<void>;
   purgeOldAnalysisJobs(olderThanDays: number): Promise<void>;
@@ -423,6 +431,7 @@ export class DatabaseStorage implements IStorage {
   listOutreachCallsForPatient(patientScreeningId: number) { return outreachRepository.listCallsForPatient(patientScreeningId); }
   listOutreachCallsForPatients(patientScreeningIds: number[]) { return outreachRepository.listCallsForPatients(patientScreeningIds); }
   listOutreachCallsForSchedulerToday(schedulerUserId: string, todayIso: string) { return outreachRepository.listCallsForSchedulerToday(schedulerUserId, todayIso); }
+  listOutreachCallsInRange(start: Date, end: Date) { return outreachRepository.listCallsInRange(start, end); }
   latestOutreachCallForPatient(patientScreeningId: number) { return outreachRepository.latestCallForPatient(patientScreeningId); }
 
   // Scheduler assignments
@@ -452,6 +461,7 @@ export class DatabaseStorage implements IStorage {
   updateAnalysisJob(id: number, updates: Partial<InsertAnalysisJob>) { return analysisJobsRepository.update(id, updates); }
   incrementAnalysisJobProgress(jobId: number) { return analysisJobsRepository.incrementProgress(jobId); }
   getLatestAnalysisJobByBatch(batchId: number) { return analysisJobsRepository.latestByBatch(batchId); }
+  getActiveAnalysisJobByBatch(batchId: number) { return analysisJobsRepository.activeByBatch(batchId); }
   getRecentAnalysisJobs(limit: number) { return analysisJobsRepository.recent(limit); }
   failRunningAnalysisJobs(errorMessage: string) { return analysisJobsRepository.failRunning(errorMessage); }
   purgeOldAnalysisJobs(olderThanDays: number) { return analysisJobsRepository.purgeOld(olderThanDays); }

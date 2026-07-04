@@ -34,6 +34,8 @@ export function PlexusIQAddPatientModal({
   onSubmit,
   pending,
   defaultPatientType,
+  defaultFacility,
+  defaultScheduleDate,
 }: {
   open: boolean;
   onClose: () => void;
@@ -49,24 +51,34 @@ export function PlexusIQAddPatientModal({
   }) => Promise<boolean>;
   pending: boolean;
   defaultPatientType?: PatientType;
+  // Destination defaults sourced from the operating list's current
+  // selection so newly added patients land in the list the user is
+  // viewing. Both are overridable in the form before submitting.
+  defaultFacility?: string;
+  defaultScheduleDate?: string;
 }) {
-  const [facility, setFacility] = useState<string>("");
-  const [scheduleDate, setScheduleDate] = useState<string>(todayIso());
+  const [facility, setFacility] = useState<string>(defaultFacility ?? "");
+  const [scheduleDate, setScheduleDate] = useState<string>(
+    defaultScheduleDate ?? todayIso(),
+  );
   const [patientType, setPatientType] = useState<PatientType>(defaultPatientType ?? "visit");
   const [name, setName] = useState("");
   const [time, setTime] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // Keep the local patientType in sync with whichever tile opened us.
+  // On open, seed the form from whichever tile opened us plus the
+  // operating list's current facility/date selection.
   useEffect(() => {
     if (open) {
       setPatientType(defaultPatientType ?? "visit");
+      setFacility(defaultFacility ?? "");
+      setScheduleDate(defaultScheduleDate ?? todayIso());
     }
-  }, [open, defaultPatientType]);
+  }, [open, defaultPatientType, defaultFacility, defaultScheduleDate]);
 
   function reset() {
-    setFacility("");
-    setScheduleDate(todayIso());
+    setFacility(defaultFacility ?? "");
+    setScheduleDate(defaultScheduleDate ?? todayIso());
     setPatientType(defaultPatientType ?? "visit");
     setName("");
     setTime("");

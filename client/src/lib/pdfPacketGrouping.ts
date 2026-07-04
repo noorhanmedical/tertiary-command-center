@@ -225,11 +225,42 @@ export function splitPatientsByFacilityDate(
 // "Completed" predicate used by the PDF buttons. A row only qualifies
 // for PDF when AI qualification has populated `qualifyingTests` /
 // `reasoning` — otherwise the PDF body would be empty.
+//
+// Packet QA Gate hardening:
+//   - Failed/error rows are NEVER eligible. The runtime-hardening
+//     runner writes reasoning.__analysisFailure on failure, which the
+//     previous version of this predicate counted as "non-empty
+//     reasoning" and let through.
+//   - A reasoning blob whose only keys are sentinel markers
+//     (__analysisFailure / __analysisError) does NOT count as real
+//     reasoning. Those sentinels are written exclusively on failure
+//     and carry no qualifying-test content.
+//   - Final test: completed OR a non-error row with at least one
+//     qualifying test. Per-test reasoning quality is enforced by the
+//     packet QA gate (client/src/lib/packetQa.ts).
+const REASONING_SENTINEL_KEYS = new Set([
+  "__analysisFailure",
+  "__analysisError",
+]);
+
+function hasRealReasoning(reasoning: unknown): boolean {
+  if (!reasoning || typeof reasoning !== "object") return false;
+  const keys = Object.keys(reasoning as Record<string, unknown>);
+  if (keys.length === 0) return false;
+  return keys.some((k) => !REASONING_SENTINEL_KEYS.has(k));
+}
+
 export function isPatientPdfEligible(p: PatientScreening): boolean {
+  // Hard block: a failed row never reaches a packet, regardless of
+  // what reasoning sentinels were written by the runner.
+  if (p.status === "error") return false;
   if (p.status === "completed") return true;
-  if (Array.isArray(p.qualifyingTests) && p.qualifyingTests.length > 0) return true;
-  if (p.reasoning && typeof p.reasoning === "object" && Object.keys(p.reasoning).length > 0) {
+  if (Array.isArray(p.qualifyingTests) && p.qualifyingTests.length > 0) {
     return true;
   }
+  // Last-resort allowance for partially-qualified rows whose reasoning
+  // was populated even though `qualifyingTests` is empty (rare). A
+  // sentinel-only reasoning blob is rejected here.
+  if (hasRealReasoning(p.reasoning)) return true;
   return false;
 }
