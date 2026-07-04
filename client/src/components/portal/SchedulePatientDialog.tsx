@@ -692,7 +692,7 @@ export function SchedulePatientDialog({
       }}
     >
       <DialogContent
-        className="max-w-3xl gap-0 overflow-hidden p-0"
+        className="z-[95] max-w-3xl gap-0 overflow-hidden p-0"
         data-testid="dialog-schedule-patient"
       >
         <DialogTitle className="sr-only">
