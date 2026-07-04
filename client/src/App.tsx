@@ -7,6 +7,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
+import MissionControlPage from "@/pages/mission-control";
+import ImagingCentralPage from "@/pages/imaging-central";
+import ClinicAnalyticsPage from "@/pages/clinic-analytics";
+import ClinicOnboardingPage from "@/pages/clinic-onboarding";
 import SchedulePage from "@/pages/SchedulePage";
 import SharedSchedule from "@/pages/shared-schedule";
 import PatientDatabasePage from "@/pages/patient-database";
@@ -24,6 +28,7 @@ import AdminPage from "@/pages/admin";
 import StovetopHeatSettingsPage from "@/pages/stovetop-heat-settings";
 import AdminUsersPage from "@/pages/admin-users";
 import AdminSettingsCenterPage from "@/pages/admin-settings-center";
+import AdminApiIntegrationsPage from "@/pages/admin-api-integrations";
 import BillingSettingsPage from "@/pages/billing-settings";
 import BillingReadinessPage from "@/pages/billing-readiness";
 import InvoiceBatchesPage from "@/pages/invoice-batches";
@@ -50,6 +55,8 @@ import ClinicWorkflowDemoPage from "@/pages/clinic-workflow-demo";
 import QualificationPage from "@/pages/qualification";
 import OutreachQualificationPage from "@/pages/outreach-qualification";
 import PlexusIQPage from "@/pages/plexus-iq";
+// Temporary design-prototype route — mock data only, not production.
+import PlexusIqPrototypePage from "@/pages/plexus-iq-prototype";
 import TeamMemberPortalsPage from "@/pages/team-member-portals";
 import PatientCareSpecialistPortalPage from "@/pages/patient-care-specialist-portal";
 import AncillaryCareSpecialistPortalPage from "@/pages/ancillary-care-specialist-portal";
@@ -105,6 +112,41 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 <Route path="/home">
                   <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
                     <Home />
+                  </SidebarProvider>
+                </Route>
+                <Route path="/mission-control">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <MissionControlPage />
+                  </SidebarProvider>
+                </Route>
+                <Route path="/imaging-central">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <ImagingCentralPage />
+                  </SidebarProvider>
+                </Route>
+                {/* Compatibility redirects: the imaging execution module was
+                    renamed from Ultrasound/Technician Central to Imaging Central.
+                    Old deep links keep working. */}
+                <Route path="/ultrasound-central">
+                  <Redirect to="/imaging-central" />
+                </Route>
+                <Route path="/technician-central">
+                  <Redirect to="/imaging-central" />
+                </Route>
+                <Route path="/clinic-analytics">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <ClinicAnalyticsPage />
+                  </SidebarProvider>
+                </Route>
+                {/* /analytics is preserved and renders Clinic Analytics. */}
+                <Route path="/analytics">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <ClinicAnalyticsPage />
+                  </SidebarProvider>
+                </Route>
+                <Route path="/clinic-onboarding">
+                  <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
+                    <ClinicOnboardingPage />
                   </SidebarProvider>
                 </Route>
                 <Route path="/schedule" component={SchedulePage} />
@@ -170,6 +212,10 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
             <PlexusIQPage />
           </SidebarProvider>
         </Route>
+        {/* Temporary design-prototype route — mock data only. */}
+        <Route path="/plexus-iq-prototype">
+          <PlexusIqPrototypePage />
+        </Route>
         <Route path="/team-member-portals">
           <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
             <TeamMemberPortalsPage />
@@ -186,9 +232,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
           </SidebarProvider>
         </Route>
         <Route path="/engagement-center">
-          <SidebarProvider defaultOpen={false} style={SIDEBAR_STYLE}>
-            <EngagementCenterPage />
-          </SidebarProvider>
+          <EngagementCenterPage />
         </Route>
                 <Route path="/team-ops" component={TeamOpsPage} />
                 <Route path="/task-brain">
@@ -207,6 +251,9 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
                 </Route>
                 <Route path="/admin/settings-center">
                   <AdminGuard user={user}><AdminSettingsCenterPage /></AdminGuard>
+                </Route>
+                <Route path="/admin/settings-center/api-integrations">
+                  <AdminGuard user={user}><AdminApiIntegrationsPage /></AdminGuard>
                 </Route>
                 <Route path="/admin/billing-settings">
                   <AdminGuard user={user}><BillingSettingsPage /></AdminGuard>
@@ -266,7 +313,7 @@ function AuthenticatedApp({ user, onLogout }: { user: AuthUser; onLogout: () => 
 }
 
 function AppShell() {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const { toast } = useToast();
 
   const { data: user, isLoading, refetch } = useQuery<AuthUser>({

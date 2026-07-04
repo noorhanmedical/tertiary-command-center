@@ -17,7 +17,6 @@
 //   /scheduler-portal → OutreachPage (unchanged, scheduler call queue)
 //   /engagement-center → this page (assignment manager view)
 
-import { SidebarTrigger } from "@/components/ui/sidebar";
 import { EngagementAssignmentBoard } from "@/components/engagement/EngagementAssignmentBoard";
 import { EngagementDuplicateBanner } from "@/components/engagement/EngagementDuplicateBanner";
 
@@ -26,7 +25,6 @@ export default function EngagementCenterPage() {
     <div className="flex flex-col h-full">
       <header className="bg-white border-b border-slate-200/60 sticky top-0 z-30">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-2">
-          <SidebarTrigger data-testid="button-sidebar-toggle-engagement-center" />
           <div>
             <div className="text-[10px] font-semibold tracking-[0.16em] text-slate-500 uppercase">
               PLEXUS ANCILLARY · ENGAGEMENT CENTER

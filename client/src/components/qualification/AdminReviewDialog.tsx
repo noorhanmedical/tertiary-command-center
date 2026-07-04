@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
@@ -13,7 +13,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Popover,
   PopoverContent,
@@ -28,16 +27,17 @@ import {
   ChevronLeft,
   ChevronRight,
   Lightbulb,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
+  Pencil,
   Plus,
+  RefreshCw,
   Sparkles,
   StickyNote,
   Trash2,
   X,
   Search,
+  FileText,
+  BookOpen,
+  Check,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -51,6 +51,8 @@ import {
   validateSameFacilityDatePacket,
   type PdfPacketSourcePatient,
 } from "@/lib/pdfPacketGrouping";
+import { auditPacketPatients, type PacketQaReport } from "@/lib/packetQa";
+import { PacketQaBlockingDialog } from "@/components/plexus-iq/PacketQaBlockingDialog";
 import {
   categoryIcons,
   categoryLabels,
@@ -98,31 +100,6 @@ const REGENERATE_TEST_IDS: Record<AdminReviewAncillaryId, string> = {
   ultrasound: "admin-review-regenerate-ultrasound",
 };
 
-const STATUS_META: Record<
-  AdminApprovalStatus,
-  { label: string; pillClass: string }
-> = {
-  pending: {
-    label: "Pending",
-    pillClass: "bg-slate-100 text-slate-700 border border-slate-200",
-  },
-  approved: {
-    label: "Approved",
-    pillClass: "bg-emerald-50 text-emerald-800 border border-emerald-200",
-  },
-  needs_info: {
-    // Visible label kept short to avoid the legacy needs-info phrasing
-    // that lived on ancillary bars. The approval state itself remains
-    // `needs_info` for backend compat.
-    label: "Pending Info",
-    pillClass: "bg-amber-50 text-amber-800 border border-amber-200",
-  },
-  rejected: {
-    label: "Rejected",
-    pillClass: "bg-rose-50 text-rose-800 border border-rose-200",
-  },
-};
-
 // Audit/change-log entry shown in the bottom "Updates Made In Patient"
 // box. This is a thin trace surface, not a second clinical truth
 // layer — every entry mirrors an action the admin took during this
@@ -153,6 +130,117 @@ export type AdminReviewUpdateEntry = {
   by?: string | null;
   metadata?: Record<string, unknown>;
 };
+
+// ────────────────────────────────────────────────────────────────────
+// Updates grouping — the bottom "Updates" box groups change entries by
+// ancillary (BrainWave / VitalWave / Ultrasound) instead of a flat
+// chronological list. Only per-ancillary clinical changes appear here;
+// session-meta entries (approvals, notes, regenerate, pdf, icd search)
+// are intentionally excluded.
+// ────────────────────────────────────────────────────────────────────
+const UPDATE_CHANGE_TYPES: ReadonlySet<AdminReviewUpdateType> = new Set([
+  "diagnosis_added",
+  "medication_added",
+  "symptom_added",
+  "qualifying_factor_removed",
+  "ancillary_removed",
+  "ultrasound_child_removed",
+]);
+
+function ancillaryOfUpdateEntry(
+  entry: AdminReviewUpdateEntry,
+): AdminReviewAncillaryId | null {
+  const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+  const direct = meta.ancillary;
+  if (direct === "brainwave" || direct === "vitalwave" || direct === "ultrasound") {
+    return direct;
+  }
+  const t = (meta.target ?? meta.from) as
+    | { type?: string; ancillaryId?: string }
+    | undefined;
+  if (t && typeof t === "object") {
+    if (
+      t.type === "ancillary" &&
+      (t.ancillaryId === "brainwave" || t.ancillaryId === "vitalwave")
+    ) {
+      return t.ancillaryId;
+    }
+    if (t.type === "ultrasound-parent" || t.type === "ultrasound-test") {
+      return "ultrasound";
+    }
+  }
+  if (entry.type === "ultrasound_child_removed") return "ultrasound";
+  return null;
+}
+
+// Short, clean change wording, e.g. "Removed PTSD" / "Added diabetes
+// mellitus". Strips the verbose "qualifying factor:" / "diagnosis:"
+// prefixes the audit log stores.
+function shortUpdateText(entry: AdminReviewUpdateEntry): string {
+  const label = entry.label ?? "";
+  const afterColon = label.includes(":")
+    ? label.slice(label.indexOf(":") + 1).trim()
+    : label.trim();
+  switch (entry.type) {
+    case "diagnosis_added":
+    case "medication_added":
+    case "symptom_added":
+      return `Added ${afterColon}`;
+    case "qualifying_factor_removed":
+    case "ultrasound_child_removed":
+      return `Removed ${afterColon}`;
+    case "ancillary_removed":
+      return "Removed ancillary";
+    default:
+      return label;
+  }
+}
+
+const UPDATE_GROUP_ORDER: AdminReviewAncillaryId[] = [
+  "brainwave",
+  "vitalwave",
+  "ultrasound",
+];
+
+const UPDATE_GROUP_ACCENT: Record<AdminReviewAncillaryId, string> = {
+  brainwave: "text-violet-700",
+  vitalwave: "text-rose-700",
+  ultrasound: "text-emerald-700",
+};
+
+const UPDATE_GROUP_DOT: Record<AdminReviewAncillaryId, string> = {
+  brainwave: "bg-violet-500",
+  vitalwave: "bg-rose-500",
+  ultrasound: "bg-emerald-500",
+};
+
+function groupUpdatesByAncillary(
+  updates: AdminReviewUpdateEntry[],
+): { ancillary: AdminReviewAncillaryId; entries: AdminReviewUpdateEntry[] }[] {
+  const byAncillary: Record<AdminReviewAncillaryId, AdminReviewUpdateEntry[]> = {
+    brainwave: [],
+    vitalwave: [],
+    ultrasound: [],
+  };
+  for (const entry of updates) {
+    if (!UPDATE_CHANGE_TYPES.has(entry.type)) continue;
+    const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+    const tgt = (meta.target ?? meta.from) as { type?: string } | undefined;
+    if (tgt && typeof tgt === "object" && tgt.type === "all") {
+      byAncillary.brainwave.push(entry);
+      byAncillary.vitalwave.push(entry);
+      byAncillary.ultrasound.push(entry);
+      continue;
+    }
+    const ancillary = ancillaryOfUpdateEntry(entry);
+    if (!ancillary) continue;
+    byAncillary[ancillary].push(entry);
+  }
+  return UPDATE_GROUP_ORDER.filter((a) => byAncillary[a].length > 0).map((a) => ({
+    ancillary: a,
+    entries: byAncillary[a],
+  }));
+}
 
 const CONFIDENCE_TONE: Record<string, string> = {
   high: "bg-emerald-50 text-emerald-800 border-emerald-200",
@@ -546,6 +634,161 @@ function chipKeyForAssignment(b: SupportingButton): string {
   return buttonKey(b);
 }
 
+// Admin Review persistence — corrective patch (b4b1569 follow-up).
+//
+// Build the next `reasoning` blob with `adminReview:<ancillary>` and
+// `adminReview:test:<testName>` keys updated to reflect the operator's
+// current `assignments` state.
+//
+// IMPORTANT: writer (this) and reader (`seedAssignmentsFromReasoning`)
+// must stay symmetrical. If this key shape changes,
+// close/reopen assignment persistence will break.
+//
+// Merge rules (preserve everything else):
+//   - Other `adminReview:<a>` keys not touched here are passed through.
+//   - Each touched key spreads its existing block then overwrites
+//     `assignedEvidence` only, so any other admin metadata
+//     (ancillaryId, ancillaryNote, regeneratedAt, regeneratedMode)
+//     survives.
+//   - Existing `reasoning[testName]` canonical entries are untouched.
+//   - `adminReview:updates` audit log is untouched.
+//
+// `staleAncillaries` (optional): a set of ancillary ids whose
+// `assignedEvidence` was just changed. The merge sets `stale: true`
+// + `staleReason` + `staleAt` on those blocks so the UI and packet QA
+// can block until regenerate runs. Other blocks' stale flags are left
+// alone.
+//
+// `clearedAncillaries` (optional): a set whose stale flags should be
+// cleared (used by the regenerate success handler).
+type AssignedEvidenceMergeOptions = {
+  staleAncillaries?: Set<string>;
+  staleReason?: string;
+  clearedAncillaries?: Set<string>;
+};
+
+function buildAssignedEvidenceReasoning(
+  prevReasoning: Record<string, unknown>,
+  assignments: AdminReviewAssignmentState,
+  options: AssignedEvidenceMergeOptions = {},
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...prevReasoning };
+  const staleSet = options.staleAncillaries ?? new Set<string>();
+  const clearedSet = options.clearedAncillaries ?? new Set<string>();
+  const staleReason = options.staleReason ?? "Evidence assignment changed";
+  const nowIso = new Date().toISOString();
+
+  for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
+    const key = `adminReview:${id}`;
+    const existing =
+      next[key] && typeof next[key] === "object" && !Array.isArray(next[key])
+        ? (next[key] as Record<string, unknown>)
+        : {};
+    const newAssigned =
+      id === "ultrasound" ? assignments.ultrasound.parent : assignments[id];
+    const merged: Record<string, unknown> = {
+      ...existing,
+      ancillaryId: id,
+      assignedEvidence: newAssigned,
+    };
+    if (staleSet.has(id)) {
+      merged.stale = true;
+      merged.staleReason = staleReason;
+      merged.staleAt = nowIso;
+    }
+    if (clearedSet.has(id)) {
+      merged.stale = false;
+      merged.staleReason = null;
+      merged.staleAt = null;
+    }
+    next[key] = merged;
+  }
+  // Ultrasound child tests live under their own key.
+  for (const [testName, assigned] of Object.entries(
+    assignments.ultrasound.byTestName,
+  )) {
+    const key = `adminReview:test:${testName}`;
+    const existing =
+      next[key] && typeof next[key] === "object" && !Array.isArray(next[key])
+        ? (next[key] as Record<string, unknown>)
+        : {};
+    const childKey = `test:${testName}`;
+    const merged: Record<string, unknown> = {
+      ...existing,
+      testName,
+      assignedEvidence: assigned,
+    };
+    if (staleSet.has(childKey)) {
+      merged.stale = true;
+      merged.staleReason = staleReason;
+      merged.staleAt = nowIso;
+    }
+    if (clearedSet.has(childKey)) {
+      merged.stale = false;
+      merged.staleReason = null;
+      merged.staleAt = null;
+    }
+    next[key] = merged;
+  }
+  return next;
+}
+
+/**
+ * Return the set of "target ids" that the writer is responsible for.
+ * Parents: `brainwave` / `vitalwave` / `ultrasound`.
+ * Ultrasound children: `test:<testName>`.
+ *
+ * Used by the corrective patch to mark exactly the touched targets as
+ * stale on attach/detach.
+ */
+function targetIdsForAssignmentTarget(
+  target: AssignmentTarget,
+): string[] {
+  if (target.type === "all") return ["brainwave", "vitalwave", "ultrasound"];
+  if (target.type === "ancillary") return [target.ancillaryId];
+  if (target.type === "ultrasound-parent") return ["ultrasound"];
+  if (target.type === "ultrasound-test") return [`test:${target.testName}`];
+  return [];
+}
+
+/**
+ * Read the stale target ids from a reasoning blob. Returns the same
+ * id shape (`brainwave|vitalwave|ultrasound|test:<n>`) the writer uses.
+ */
+function readStaleTargetIds(reasoning: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const id of ["brainwave", "vitalwave", "ultrasound"] as const) {
+    const block = reasoning[`adminReview:${id}`];
+    if (
+      block &&
+      typeof block === "object" &&
+      (block as Record<string, unknown>).stale === true
+    ) {
+      out.push(id);
+    }
+  }
+  for (const key of Object.keys(reasoning)) {
+    if (!key.startsWith("adminReview:test:")) continue;
+    const block = reasoning[key];
+    if (
+      block &&
+      typeof block === "object" &&
+      (block as Record<string, unknown>).stale === true
+    ) {
+      out.push(`test:${key.slice("adminReview:test:".length)}`);
+    }
+  }
+  return out;
+}
+
+function ancillaryLabelForTargetId(id: string): string {
+  if (id === "brainwave") return "BrainWave";
+  if (id === "vitalwave") return "VitalWave";
+  if (id === "ultrasound") return "Ultrasound";
+  if (id.startsWith("test:")) return `Ultrasound · ${id.slice("test:".length)}`;
+  return id;
+}
+
 // ────────────────────────────────────────────────────────────────────
 // ICD search result type
 // ────────────────────────────────────────────────────────────────────
@@ -668,6 +911,29 @@ export function AdminReviewDialog({
   const [icdSearchQuery, setIcdSearchQuery] = useState("");
   const [aiIcdButtons, setAiIcdButtons] = useState<SupportingButton[]>([]);
 
+  // Source Data popover edit mode — allows inline editing of Hx/Dx/Rx
+  // with a Save → Regenerate flow.
+  const [sourceEditMode, setSourceEditMode] = useState(false);
+  const [sourceEditHx, setSourceEditHx] = useState("");
+  const [sourceEditDx, setSourceEditDx] = useState("");
+  const [sourceEditRx, setSourceEditRx] = useState("");
+  const [sourceDataSaved, setSourceDataSaved] = useState(false);
+
+  // Local mirrors of Hx/Dx/Rx that update immediately when source data
+  // is saved, so evidence buttons re-parse without waiting for the parent
+  // to propagate the updated patient prop back down.
+  const [localHx, setLocalHx] = useState(() => patient.history ?? "");
+  const [localDx, setLocalDx] = useState(() => patient.diagnoses ?? "");
+  const [localRx, setLocalRx] = useState(() => patient.medications ?? "");
+
+  // Sync local mirrors when the active patient changes (sibling navigation).
+  useEffect(() => {
+    setLocalHx(patient.history ?? "");
+    setLocalDx(patient.diagnoses ?? "");
+    setLocalRx(patient.medications ?? "");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient.id]);
+
   const icdSearchMutation = useMutation<
     { ok: boolean; results: IcdSearchResult[]; error?: string; detail?: string },
     Error,
@@ -728,14 +994,6 @@ export function AdminReviewDialog({
   // SupportingButton only after the admin clicks accept.
   const [acceptedSuggestions, setAcceptedSuggestions] = useState<SupportingButton[]>([]);
 
-  // Layout state — left/right panels default open, collapsible via
-  // header toggle buttons. Source tab is the default left tab.
-  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
-  const [leftTab, setLeftTab] = useState<
-    "source" | "patient-directory" | "cooldown" | "insurance" | "history" | "engagement"
-  >("source");
-
   // Engagement assignment for THIS patient — drives the scheduler
   // routing chip on the right panel and the highlight in the
   // Engagement tab call list.
@@ -764,196 +1022,12 @@ export function AdminReviewDialog({
     staleTime: 30_000,
   });
 
-  // Scheduler-grouped call list — backed by /api/engagement/assignment-board,
-  // grouped CLIENT-SIDE by assignedName since the backend returns a flat
-  // list (no scheduler-grouped endpoint exists today). Patients filtered
-  // to the current patient's facility so the call list shows the
-  // scheduler context the admin is actually reviewing.
-  //
-  // SOURCE MARKER: Engagement Center source of truth
-  // SOURCE MARKER: Scheduler call lists grouped by scheduler
-  type EngagementBoardRow = {
-    patientScreeningId: number | null;
-    executionCaseId: number;
-    patientName: string;
-    patientDob: string | null;
-    phoneNumber: string | null;
-    facility: string | null;
-    scheduleDate: string | null;
-    patientType: string | null;
-    engagementBucket: string | null;
-    engagementStatus: string | null;
-    commitStatus: string | null;
-    assignedTeamMemberId: number | null;
-    assignedRole: string | null;
-    assignedName: string | null;
-    assignedFacility: string | null;
-    nextActionAt: string | null;
-    lastActivityAt: string | null;
-    lastActivitySummary: string | null;
-    missingInfo: string[];
-    selectedServiceList: string[];
-  };
-  const engagementBoardQuery = useQuery<{ rows: EngagementBoardRow[] }>({
-    queryKey: [
-      "/api/engagement/assignment-board",
-      patient.facility ?? "_all_",
-    ],
-    queryFn: async () => {
-      const url = patient.facility
-        ? `/api/engagement/assignment-board?facility=${encodeURIComponent(patient.facility)}`
-        : `/api/engagement/assignment-board`;
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error(`assignment-board ${res.status}`);
-      return res.json();
-    },
-    enabled: open && leftTab === "engagement",
-    staleTime: 30_000,
-  });
-
-  type SchedulerGroup = {
-    schedulerKey: string;
-    schedulerName: string;
-    rows: EngagementBoardRow[];
-  };
-
-  const schedulerGroups: SchedulerGroup[] = useMemo(() => {
-    const rows = engagementBoardQuery.data?.rows ?? [];
-    const map = new Map<string, SchedulerGroup>();
-    for (const r of rows) {
-      const key = r.assignedTeamMemberId != null
-        ? `id:${r.assignedTeamMemberId}`
-        : "__unassigned__";
-      const name = r.assignedName?.trim() || "Unassigned / Engagement Queue";
-      const existing = map.get(key);
-      if (existing) existing.rows.push(r);
-      else map.set(key, { schedulerKey: key, schedulerName: name, rows: [r] });
-    }
-    const ordered = Array.from(map.values());
-    ordered.sort((a, b) => {
-      if (a.schedulerKey === "__unassigned__") return 1;
-      if (b.schedulerKey === "__unassigned__") return -1;
-      return a.schedulerName.localeCompare(b.schedulerName);
-    });
-    return ordered;
-  }, [engagementBoardQuery.data]);
-
-  // Per-scheduler selected patient IDs (patient_screenings.id) for the
-  // scheduler-scoped Plexus / Clinician PDF buttons.
-  // SOURCE MARKER: Scheduler PDF packets are scoped to assigned scheduler
-  const [selectedByScheduler, setSelectedByScheduler] = useState<
-    Record<string, Set<number>>
-  >({});
-
-  function toggleSelectedForScheduler(schedulerKey: string, patientId: number) {
-    setSelectedByScheduler((prev) => {
-      const next = new Set(prev[schedulerKey] ?? []);
-      if (next.has(patientId)) next.delete(patientId);
-      else next.add(patientId);
-      return { ...prev, [schedulerKey]: next };
-    });
-  }
-
-  function setAllSelectedForScheduler(group: SchedulerGroup) {
-    setSelectedByScheduler((prev) => {
-      const existing = prev[group.schedulerKey] ?? new Set<number>();
-      const allIds = group.rows
-        .map((r) => r.patientScreeningId)
-        .filter((id): id is number => id != null);
-      // If everyone is already selected, clear. Otherwise select all.
-      const allSelected = allIds.length > 0 && allIds.every((id) => existing.has(id));
-      const next = new Set<number>(allSelected ? [] : allIds);
-      return { ...prev, [group.schedulerKey]: next };
-    });
-  }
-
-  // Scheduler-scoped PDF packet generation. Pulls full patient
-  // records for the selected ids, validates the facility/date
-  // packet, then opens the canonical print-preview popup. The
-  // operator hits "Print / Save as PDF" inside the popup to produce
-  // the file — html2pdf / html2canvas are not used here so the
-  // dialog stays responsive even on large selections.
-  // SOURCE MARKER: Scheduler PDF packets are scoped to assigned scheduler
-  // SOURCE MARKER: Admin Review packets use print preview
-  // SOURCE MARKER: Admin Review packet print preview avoids html2canvas
-  // SOURCE MARKER: Admin Review packet print preview opens printable popup
-  async function generateSchedulerScopedPdf(
-    group: SchedulerGroup,
-    patientIds: number[],
-    mode: "plexus" | "clinician",
-  ) {
-    if (patientIds.length === 0) {
-      // SOURCE MARKER: Admin Review print preview errors are surfaced
-      toast({
-        title: "Select patients first.",
-        description: `Pick at least one patient under ${group.schedulerName} to generate a packet.`,
-        variant: "destructive",
-      });
-      return;
-    }
-    try {
-      const fetched = await Promise.all(
-        patientIds.map(async (id) => {
-          const res = await fetch(`/api/patients/${id}`, { credentials: "include" });
-          if (!res.ok) return null;
-          return (await res.json()) as PatientScreening;
-        }),
-      );
-      const fullPatients = fetched.filter((p): p is PatientScreening => p != null);
-      if (fullPatients.length === 0) {
-        toast({
-          title: "PDF packet blocked",
-          description: "Could not load any of the selected patients.",
-          variant: "destructive",
-        });
-        return;
-      }
-      const validation = validateSameFacilityDatePacket(
-        fullPatients as PdfPacketSourcePatient[],
-        patient.facility ?? null,
-        scheduleDate ?? null,
-      );
-      if (!validation.ok) {
-        toast({
-          title: "PDF packet blocked",
-          description: validation.reason,
-          variant: "destructive",
-        });
-        return;
-      }
-      const batchName = `${validation.patients[0]?.facility ?? group.schedulerName} · ${
-        validation.isOutreachPacket ? "Outreach" : validation.scheduleDate
-      }`;
-      const result = openPatientPacketPrintPreview({
-        mode,
-        batchName,
-        patients: validation.patients,
-        scheduleDate: validation.scheduleDate,
-        createdAt: null,
-      });
-      if (!result.ok && result.reason === "popup-blocked") {
-        // SOURCE MARKER: Admin Review print preview popup blocked is surfaced
-        toast({
-          title: "Popup blocked. Allow popups to print this packet.",
-          description:
-            "Your browser blocked the print preview window. Re-enable popups for this site and try again.",
-          variant: "destructive",
-        });
-        return;
-      }
-      recordAdminReviewUpdate(
-        "pdf_previewed",
-        `Generated ${mode === "plexus" ? "Plexus" : "Clinician"} PDF for ${group.schedulerName} (${fullPatients.length})`,
-        { scheduler: group.schedulerName, kind: mode },
-      );
-    } catch (err) {
-      toast({
-        title: "Could not open print preview",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "destructive",
-      });
-    }
-  }
+  // Packet QA Gate — opened on per-scheduler PDF preview when audit
+  // finds blockers. proceed() carries the printable subset forward.
+  const [packetQa, setPacketQa] = useState<{
+    report: PacketQaReport;
+    proceed: () => void;
+  } | null>(null);
 
   // Audit log. Seeded from patient.reasoning["adminReview:updates"]
   // so prior persisted entries survive a dialog reopen. New entries
@@ -964,9 +1038,33 @@ export function AdminReviewDialog({
     return [];
   });
 
+  // Admin Review persistence — corrective patch refs.
+  //
+  // `assignmentsRef` mirrors `assignments` so handlers read the latest
+  // staged state synchronously without waiting for React to flush.
+  //
+  // `lastWrittenReasoningRef` is the authoritative local truth for
+  // "what reasoning blob have we sent to the parent so far". We rebase
+  // every attach/detach merge against this ref — NOT against
+  // `patient.reasoning` — so a still-in-flight PATCH response cannot
+  // overwrite a chained click's value.
+  //
+  // Both refs are RE-SEEDED inside the seed useEffect below whenever
+  // the dialog opens or the patient swaps.
+  const assignmentsRef = useRef<AdminReviewAssignmentState>(assignments);
+  const lastWrittenReasoningRef = useRef<Record<string, unknown>>(
+    reasoningAsObject(patient.reasoning),
+  );
+
   useEffect(() => {
     if (!open) return;
-    setAssignments(seedAssignmentsFromReasoning(reasoningAsObject(patient.reasoning)));
+    const freshAssignments = seedAssignmentsFromReasoning(
+      reasoningAsObject(patient.reasoning),
+    );
+    setAssignments(freshAssignments);
+    // Corrective patch: also seed the synchronous ref so the very
+    // first attach/detach after open uses the seeded snapshot as base.
+    assignmentsRef.current = freshAssignments;
     setAdminNote("");
     setAncillaryNotes({});
     setIcdSearchQuery("");
@@ -978,9 +1076,156 @@ export function AdminReviewDialog({
       vitalwave: [],
       ultrasound: { parent: [], byTestName: {} },
     });
+    setSourceEditMode(false);
+    setSourceDataSaved(false);
     const stored = reasoningAsObject(patient.reasoning)["adminReview:updates"];
     setUpdatesLog(Array.isArray(stored) ? (stored as AdminReviewUpdateEntry[]) : []);
-  }, [open, patient.id, patient.reasoning]);
+    // Patch 1 (admin-review persistence fix):
+    //   `patient.reasoning` is intentionally EXCLUDED from this
+    //   dependency list. Per-ancillary regenerate updates
+    //   patient.reasoning during an active editing session; including
+    //   it here would re-run this seeder and wipe the operator's
+    //   staged assignments for ancillaries that haven't been
+    //   regenerated yet (e.g., regenerate BrainWave → VitalWave and
+    //   Ultrasound staged evidence resets to the pre-regen saved
+    //   state). The seeder is now an "entry-point only" reset: it
+    //   runs when the dialog opens or the patient id changes, then
+    //   yields to operator-driven state mutation until next
+    //   open / patient swap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, patient.id]);
+
+  // Admin Review persistence — corrective patch.
+  //
+  // The previous patch (b4b1569) used a passive useEffect to persist
+  // assignments on every `assignments` change. Replit smoke-test showed
+  // that approach was insufficient: rapid attach clicks raced with
+  // React Query cache propagation, the closure-stale `patient.reasoning`
+  // used as merge base lost concurrent updates, and the
+  // `sameAssignedEvidenceState` skip masked legitimate diffs in some
+  // ordering paths.
+  //
+  // Corrective approach (this patch):
+  //   1. `assignmentsRef` mirrors `assignments` so handlers can read
+  //      the latest staged state synchronously without waiting for
+  //      React to flush a render.
+  //   2. `lastWrittenReasoningRef` is the authoritative local truth
+  //      for "what reasoning blob have we sent to the parent so far".
+  //      We rebase every attach/detach merge against this ref — NOT
+  //      against `patient.reasoning` — so a still-in-flight PATCH
+  //      response cannot overwrite a chained click's value.
+  //   3. Attach and detach handlers compute the next state
+  //      synchronously, update both refs, push to React state, and
+  //      call `onUpdate("reasoning", ...)` in the same tick. No
+  //      deferred effect.
+  //   4. Regenerate-success handlers MERGE the server-returned
+  //      `reasoning` with the live `lastWrittenReasoningRef.current`'s
+  //      `adminReview:<other>.assignedEvidence` blocks before pushing
+  //      out, so a server response that pre-dates a concurrent attach
+  //      cannot wipe other targets' staged evidence.
+  //
+  // The refs themselves are declared higher up in the file (right
+  // after `updatesLog` so they're in scope for the seed useEffect).
+  // The seed useEffect re-seeds BOTH `assignmentsRef` and
+  // `lastWrittenReasoningRef` on open / patient-swap.
+
+  // Keep assignmentsRef in lockstep with React state — guards against
+  // any code path that bypasses the handlers below.
+  useEffect(() => {
+    assignmentsRef.current = assignments;
+  }, [assignments]);
+
+  // Re-seed the lastWrittenReasoningRef whenever the dialog opens or
+  // the patient swaps. The seed useEffect above resets `assignments`
+  // to match; we mirror the same reset here so subsequent attach/
+  // detach merges start from the real saved state.
+  useEffect(() => {
+    if (!open) return;
+    lastWrittenReasoningRef.current = reasoningAsObject(patient.reasoning);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, patient.id]);
+
+  /**
+   * Persist a freshly-computed `assignments` snapshot through the
+   * existing `onUpdate("reasoning", ...)` path. The merge base is
+   * `lastWrittenReasoningRef.current` — NOT `patient.reasoning` from
+   * props — so rapid sequential clicks chain correctly even before
+   * React Query's cache catches up.
+   *
+   * `staleAncillaries` is the set of target ids whose `assignedEvidence`
+   * the operator just changed. They're flagged stale until the next
+   * regenerate runs.
+   */
+  function persistAssignmentsToReasoning(
+    nextAssignments: AdminReviewAssignmentState,
+    staleAncillaries: Set<string>,
+    staleReason: string,
+  ): void {
+    const base = lastWrittenReasoningRef.current;
+    const nextReasoning = buildAssignedEvidenceReasoning(
+      base,
+      nextAssignments,
+      { staleAncillaries, staleReason },
+    );
+    lastWrittenReasoningRef.current = nextReasoning;
+    onUpdate("reasoning", nextReasoning);
+  }
+
+  /**
+   * After a regenerate success, the server returns `data.patient.reasoning`.
+   * That response is reliable for the *regenerated* ancillary, but for
+   * OTHER ancillaries it reflects whatever was last persisted before
+   * the regenerate kicked off — which may NOT include attach/detach
+   * changes the operator made while the regenerate was in flight.
+   *
+   * Re-overlay the live `lastWrittenReasoningRef`'s
+   * `adminReview:<other>.assignedEvidence` blocks on top of the
+   * server's response, then clear the just-regenerated ancillary's
+   * stale flag. The result becomes the new authoritative local truth.
+   */
+  function mergeRegenerateResponseReasoning(
+    serverReasoning: Record<string, unknown>,
+    regeneratedTargetIds: Set<string>,
+  ): Record<string, unknown> {
+    const live = lastWrittenReasoningRef.current;
+    const merged: Record<string, unknown> = { ...serverReasoning };
+    // Carry forward every adminReview:* block that was newer locally
+    // (i.e., any block whose `assignedEvidence` array differs). The
+    // regenerated targets' blocks come from the server.
+    for (const key of new Set([...Object.keys(live), ...Object.keys(serverReasoning)])) {
+      if (!key.startsWith("adminReview:")) continue;
+      if (key === "adminReview:updates") {
+        // Audit log: prefer server if present, else local.
+        if (serverReasoning[key] !== undefined) merged[key] = serverReasoning[key];
+        else if (live[key] !== undefined) merged[key] = live[key];
+        continue;
+      }
+      const targetId = key === "adminReview:ultrasound" ? "ultrasound"
+        : key === "adminReview:brainwave" ? "brainwave"
+        : key === "adminReview:vitalwave" ? "vitalwave"
+        : key.startsWith("adminReview:test:") ? `test:${key.slice("adminReview:test:".length)}`
+        : null;
+      if (targetId == null) continue;
+      if (regeneratedTargetIds.has(targetId)) {
+        // Trust server for the regenerated block.
+        if (serverReasoning[key] !== undefined) merged[key] = serverReasoning[key];
+      } else {
+        // Carry forward local block (preserves operator's staged
+        // assignedEvidence + stale flag for non-regenerated targets).
+        if (live[key] !== undefined) merged[key] = live[key];
+      }
+    }
+    // Clear stale for the regenerated targets — overlay onto whichever
+    // block now wins.
+    const cleared = buildAssignedEvidenceReasoning(
+      merged,
+      assignmentsRef.current,
+      {
+        clearedAncillaries: regeneratedTargetIds,
+      },
+    );
+    return cleared;
+  }
 
   // recordAdminReviewUpdate — append to the session log and persist
   // to patient.reasoning["adminReview:updates"] so the audit trail
@@ -1000,8 +1245,13 @@ export function AdminReviewDialog({
     };
     setUpdatesLog((prev) => {
       const next = [entry, ...prev].slice(0, 200);
-      const reasoning = reasoningAsObject(patient.reasoning);
-      const nextReasoning = { ...reasoning, "adminReview:updates": next };
+      // Merge into the authoritative local reasoning ref — NOT
+      // patient.reasoning from props — so an audit-log write never
+      // clobbers freshly-written assignedEvidence / stale flags from a
+      // just-prior attach/detach/source-edit on the same tick.
+      const base = lastWrittenReasoningRef.current;
+      const nextReasoning = { ...base, "adminReview:updates": next };
+      lastWrittenReasoningRef.current = nextReasoning;
       onUpdate("reasoning", nextReasoning);
       return next;
     });
@@ -1010,17 +1260,19 @@ export function AdminReviewDialog({
   const apiEvidence: AdminEvidenceChip[] = evidenceQuery.data?.evidence ?? [];
 
   // Build assignable button lists from raw source + rule engine + AI ICD additions.
+  // Use localDx/localRx/localHx so saves from the Source Data popover are
+  // reflected immediately without waiting for the parent to re-propagate.
   const dxButtons = useMemo(
-    () => parseDiagnosisButtonsFromDx(patient.diagnoses),
-    [patient.diagnoses],
+    () => parseDiagnosisButtonsFromDx(localDx),
+    [localDx],
   );
   const rxButtons = useMemo(
-    () => parseMedicationButtonsFromRx(patient.medications),
-    [patient.medications],
+    () => parseMedicationButtonsFromRx(localRx),
+    [localRx],
   );
   const hxButtons = useMemo(
-    () => parseSymptomButtonsFromHx(patient.history),
-    [patient.history],
+    () => parseSymptomButtonsFromHx(localHx),
+    [localHx],
   );
   const mergedDx = useMemo(
     () => mergeRuleEngineEvidence(dxButtons, apiEvidence),
@@ -1470,35 +1722,43 @@ export function AdminReviewDialog({
   // every diagnosis from patient.diagnoses is a valid SupportingButton.
   // ICD Search is an optional add-on, not a prerequisite.
   function assignToTarget(target: AssignmentTarget, btn: SupportingButton) {
-    setAssignments((prev) => {
-      const next: AdminReviewAssignmentState = {
-        brainwave: [...prev.brainwave],
-        vitalwave: [...prev.vitalwave],
-        ultrasound: {
-          parent: [...prev.ultrasound.parent],
-          byTestName: { ...prev.ultrasound.byTestName },
-        },
-      };
-      const k = chipKeyForAssignment(btn);
-      const pushTo = (arr: SupportingButton[]) => {
-        if (!arr.some((c) => chipKeyForAssignment(c) === k)) arr.push(btn);
-      };
-      if (target.type === "all") {
-        pushTo(next.brainwave);
-        pushTo(next.vitalwave);
-        pushTo(next.ultrasound.parent);
-      } else if (target.type === "ancillary") {
-        pushTo(next[target.ancillaryId]);
-      } else if (target.type === "ultrasound-parent") {
-        pushTo(next.ultrasound.parent);
-      } else if (target.type === "ultrasound-test") {
-        const list = next.ultrasound.byTestName[target.testName] ?? [];
-        const arr = [...list];
-        pushTo(arr);
-        next.ultrasound.byTestName[target.testName] = arr;
-      }
-      return next;
-    });
+    // Corrective patch: compute the next snapshot ONCE using the
+    // synchronously-tracked ref (not React state) so rapid sequential
+    // clicks chain correctly even before React commits.
+    const prev = assignmentsRef.current;
+    const next: AdminReviewAssignmentState = {
+      brainwave: [...prev.brainwave],
+      vitalwave: [...prev.vitalwave],
+      ultrasound: {
+        parent: [...prev.ultrasound.parent],
+        byTestName: { ...prev.ultrasound.byTestName },
+      },
+    };
+    const k = chipKeyForAssignment(btn);
+    const pushTo = (arr: SupportingButton[]) => {
+      // Dedupe ONLY inside the target being changed.
+      if (!arr.some((c) => chipKeyForAssignment(c) === k)) arr.push(btn);
+    };
+    if (target.type === "all") {
+      pushTo(next.brainwave);
+      pushTo(next.vitalwave);
+      pushTo(next.ultrasound.parent);
+    } else if (target.type === "ancillary") {
+      pushTo(next[target.ancillaryId]);
+    } else if (target.type === "ultrasound-parent") {
+      pushTo(next.ultrasound.parent);
+    } else if (target.type === "ultrasound-test") {
+      const list = next.ultrasound.byTestName[target.testName] ?? [];
+      const arr = [...list];
+      pushTo(arr);
+      next.ultrasound.byTestName[target.testName] = arr;
+    }
+    // Sync ref + React state, then persist.
+    assignmentsRef.current = next;
+    setAssignments(next);
+    const stale = new Set(targetIdsForAssignmentTarget(target));
+    persistAssignmentsToReasoning(next, stale, "Evidence attached");
+
     const type: AdminReviewUpdateType =
       btn.kind === "icd_disease"
         ? "diagnosis_added"
@@ -1515,41 +1775,53 @@ export function AdminReviewDialog({
   }
 
   function unassign(from: AssignmentTarget, btn: SupportingButton) {
-    setAssignments((prev) => {
-      const k = chipKeyForAssignment(btn);
-      const next: AdminReviewAssignmentState = {
-        brainwave: prev.brainwave.filter((c) => chipKeyForAssignment(c) !== k),
-        vitalwave: prev.vitalwave.filter((c) => chipKeyForAssignment(c) !== k),
-        ultrasound: {
-          parent: prev.ultrasound.parent.filter((c) => chipKeyForAssignment(c) !== k),
-          byTestName: { ...prev.ultrasound.byTestName },
+    // Corrective patch: same synchronous compute-and-persist pattern
+    // as `assignToTarget`. Detach scopes to the exact target the
+    // operator clicked; other targets keep the same evidence.
+    const prev: AdminReviewAssignmentState = assignmentsRef.current;
+    const k = chipKeyForAssignment(btn);
+    const filterOut = (arr: SupportingButton[]): SupportingButton[] =>
+      arr.filter((c: SupportingButton) => chipKeyForAssignment(c) !== k);
+    const next: AdminReviewAssignmentState = {
+      brainwave: [...prev.brainwave],
+      vitalwave: [...prev.vitalwave],
+      ultrasound: {
+        parent: [...prev.ultrasound.parent],
+        byTestName: { ...prev.ultrasound.byTestName },
+      },
+    };
+    if (from.type === "all") {
+      next.brainwave = filterOut(prev.brainwave);
+      next.vitalwave = filterOut(prev.vitalwave);
+      next.ultrasound = {
+        parent: filterOut(prev.ultrasound.parent),
+        byTestName: { ...prev.ultrasound.byTestName },
+      };
+    } else if (from.type === "ancillary") {
+      if (from.ancillaryId === "brainwave") {
+        next.brainwave = filterOut(prev.brainwave);
+      } else if (from.ancillaryId === "vitalwave") {
+        next.vitalwave = filterOut(prev.vitalwave);
+      }
+    } else if (from.type === "ultrasound-parent") {
+      next.ultrasound = {
+        parent: filterOut(prev.ultrasound.parent),
+        byTestName: { ...prev.ultrasound.byTestName },
+      };
+    } else if (from.type === "ultrasound-test") {
+      const list = prev.ultrasound.byTestName[from.testName] ?? [];
+      next.ultrasound = {
+        parent: [...prev.ultrasound.parent],
+        byTestName: {
+          ...prev.ultrasound.byTestName,
+          [from.testName]: filterOut(list),
         },
       };
-      if (from.type === "ancillary") {
-        next.brainwave = from.ancillaryId === "brainwave" ? prev.brainwave.filter((c) => chipKeyForAssignment(c) !== k) : prev.brainwave;
-        next.vitalwave = from.ancillaryId === "vitalwave" ? prev.vitalwave.filter((c) => chipKeyForAssignment(c) !== k) : prev.vitalwave;
-        next.ultrasound = prev.ultrasound;
-      } else if (from.type === "ultrasound-parent") {
-        next.brainwave = prev.brainwave;
-        next.vitalwave = prev.vitalwave;
-        next.ultrasound = {
-          parent: prev.ultrasound.parent.filter((c) => chipKeyForAssignment(c) !== k),
-          byTestName: prev.ultrasound.byTestName,
-        };
-      } else if (from.type === "ultrasound-test") {
-        const list = prev.ultrasound.byTestName[from.testName] ?? [];
-        next.brainwave = prev.brainwave;
-        next.vitalwave = prev.vitalwave;
-        next.ultrasound = {
-          parent: prev.ultrasound.parent,
-          byTestName: {
-            ...prev.ultrasound.byTestName,
-            [from.testName]: list.filter((c) => chipKeyForAssignment(c) !== k),
-          },
-        };
-      }
-      return next;
-    });
+    }
+    assignmentsRef.current = next;
+    setAssignments(next);
+    const stale = new Set(targetIdsForAssignmentTarget(from));
+    persistAssignmentsToReasoning(next, stale, "Evidence detached");
   }
 
   // Record a removed qualifying factor + unassign the button from the
@@ -1740,7 +2012,7 @@ export function AdminReviewDialog({
       recordAdminReviewUpdate(
         "ancillary_removed",
         `Removed ancillary: ${categoryLabels[vars.ancillary]}`,
-        { removed: data.removedTests ?? [] },
+        { removed: data.removedTests ?? [], ancillary: vars.ancillary },
       );
       queryClient.invalidateQueries({ queryKey: ["/api/screening-batches", patient.batchId] });
     },
@@ -1895,9 +2167,12 @@ export function AdminReviewDialog({
           assignedEvidence: evidenceForCall,
           ancillaryNote: ancillaryNotes[ancillary] ?? "",
           adminNote,
-          diagnoses: patient.diagnoses ?? "",
-          medications: patient.medications ?? "",
-          history: patient.history ?? "",
+          // Use the local mirrors (updated synchronously on source save) so a
+          // Regenerate fired right after editing never sends stale Hx/Dx/Rx,
+          // even before the parent re-propagates the patient prop.
+          diagnoses: localDx,
+          medications: localRx,
+          history: localHx,
           icdCodes: activeIcdCodes(),
           removedFactors: removedForCall,
           priorQualifyingFactorsByTest,
@@ -1911,7 +2186,21 @@ export function AdminReviewDialog({
         description: "Canonical reasoning updated.",
       });
       if (data.patient) {
-        onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
+        // Corrective patch: re-overlay other targets' staged
+        // assignedEvidence on top of the server response so a
+        // concurrent attach/detach that the regenerate request did NOT
+        // know about cannot be lost. Also clears the just-regenerated
+        // ancillary's stale flag.
+        const serverReasoning = (data.patient.reasoning ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const merged = mergeRegenerateResponseReasoning(
+          serverReasoning,
+          new Set([vars.ancillary]),
+        );
+        lastWrittenReasoningRef.current = merged;
+        onUpdate("reasoning", merged);
       }
       recordAdminReviewUpdate(
         "regenerate",
@@ -1963,9 +2252,12 @@ export function AdminReviewDialog({
           assignedEvidence: evidenceForCall,
           ancillaryNote: ancillaryNotes[`test:${testName}`] ?? "",
           adminNote,
-          diagnoses: patient.diagnoses ?? "",
-          medications: patient.medications ?? "",
-          history: patient.history ?? "",
+          // Use the local mirrors (updated synchronously on source save) so a
+          // Regenerate fired right after editing never sends stale Hx/Dx/Rx,
+          // even before the parent re-propagates the patient prop.
+          diagnoses: localDx,
+          medications: localRx,
+          history: localHx,
           icdCodes: activeIcdCodes(),
           removedFactors: removedForCall,
           priorQualifyingFactorsByTest,
@@ -1979,7 +2271,18 @@ export function AdminReviewDialog({
         description: "Canonical reasoning updated for this test.",
       });
       if (data.patient) {
-        onUpdate("reasoning", (data.patient.reasoning ?? {}) as Record<string, unknown>);
+        // Corrective patch: merge server response with live staged
+        // assignedEvidence; clear stale for the just-regenerated test.
+        const serverReasoning = (data.patient.reasoning ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const merged = mergeRegenerateResponseReasoning(
+          serverReasoning,
+          new Set([`test:${vars.testName}`]),
+        );
+        lastWrittenReasoningRef.current = merged;
+        onUpdate("reasoning", merged);
       }
       recordAdminReviewUpdate("regenerate", `Regenerated ${vars.testName}`);
       setRegenErrors((prev) => ({ ...prev, [`test:${vars.testName}`]: null }));
@@ -1998,6 +2301,82 @@ export function AdminReviewDialog({
       setRegenInFlight((prev) => ({ ...prev, [`test:${vars.testName}`]: false }));
     },
   });
+
+  // Admin Review persistence — corrective patch: Regenerate Changed
+  //
+  // Sequentially regenerates every target whose `adminReview:<id>` block
+  // currently carries `stale: true`. Sequential (not parallel) so each
+  // call sees the previous call's server-side update; merges via
+  // `mergeRegenerateResponseReasoning` preserve other targets' staged
+  // evidence at every step. A per-target failure does NOT abort the
+  // queue — the target keeps its stale flag and its row-level error
+  // surfaces via `setRegenErrors` (existing UI).
+  const [regenChangedInFlight, setRegenChangedInFlight] = useState(false);
+  const regenerateChangedTargets = useCallback(async (): Promise<void> => {
+    const staleIds = readStaleTargetIds(lastWrittenReasoningRef.current);
+    if (staleIds.length === 0) return;
+    setRegenChangedInFlight(true);
+    try {
+      for (const targetId of staleIds) {
+        try {
+          if (
+            targetId === "brainwave" ||
+            targetId === "vitalwave" ||
+            targetId === "ultrasound"
+          ) {
+            await regenerateAncillaryMutation.mutateAsync({ ancillary: targetId });
+          } else if (targetId.startsWith("test:")) {
+            const testName = targetId.slice("test:".length);
+            await regenerateTestMutation.mutateAsync({
+              testName,
+              ancillaryId: "ultrasound",
+            });
+          }
+        } catch {
+          // Per-target failure already surfaces via the mutation's
+          // onError handler — keep going so the operator sees per-row
+          // errors but successful targets clear their stale flag.
+        }
+      }
+    } finally {
+      setRegenChangedInFlight(false);
+    }
+  }, [regenerateAncillaryMutation, regenerateTestMutation]);
+
+  // The single Regenerate action surfaced in the Updates panel. Source-data
+  // edits invalidate every ancillary (we don't track which Hx/Dx/Rx line maps
+  // to which test), so they trigger a full re-analysis; evidence attach/detach
+  // changes regenerate only their stale targets. Both clear their own "needs
+  // regeneration" state on success so Approve/PDF unblock.
+  const regeneratePending = useCallback(async (): Promise<void> => {
+    if (sourceDataSaved) {
+      setRegenChangedInFlight(true);
+      const failures: string[] = [];
+      for (const ancillary of ANCILLARIES) {
+        try {
+          await regenerateAncillaryMutation.mutateAsync({ ancillary });
+        } catch {
+          failures.push(ancillary);
+        }
+      }
+      setRegenChangedInFlight(false);
+      if (failures.length === 0) {
+        setSourceDataSaved(false);
+        toast({ title: "Re-analysis complete", description: "All ancillaries regenerated with updated source data." });
+      } else {
+        // Spec: a failed regeneration must keep blocking. Leave
+        // sourceDataSaved=true so Approve + PDF stay locked until every
+        // ancillary regenerates cleanly.
+        toast({
+          title: failures.length < ANCILLARIES.length ? "Re-analysis incomplete" : "Re-analysis failed",
+          description: `${failures.join(", ")} could not be regenerated. Approval stays blocked until all ancillaries regenerate — try again.`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    await regenerateChangedTargets();
+  }, [sourceDataSaved, regenerateAncillaryMutation, regenerateChangedTargets, toast]);
 
   const approvalMutation = useMutation<
     { ok: boolean; patient: PatientScreening },
@@ -2070,36 +2449,32 @@ export function AdminReviewDialog({
     (b) => b.kind === "icd_disease" && b.requiresIcd,
   ).length;
 
-  // Grid template flexes to whichever panels are open. Collapsed
-  // panels collapse to a 40px rail with the toggle button.
-  const leftCol = leftPanelOpen ? "340px" : "44px";
-  const rightCol = rightPanelOpen ? "340px" : "44px";
+  // Ancillaries whose assigned evidence changed since the last
+  // regenerate. Computed once per render so the Updates Regenerate
+  // button, the Approve gate, the Blocking Rules message, and the
+  // Documents gate all read the same synchronous truth.
+  const staleTargetIds = readStaleTargetIds(lastWrittenReasoningRef.current);
+  // Source-data edits invalidate every ancillary; evidence attach/detach
+  // marks specific stale targets. Either blocks Approve + PDF until the
+  // single Updates-panel Regenerate clears it.
+  const needsRegeneration = staleTargetIds.length > 0 || sourceDataSaved;
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="w-[calc(100vw-2rem)] max-w-[1440px] max-h-[94vh] overflow-hidden p-0 gap-0 rounded-2xl"
-        data-testid={`dialog-admin-review-${patient.id}`}
-      >
+  const shellChildren = (
+    <>
         {/* Smoke header — black at ~70% opacity per Team Portal spec. */}
         <DialogHeader
-          className="px-6 pt-5 pb-4 border-b border-black/30 bg-black/70 backdrop-blur-md text-white"
+          className="px-6 pt-5 pb-4 border-b border-slate-700 bg-slate-900 text-white"
           data-testid="admin-review-smoke-header"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <DialogTitle className="text-base font-semibold tracking-tight text-white">
-                Admin Review · {patient.name || "Unnamed patient"}
+                {patient.name || "Unnamed patient"}
               </DialogTitle>
               <DialogDescription className="sr-only">
                 Admin review for {patient.name || "patient"}
               </DialogDescription>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
-                <span
-                  className={`inline-flex items-center rounded-full px-2 py-0.5 ${STATUS_META[review.approval].pillClass}`}
-                >
-                  {STATUS_META[review.approval].label}
-                </span>
                 {isUnder16 && (
                   <span
                     className="inline-flex items-center gap-1 rounded-full bg-rose-100 text-rose-900 border border-rose-300 px-2 py-0.5 font-semibold uppercase tracking-wider"
@@ -2111,6 +2486,15 @@ export function AdminReviewDialog({
                 )}
                 {patient.facility && <span className="text-white/70">{patient.facility}</span>}
                 {scheduleDate && <span className="text-white/70">· {scheduleDate}</span>}
+                {patient.dob && (
+                  <span className="text-white/70" data-testid="admin-review-banner-dob">· DOB {patient.dob}</span>
+                )}
+                {patient.insurance && (
+                  <span className="text-white/70" data-testid="admin-review-banner-insurance">· {patient.insurance}</span>
+                )}
+                {patient.phoneNumber && (
+                  <span className="text-white/70" data-testid="admin-review-banner-phone">· {patient.phoneNumber}</span>
+                )}
                 {evidenceQuery.isFetching && (
                   <span className="text-white/60 inline-flex items-center gap-1">
                     <Loader2 className="w-3 h-3 animate-spin" /> Refreshing
@@ -2124,604 +2508,74 @@ export function AdminReviewDialog({
                   advance on approve is handled in approvalMutation's
                   onSuccess.
                   SOURCE MARKER: Admin Review sibling navigation */}
-              {siblings && siblings.length > 1 && (
+              {siblings && siblings.length >= 1 && (
                 <div
-                  className="inline-flex items-center gap-1 rounded-md bg-white/10 px-1 py-0.5"
+                  className="inline-flex flex-col items-center gap-1"
                   data-testid="admin-review-sibling-nav"
                   data-active-index={activeIndex}
                   data-total={totalSiblings}
                   data-approve-pending={approvalMutation.isPending ? "true" : "false"}
                 >
                   {/* SOURCE MARKER: Admin Review navigation disabled during approve */}
-                  <button
-                    type="button"
-                    onClick={() => goToSibling(-1)}
-                    disabled={!hasPrev || approvalMutation.isPending}
-                    aria-label="Previous patient"
-                    title="Previous patient"
-                    data-testid="admin-review-sibling-prev"
-                    className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="inline-flex items-center gap-1 rounded-md bg-white/10 px-1 py-0.5">
+                    <button
+                      type="button"
+                      onClick={() => goToSibling(-1)}
+                      disabled={!hasPrev || approvalMutation.isPending}
+                      aria-label="Previous patient"
+                      title="Previous patient"
+                      data-testid="admin-review-sibling-prev"
+                      className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => goToSibling(1)}
+                      disabled={!hasNext || approvalMutation.isPending}
+                      aria-label="Next patient"
+                      title={hasNext ? "Next patient" : "No more patients"}
+                      data-testid="admin-review-sibling-next"
+                      className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                   <span
-                    className="text-[11px] font-medium text-white/85 tabular-nums px-1"
-                    data-testid="admin-review-sibling-counter"
+                    className="text-[10px] font-medium text-white/70 whitespace-nowrap leading-none"
+                    data-testid="admin-review-sibling-count"
                   >
-                    {activeIndex + 1} of {totalSiblings}
-                    {dateLabel ? ` · ${dateLabel}` : ""}
+                    {activeIndex + 1} of {totalSiblings}{" "}
+                    {totalSiblings === 1 ? "patient" : "patients"} for Admin Review
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => goToSibling(1)}
-                    disabled={!hasNext || approvalMutation.isPending}
-                    aria-label="Next patient"
-                    title={
-                      hasNext
-                        ? `Next patient (${remainingAfter} more${dateLabel ? ` in ${dateLabel}` : ""})`
-                        : "No more patients"
-                    }
-                    data-testid="admin-review-sibling-next"
-                    className="inline-flex items-center justify-center h-6 w-6 rounded text-white/85 hover:text-white hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
                 </div>
               )}
+              {/* Regenerate moved into the Updates section (bottom of the
+                  right panel) per the Admin Review cleanup spec. */}
               <button
                 type="button"
-                onClick={() => setLeftPanelOpen((v) => !v)}
-                aria-label={leftPanelOpen ? "Collapse left panel" : "Expand left panel"}
-                title={leftPanelOpen ? "Collapse left panel" : "Expand left panel"}
-                data-testid="admin-review-left-panel-toggle"
-                data-panel-state={leftPanelOpen ? "admin-review-left-panel-open" : "admin-review-left-panel-collapsed"}
-                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/80 hover:text-white hover:bg-white/10"
+                onClick={() => onOpenChange(false)}
+                aria-label="Close admin review"
+                title="Close"
+                data-testid="admin-review-close-button"
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/85 hover:text-white hover:bg-white/15 transition-colors"
               >
-                {leftPanelOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
-              </button>
-              <button
-                type="button"
-                onClick={() => setRightPanelOpen((v) => !v)}
-                aria-label={rightPanelOpen ? "Collapse right panel" : "Expand right panel"}
-                title={rightPanelOpen ? "Collapse right panel" : "Expand right panel"}
-                data-testid="admin-review-right-panel-toggle"
-                data-panel-state={rightPanelOpen ? "admin-review-right-panel-open" : "admin-review-right-panel-collapsed"}
-                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-white/80 hover:text-white hover:bg-white/10"
-              >
-                {rightPanelOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+                <X className="w-4 h-4" />
               </button>
             </div>
           </div>
         </DialogHeader>
-
+        {/* ─── Two-panel body: LEFT ancillaries playground · RIGHT action column ─── */}
         <div
-          className="grid grid-cols-1 xl:grid-cols-[var(--left)_minmax(0,1fr)_var(--right)] gap-0 max-h-[calc(94vh-7.5rem)]"
-          style={{
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            ['--left' as any]: leftCol,
-            ['--right' as any]: rightCol,
-          }}
-          data-testid="admin-review-three-column-layout"
-          data-left-state={leftPanelOpen ? "admin-review-left-panel-open" : "admin-review-left-panel-collapsed"}
-          data-right-state={rightPanelOpen ? "admin-review-right-panel-open" : "admin-review-right-panel-collapsed"}
+          className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4"
+          style={{ background: "#F4F5F7" }}
+          data-testid="admin-review-two-panel-body"
         >
-            {/* ─── Column 1 — approved muted blue #7283B0, tabs, scrollable ─── */}
-            <aside
-              className="bg-[#7283B0] text-white border-r border-black/10 flex flex-col min-h-0"
-              data-testid="admin-review-left-column"
-              data-panel-style="admin-review-blue-left-panel"
-              data-panel-color="#7283B0"
-              style={{ backgroundColor: "#7283B0" }}
-            >
-              {!leftPanelOpen ? (
-                <div
-                  className="flex-1 flex items-start justify-center pt-3"
-                  data-testid="admin-review-left-panel-collapsed"
-                >
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-white/60 rotate-90 origin-top mt-8 whitespace-nowrap">
-                    Source
-                  </span>
-                </div>
-              ) : (
-                <div
-                  className="flex-1 min-h-0 flex flex-col"
-                  data-testid="admin-review-left-panel-open"
-                >
-                  <ScrollArea
-                    className="flex-1 min-h-0 px-4 py-4"
-                    data-testid="admin-review-left-panel-scroll"
-                  >
-                    <Tabs
-                      value={leftTab}
-                      onValueChange={(v) => setLeftTab(v as typeof leftTab)}
-                      className="w-full"
-                      data-testid="admin-review-left-tabs"
-                    >
-                      <TabsList className="bg-black/15 text-white grid grid-cols-3 w-full">
-                        <TabsTrigger
-                          value="source"
-                          data-testid="admin-review-left-tab-source"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Source
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="patient-directory"
-                          data-testid="admin-review-left-tab-patient-directory"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Directory
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="cooldown"
-                          data-testid="admin-review-left-tab-cooldown"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Cooldown
-                        </TabsTrigger>
-                      </TabsList>
-                      <TabsList className="bg-black/15 text-white grid grid-cols-2 w-full mt-1">
-                        <TabsTrigger
-                          value="insurance"
-                          data-testid="admin-review-left-tab-insurance"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Insurance
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="history"
-                          data-testid="admin-review-left-tab-history"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          History
-                        </TabsTrigger>
-                      </TabsList>
-                      <TabsList className="bg-black/15 text-white grid grid-cols-1 w-full mt-1">
-                        <TabsTrigger
-                          value="engagement"
-                          data-testid="admin-review-left-tab-engagement"
-                          className="text-[11px] data-[state=active]:bg-white data-[state=active]:text-[#3d4a6b]"
-                        >
-                          Engagement
-                        </TabsTrigger>
-                      </TabsList>
-
-                      <TabsContent
-                        value="source"
-                        className="mt-3 space-y-3"
-                        data-testid="admin-review-source-tab-content"
-                      >
-                        <section className="space-y-2" data-testid="admin-review-clinical-source">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Clinical Source
-                          </div>
-                          <RawSourceCard
-                            label="Hx"
-                            value={patient.history}
-                            emptyText="No history entered"
-                            testId="admin-review-source-hx"
-                          />
-                          <RawSourceCard
-                            label="Dx"
-                            value={patient.diagnoses}
-                            emptyText="No diagnoses entered"
-                            testId="admin-review-source-dx"
-                          />
-                          <RawSourceCard
-                            label="Rx"
-                            value={patient.medications}
-                            emptyText="No medications entered"
-                            testId="admin-review-source-rx"
-                          />
-                          <RawSourceCard
-                            label="Previous Tests"
-                            value={
-                              typeof (patient as { previousTests?: unknown }).previousTests === "string"
-                                ? ((patient as { previousTests?: string }).previousTests ?? "")
-                                : ""
-                            }
-                            emptyText="No prior testing on file"
-                            testId="admin-review-source-prior"
-                          />
-                        </section>
-
-                        <section
-                          className="space-y-1.5 rounded-2xl border border-white/15 bg-black/15 p-3"
-                          data-testid="admin-review-icd-search-left"
-                        >
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Search ICD-10
-                </div>
-                <div className="text-[11px] text-slate-500">
-                  Search ICD-10 codes beyond the current chart, then assign selected codes to ancillaries.
-                </div>
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
-                  <Input
-                    type="search"
-                    placeholder="Search any ICD-10 diagnosis..."
-                    value={icdSearchQuery}
-                    onChange={(e) => setIcdSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && icdSearchQuery.trim().length >= 2) {
-                        icdSearchMutation.mutate({ query: icdSearchQuery.trim() });
-                      }
-                    }}
-                    className="h-8 text-xs"
-                    data-testid="admin-review-icd-ai-search"
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={
-                      icdSearchMutation.isPending || icdSearchQuery.trim().length < 2
-                    }
-                    onClick={() =>
-                      icdSearchMutation.mutate({ query: icdSearchQuery.trim() })
-                    }
-                    data-testid="admin-review-icd-ai-search-button"
-                    className="h-8 px-2"
-                  >
-                    {icdSearchMutation.isPending ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <Search className="w-3 h-3" />
-                    )}
-                  </Button>
-                </div>
-
-                {icdSearchMutation.isPending && (
-                  <div
-                    className="text-[11px] text-slate-400 inline-flex items-center gap-1"
-                    data-testid="admin-review-icd-ai-search-loading"
-                  >
-                    <Loader2 className="w-3 h-3 animate-spin" /> Searching ICD codes
-                  </div>
-                )}
-                {icdSearchMutation.isError && (
-                  <div
-                    className="text-[11px] text-rose-700 inline-flex items-center gap-1"
-                    data-testid="admin-review-icd-ai-search-error"
-                  >
-                    <AlertTriangle className="w-3 h-3" /> OpenAI universal ICD search failed
-                  </div>
-                )}
-                {icdSearchMutation.isSuccess && icdSearchMutation.data?.results?.length === 0 && (
-                  <div
-                    className="text-[11px] text-slate-400 italic"
-                    data-testid="admin-review-icd-ai-search-empty"
-                  >
-                    No matching ICD codes.
-                  </div>
-                )}
-                {icdSearchMutation.isSuccess && (icdSearchMutation.data?.results ?? []).length > 0 && (
-                  <div className="flex flex-col gap-1 max-h-48 overflow-auto rounded-md border border-slate-200 bg-white">
-                    {(icdSearchMutation.data?.results ?? []).map((r) => (
-                      <button
-                        key={r.code}
-                        type="button"
-                        onClick={() => adoptIcdSearchResult(r)}
-                        data-testid="admin-review-icd-ai-search-result"
-                        className="text-left text-xs px-2 py-1.5 hover:bg-slate-100 inline-flex items-start gap-2"
-                      >
-                        <span className="font-mono text-slate-700 shrink-0">{r.code}</span>
-                        <div className="min-w-0">
-                          <div className="text-slate-800 truncate">{r.label}</div>
-                          {r.rationale && (
-                            <div className="text-[10px] text-slate-500 truncate">
-                              {r.rationale}
-                            </div>
-                          )}
-                        </div>
-                        <span
-                          className={`ml-auto inline-flex items-center rounded-full border px-1.5 text-[9px] uppercase tracking-wider ${CONFIDENCE_TONE[r.confidence]}`}
-                        >
-                          {r.confidence}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                        </section>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="patient-directory"
-                        className="mt-3"
-                        data-testid="admin-review-patient-directory-tab-content"
-                      >
-                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-2">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Patient Directory
-                          </div>
-                          <div className="text-xs text-white/80">
-                            <div>{patient.name || "Unnamed patient"}</div>
-                            {patient.dob && <div className="text-white/60">DOB {patient.dob}</div>}
-                            {patient.phoneNumber && (
-                              <div className="text-white/60">{patient.phoneNumber}</div>
-                            )}
-                            {patient.facility && (
-                              <div className="text-white/60">{patient.facility}</div>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-white/50 italic">
-                            Full directory roster will appear here when the
-                            backend route is wired.
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="cooldown"
-                        className="mt-3"
-                        data-testid="admin-review-cooldown-tab-content"
-                      >
-                        <div
-                          className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1"
-                          data-testid="admin-review-patient-cooldown-summary"
-                        >
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Cooldown
-                          </div>
-                          <div className="text-xs text-white/80">
-                            No active cooldown rules detected for this patient.
-                          </div>
-                          <div className="text-[10px] text-white/50 italic">
-                            Cooldown engine wires here once the per-test
-                            cooldown route ships.
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="insurance"
-                        className="mt-3"
-                        data-testid="admin-review-insurance-tab-content"
-                      >
-                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Insurance
-                          </div>
-                          <div className="text-xs text-white/80">
-                            {patient.insurance || (
-                              <span className="italic text-white/50">No insurance on file</span>
-                            )}
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="history"
-                        className="mt-3"
-                        data-testid="admin-review-history-tab-content"
-                      >
-                        <div className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-1">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-                            Patient History (chart)
-                          </div>
-                          <div className="text-xs text-white/80 whitespace-pre-wrap min-h-[3rem]">
-                            {patient.history || (
-                              <span className="italic text-white/50">No history entered</span>
-                            )}
-                          </div>
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent
-                        value="engagement"
-                        className="mt-3"
-                        data-testid="admin-review-engagement-tab-content"
-                      >
-                        {/* Engagement Center source of truth: client-side
-                            grouping of /api/engagement/assignment-board
-                            (no dedicated grouped endpoint exists). Each
-                            scheduler group supports Select All + Plexus
-                            PDF + Clinician PDF scoped to selected rows.
-                            SOURCE MARKER: Engagement Center source of truth
-                            SOURCE MARKER: Scheduler call lists grouped by scheduler
-                            SOURCE MARKER: Plexus PDF by scheduler assignment
-                            SOURCE MARKER: Clinician PDF by scheduler assignment */}
-                        <div
-                          className="space-y-3"
-                          data-testid="admin-review-scheduler-call-lists"
-                        >
-                          {engagementBoardQuery.isLoading && (
-                            <div className="text-[11px] text-white/60 italic">
-                              Loading Engagement assignments…
-                            </div>
-                          )}
-                          {engagementBoardQuery.isError && (
-                            <div className="text-[11px] text-rose-200">
-                              Could not load Engagement Center: {String(engagementBoardQuery.error)}
-                            </div>
-                          )}
-                          {!engagementBoardQuery.isLoading &&
-                            !engagementBoardQuery.isError &&
-                            schedulerGroups.length === 0 && (
-                              <div className="text-[11px] text-white/60 italic">
-                                No Engagement assignment found for this facility yet.
-                              </div>
-                            )}
-                          {schedulerGroups.map((group) => {
-                            const selected = selectedByScheduler[group.schedulerKey] ?? new Set<number>();
-                            const eligibleIds = group.rows
-                              .map((r) => r.patientScreeningId)
-                              .filter((id): id is number => id != null);
-                            const allSelected =
-                              eligibleIds.length > 0 && eligibleIds.every((id) => selected.has(id));
-                            const selectedCount = selected.size;
-                            return (
-                              <section
-                                key={group.schedulerKey}
-                                className="rounded-2xl border border-white/15 bg-black/15 p-3 space-y-2"
-                                data-testid="admin-review-scheduler-call-list"
-                                data-scheduler-name={group.schedulerName}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="text-[11px] font-semibold text-white">
-                                    {group.schedulerName}
-                                    <span className="ml-1.5 text-white/60 font-normal">
-                                      ({group.rows.length})
-                                    </span>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setAllSelectedForScheduler(group)}
-                                    data-testid="admin-review-select-all-scheduler-patients"
-                                    className="text-[10px] uppercase tracking-wider text-white/80 hover:text-white"
-                                  >
-                                    {allSelected ? "Clear" : "Select All"}
-                                  </button>
-                                </div>
-                                <div
-                                  className="text-[10px] text-white/60"
-                                  data-testid="admin-review-scheduler-selected-count"
-                                >
-                                  {selectedCount} selected
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    disabled={selectedCount === 0}
-                                    onClick={() =>
-                                      generateSchedulerScopedPdf(
-                                        group,
-                                        Array.from(selected),
-                                        "plexus",
-                                      )
-                                    }
-                                    data-testid="admin-review-scheduler-plexus-pdf"
-                                    data-print-preview-testid="admin-review-plexus-print-preview"
-                                    className="rounded-md border border-white/30 bg-white/15 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 text-[11px] font-semibold transition-colors"
-                                  >
-                                    Plexus PDF
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={selectedCount === 0}
-                                    onClick={() =>
-                                      generateSchedulerScopedPdf(
-                                        group,
-                                        Array.from(selected),
-                                        "clinician",
-                                      )
-                                    }
-                                    data-testid="admin-review-scheduler-clinician-pdf"
-                                    data-print-preview-testid="admin-review-clinician-print-preview"
-                                    className="rounded-md border border-white/30 bg-white/15 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2 py-1 text-[11px] font-semibold transition-colors"
-                                  >
-                                    Clinician PDF
-                                  </button>
-                                </div>
-                                {/* Hidden surface-state markers for QA / e2e. */}
-                                <span
-                                  className="sr-only"
-                                  data-testid="admin-review-print-preview-popup-blocked"
-                                  aria-hidden="true"
-                                >
-                                  Popup blocked. Allow popups to print this packet.
-                                </span>
-                                <span
-                                  className="sr-only"
-                                  data-testid="admin-review-print-preview-error"
-                                  aria-hidden="true"
-                                >
-                                  Admin Review print preview error surface.
-                                </span>
-                                <ul className="space-y-1">
-                                  {group.rows.map((r) => {
-                                    const isCurrent =
-                                      r.patientScreeningId === patient.id;
-                                    const isChecked = r.patientScreeningId != null
-                                      ? selected.has(r.patientScreeningId)
-                                      : false;
-                                    return (
-                                      <li
-                                        key={r.executionCaseId}
-                                        className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-[11px] ${
-                                          isCurrent
-                                            ? "border-white/40 bg-white/15"
-                                            : "border-white/10 bg-black/10"
-                                        }`}
-                                        data-testid="admin-review-scheduler-call-list-patient"
-                                        data-patient-id={r.patientScreeningId ?? ""}
-                                        data-is-current={isCurrent ? "true" : "false"}
-                                        {...(isCurrent
-                                          ? { "data-current-marker": "admin-review-current-patient-in-call-list" }
-                                          : {})}
-                                      >
-                                        <input
-                                          type="checkbox"
-                                          checked={isChecked}
-                                          disabled={r.patientScreeningId == null}
-                                          onChange={() => {
-                                            if (r.patientScreeningId != null) {
-                                              toggleSelectedForScheduler(
-                                                group.schedulerKey,
-                                                r.patientScreeningId,
-                                              );
-                                            }
-                                          }}
-                                          data-testid="admin-review-select-scheduler-patient"
-                                          className="mt-0.5"
-                                        />
-                                        <div className="min-w-0 flex-1">
-                                          <div className="font-medium text-white truncate">
-                                            {r.patientName}
-                                            {isCurrent && (
-                                              <span
-                                                className="ml-1 text-[9px] uppercase tracking-wider text-white/70"
-                                                data-testid="admin-review-current-patient-in-call-list"
-                                              >
-                                                · current
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="text-white/60 truncate">
-                                            {[r.facility, r.scheduleDate, r.engagementStatus]
-                                              .filter(Boolean)
-                                              .join(" · ")}
-                                          </div>
-                                          {r.selectedServiceList?.length ? (
-                                            <div className="text-white/50 truncate">
-                                              {r.selectedServiceList.join(", ")}
-                                            </div>
-                                          ) : null}
-                                        </div>
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              </section>
-                            );
-                          })}
-                        </div>
-                      </TabsContent>
-                    </Tabs>
-                  </ScrollArea>
-                </div>
-              )}
-            </aside>
-
-            {/* ─── Column 2 — Ancillary Playground (white) ─── */}
-            <main
-              className="bg-white min-h-0 flex flex-col"
-              data-testid="admin-review-middle-column"
-              data-panel-style="admin-review-ancillary-playground-white-panel"
-            >
-              <div className="px-5 pt-4 pb-2 border-b border-slate-100 flex items-center gap-2">
-                <span
-                  className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 text-white px-3 py-1 text-[11px] font-semibold uppercase tracking-wider shadow-sm"
-                  data-testid="admin-review-ancillary-playground-pill"
-                >
-                  <Sparkles className="w-3 h-3" />
-                  Ancillary Playground
-                </span>
-                {evidenceQuery.isFetching && (
-                  <span className="text-[10px] text-slate-400 inline-flex items-center gap-1">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Refreshing rule engine
-                  </span>
-                )}
-              </div>
+          {/* ─── LEFT panel — Ancillaries playground ─── */}
+          <main
+            className="flex min-h-0 flex-[1.35] flex-col overflow-hidden rounded-2xl border border-[#E6E8EF] bg-white"
+            data-testid="admin-review-ancillary-panel"
+          >
               <ScrollArea className="flex-1 min-h-0 px-5 py-4">
                 <div
                   className="space-y-4"
@@ -2741,11 +2595,11 @@ export function AdminReviewDialog({
                 return (
                   <div
                     key={id}
-                    className={`rounded-2xl border overflow-hidden ${style.bg} ${style.border}`}
+                    className={`rounded-2xl border overflow-hidden shadow-sm ring-1 ring-black/5 transition-shadow hover:shadow-md ${style.bg} ${style.border}`}
                     data-testid="admin-review-ancillary-colored-panel"
                     data-ancillary={id}
                   >
-                    <div className="px-4 py-3 border-b border-white/40 bg-white/30 backdrop-blur-sm">
+                    <div className="px-4 py-3 border-b border-white/50 bg-gradient-to-b from-white/55 to-white/20 backdrop-blur-md">
                       <div className="flex items-center justify-between gap-3">
                         <button
                           type="button"
@@ -2758,8 +2612,8 @@ export function AdminReviewDialog({
                           ) : (
                             <ChevronRight className={`w-4 h-4 shrink-0 ${style.accent}`} />
                           )}
-                          <div className={`shrink-0 w-7 h-7 rounded-full bg-white inline-flex items-center justify-center ${style.icon}`}>
-                            <Icon className="w-4 h-4" strokeWidth={2} fill="none" />
+                          <div className={`shrink-0 w-8 h-8 rounded-full bg-white/90 shadow-sm inline-flex items-center justify-center ${style.icon}`}>
+                            <Icon className="w-5 h-5" strokeWidth={2} fill="none" />
                           </div>
                           <div className="min-w-0 flex items-center gap-2 flex-wrap">
                             <div className={`font-semibold text-sm ${style.accent} shrink-0`}>
@@ -2923,10 +2777,10 @@ export function AdminReviewDialog({
                       ) : (
                         <ChevronRight className={`w-4 h-4 shrink-0 ${categoryStyles.ultrasound.accent}`} />
                       )}
-                      <div className={`shrink-0 w-7 h-7 rounded-full bg-white inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
+                      <div className={`shrink-0 w-8 h-8 rounded-full bg-white/90 shadow-sm inline-flex items-center justify-center ${categoryStyles.ultrasound.icon}`}>
                         {(() => {
                           const Icon = categoryIcons.ultrasound;
-                          return <Icon className="w-4 h-4" strokeWidth={2} fill="none" />;
+                          return <Icon className="w-5 h-5" strokeWidth={2} fill="none" />;
                         })()}
                       </div>
                       <div className="min-w-0 flex items-center gap-2 flex-wrap">
@@ -3168,92 +3022,324 @@ export function AdminReviewDialog({
               </div>
                 </div>
               </ScrollArea>
-            </main>
+          </main>
 
-            {/* ─── Column 3 — approved muted blue #7283B0 actions panel ─── */}
-            <aside
-              className="bg-[#7283B0] text-white border-l border-black/10 flex flex-col min-h-0"
-              data-testid="admin-review-right-column"
-              data-panel-style="admin-review-blue-right-panel"
-              data-panel-color="#7283B0"
-              style={{ backgroundColor: "#7283B0" }}
-            >
-              {!rightPanelOpen ? (
-                <div
-                  className="flex-1 flex items-start justify-center pt-3"
-                  data-testid="admin-review-right-panel-collapsed"
-                >
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-white/60 rotate-90 origin-top mt-8 whitespace-nowrap">
-                    Actions
-                  </span>
+          {/* ─── RIGHT panel — slim action rail. Evidence sits at the top,
+              the decision is pinned at the bottom, and heavier surfaces
+              (documents, note, scheduler, reference, activity) collapse into
+              popovers so the column stays narrow. ─── */}
+          <aside
+            className="flex min-h-0 w-[300px] flex-none flex-col overflow-hidden rounded-2xl border border-[#E6E8EF] bg-white"
+            data-testid="admin-review-action-panel"
+          >
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="space-y-4 p-4">
+                    {/* Reference surfaces — split into top-of-rail buttons */}
+                    <div data-testid="admin-review-reference-buttons-group">
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Reference</span>
+                        <span className="h-px flex-1 bg-slate-200" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {/* Source data */}
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              data-testid="admin-review-reference-source-trigger"
+                              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300 px-3 py-2 text-xs font-semibold shadow-sm transition-colors"
+                            >
+                              <BookOpen className="w-3.5 h-3.5" />
+                              Source data
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            align="end"
+                            className="w-[520px] max-w-[92vw] max-h-[72vh] overflow-auto p-3"
+                            data-testid="admin-review-source-popover"
+                          >
+                <div className="px-0 py-0" data-testid="admin-review-source-tab-content">
+                        <section className="space-y-2" data-testid="admin-review-clinical-source">
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                              Clinical Source
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!sourceEditMode) {
+                                  // Seed from the freshest local mirrors (latest
+                                  // saved values), and DO NOT clear sourceDataSaved
+                                  // here — re-entering edit must not bypass the
+                                  // regeneration gate. It clears only on a fully
+                                  // successful regenerate.
+                                  setSourceEditHx(localHx);
+                                  setSourceEditDx(localDx);
+                                  setSourceEditRx(localRx);
+                                }
+                                setSourceEditMode((m) => !m);
+                              }}
+                              data-testid="admin-review-source-edit-toggle"
+                              className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
+                                sourceEditMode
+                                  ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              <Pencil className="w-3 h-3" />
+                              {sourceEditMode ? "Cancel" : "Edit"}
+                            </button>
+                          </div>
+
+                          {sourceEditMode ? (
+                            <div className="space-y-2" data-testid="admin-review-source-edit-form">
+                              <div>
+                                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Hx</label>
+                                <Textarea
+                                  value={sourceEditHx}
+                                  onChange={(e) => setSourceEditHx(e.target.value)}
+                                  rows={3}
+                                  className="text-xs"
+                                  data-testid="admin-review-source-edit-hx"
+                                  placeholder="Patient history..."
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Dx</label>
+                                <Textarea
+                                  value={sourceEditDx}
+                                  onChange={(e) => setSourceEditDx(e.target.value)}
+                                  rows={3}
+                                  className="text-xs"
+                                  data-testid="admin-review-source-edit-dx"
+                                  placeholder="Diagnoses..."
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Rx</label>
+                                <Textarea
+                                  value={sourceEditRx}
+                                  onChange={(e) => setSourceEditRx(e.target.value)}
+                                  rows={3}
+                                  className="text-xs"
+                                  data-testid="admin-review-source-edit-rx"
+                                  placeholder="Medications..."
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onUpdate("history", sourceEditHx);
+                                  onUpdate("diagnoses", sourceEditDx);
+                                  onUpdate("medications", sourceEditRx);
+                                  // Update local mirrors immediately so evidence buttons
+                                  // re-parse without waiting for the parent re-render.
+                                  setLocalHx(sourceEditHx);
+                                  setLocalDx(sourceEditDx);
+                                  setLocalRx(sourceEditRx);
+                                  setSourceEditMode(false);
+                                  setSourceDataSaved(true);
+                                  recordAdminReviewUpdate(
+                                    "admin_note_updated",
+                                    "Source clinical data (Hx/Dx/Rx) updated",
+                                  );
+                                  toast({ title: "Source data saved", description: "Hx, Dx, and Rx have been updated." });
+                                }}
+                                data-testid="admin-review-source-save-button"
+                                className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 px-3 py-2 text-xs font-semibold transition-colors"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                Save Changes
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <RawSourceCard
+                                label="Hx"
+                                value={patient.history}
+                                emptyText="No history entered"
+                                testId="admin-review-source-hx"
+                              />
+                              <RawSourceCard
+                                label="Dx"
+                                value={patient.diagnoses}
+                                emptyText="No diagnoses entered"
+                                testId="admin-review-source-dx"
+                              />
+                              <RawSourceCard
+                                label="Rx"
+                                value={patient.medications}
+                                emptyText="No medications entered"
+                                testId="admin-review-source-rx"
+                              />
+                              {(() => {
+                                const prevTests = typeof (patient as { previousTests?: unknown }).previousTests === "string"
+                                  ? ((patient as { previousTests?: string }).previousTests ?? "")
+                                  : "";
+                                return (
+                                  <RawSourceCard
+                                    label="Previous Tests"
+                                    value={prevTests}
+                                    emptyText="No prior testing on file"
+                                    testId="admin-review-source-prior"
+                                  />
+                                );
+                              })()}
+                            </>
+                          )}
+
+                          {sourceDataSaved && !sourceEditMode && (
+                            <div
+                              className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                              data-testid="admin-review-source-regenerate-section"
+                            >
+                              <div className="text-[11px] text-slate-600 font-medium inline-flex items-start gap-1.5">
+                                <RefreshCw className="w-3 h-3 mt-px shrink-0 text-slate-500" />
+                                Source data updated — press Regenerate in the Updates panel to re-analyze all ancillaries.
+                              </div>
+                            </div>
+                          )}
+                        </section>
                 </div>
-              ) : (
-              <ScrollArea
-                className="flex-1 min-h-0 px-4 py-4"
-                data-testid="admin-review-right-panel-scroll"
-              >
-              <div
-                className="space-y-4"
-                data-testid="admin-review-right-panel-open"
-              >
-              <section
-                className="space-y-2"
-                data-testid="admin-review-right-actions-panel"
-              >
-              {/* Top-right PDF action buttons. Labels match the PDF
-                  generator naming: "Plexus PDF" (the canonical Plexus
-                  packet) and "Clinician PDF" (the clinician-facing
-                  packet). The reasoning content area below carries
-                  Clinician Understanding / Patient Talking Points
-                  labels — those belong inside the reasoning cards,
-                  not on PDF action buttons. */}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    recordAdminReviewUpdate("pdf_previewed", "Previewed Plexus PDF", { kind: "plexus" });
-                  }}
-                  data-testid="admin-review-pdf-preview-button-plexus"
-                  data-pdf-action="admin-review-pdf-action-plexus"
-                  className="rounded-xl border border-white/20 bg-black/15 hover:bg-black/25 text-white px-3 py-2 text-xs font-semibold transition-colors"
-                >
-                  Plexus PDF
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    recordAdminReviewUpdate("pdf_previewed", "Previewed Clinician PDF", { kind: "clinician" });
-                  }}
-                  data-testid="admin-review-pdf-preview-button-clinician"
-                  data-pdf-action="admin-review-pdf-action-clinician"
-                  className="rounded-xl border border-white/20 bg-black/15 hover:bg-black/25 text-white px-3 py-2 text-xs font-semibold transition-colors"
-                >
-                  Clinician PDF
-                </button>
-              </div>
-              <div data-testid="admin-review-pdf-actions-inline" className="bg-white rounded-xl p-2">
-                <PatientPdfActions
-                  patient={patient}
-                  facility={facility ?? patient.facility ?? null}
-                  scheduleDate={scheduleDate ?? null}
-                  compact
-                />
-              </div>
-              </section>
+                          </PopoverContent>
+                        </Popover>
+                        {/* ICD search */}
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              data-testid="admin-review-reference-icd-trigger"
+                              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300 px-3 py-2 text-xs font-semibold shadow-sm transition-colors"
+                            >
+                              <Search className="w-3.5 h-3.5" />
+                              ICD search
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            align="end"
+                            className="w-[420px] max-w-[92vw] max-h-[72vh] overflow-auto p-3"
+                            data-testid="admin-review-icd-popover"
+                          >
+                <div className="px-0 py-0" data-testid="admin-review-icd-tab-content">
+                        <section
+                          className="space-y-1.5 rounded-2xl border border-slate-200 bg-slate-50 p-3"
+                          data-testid="admin-review-icd-search-left"
+                        >
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                  Search ICD-10
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Search ICD-10 codes beyond the current chart, then assign selected codes to ancillaries.
+                </div>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+                  <Input
+                    type="search"
+                    placeholder="Search any ICD-10 diagnosis..."
+                    value={icdSearchQuery}
+                    onChange={(e) => setIcdSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && icdSearchQuery.trim().length >= 2) {
+                        icdSearchMutation.mutate({ query: icdSearchQuery.trim() });
+                      }
+                    }}
+                    className="h-8 text-xs"
+                    data-testid="admin-review-icd-ai-search"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={
+                      icdSearchMutation.isPending || icdSearchQuery.trim().length < 2
+                    }
+                    onClick={() =>
+                      icdSearchMutation.mutate({ query: icdSearchQuery.trim() })
+                    }
+                    data-testid="admin-review-icd-ai-search-button"
+                    className="h-8 px-2"
+                  >
+                    {icdSearchMutation.isPending ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Search className="w-3 h-3" />
+                    )}
+                  </Button>
+                </div>
 
-              <section
-                className="space-y-2 rounded-2xl border border-white/15 bg-black/15 p-3"
-                data-testid="admin-review-right-panel-buttons"
-              >
-                <div
-                  className="grid grid-cols-2 gap-2"
-                  data-testid="admin-review-right-panel-button-row"
-                >
+                {icdSearchMutation.isPending && (
+                  <div
+                    className="text-[11px] text-slate-400 inline-flex items-center gap-1"
+                    data-testid="admin-review-icd-ai-search-loading"
+                  >
+                    <Loader2 className="w-3 h-3 animate-spin" /> Searching ICD codes
+                  </div>
+                )}
+                {icdSearchMutation.isError && (
+                  <div
+                    className="text-[11px] text-rose-700 inline-flex items-center gap-1"
+                    data-testid="admin-review-icd-ai-search-error"
+                  >
+                    <AlertTriangle className="w-3 h-3" /> OpenAI universal ICD search failed
+                  </div>
+                )}
+                {icdSearchMutation.isSuccess && icdSearchMutation.data?.results?.length === 0 && (
+                  <div
+                    className="text-[11px] text-slate-400 italic"
+                    data-testid="admin-review-icd-ai-search-empty"
+                  >
+                    No matching ICD codes.
+                  </div>
+                )}
+                {icdSearchMutation.isSuccess && (icdSearchMutation.data?.results ?? []).length > 0 && (
+                  <div className="flex flex-col gap-1 max-h-48 overflow-auto rounded-md border border-slate-200 bg-white">
+                    {(icdSearchMutation.data?.results ?? []).map((r) => (
+                      <button
+                        key={r.code}
+                        type="button"
+                        onClick={() => adoptIcdSearchResult(r)}
+                        data-testid="admin-review-icd-ai-search-result"
+                        className="text-left text-xs px-2 py-1.5 hover:bg-slate-100 inline-flex items-start gap-2"
+                      >
+                        <span className="font-mono text-slate-700 shrink-0">{r.code}</span>
+                        <div className="min-w-0">
+                          <div className="text-slate-800 truncate">{r.label}</div>
+                          {r.rationale && (
+                            <div className="text-[10px] text-slate-500 truncate">
+                              {r.rationale}
+                            </div>
+                          )}
+                        </div>
+                        <span
+                          className={`ml-auto inline-flex items-center rounded-full border px-1.5 text-[9px] uppercase tracking-wider ${CONFIDENCE_TONE[r.confidence]}`}
+                        >
+                          {r.confidence}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                        </section>
+                </div>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                    </div>
+
+                {/* Reference content continues — Diagnosis / Medications / Symptoms / Prior Testing
+                    (single "Reference" header is provided by admin-review-reference-buttons-group above). */}
+                <div data-testid="admin-review-evidence-group">
+                  <section
+                    className="space-y-2"
+                    data-testid="admin-review-right-panel-buttons"
+                  >
+                    <div
+                      className="grid grid-cols-2 gap-2"
+                      data-testid="admin-review-right-panel-button-row"
+                    >
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="rounded-xl border border-blue-200 bg-blue-50 text-blue-900 px-3 py-2 text-xs font-semibold hover:bg-blue-100 transition-colors"
+                        className="rounded-xl border border-slate-200 bg-white text-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors"
                         data-testid="admin-review-right-button-diagnosis"
                       >
                         Diagnosis
@@ -3289,12 +3375,11 @@ export function AdminReviewDialog({
                       />
                     </PopoverContent>
                   </Popover>
-
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="rounded-xl border border-purple-200 bg-purple-50 text-purple-800 px-3 py-2 text-xs font-semibold hover:bg-purple-100 transition-colors"
+                        className="rounded-xl border border-slate-200 bg-white text-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors"
                         data-testid="admin-review-right-button-medications"
                       >
                         Medications
@@ -3325,12 +3410,11 @@ export function AdminReviewDialog({
                       />
                     </PopoverContent>
                   </Popover>
-
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-xs font-semibold hover:bg-amber-100 transition-colors"
+                        className="rounded-xl border border-slate-200 bg-white text-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors"
                         data-testid="admin-review-right-button-symptoms"
                       >
                         Symptoms
@@ -3342,19 +3426,19 @@ export function AdminReviewDialog({
                       data-testid="admin-review-right-popover-symptoms"
                     >
                       <AvailableButtonsRow
-                        title="Symptoms / History"
+                        title="Symptoms"
                         testId="admin-review-available-buttons-hx"
                         emptyText="No symptoms recorded"
                         items={availableButtons.filter(
-                          (b) => b.kind === "symptom" || b.kind === "history" || b.kind === "prior_test",
+                          (b) => b.kind === "symptom" || b.kind === "history",
                         )}
                         renderItem={(b) => (
                           <SupportingChipButton
                             key={buttonKey(b)}
                             btn={b}
-                            testId={b.kind === "prior_test" ? "admin-review-prior-button" : "admin-review-hx-button"}
-                            tone={b.kind === "prior_test" ? "teal" : "amber"}
-                            prefix={b.kind === "prior_test" ? "Prior" : "Hx"}
+                            testId="admin-review-hx-button"
+                            tone="amber"
+                            prefix="Hx"
                             ultrasoundTests={ultrasoundTests}
                             isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
                             onAssign={(target) => assignToTarget(target, b)}
@@ -3363,54 +3447,182 @@ export function AdminReviewDialog({
                       />
                     </PopoverContent>
                   </Popover>
-
+                  {/* Prior Testing — actual completed prior tests ONLY.
+                      Never patient history (Dx/Hx). Sourced from
+                      prior_test evidence chips + the patient's own
+                      previousTests free text. */}
                   <Popover>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-900 px-3 py-2 text-xs font-semibold hover:bg-emerald-100 transition-colors col-span-2"
-                        data-testid="admin-review-right-button-suggestions"
+                        className="rounded-xl border border-slate-200 bg-white text-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors"
+                        data-testid="admin-review-right-button-prior-testing"
                       >
-                        <span className="inline-flex items-center gap-1.5">
-                          <Lightbulb className="w-3 h-3" />
-                          Suggestions
-                          {visibleSuggestions.length > 0 && (
-                            <span className="inline-flex items-center justify-center rounded-full bg-emerald-200 text-emerald-900 text-[10px] px-1.5">
-                              {visibleSuggestions.length}
-                            </span>
-                          )}
-                        </span>
+                        Prior Testing
                       </button>
                     </PopoverTrigger>
                     <PopoverContent
                       align="end"
-                      className="w-[340px] p-3 space-y-2"
-                      data-testid="admin-review-right-popover-suggestions"
+                      className="w-[340px] p-3 space-y-3 max-h-[60vh] overflow-y-auto"
+                      data-testid="admin-review-right-popover-prior-testing"
                     >
-                      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                        Diagnosis Suggestions
-                      </div>
-                      <div className="text-[10px] text-slate-500">
-                        Medication-derived. Click to accept — suggestions are
-                        inactive until accepted.
-                      </div>
-                      {visibleSuggestions.length === 0 ? (
-                        <div className="text-[11px] text-slate-400 italic">
-                          No suggestions for this patient.
-                        </div>
-                      ) : (
-                        <DiagnosisSuggestionsSection
-                          suggestions={visibleSuggestions}
-                          onAccept={acceptDiagnosisSuggestion}
-                        />
-                      )}
+                      {(() => {
+                        const priorButtons = availableButtons.filter(
+                          (b) => b.kind === "prior_test",
+                        );
+                        const priorText =
+                          typeof (patient as { previousTests?: unknown }).previousTests === "string"
+                            ? ((patient as { previousTests?: string }).previousTests ?? "").trim()
+                            : "";
+                        const noPrior = Boolean(
+                          (patient as { noPreviousTests?: unknown }).noPreviousTests,
+                        );
+                        if (noPrior || (priorButtons.length === 0 && !priorText)) {
+                          return (
+                            <div
+                              className="text-[11px] text-slate-400 italic"
+                              data-testid="admin-review-prior-testing-empty"
+                            >
+                              No prior testing found.
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="space-y-3">
+                            {priorText && (
+                              <div data-testid="admin-review-prior-testing-source">
+                                <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                                  Recorded prior tests
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-700 whitespace-pre-wrap leading-snug">
+                                  {priorText}
+                                </div>
+                              </div>
+                            )}
+                            {priorButtons.length > 0 && (
+                              <AvailableButtonsRow
+                                title="Attach prior testing"
+                                testId="admin-review-available-buttons-prior"
+                                emptyText="No prior testing found."
+                                items={priorButtons}
+                                renderItem={(b) => (
+                                  <SupportingChipButton
+                                    key={buttonKey(b)}
+                                    btn={b}
+                                    testId="admin-review-prior-button"
+                                    tone="teal"
+                                    prefix="Prior"
+                                    ultrasoundTests={ultrasoundTests}
+                                    isAlreadyAssigned={(target) => isAssignedToTarget(b, target, assignments)}
+                                    onAssign={(target) => assignToTarget(target, b)}
+                                  />
+                                )}
+                              />
+                            )}
+                          </div>
+                        );
+                      })()}
                     </PopoverContent>
                   </Popover>
+                    </div>
+                  </section>
                 </div>
-              </section>
 
+                    {/* Updates — grouped by ancillary; Regenerate lives here */}
+                    <div data-testid="admin-review-updates-group">
+          <div
+            className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3"
+            data-testid="admin-review-updates-made-box"
+            data-record-helper="admin-review-record-update"
+          >
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                Updates
+              </div>
+              {needsRegeneration ? (
+                <button
+                  type="button"
+                  onClick={() => void regeneratePending()}
+                  disabled={regenChangedInFlight}
+                  aria-label="Regenerate"
+                  title={sourceDataSaved
+                    ? "Regenerate all ancillaries with updated source data"
+                    : `Regenerate: ${staleTargetIds
+                        .map(ancillaryLabelForTargetId)
+                        .join(", ")}`}
+                  data-testid="admin-review-regenerate-changed"
+                  data-stale-count={staleTargetIds.length}
+                  className="inline-flex items-center gap-1 h-6 px-2.5 rounded-md bg-slate-800 hover:bg-slate-900 text-white text-[10px] font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {regenChangedInFlight ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-3 h-3" />
+                  )}
+                  Regenerate
+                </button>
+              ) : (
+                <span className="text-[10px] text-slate-400 tabular-nums">
+                  {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
+                </span>
+              )}
+            </div>
+            {(() => {
+              const groups = groupUpdatesByAncillary(updatesLog);
+              if (groups.length === 0) {
+                return (
+                  <div className="text-[11px] text-slate-400 italic">
+                    {sourceDataSaved
+                      ? "Source data edited — regenerate to apply across all ancillaries."
+                      : "Changes you make will appear here, grouped by ancillary."}
+                  </div>
+                );
+              }
+              return (
+                <ScrollArea className="max-h-[260px]">
+                  <div className="space-y-3 pr-2">
+                    {groups.map((group) => (
+                      <div
+                        key={group.ancillary}
+                        data-testid={`admin-review-updates-group-${group.ancillary}`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span
+                            className={`h-1.5 w-1.5 rounded-full ${UPDATE_GROUP_DOT[group.ancillary]}`}
+                          />
+                          <span
+                            className={`text-[10px] font-bold uppercase tracking-wider ${UPDATE_GROUP_ACCENT[group.ancillary]}`}
+                          >
+                            {categoryLabels[group.ancillary]}
+                          </span>
+                        </div>
+                        <ul className="space-y-1 pl-3">
+                          {group.entries.map((entry) => (
+                            <li
+                              key={entry.id}
+                              className="flex items-start gap-2 text-[11px] text-slate-700 leading-snug"
+                              data-testid="admin-review-updates-made-item"
+                              data-update-type={entry.type}
+                            >
+                              <span className="font-mono text-[10px] text-slate-400 shrink-0 tabular-nums">
+                                {entry.at.slice(11, 16)}
+                              </span>
+                              <span className="min-w-0">{shortUpdateText(entry)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              );
+            })()}
+          </div>
+                        </div>
+                {/* Blocking rules */}
+                <div data-testid="admin-review-blocking-group">
               <section className="space-y-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                   Blocking Rules
                 </div>
                 {isUnder16 && (
@@ -3428,36 +3640,85 @@ export function AdminReviewDialog({
                     Diagnosis missing ICD
                   </div>
                 )}
-                {!isUnder16 && totalMissingIcds === 0 && (
-                  <div className="text-[11px] text-white/50 italic">No blocking rules.</div>
+                {needsRegeneration && (
+                  <div
+                    className="rounded-md border border-slate-300 bg-slate-100 text-slate-800 text-[11px] px-3 py-2 inline-flex items-center gap-1.5 w-full"
+                    data-testid="admin-review-regeneration-required-rule"
+                  >
+                    <RefreshCw className="w-3 h-3 shrink-0" />
+                    Regeneration required · sources edited
+                  </div>
+                )}
+                {!isUnder16 && totalMissingIcds === 0 && !needsRegeneration && (
+                  <div className="text-[11px] text-slate-400 italic">No blocking rules.</div>
                 )}
               </section>
+                </div>
 
-              {/* Admin note: circular icon button opens an inline
-                  popover with the note textarea — keeps the panel
-                  compact when the admin doesn't need a note. */}
-              <section className="flex items-center gap-2">
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      aria-label="Add admin note"
-                      title={adminNote ? "Admin note recorded" : "Add admin note"}
-                      data-testid="admin-review-admin-note-icon-button"
-                      className={`inline-flex items-center justify-center h-9 w-9 rounded-full border border-white/30 transition-colors ${
-                        adminNote
-                          ? "bg-white text-[#3d4a6b]"
-                          : "bg-black/15 text-white hover:bg-black/25"
-                      }`}
-                    >
-                      <StickyNote className="w-4 h-4" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="end"
-                    className="w-[300px] p-3 space-y-2"
-                    data-testid="admin-review-admin-note-popover"
-                  >
+                {/* Actions — heavier surfaces collapsed into popovers */}
+                <div data-testid="admin-review-actions-group">
+                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Actions</div>
+                  <div className="grid grid-cols-2 gap-2">
+
+                    {/* Documents — single Plexus / Clinician PDF set */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          data-testid="admin-review-documents-trigger"
+                          disabled={needsRegeneration}
+                          title={
+                            needsRegeneration
+                              ? "Regenerate changed ancillaries before generating documents"
+                              : undefined
+                          }
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-50"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          Documents
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="end"
+                        className="w-[300px] p-3"
+                        data-testid="admin-review-documents-popover"
+                      >
+                        <div data-testid="admin-review-documents-group">
+                          <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Documents</div>
+                          <section className="space-y-2" data-testid="admin-review-right-actions-panel">
+              <div data-testid="admin-review-pdf-actions-inline" className="bg-white rounded-xl p-2">
+                <PatientPdfActions
+                  patient={patient}
+                  facility={facility ?? patient.facility ?? null}
+                  scheduleDate={scheduleDate ?? null}
+                  compact
+                />
+              </div>
+                          </section>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+
+                    {/* Admin note */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label="Add admin note"
+                          title={adminNote ? "Admin note recorded" : "Add admin note"}
+                          data-testid="admin-review-admin-note-icon-button"
+                          className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${adminNote ? "border-[#3d4a6b]/30 bg-[#3d4a6b]/10 text-[#3d4a6b]" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"}`}
+                        >
+                          <StickyNote className="w-3.5 h-3.5" />
+                          Note
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="end"
+                        className="w-[300px] p-3 space-y-2"
+                        data-testid="admin-review-admin-note-popover"
+                      >
+                        <div data-testid="admin-review-admin-note-group">
                     <Label
                       htmlFor={`admin-review-admin-note-${patient.id}`}
                       className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"
@@ -3479,64 +3740,32 @@ export function AdminReviewDialog({
                       placeholder="Optional context attached to this approval action"
                       data-testid={`admin-review-admin-note-${patient.id}`}
                     />
-                  </PopoverContent>
-                </Popover>
-                <div className="text-[11px] text-white/70">
-                  {adminNote.trim() ? "Admin note recorded for this session" : "No admin note yet"}
-                </div>
-              </section>
+                          <div className="text-[11px] text-slate-500">
+                            {adminNote.trim() ? "Admin note recorded for this session" : "No admin note yet"}
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
 
-              <section className="space-y-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
-                  Decision
-                </div>
-                <div className="flex flex-col gap-2">
-                  <Button
-                    type="button"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "approved" });
-                      recordAdminReviewUpdate("approval_approved", "Approved review");
-                    }}
-                    data-testid="admin-review-approve-button"
-                    data-bar-testid={`admin-review-button-approve-${patient.id}`}
-                    className="bg-emerald-500 text-white hover:bg-emerald-600 w-full"
-                  >
-                    {approvalMutation.isPending ? (
-                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
-                    )}
-                    {isUnder16 ? "Admin Override Approve" : "Approve"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "needs_info" });
-                      recordAdminReviewUpdate("approval_pended", "Pended review");
-                    }}
-                    data-testid="admin-review-pend-button"
-                    data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
-                    className="w-full bg-white/10 text-white border-white/20 hover:bg-white/20"
-                  >
-                    Pend
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={approvalMutation.isPending}
-                    onClick={() => {
-                      approvalMutation.mutate({ status: "rejected" });
-                      recordAdminReviewUpdate("approval_rejected", "Rejected review");
-                    }}
-                    data-testid={`admin-review-button-reject-${patient.id}`}
-                    className="w-full text-rose-200 border-rose-300/40 bg-rose-900/40 hover:bg-rose-900/60"
-                  >
-                    Reject
-                  </Button>
-                </div>
+                    {/* Scheduler routing */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          data-testid="admin-review-scheduler-trigger"
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 px-3 py-2 text-xs font-semibold transition-colors"
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          Scheduler
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="end"
+                        className="w-[320px] p-3 space-y-2"
+                        data-testid="admin-review-scheduler-popover"
+                      >
+                        <div data-testid="admin-review-scheduler-group">
+                          <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Scheduler</div>
                 {/* Scheduler routing chip. The settings source is the
                     canonical outreach_schedulers table (admin-edited
                     via Settings → Scheduler Team). When that table
@@ -3549,7 +3778,7 @@ export function AdminReviewDialog({
                     SOURCE MARKER: Engagement Center uses assigned scheduler from scheduler settings
                     SOURCE MARKER: Scheduler settings fallback is Unassigned Engagement Queue */}
                 <div
-                  className="inline-flex items-center gap-1.5 rounded-full bg-white/10 text-white/70 px-2 py-0.5 text-[10px]"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 text-[10px]"
                   data-testid="admin-review-scheduler-routing-chip"
                   data-scheduler-state={
                     engagementAssignmentQuery.data?.scheduler
@@ -3574,7 +3803,7 @@ export function AdminReviewDialog({
                         : "Scheduler routes on approval"}
                 </div>
                 <div
-                  className="text-[10px] text-white/60"
+                  className="text-[10px] text-slate-500"
                   data-testid="admin-review-scheduler-settings-source"
                   data-source-state={
                     engagementAssignmentQuery.data?.scheduler
@@ -3592,53 +3821,107 @@ export function AdminReviewDialog({
                     </span>
                   )}
                 </div>
-              </section>
-              </div>
-              </ScrollArea>
-              )}
-            </aside>
-          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
 
-          {/* ─── Bottom box — Updates Made In Patient ──────────── */}
-          <div
-            className="border-t border-slate-200 bg-slate-50 px-5 py-3"
-            data-testid="admin-review-updates-made-box"
-            data-record-helper="admin-review-record-update"
-          >
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                Updates Made In Patient
+
+
+                  </div>
+                </div>
+
               </div>
-              <span className="text-[10px] text-slate-400 tabular-nums">
-                {updatesLog.length} {updatesLog.length === 1 ? "update" : "updates"}
-              </span>
+            </ScrollArea>
+
+            {/* Decision — pinned at the bottom of the action column */}
+            <div
+              className="border-t border-slate-200 bg-white p-4"
+              data-testid="admin-review-decision-group"
+            >
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">Decision</div>
+                <div className="flex flex-col gap-2">
+                  <Button
+                    type="button"
+                    disabled={approvalMutation.isPending || needsRegeneration}
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "approved" });
+                      recordAdminReviewUpdate("approval_approved", "Approved review");
+                    }}
+                    data-testid="admin-review-approve-button"
+                    data-bar-testid={`admin-review-button-approve-${patient.id}`}
+                    title={
+                      needsRegeneration
+                        ? "Regenerate changed ancillaries before approving"
+                        : undefined
+                    }
+                    className="bg-emerald-500 text-slate-800 hover:bg-emerald-600 w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {approvalMutation.isPending ? (
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-3 h-3 mr-1" />
+                    )}
+                    {needsRegeneration
+                      ? "Regenerate to Approve"
+                      : isUnder16
+                        ? "Admin Override Approve"
+                        : "Approve"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={approvalMutation.isPending}
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "needs_info" });
+                      recordAdminReviewUpdate("approval_pended", "Pended review");
+                    }}
+                    data-testid="admin-review-pend-button"
+                    data-bar-testid={`admin-review-button-needs-info-${patient.id}`}
+                    className="w-full bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+                  >
+                    Pend
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={approvalMutation.isPending}
+                    onClick={() => {
+                      approvalMutation.mutate({ status: "rejected" });
+                      recordAdminReviewUpdate("approval_rejected", "Rejected review");
+                    }}
+                    data-testid={`admin-review-button-reject-${patient.id}`}
+                    className="w-full text-rose-700 border-rose-200 bg-rose-50 hover:bg-rose-100"
+                  >
+                    Reject
+                  </Button>
+                </div>
             </div>
-            {updatesLog.length === 0 ? (
-              <div className="text-[11px] text-slate-400 italic">
-                Audit log will populate as you make changes in this review.
-              </div>
-            ) : (
-              <ScrollArea className="max-h-[110px]">
-                <ul className="space-y-1 pr-2">
-                  {updatesLog.map((entry) => (
-                    <li
-                      key={entry.id}
-                      className="flex items-start gap-2 text-[11px] text-slate-700 leading-snug"
-                      data-testid="admin-review-updates-made-item"
-                      data-update-type={entry.type}
-                    >
-                      <span className="font-mono text-[10px] text-slate-400 shrink-0 tabular-nums">
-                        {entry.at.slice(11, 16)}
-                      </span>
-                      <span className="min-w-0">{entry.label}</span>
-                    </li>
-                  ))}
-                </ul>
-              </ScrollArea>
-            )}
-          </div>
-      </DialogContent>
-    </Dialog>
+          </aside>
+        </div>
+    </>
+  );
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent
+          className="flex flex-col w-[calc(100vw-3rem)] max-w-[1040px] h-[min(86vh,760px)] overflow-hidden p-0 gap-0 rounded-2xl border border-slate-200 shadow-2xl"
+          overlayClassName="bg-slate-900/30 backdrop-blur-[2px]"
+          hideClose
+          data-testid={`dialog-admin-review-${patient.id}`}
+        >
+          {shellChildren}
+        </DialogContent>
+      </Dialog>
+      <PacketQaBlockingDialog
+        open={packetQa !== null}
+        report={packetQa?.report ?? null}
+        onCancel={() => setPacketQa(null)}
+        onProceed={() => {
+          packetQa?.proceed?.();
+        }}
+      />
+    </>
   );
 }
 

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { db } from "../db";
 import { billingRecords } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, or, ilike, desc } from "drizzle-orm";
 import type { InsertBillingRecord } from "../../shared/schema";
 import { logAudit } from "../services/auditService";
 
@@ -91,6 +91,45 @@ export function registerBillingRoutes(
     try {
       const links = await storage.getBillingRecordInvoiceLinks();
       res.json(links);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Cross-entity command search: match billing records by patient name, MRN,
+  // service, or facility. Used by the command-rail Search popup alongside the
+  // patient and document searches. Test rows are excluded.
+  app.get("/api/billing-records/search", async (req, res) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      const limit = Math.min(parseInt(String(req.query.limit ?? "25"), 10) || 25, 100);
+      if (q.length === 0) return res.json({ rows: [] });
+      const pattern = `%${q}%`;
+      const rows = await db
+        .select({
+          id: billingRecords.id,
+          patientName: billingRecords.patientName,
+          service: billingRecords.service,
+          facility: billingRecords.facility,
+          dateOfService: billingRecords.dateOfService,
+          mrn: billingRecords.mrn,
+          billingStatus: billingRecords.billingStatus,
+        })
+        .from(billingRecords)
+        .where(
+          and(
+            eq(billingRecords.isTest, false),
+            or(
+              ilike(billingRecords.patientName, pattern),
+              ilike(billingRecords.service, pattern),
+              ilike(billingRecords.facility, pattern),
+              ilike(billingRecords.mrn, pattern),
+            ),
+          ),
+        )
+        .orderBy(desc(billingRecords.createdAt))
+        .limit(limit);
+      res.json({ rows });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

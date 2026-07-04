@@ -13,8 +13,13 @@
 //
 // Future view modes (week/day/agenda) plug in alongside this file.
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 export type CanonicalCalendarUnscheduledItem = {
   id: string | number;
@@ -46,6 +51,13 @@ export type CanonicalMonthCalendarProps = {
   onUnscheduledItemAction?: (item: CanonicalCalendarUnscheduledItem) => void;
   // Initial month displayed; defaults to today.
   initialMonth?: Date;
+  // Optional per-day popover. When provided, clicking a day that has any
+  // content opens a Shadcn popover anchored to that cell (in addition to
+  // firing onSelectDate). Return null/undefined to suppress the popover
+  // for a given day — empty days never open one. Surfaces that prefer the
+  // legacy "click → caller-owned modal/drawer" flow simply omit this prop,
+  // so their behavior is unchanged.
+  renderDayPopoverContent?: (isoDate: string) => React.ReactNode;
 };
 
 function ymd(d: Date): string {
@@ -77,10 +89,12 @@ export function CanonicalMonthCalendar({
   unscheduledItems,
   onUnscheduledItemAction,
   initialMonth,
+  renderDayPopoverContent,
 }: CanonicalMonthCalendarProps) {
   const [cursor, setCursor] = useState<Date>(() =>
     startOfMonth(initialMonth ?? new Date()),
   );
+  const [openPopoverKey, setOpenPopoverKey] = useState<string | null>(null);
 
   const monthLabel = cursor.toLocaleDateString("en-US", {
     month: "long",
@@ -145,9 +159,8 @@ export function CanonicalMonthCalendar({
             (cell?.count ?? 0) > 0 ||
             (cell?.dots && cell.dots.length > 0) ||
             !!cell?.badge;
-          return (
+          const dayButton = (
             <button
-              key={key}
               type="button"
               onClick={() => onSelectDate?.(key)}
               className={`min-h-[88px] rounded-xl border text-left p-2 transition-colors flex flex-col ${
@@ -198,6 +211,32 @@ export function CanonicalMonthCalendar({
               )}
             </button>
           );
+
+          const popoverContent =
+            renderDayPopoverContent && hasAny
+              ? renderDayPopoverContent(key)
+              : null;
+
+          if (popoverContent) {
+            return (
+              <Popover
+                key={key}
+                open={openPopoverKey === key}
+                onOpenChange={(o) => setOpenPopoverKey(o ? key : null)}
+              >
+                <PopoverTrigger asChild>{dayButton}</PopoverTrigger>
+                <PopoverContent
+                  align="center"
+                  className="w-72 p-0"
+                  data-testid={`canonical-month-day-popover-${key}`}
+                >
+                  {popoverContent}
+                </PopoverContent>
+              </Popover>
+            );
+          }
+
+          return <Fragment key={key}>{dayButton}</Fragment>;
         })}
       </div>
 

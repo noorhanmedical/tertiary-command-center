@@ -83,7 +83,7 @@ function TaskRow({
   const urgencyClass = URGENCY_COLORS[task.urgency] ?? URGENCY_COLORS["none"];
 
   return (
-    <div className="rounded-2xl border border-slate-200/80 bg-white shadow-sm transition hover:border-blue-200 hover:shadow-md">
+    <div className="rounded-xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:shadow-md">
       <div
         className="flex cursor-pointer items-start gap-3 p-4"
         onClick={() => onOpen(task)}
@@ -123,7 +123,7 @@ function TaskRow({
             )}
             {unreadCount > 0 && (
               <span
-                className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold text-indigo-700"
+                className="inline-flex items-center gap-1 rounded-full bg-[#7283B0]/10 px-2 py-0.5 text-[10px] font-semibold text-[#7283B0]"
                 data-testid={`unread-badge-${task.id}`}
               >
                 <MessageSquare className="h-2.5 w-2.5" />
@@ -331,7 +331,7 @@ function ProjectsView({ onCreateTask, onOpen }: { onCreateTask: (projectId: numb
           <div className="flex items-center gap-2">
             <input
               autoFocus
-              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#7283B0]/40"
               placeholder="Project name…"
               value={newProjectTitle}
               onChange={(e) => setNewProjectTitle(e.target.value)}
@@ -343,7 +343,7 @@ function ProjectsView({ onCreateTask, onOpen }: { onCreateTask: (projectId: numb
             />
             <Button
               size="sm"
-              className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs"
+              className="rounded-xl bg-plexus-navy-800 hover:bg-plexus-navy-700 text-white text-xs"
               onClick={() => newProjectTitle.trim() && createProjectMutation.mutate()}
               disabled={createProjectMutation.isPending || !newProjectTitle.trim()}
               data-testid="button-create-project-confirm"
@@ -358,7 +358,7 @@ function ProjectsView({ onCreateTask, onOpen }: { onCreateTask: (projectId: numb
           <Button
             size="sm"
             variant="outline"
-            className="rounded-xl border-indigo-200 text-indigo-700 hover:bg-indigo-50 text-xs"
+            className="rounded-xl border-[#7283B0]/30 text-[#7283B0] hover:bg-[#7283B0]/10 text-xs"
             onClick={() => setShowNewProject(true)}
             data-testid="button-new-project"
           >
@@ -387,13 +387,13 @@ function ProjectsView({ onCreateTask, onOpen }: { onCreateTask: (projectId: numb
             }, {})
           : (summary?.counts ?? {});
         return (
-          <Card key={project.id} className="rounded-2xl border border-white/60 bg-white/80 shadow-sm">
+          <Card key={project.id} className="rounded-xl border-0 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
             <div
               className="flex cursor-pointer items-center gap-3 p-4"
               onClick={() => setExpandedProject(isOpen ? null : project.id)}
               data-testid={`project-row-${project.id}`}
             >
-              <FolderOpen className={`h-5 w-5 shrink-0 ${isOpen ? "text-blue-500" : "text-slate-400"}`} />
+              <FolderOpen className={`h-5 w-5 shrink-0 ${isOpen ? "text-[#7283B0]" : "text-slate-400"}`} />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-slate-800">{project.title}</span>
@@ -583,16 +583,16 @@ function UrgentPanel({
 
   return (
     <aside
-      className={`shrink-0 flex flex-col border-l border-slate-200/80 bg-white/70 transition-all duration-200 ${collapsed ? "w-10" : "w-64"}`}
+      className={`shrink-0 flex flex-col border-l border-slate-200/80 bg-white transition-all duration-200 ${collapsed ? "w-10" : "w-64"}`}
       data-testid="urgent-panel"
     >
-      <div className={`flex items-center border-b border-slate-100 px-2 py-3 ${collapsed ? "justify-center" : "justify-between px-3"}`}>
+      <div className={`flex items-center border-b border-l-2 border-l-[#7283B0] border-slate-100 px-2 py-3 ${collapsed ? "justify-center" : "justify-between px-3"}`}>
         {!collapsed && (
           <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-red-500" />
+            <AlertTriangle className="h-4 w-4 text-[#7283B0]" />
             <span className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Urgent</span>
             {sorted.length > 0 && (
-              <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-600">
+              <span className="rounded-full bg-[#7283B0]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#7283B0]">
                 {sorted.length}
               </span>
             )}
@@ -600,7 +600,7 @@ function UrgentPanel({
         )}
         <button
           onClick={onToggle}
-          className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+          className="inline-flex items-center justify-center h-7 w-7 rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
           title={collapsed ? "Expand urgent panel" : "Collapse urgent panel"}
           data-testid="button-toggle-urgent-panel"
         >
@@ -621,12 +621,12 @@ function UrgentPanel({
               return (
                 <div
                   key={t.id}
-                  className="cursor-pointer rounded-2xl border border-red-200/60 bg-red-50/60 p-3 transition hover:bg-red-50"
+                  className="cursor-pointer rounded-xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] border-l-2 border-l-[#7283B0] p-3 transition hover:shadow-md"
                   onClick={() => onHelp(t)}
                   data-testid={`urgent-task-${t.id}`}
                 >
                   <div className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#7283B0]" />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold text-slate-800 leading-tight">{t.title}</p>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
@@ -659,7 +659,7 @@ function UrgentPanel({
                     </div>
                   </div>
                   <button
-                    className="mt-2 w-full rounded-xl border border-blue-200 bg-blue-50 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 transition"
+                    className="mt-2 w-full rounded-xl border border-[#7283B0]/30 bg-[#7283B0]/10 py-1 text-xs font-medium text-[#7283B0] hover:bg-[#7283B0]/20 transition"
                     onClick={(e) => { e.stopPropagation(); onHelp(t); }}
                     data-testid={`button-help-task-${t.id}`}
                   >
@@ -802,19 +802,19 @@ export default function PlexusTasksPage() {
   ];
 
   return (
-    <div className="flex h-full min-h-screen bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.45),_rgba(248,250,252,1)_40%,_rgba(239,246,255,0.92)_100%)]">
+    <div className="flex h-full min-h-screen bg-slate-50">
 
       {/* Left sidebar */}
-      <aside className="flex w-52 shrink-0 flex-col gap-4 border-r border-slate-200/80 bg-white/60 p-5">
+      <aside className="flex w-52 shrink-0 flex-col gap-4 border-r border-slate-200/80 bg-white p-5">
         <div className="flex items-center gap-2.5">
-          <div className="rounded-xl bg-indigo-600/10 p-2 text-indigo-700">
+          <div className="rounded-xl bg-[#7283B0]/10 p-2 text-[#7283B0]">
             <CheckSquare className="h-5 w-5" />
           </div>
           <h1 className="text-base font-bold text-slate-900">Plexus Tasks</h1>
         </div>
 
         <Button
-          className="rounded-2xl w-full justify-start gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
+          className="rounded-2xl w-full justify-start gap-2 bg-plexus-navy-800 hover:bg-plexus-navy-700 text-white"
           onClick={() => openCreateFor()}
           data-testid="button-open-create-task"
         >
@@ -829,7 +829,7 @@ export default function PlexusTasksPage() {
               onClick={() => setView(id)}
               className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition ${
                 view === id
-                  ? "bg-indigo-50 text-indigo-700"
+                  ? "bg-[#7283B0]/10 text-[#7283B0]"
                   : "text-slate-600 hover:bg-slate-100 hover:text-slate-800"
               }`}
               data-testid={`nav-plexus-${id}`}
@@ -846,7 +846,7 @@ export default function PlexusTasksPage() {
         <PageHeader
           eyebrow="PLEXUS ANCILLARY · TASKS"
           icon={NAV.find((n) => n.id === view)?.Icon}
-          iconAccent="bg-indigo-600/10 text-indigo-700"
+          iconAccent="bg-[#7283B0]/10 text-[#7283B0]"
           title={
             view === "my-work" ? "My Work"
             : view === "projects" ? "Projects"
@@ -861,7 +861,7 @@ export default function PlexusTasksPage() {
           actions={
             <Button
               variant="outline"
-              className="rounded-2xl border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+              className="rounded-2xl border-[#7283B0]/30 text-[#7283B0] hover:bg-[#7283B0]/10"
               onClick={() => openCreateFor()}
               data-testid="button-create-task-header"
             >
