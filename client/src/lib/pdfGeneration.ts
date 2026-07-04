@@ -760,6 +760,13 @@ const PREVIEW_TOOLBAR_STYLES = `
 // Build the popup HTML body for one or more sections. Used by every
 // print-preview entry point so the toolbar markup + testIds + media
 // rules are defined exactly once.
+//
+// Packet QA Gate hardening — toolbar now carries a "Generated at"
+// timestamp so the operator can see how fresh the popup snapshot is
+// before they hit Print. The timestamp is rendered inside the
+// toolbar `<h1>` block and inherits the existing print-hide rule
+// (@media print { .preview-toolbar { display:none } }) so it does
+// NOT bleed into the printed packet.
 function buildPreviewPopupHtml(docTitle: string, sections: PacketPrintPreviewSection[]): string {
   const sectionsHtml = sections
     .map((s) => {
@@ -769,6 +776,13 @@ function buildPreviewPopupHtml(docTitle: string, sections: PacketPrintPreviewSec
       return `${head}${s.body}`;
     })
     .join("");
+  const generatedAt = new Date().toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
   return (
     `<!DOCTYPE html><html><head><meta charset="utf-8">` +
     `<title>${esc(docTitle)}</title>` +
@@ -776,7 +790,10 @@ function buildPreviewPopupHtml(docTitle: string, sections: PacketPrintPreviewSec
     `<style>${PREVIEW_TOOLBAR_STYLES}</style>` +
     `</head><body>` +
     `<div class="preview-toolbar" data-testid="packet-print-preview-window">` +
+    `<div style="display:flex;flex-direction:column;gap:2px;">` +
     `<h1>${esc(docTitle)}</h1>` +
+    `<span data-testid="packet-print-preview-generated-at" style="font-size:10px;font-weight:500;opacity:0.75;">Generated at ${esc(generatedAt)}</span>` +
+    `</div>` +
     `<div>` +
     `<button type="button" class="preview-print-btn" data-testid="packet-print-preview-print-button" onclick="window.print()">Print / Save as PDF</button>` +
     ` ` +

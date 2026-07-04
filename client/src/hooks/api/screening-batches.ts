@@ -5,6 +5,7 @@ import type {
   PatientScreening,
   OutreachScheduler,
 } from "@shared/schema";
+import type { PlexusIqBatchPlacement } from "@/lib/plexusIqClinicalImportApi";
 import { qk } from "./keys";
 
 export type ScreeningBatchWithPatients = ScreeningBatch & {
@@ -15,6 +16,17 @@ export type ScreeningBatchWithPatients = ScreeningBatch & {
 export type CreateBatchResult = ScreeningBatchWithPatients & {
   requiresManualAssignment?: boolean;
   availableSchedulers?: OutreachScheduler[];
+  /**
+   * Plexus IQ runtime hardening — Routes step 4.
+   *
+   * Set on the append-mode response so the UI can show
+   * "added to existing run" instead of "new run created". When the
+   * server returns `created: false`, the same batch row is reused —
+   * `id`/`facility`/`scheduleDate` are the existing batch's values.
+   * When absent (today's default newRun path), assume `created: true`.
+   */
+  created?: boolean;
+  placement?: PlexusIqBatchPlacement;
 };
 
 export type AnalysisStatus = {
@@ -58,6 +70,13 @@ export function useCreateBatch() {
       name: string;
       facility: string;
       scheduleDate?: string;
+      // Plexus IQ runtime hardening — Routes step 4.
+      // Optional. When omitted the server defaults to `newRun`
+      // (preserves today's "create a fresh batch each time" behavior).
+      // Pass `{ mode: 'append', targetBatchId }` to reuse an existing
+      // batch — the response will carry `created: false` so the UI
+      // can render "added to existing run".
+      placement?: PlexusIqBatchPlacement;
     }) => {
       const res = await apiRequest("POST", "/api/batches", input);
       return (await res.json()) as CreateBatchResult;
